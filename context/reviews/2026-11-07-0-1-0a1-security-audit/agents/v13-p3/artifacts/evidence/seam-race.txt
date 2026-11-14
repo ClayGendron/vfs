@@ -1,0 +1,90 @@
+== copy control (sequential) ==
+ alice read bob file: success=False errors=[('vfs.not_found', '/team/alice/s.txt')] obs=[]
+ alice copy: success=False errors=[('vfs.permission_denied', '/team/alice')] obs=[]
+== copy, rival at transfer:post-snapshot ==
+   rival bob write at transfer:post-snapshot /team/alice/s.txt success= True
+ alice copy: success=True errors=[] obs=[('/mine/c', None)]
+ alice read original: success=False errors=[('vfs.not_found', '/team/alice/s.txt')] obs=[]
+ alice read copy: success=True errors=[] obs=[('/mine/c/s.txt', 'BOB SECRET')]
+== sweep control (sequential) ==
+ alice sweep: success=False errors=[('vfs.permission_denied', '/team/alice')] obs=[]
+== sweep, rival at purge:post-collect ==
+   rival bob write at purge:post-collect /team/alice/b.txt success= True
+ alice sweep: success=True errors=[] obs=[('/team/alice', None)]
+ system read bob file: success=False errors=[('vfs.not_found', '/team/alice')] obs=[]
+
+----- repro.py -----
+"""v13-p3: rival write injected at the repository's own seams (transfer:post-snapshot,
+purge:post-collect) on the verb's session, simulating READ COMMITTED visibility. SQLite only."""
+import asyncio, sys
+sys.path.insert(0, "./src")
+from vfs.authority import Authority, Principal
+from vfs.models import Entry
+from vfs.paths import Path as P
+from vfs.storage import ResolvedPair
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.database import writes as W, seams, topology as T, trash as TR
+
+SYSTEM, ALICE, BOB = Authority.system(), Authority.of(Principal("alice")), Authority.of(Principal("bob"))
+CUR = {}
+for mod in (T, TR):
+    orig = mod.serialize
+    async def cap(session, profile, lock, _o=orig):
+        CUR["s"] = session
+        return await _o(session, profile, lock)
+    mod.serialize = cap
+
+def rival(storage, seam_name, path, body):
+    async def h():
+        seams.clear(seam_name)
+        hst = storage._host
+        r = await W.write_rows(CUR["s"], hst.tables, hst.profile, hst.parameter_budget, hst.membership_budget,
+                               entries=[Entry(path=P(path), content=body)], overwrite=False, parents=False, authority=BOB)
+        print("   rival bob write at", seam_name, path, "success=", r.success)
+    return h
+
+def show(label, r):
+    print(f"{label}: success={r.success} errors={[(getattr(e.kind,'value',e.kind), str(e.path)) for e in r.errors]} "
+          f"obs={[(str(o.path), getattr(o,'content',None)) for o in r.observations]}")
+
+async def ok(c):
+    r = await c; assert r.success, r.errors; return r
+
+async def world():
+    s = InMemoryStorage()
+    await ok(s.posture(path=P("/"), posture="none", authority=SYSTEM))
+    for d in ("/team", "/mine"): await ok(s.mkdir(path=P(d), authority=SYSTEM))
+    await ok(s.grant(path=P("/team"), principal="alice", level="add", authority=SYSTEM))
+    await ok(s.grant(path=P("/mine"), principal="alice", level="add", authority=SYSTEM))
+    await ok(s.write(entries=[Entry(path=P("/team/alice/a.txt"), content="alice own")], parents=True, authority=ALICE))
+    await ok(s.revoke(path=P("/team"), principal="alice", authority=SYSTEM))
+    await ok(s.grant(path=P("/team/alice"), principal="bob", level="add", authority=SYSTEM))
+    return s
+
+async def main():
+    print("== copy control (sequential) ==")
+    s = await world()
+    await ok(s.write(entries=[Entry(path=P("/team/alice/s.txt"), content="BOB SECRET")], authority=BOB))
+    show(" alice read bob file", await s.read(path=P("/team/alice/s.txt"), authority=ALICE))
+    show(" alice copy", await s.copy(operations=[ResolvedPair(src=P("/team/alice"), dest=P("/mine/c"))], authority=ALICE))
+    await s.close()
+    print("== copy, rival at transfer:post-snapshot ==")
+    s = await world()
+    seams.install("transfer:post-snapshot", rival(s, "transfer:post-snapshot", "/team/alice/s.txt", "BOB SECRET"))
+    show(" alice copy", await s.copy(operations=[ResolvedPair(src=P("/team/alice"), dest=P("/mine/c"))], authority=ALICE))
+    show(" alice read original", await s.read(path=P("/team/alice/s.txt"), authority=ALICE))
+    show(" alice read copy", await s.read(path=P("/mine/c/s.txt"), authority=ALICE))
+    await s.close()
+    print("== sweep control (sequential) ==")
+    s = await world()
+    await ok(s.write(entries=[Entry(path=P("/team/alice/b.txt"), content="BOB WORK")], authority=BOB))
+    show(" alice sweep", await s.sweep(path=P("/team/alice"), authority=ALICE))
+    await s.close()
+    print("== sweep, rival at purge:post-collect ==")
+    s = await world()
+    seams.install("purge:post-collect", rival(s, "purge:post-collect", "/team/alice/b.txt", "BOB WORK"))
+    show(" alice sweep", await s.sweep(path=P("/team/alice"), authority=ALICE))
+    show(" system read bob file", await s.read(path=P("/team/alice/b.txt"), authority=SYSTEM))
+    await s.close()
+
+asyncio.run(main())

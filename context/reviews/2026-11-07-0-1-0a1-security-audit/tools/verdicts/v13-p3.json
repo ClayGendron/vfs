@@ -1,0 +1,98 @@
+{
+ "decision": "needs_validation",
+ "record": {
+  "verdict": "needs_validation",
+  "fingerprint": "vfs/storage/database/topology-subtree-authorized-before-collection",
+  "title": "copy, sweep, delete and move check rights over a subtree once, then act on rows read later, including rows a concurrent writer just added",
+  "description": "The topology and trash verbs check the caller's rights over the source subtree once, inside the gate (WriteGate.subtrees). That check reads the rows beneath the root as they exist at that moment. The later statements read the subtree again, live, and act on whatever they find. Copy and move fetch the subtree with _fetch_subtree and _descendant_rewrites. Delete marks every live descendant with one LIKE update. The sweep purge loops its select-then-delete until the scope reads empty. Nothing checks the rows found by these later reads. The serialization point only makes serialized verbs wait for each other. Ordinary writes never read the lock row. On the server engines the topology transaction runs at READ COMMITTED, so every statement sees rows committed after the gate. Example: alice holds rights over /team/alice only through the owner floor, and bob holds add there. If bob's file commits inside the window, alice's copy duplicates it into /mine/c, owned by alice with the destination label, and alice can then read a file the read verb hides from her. Alice's sweep in the same window permanently destroys bob's file. Run one after the other, both calls are permission_denied. Some guards narrow the window, though they do not close it. In move and delete, a direct child that commits after the snapshot bumps the root's version, so the root claim misses and the verb redrives, which re-runs the gate. That guard does not cover the window between the gate and the snapshot. It also misses a deeper descendant, whose write bumps only its own parent. Copy and the sweep purge arm have no root guard at all. In the sweep, the rival does not even need precise timing: the purge's delete of the root waits on the rival's parent-bump row lock, and the re-collect loop then finds the rival's row and deletes it. The repository's own threat model (T57 in context/research/2026-09-05-permissions-framing-threat-model-and-requirements.md) says check and act must happen in one statement or one transaction, with the write's own predicate as the check. Here the check and the act share a transaction, but under READ COMMITTED the act's predicate is not the check. I re-ran this independently. The rival write was injected at the repository's own seams (transfer:post-snapshot and purge:post-collect) on the verb's own session. With it, alice's copy succeeded and she read 'BOB SECRET' from /mine/c/s.txt, and alice's sweep succeeded and bob's file was gone. The sequential controls were permission_denied. This simulates READ COMMITTED visibility; it is not a commit from a second connection. Likely fix: inside the mutation, judge every collected row with resolution.at(rung).admits(path, owner_id, everyone_level), and refuse or redrive on a miss. That covers copy's subtree, move's descendant rewrites, delete's descendant stamp (as a RETURNING set or a pre-stamp select), and each purge collect. Another option is to make child creation take a shared lock that conflicts with the serialization row.",
+  "claimed_root_cause": "The authorization decision (WriteGate.subtrees, rights.py:730-761, paging through _refused_beneath at rights.py:763-780) runs over a point-in-time read. The scope the mutation acts on is collected again afterwards by path pattern: topology.py:186 (_fetch_subtree, copy and move), topology.py:397 (_descendant_rewrites, move), trash.py:483 (_tombstone_descendants, delete) and trash.py:567 (the _purge collect loop, sweep). Rows found by these later reads are never judged. Ordinary writes do not serialize with these verbs (serialized.py:115-123). The topology connection is pinned to READ COMMITTED on PostgreSQL and MariaDB (dialects.py:437, 503). MSSQL and Oracle declare no pin, so they run at their engine default of READ COMMITTED (dialects.py:607-609). Each later statement therefore sees rows committed after the gate.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1692,
+    "scope": "DatabaseStorage._execute_transfer.gate",
+    "description": "A named lower-trust caller's copy or move source is authorized by checks.subtrees(sources, passing) at read or read_write. delete (backend.py:763) and sweep (backend.py:862) make the same subtree call at read_write."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 763,
+    "scope": "WriteGate._refused_beneath",
+    "description": "Pages through the rows beneath the root that exist when this statement runs, and checks each with rights.admits. A row committed afterwards is never judged."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/serialized.py",
+    "line": 123,
+    "scope": "serialize",
+    "description": "A locking read of the single lock row. Its docstring (line 117) says nothing else reads that row, so ordinary writes commit concurrently with copy, move, delete and sweep."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/topology.py",
+    "line": 186,
+    "scope": "transfer_rows",
+    "description": "After the gate and the per-pair checks, the source subtree is read again live through subtree_filter. Under READ COMMITTED it includes a rival's newly committed rows. Copy takes no lock or version guard on the source root."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/trash.py",
+    "line": 567,
+    "scope": "_purge",
+    "description": "The sweep purge arm repeats collect-then-delete until the scope reads empty, which is meant to catch late children. It hard-deletes them with no rights check and no proof predicate (trash.py:381)."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/topology.py",
+    "line": 452,
+    "scope": "_execute_copy",
+    "description": "Every collected row, the rival's included, is minted at the destination with owner_id = owner_for(authority) and the destination posture label (line 453). _copy_bodies (topology.py:483-517) then copies its body, so the copier owns a readable duplicate."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/storage/backends/database/trash.py",
+    "line": 483,
+    "description": "_tombstone_descendants marks every live row under the claimed directory. Its docstring says a child a rival landed after the snapshot rides with its parent. The root version guard (trash.py:200-202) catches only a direct child that commits after the snapshot; a deeper descendant, or any child in the gate-to-snapshot window, is tombstoned without being judged."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/trash.py",
+    "line": 381,
+    "description": "The sweep purge arm calls _purge with subtree_filter and no proof. The _purge docstring (trash.py:551-554) says writes are not serialized with this verb and the loop exists to catch a rival's new child."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/topology.py",
+    "line": 397,
+    "description": "Move rewrites the descendants it collects live after the root claim. A late deeper descendant is relocated to the destination and takes the destination's label without being judged."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/dialects.py",
+    "line": 437,
+    "description": "PostgreSQL topology_isolation is READ COMMITTED. MariaDB matches at line 503, and topology_execution_options (dialects.py:598-610) leaves MSSQL and Oracle on their READ COMMITTED default. Each statement sees rows committed after the gate."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 754,
+    "description": "subtrees skips the read only when the caller's rights cover the subtree whole. The gap opens exactly where rights are partial: an owner floor, or a posture that narrows a region."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 1026,
+    "description": "_bump_parents: a write bumps only its immediate parent's version. So a root version guard sees only direct-child arrivals, and copy and sweep check no root version at all."
+   },
+   {
+    "file": "agents/v13-p3/artifacts/evidence/seam-race.txt",
+    "line": 1,
+    "description": "Verifier's independent run on InMemoryStorage. Bob's legitimate write is injected at the repository's own seams on the verb's session. Controls: alice cannot read bob's file, and her sequential copy and sweep are permission_denied. Raced: the copy succeeds and alice reads 'BOB SECRET' from /mine/c/s.txt; the sweep succeeds and bob's file is gone."
+   }
+  ],
+  "blockers": [
+   "The decisive interleaving needs a real commit from a second connection on a server engine (PostgreSQL, MSSQL, MariaDB or Oracle) during the verb's transaction. This sandbox allows only SQLite and InMemoryStorage. There, topology verbs open BEGIN IMMEDIATE and hold the database write lock, so a second writer cannot commit inside the window.",
+   "The local evidence (the hunter's and mine) injects the rival write on the victim verb's own session at the repository's seams. That simulates READ COMMITTED statement visibility. It is not an observed concurrent commit, so lock interactions on a real engine are unobserved: for example, whether the copy's later body read or the sweep's delete blocks on or conflicts with the rival's parent-bump row lock in a way that forces a redrive."
+  ],
+  "validation_plan": {
+   "local": "Add engine-leg tests to tests/storage/database/test_races.py in its self-uninstalling seam-handler style, with the rival verb on its own DatabaseStorage session. Run them through the db_test skill on the postgres, mssql, mariadb and oracle legs. World setup: posture '/' none; mkdir /team and /mine; grant alice add on /team and /mine; alice writes /team/alice/a.txt with parents=True; revoke alice on /team; grant bob add on /team/alice. (1) Copy: install a handler on 'transfer:post-snapshot' that commits bob's write of /team/alice/s.txt. Run alice's copy of /team/alice to /mine/c. Assert the copy is refused, or that /mine/c/s.txt does not exist. (2) Sweep: install a handler on 'purge:post-collect' that commits bob's write of /team/alice/b.txt. Run alice's sweep of /team/alice. Assert bob's row survives, or that the sweep is refused. (3) Delete, deep descendant: alice also creates /team/alice/sub. Install a handler on 'delete:post-snapshot' that commits bob's write of /team/alice/sub/x.txt; this bumps only sub, not the root. Run alice's delete of /team/alice. Assert the delete is refused, or that x.txt stays live. (4) Move: same deep-descendant rival on 'transfer:post-snapshot'. Assert x.txt is not relocated. Each test is non-destructive and runs in disposable Docker containers. A pass on any leg that shows the unauthorized copy, purge, tombstone or relocation confirms the finding on that engine."
+  }
+ }
+}

@@ -1,0 +1,401 @@
+{
+ "units": [
+  {
+   "coverage_id": "repository%23tracked%20files::repository%23secrets%20debug%20gates%20and%20dangerous%20calls::repository::ATTACK-CLASSES.md%23Obvious%20things",
+   "disposition": "covered",
+   "reviewed_paths": [
+    ".gitignore",
+    "docker/compose.test.yml",
+    ".github/workflows/test-dialects.yml",
+    ".github/workflows/test.yml",
+    ".github/workflows/publish.yml",
+    "src/vfs",
+    "scripts",
+    "crates/vfs-core/src",
+    "tests/conftest.py",
+    "pyproject.toml",
+    "uv.lock",
+    "Cargo.lock",
+    "src/vfs/storage/backends/database/engine.py",
+    "src/vfs/storage/backends/database/dialects.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/base.py",
+    "src/vfs/exceptions.py",
+    "src/vfs/rendering/seam.py",
+    "src/vfs/embedding/model2vec.py",
+    "src/vfs/results/render.py",
+    "scripts/fetch_beir.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs",
+      "scripts",
+      "crates/vfs-core/src",
+      ".github/workflows/test.yml",
+      ".github/workflows/publish.yml",
+      "docker/compose.test.yml",
+      ".github/workflows/test-dialects.yml"
+     ],
+     "invariant": "No real password, API key, token or private key in tracked files",
+     "method": "source",
+     "result": "git grep for password/secret/api_key/token/Bearer/-----BEGIN and provider key shapes (sk-, AKIA, ghp_, xox, hf_, pypi-, AIza) over all 2214 tracked files. No real secret found. The only credentials are fixed passwords for the local Docker test containers (vfs/vfs, vfs-root, vfsStr0ngPassw0rd, vfs-sys in docker/compose.test.yml:34-114, repeated as localhost URLs in .github/workflows/test-dialects.yml:40-49, .claude/skills and context/research). CI uses ${{ secrets.CODECOV_TOKEN }} (test.yml:64). src/ holds no credential.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs",
+      "scripts",
+      "docker/compose.test.yml"
+     ],
+     "invariant": "No secret was committed and later removed (still in git history)",
+     "method": "source",
+     "result": "Read-only, bounded history search over all 911 commits (--all): git log -S for sk-, AKIA, ghp_, BEGIN RSA/OPENSSH/PRIVATE, hf_, pypi-, OPENAI_API_KEY=, api_key=; git log -G for provider-key regexes; --diff-filter=AD on *.env/.env*/*.pem/*.key/credentials*/*secret*/.pypirc; -p -G for credential-valued assignments outside uv.lock and context/. The only hits are test fakes (api_key=\"fake-key\", \"sk-test-key\") in removed Pinecone/OpenAI test code. A positive control (-S POSTGRES_PASSWORD) returned the compose commit a5d4a3a as expected. No secret in history.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      ".gitignore"
+     ],
+     "invariant": "No .env, credentials.json, *.pem or *.key file is tracked, and .gitignore covers secrets and local state",
+     "method": "source",
+     "result": "No tracked file matches .env*, credential*, *.pem, *.key, *.p12, *.pfx or id_rsa. .gitignore covers .env, .envrc, .venv, .pypirc, *.db/*.db-wal/*.db-shm, demo_vfs.sqlite*, *.log, .claude/* (skills excepted), *.so, and build output. It does not list *.pem/*.key/credentials.json explicitly, but none exist, so there is no exposure.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs",
+      "src/vfs/rendering/seam.py",
+      "src/vfs/embedding/model2vec.py",
+      "src/vfs/results/render.py",
+      "src/vfs/storage/backends/database/engine.py"
+     ],
+     "invariant": "No eval/exec/compile/__import__/pickle/marshal/yaml.load/subprocess/os.system on dynamic input",
+     "method": "source",
+     "result": "src/vfs has no eval, exec, pickle, marshal, yaml.load, subprocess, os.system or shell=True. importlib.import_module takes only constants: renderer package names fixed per class (seam.py:258-263) and _PACKAGE='model2vec' (model2vec.py:34). getattr in results/render.py:238-294 reads Observation fields from a projection that validate_projection checks first. SQLite load_extension loads only SQLITE_VEC_PATH from the installed sqlite_vec package, and extension loading is switched off again in a finally block (engine.py:686-690), so SQL cannot call load_extension.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs",
+      "tests/conftest.py",
+      "scripts/fetch_beir.py"
+     ],
+     "invariant": "No debug or dev mode can be switched on by environment variable, parameter or header; no security TODO/FIXME/HACK",
+     "method": "source",
+     "result": "src/vfs reads no environment variable (no os.environ or getenv) and has no debug flag. The env reads are VFS_TEST_<ENGINE>_URL in tests/conftest.py:97, which only deselects test legs, and VFS_RANKING_CACHE in the dev script scripts/fetch_beir.py:29. The only TODO in src is the string literal \"TODO\" in paths.py:109, which is data, not a comment. No security TODO/FIXME/HACK/XXX in src, scripts, crates, .github or docker.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs"
+     ],
+     "invariant": "Web items (unprotected /debug|/admin|/health endpoints, CORS, cookies, open redirects, plain-HTTP endpoints) do not apply",
+     "method": "source",
+     "result": "src/vfs has no HTTP server, route, cookie, CORS header or redirect. It is an in-process library. The only http:// strings are OOXML namespace URIs (rendering/docx.py:29-31). The source never downgrades database TLS: _engine_kwargs only sets use_setinputsizes=False for mssql (engine.py:601-618). TrustServerCertificate=yes appears only in test URLs.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "pyproject.toml",
+      "uv.lock",
+      "Cargo.lock"
+     ],
+     "invariant": "Dependencies are locked and pinned",
+     "method": "source",
+     "result": "uv.lock and Cargo.lock are tracked. The locked versions are current (pypdf 6.19.0, sqlalchemy 2.0.52, pydantic 2.12.5, pyyaml 6.0.3, lxml 6.1.2, pillow 12.3.0, openpyxl 3.1.5, unidiff 0.7.5). Published requirements are lower bounds only (pypdf>=5.0, openpyxl>=3.1, unidiff>=0.7). A CVE check of the tree was not possible offline, so no claim either way; the floors are recorded as hardening.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/engine.py",
+      "src/vfs/storage/backends/database/dialects.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/base.py",
+      "src/vfs/exceptions.py"
+     ],
+     "invariant": "No Result, exception, repr or log line carries a database URL with a password, or SQL text and parameters",
+     "method": "source",
+     "result": "The URL is passed straight into create_async_engine (engine.py:176). vfs keeps no copy of its own, so only SQLAlchemy's password-masking URL repr can show it. No __repr__ in storage exposes it, and src has no logging. classify_failure (engine.py:330-355) and the install path (engine.py:291-295) interpolate driver_origin(exc), the driver exception, never the SQLAlchemy wrapper that carries [SQL]/[parameters]. _wrap_driver_error builds a DBAPIError with statement 'bulk insert <table>' and no params (dialects.py:1074-1079). The transport detail is the TransportError text (base.py:3091-3092). Driver messages name users, never passwords. No credential leak.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  },
+  {
+   "coverage_id": "repository%23tracked%20files::repository%23secrets%20randomness%20and%20comparisons::repository::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/engine.py",
+    "src/vfs/storage/backends/database/indexing.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/authority.py",
+    "src/vfs/models/version.py",
+    "src/vfs/embedding/hashing.py",
+    "src/vfs/embedding/openai.py",
+    "src/vfs/embedding/model2vec.py",
+    "src/vfs/embedding/provider.py",
+    "src/vfs/storage/backends/database/embed.py",
+    "src/vfs/storage/ranking.py",
+    "src/vfs/rerank.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/engine.py",
+      "src/vfs/storage/backends/database/indexing.py"
+     ],
+     "invariant": "No security-relevant value comes from weak randomness",
+     "method": "source",
+     "result": "The random values are ULIDs (python-ulid 3.1.0: os.urandom for 80 bits, incremented within one millisecond) used for entry ids, mount identity, generations and the reindex lease token (backend.py:1139, indexing.py:151-217), plus random.uniform for retry jitter (engine.py:325). None of these is a bearer capability. Access is decided by row rights, never by knowing an id. The lease token only arbitrates between trusted backend instances that share the database. No security token, key or nonce is generated.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/models/version.py",
+      "src/vfs/embedding/hashing.py",
+      "src/vfs/storage/ranking.py",
+      "src/vfs/storage/backends/database/engine.py",
+      "src/vfs/storage/backends/database/embed.py",
+      "src/vfs/rerank.py"
+     ],
+     "invariant": "Hashes used for integrity or identity are collision-resistant where a collision would matter",
+     "method": "source",
+     "result": "Content hashes are SHA-256 (version.py:74,79). Version reconstruction checks the rebuilt text against the stored sha256 (version.py:216-220), so a bad diff chain fails loudly and never returns wrong content. Embedding-cache and cross-mount dedup keys are that SHA-256 (embed.py:282-316, rerank.py:268-277). Options and index hashes are SHA-256 of constants (ranking.py:372, indexing.py:134). blake2b-64 serves only as a Postgres advisory-lock key (engine.py:107-116) and as feature hashing in the test embedder (hashing.py:47), where a collision costs contention or recall, not access. Python hash() is used only for in-process __hash__. There is no HMAC, encryption, key derivation or IV anywhere, so no misuse of primitives and no crypto fallback path.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/authority.py"
+     ],
+     "invariant": "The RightsCache key cannot make one principal reuse another principal's resolution",
+     "method": "source",
+     "result": "The cache is keyed by subject_names (the sorted subs) plus stamp and marks (rights.py:221-226, 250-296). The resolution also depends on is_anonymous (closures and owner_floor, rights.py:357-375), so a named principal with the anonymous name would collide. Principal.__post_init__ prevents that: 'anon' and 'system' belong only to their own kinds, and '*' and 'group:' prefixes are refused (authority.py:87-99, 44-57). Authority enforces that anonymous is the sole subject (authority.py:146-149). The system authority never reaches the cache (rights.py:351-352). No secret is compared anywhere, so timing side channels do not apply.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/embedding/openai.py",
+      "src/vfs/embedding/model2vec.py",
+      "src/vfs/embedding/provider.py",
+      "src/vfs/storage/backends/database/embed.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "Provider API keys and DB URLs are not kept in reprs, Results or exceptions",
+     "method": "source",
+     "result": "Providers receive an already-built client (OpenAIEmbeddingProvider stores _client, _model, _dimensions) and never see the key. model_id is provider/model@dim (provider.py:99-101), and no custom __repr__ exposes the client. The provider exception text does reach callers: in the glean warning detail (backend.py:647) and in reindex stopped_by (backend.py:1466-1467). OpenAI SDK auth errors mask the key, so this is recorded as hardening, not a finding.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  },
+  {
+   "coverage_id": "src%2Fvfs%23all%20modules::src%2Fvfs%23any::src%2Fvfs::ATTACK-CLASSES.md%23Wildcard",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/models/rows.py",
+    "src/vfs/authority.py",
+    "src/vfs/storage/grants.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/rerank.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/results/envelope.py",
+    "src/vfs/models/version.py",
+    "src/vfs/models/versioning.py",
+    "src/vfs/models/vector.py",
+    "src/vfs/exceptions.py",
+    "src/vfs/storage/editing.py",
+    "src/vfs/storage/backends/database/offload.py",
+    "src/vfs/storage/backends/database/embed.py",
+    "src/vfs/rendering/seam.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/models/rows.py",
+      "src/vfs/authority.py",
+      "src/vfs/storage/grants.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/reads.py"
+     ],
+     "invariant": "Principal identity compares the same way in SQL predicates and in the Python authority on every supported engine (the case-sensitivity assumption)",
+     "method": "local",
+     "result": "Principal and owner columns use _string(255), which pins a binary collation only on MSSQL (rows.py:179-188). On MariaDB and MySQL they compile as plain VARCHAR(255) and take the database's default collation, while path is VARBINARY. The DDL compile confirmed this. Grants and memberships are re-filtered in Python with exact compares (grants.py:624-629, rights.py:1152-1163), so those are safe. The owner-arm road predicate, owner_id == :owner (rights.py:1236-1252, used by road at rights.py:553-580), runs only in SQL. A local simulation on SQLite with owner_id COLLATE NOCASE: principal 'ALICE' sees the directory '/private' that holds an 'alice'-owned file in glob, ls / and stat, while 'bob' gets nothing or not_found. The file name and content stay hidden, because Rights.admits compares exactly (grants.py:485-498). Under the stock binary collation 'ALICE' sees nothing.",
+     "artifact": "agents/h10-obvious/artifacts/evidence/owner-id-collation-probe.txt"
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/rerank.py",
+      "src/vfs/storage/backends/database/glean.py"
+     ],
+     "invariant": "Cross-mount rerank statistics do not count rows the caller cannot see",
+     "method": "source",
+     "result": "merge_ranked sums each mount's exported lexical_stats (rerank.py:286-301). glean replaces the corpus-wide stats with _visible_lexicon whenever a view applies (glean.py:295-299), so the df/idf a caller gets back is computed over visible rows. No leak found; the deeper derived-data question is owned by a peer.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/results/envelope.py",
+      "src/vfs/exceptions.py",
+      "src/vfs/storage/editing.py"
+     ],
+     "invariant": "Result deserialization and the error and exception adapters do not run code or invent success",
+     "method": "source",
+     "result": "Result.from_payload validates each item with pydantic, quarantines bad items, re-derives success and never raises (envelope.py:770-865). Nothing in src calls it; no wire peer exists yet. raise_if_failed maps kinds to exception classes through kind_family and never inspects messages (exceptions.py). edited_entry sends edit output back through Entry validation (editing.py:27-45). No deserialization sink.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/models/version.py",
+      "src/vfs/models/versioning.py",
+      "src/vfs/models/vector.py",
+      "src/vfs/rendering/seam.py"
+     ],
+     "invariant": "Parsing of stored diffs, vectors and unit tables cannot return wrong data silently",
+     "method": "source",
+     "result": "Stored diffs are parsed with unidiff.PatchSet (versioning.py:70-75) only during reconstruction, and the sha256 check (version.py:216-220) turns a malformed or ambiguous chain into a ValueError. The MSSQL vector read uses json.loads and then a dimension check (vector.py:293-308). units_from_json reads Unit(**item) from the vfs-written entry row (seam.py:245-249). All inputs are written by vfs itself; nothing caller-controlled reaches a code-executing parser.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h10-obvious",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/offload.py",
+      "src/vfs/storage/backends/database/embed.py"
+     ],
+     "invariant": "The offload pool and embedding retry hold no shared mutable security state",
+     "method": "source",
+     "result": "offload.py runs synchronous engine work on a pool owned by the backend. Abandoned workers touch no session (documented laws, offload.py:1-48). _embed_with_retry honors a provider Retry-After capped by RETRY_AFTER_CAP_SECONDS (embed.py:347-370), and the provider is operator-trusted. The embedding cache 'known' is keyed by content SHA-256, so identical content gets the identical vector. Peer units own resource exhaustion, so no further checks here.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs:models/rows.py:_string:principal-columns-unpinned-collation-mysql-family"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs:models/rows.py:_string:principal-columns-unpinned-collation-mysql-family",
+   "title": "owner_id and principal columns use the engine's default collation on MariaDB/MySQL, so a case- or accent-variant principal gets another owner's road directories",
+   "description": "vfs compares principal identities exactly in Python (Principal.sub, grants.resolve, Rights.admits). The SQL owner-arm predicate entry.owner_id == :owner runs on a column that pins a bytewise collation only on MSSQL. On MariaDB and MySQL, owner_id (and grants and memberships principal_id) compile as plain VARCHAR(255) and inherit the database default collation. MariaDB 11.x defaults to utf8mb4_uca1400_ai_ci and MySQL 8 to utf8mb4_0900_ai_ci; both are case- and accent-insensitive, and some are PAD SPACE. Picture a named principal whose sub differs from a victim's only by case, accents or trailing spaces, such as 'ALICE', 'Alicé' or 'alice ' against 'alice'. Principal.__post_init__ accepts these. That principal's owner arm then matches the victim's rows inside the SQL road query, Visibility.road (rights.py:553-580 via _owned_beneath, rights.py:1236-1252). Directories that hold victim-owned rows (the 'road') then show up in glob, ls and stat, including in the trash view, even though those directories are not visible to the principal. A simulation with a case-insensitive owner_id showed it: 'ALICE' sees '/private' in glob('/**') and ls('/'), and stat('/private') succeeds, while an unrelated 'bob' gets nothing and not_found. File names and content are not disclosed, because the Python Rights.admits filter compares owner_id exactly. Grants and memberships are re-keyed exactly in Python, so this does not escalate to grant or group inheritance.",
+   "claimed_root_cause": "_string() (src/vfs/models/rows.py:179-188) adds a binary collation variant only for 'mssql'. The mysql/mariadb family (and Oracle when NLS_COMP=LINGUISTIC) gets a VARCHAR whose equality follows the server's collation. Meanwhile the authority model (authority.py:75-99, grants.py:595-643, grants.py:485-498) treats subs as exact byte strings. SQL-only predicates on owner_id (rights.py:1220, 1250; ranges.py:128-130) therefore admit rows the Python authority would refuse. BytewiseString pins path and name (VARBINARY on mysql), but principal and owner columns are not pinned.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/authority.py",
+     "line": 87,
+     "scope": "Principal.__post_init__",
+     "description": "The host builds Principal(sub) from its IdP. Only empty, '*', 'group:'-prefixed and reserved exact names are refused, so 'ALICE', 'alice ' and 'Alicé' are accepted as principals distinct from 'alice'."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/grants.py",
+     "line": 638,
+     "scope": "resolve (owner floor)",
+     "description": "A single named subject gets OwnerArm(sub, trimmed) covering the mount outside its shared grants, keyed by its exact sub ('ALICE')."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/reads.py",
+     "line": 378,
+     "scope": "glob (also ls via reads.py:720/890, trash view reads.py:753)",
+     "description": "Directories the view does not show are passed to view.road() to decide whether they are on the road to a visible row."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 576,
+     "scope": "Visibility.road",
+     "description": "For each owner arm, _owned_beneath asks SQL which candidate directories hold a row owned by that owner. Python does not re-check the result."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 1250,
+     "scope": "_owned_beneath",
+     "description": "The predicate is row.c.owner_id == owner. Under a case- or accent-insensitive collation, 'ALICE' matches rows owned by 'alice'."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/models/rows.py",
+     "line": 471,
+     "scope": "build_vfs_tables entries.owner_id",
+     "description": "Column('owner_id', _string(255)) compiles as 'owner_id VARCHAR(255)' with no COLLATE or binary type on mariadb/mysql (verified by DDL compile), so equality follows the server default collation."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/models/rows.py",
+     "line": 188,
+     "description": "_string returns String(length).with_variant(String(length, collation=MSSQL_UTF8_COLLATION), 'mssql'): binary collation is pinned for MSSQL only."
+    },
+    {
+     "file": "src/vfs/models/rows.py",
+     "line": 225,
+     "description": "BytewiseString gives the mysql family VARBINARY for path and name, showing the authors pin bytewise comparison for keys but not for principal and owner columns."
+    },
+    {
+     "file": "src/vfs/storage/grants.py",
+     "line": 497,
+     "description": "Rights.admits does self._owned.get(owner_id), an exact Python dict lookup. That is why file rows stay hidden while road directories leak, an inconsistency between the SQL and Python sides of the same rule."
+    },
+    {
+     "file": "src/vfs/storage/grants.py",
+     "line": 629,
+     "description": "Grant rows are re-keyed by their DB-returned principal_id and looked up by exact sub, so case-variant grant and membership rows fetched by a ci collation are dropped in Python. Impact is limited to the owner-arm SQL paths."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 1220,
+     "description": "_units builds the per-owner visibility clause and_(entry.c.owner_id == owner, ...) used by SQL push-down in listing and search, the same collation-dependent comparison."
+    },
+    {
+     "file": "docker/compose.test.yml",
+     "line": 53,
+     "description": "The MariaDB test leg runs mariadb:11.8 with no collation override. The engine tests use one fixed principal per name and never a case-variant principal, so no test pins this."
+    }
+   ],
+   "blockers": [
+    "No real MariaDB or MySQL engine may run in this audit's sandbox. The behavior was shown only on SQLite with owner_id rewritten to COLLATE NOCASE as an analogue of utf8mb4_uca1400_ai_ci.",
+    "The deployment's actual database or table default collation, and whether the host's IdP can issue a sub that differs from another principal's only by case, accents or trailing spaces, are deployment facts outside source."
+   ],
+   "validation_plan": {
+    "local": "Against a disposable mariadb:11.8 container from docker/compose.test.yml (default collation), run the bundled probe scripts with url mariadb+aiomysql://vfs:vfs@localhost:33062/<db>. As system, write /private/alice-notes.txt with owner_id='alice' and set posture('/', 'none'). Then call glob(patterns=('/**',)), ls('/'), stat('/private') and ls('/private') as Authority.of(Principal('ALICE')), Principal('alice ') and Principal('Alicé'), with Principal('bob') as the control. Expected if real: the variants see '/private' and stat succeeds, while bob gets [] and not_found. Fix check: pin owner_id/principal_id/group_id/granted_by/actor columns to a binary type or collation on the mysql family (VARBINARY like BytewiseString, or COLLATE utf8mb4_bin), and add a regression test that a case-variant principal sees no road directory.",
+    "deployment": "The owner runs SHOW VARIABLES LIKE 'collation_database' (MariaDB/MySQL) or checks NLS_COMP/NLS_SORT (Oracle) on the production vfs schema, and confirms whether the IdP or host mapping can mint subs that differ from existing ones only by case, accents or trailing spaces."
+   }
+  }
+ ],
+ "hardening": [
+  "docker/compose.test.yml publishes the test databases on all host interfaces ('54320:5432', '33062:3306', '14330:1433', '15210:1521') with fixed passwords (vfs, vfs-root, vfsStr0ngPassw0rd, vfs-sys). On a developer machine on a shared network they are reachable with known credentials while running. Bind to 127.0.0.1 ('127.0.0.1:54320:5432'). Test-only, so not a finding.",
+  "The glean vector-leg warning puts the raw provider exception text in the agent-visible Result detail (src/vfs/storage/backends/database/backend.py:647), and reindex records it in stopped_by (backend.py:1466-1467). OpenAI SDK auth errors mask the key, but a LangChain or custom provider, or an httpx error naming a base_url with an embedded key, could pass operator secrets to the lower-trust caller. Consider exposing only type(exc).__name__ plus a fixed reason.",
+  "Published extra floors (pypdf>=5.0, openpyxl>=3.1, python-docx>=1.1, python-pptx>=1.0, unidiff>=0.7 in pyproject.toml) allow older parser versions, including pypdf 5.x with published resource-exhaustion advisories on untrusted PDFs, which vfs renders. The lock pins current versions, but installed users resolve their own. Raising floors to audited versions is cheap. CVE status was not verifiable offline.",
+  "_retry_after_seconds accepts any float from a provider Retry-After header (embed.py:358-370). 'nan' passes min(delay, cap) unchanged into asyncio.sleep. The provider is operator-trusted, but clamping to a finite non-negative value is safer.",
+  "scripts/fetch_beir.py downloads benchmark zips over HTTPS with no checksum before extractall (zipfile strips traversal). It is dev-only benchmark data and not shipped.",
+  "The trash-view road (reads.py:753) inherits the same SQL-only owner predicate as the collation candidate, so any fix must cover both the live and trashed road queries."
+ ],
+ "uncovered": []
+}

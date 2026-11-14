@@ -1,0 +1,27 @@
+== arbitration=native(sqlite upsert) alice=add overwrite=True ==
+   profile.name=sqlite arbitration=upsert
+  sequential alice overwrite: success=False errors=[('vfs.permission_denied', '/drop/report.txt')]
+   profile.name=sqlite arbitration=upsert
+   [bob create inside alice's gate-to-apply window] success=True errors=[]
+  raced alice create: success=True errors=[]
+  system read after: [('/drop/report.txt', 'ALICE')]
+  system stat owner: ['?']
+  bob reads his file: ['ALICE'] success=True errors=[]
+== arbitration=catch_retry alice=add overwrite=True ==
+   profile.name=sqlite arbitration=catch_retry
+  sequential alice overwrite: success=False errors=[('vfs.permission_denied', '/drop/report.txt')]
+   profile.name=sqlite arbitration=catch_retry
+   [bob create inside alice's gate-to-apply window] success=True errors=[]
+  raced alice create: success=True errors=[]
+  system read after: [('/drop/report.txt', 'ALICE')]
+  system stat owner: ['?']
+  bob reads his file: ['ALICE'] success=True errors=[]
+== arbitration=catch_retry alice=add overwrite=False ==
+   profile.name=sqlite arbitration=catch_retry
+  sequential alice overwrite: success=False errors=[('vfs.permission_denied', '/drop/report.txt')]
+   profile.name=sqlite arbitration=catch_retry
+   [bob create inside alice's gate-to-apply window] success=True errors=[]
+  raced alice create: success=False errors=[('vfs.exists', '/drop/report.txt')]
+  system read after: []
+  system stat owner: []
+  bob reads his file: [] success=False errors=[('vfs.not_found', '/drop/report.txt')]

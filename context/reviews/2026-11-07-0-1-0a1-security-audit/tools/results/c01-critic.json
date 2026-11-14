@@ -1,0 +1,203 @@
+{
+ "missing_units": [
+  {
+   "surface": "src/vfs/base.py#edit (EditOperation old/new, replace_all, many targets)",
+   "boundary": "src/vfs/storage/replace.py#fuzzy replacers run inline in the writer transaction",
+   "subsystem": "src/vfs/storage",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+   "starting_paths": [
+    "src/vfs/storage/replace.py",
+    "src/vfs/storage/editing.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/params.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Resource accumulation attack classes",
+     "reason": "edit leaves no state that builds up past the call; the cost is CPU while the transaction is held"
+    },
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes",
+     "reason": "the edit rights gate (backend.py:729-732, gate.targets modify) runs before edit_rows and is owned by the WriteGate unit"
+    }
+   ],
+   "reason": "The architecture names replace.py's O(n^2) Levenshtein, and the compute unit lists replace.py as a starting path, but none of that unit's four checks or two unresolved items touches edit. In source, block_anchor_replacer (replace.py:167-235) scans forward from every line that matches the first anchor until it finds the last anchor, which is O(L^2) in content lines. It then runs pure-Python levenshtein (replace.py:61-82, a full len(a) x len(b) matrix) on each middle line. line_trimmed_replacer is O(L x F), and each match recomputes start_pos with an O(L) sum. edit_rows (writes.py:261) calls edited_entry for every target, synchronously on the event loop, inside the open writer transaction. Neither the size of the old/new strings nor the number of edits or targets is capped (params has no string-length caps). So any caller with contribute or owner rights on one row can stall the shared loop and hold the store's write lock (on SQLite, every writer)."
+  },
+  {
+   "surface": "crates/vfs-core/src/links.rs#markdown_refs and line_context in the reindex chunk pass",
+   "boundary": "src/vfs/storage/backends/database/indexing.py#_assess_and_split, offloaded with no budget under the single-runner lease",
+   "subsystem": "crates/vfs-core",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+   "starting_paths": [
+    "crates/vfs-core/src/links.rs",
+    "crates/vfs-core/src/python.rs",
+    "src/vfs/models/links.py",
+    "src/vfs/storage/backends/database/links.py",
+    "src/vfs/storage/backends/database/indexing.py",
+    "src/vfs/storage/backends/database/offload.py",
+    "src/vfs/models/chunk.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Failure and recovery attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "MEMORY-SAFETY-AND-BINARY.md#Bounds, integer, and representation attack classes",
+     "reason": "bounds and panics in the vfs-owned Rust were closed by the pyo3 unit; atomic_spans is iterative (chunk.rs:146-181)"
+    },
+    {
+     "block": "AI-AND-LLM.md#Tool and action attack classes",
+     "reason": "edge minting toward hidden targets is already a candidate (publish_links target-resolution); this unit is about cost only"
+    }
+   ],
+   "reason": "This promotes the native unit's x_uncovered proposal, which I checked against source. markdown_refs (links.rs:39-68) calls line_context for every link_destination and every code_span. line_context (links.rs:71-76) copies and folds the whole enclosing line through String::from_utf8_lossy and fold_line before truncating to 256 characters, so N references on one line cost O(N x line length). The pass runs over every caller-written .md body during reindex (indexing.py:330 -> _assess_and_split -> extract_link_work). It has no wall budget and holds the one reindex lease, so index freshness stalls for every agent on the store. No unit owns markdown_refs or the reindex chunk pass for this class: the native unit excluded computational amplification, and the compute unit never reached indexing.py."
+  },
+  {
+   "surface": "src/vfs/base.py#chained glob and grep over rows in hand (_glob_rows_in_hand, _grep_rows_in_hand, observations=)",
+   "boundary": "src/vfs/pattern_matching/grep.py#match_texts with budget=None, and scope.py#passes_gates per candidate times per gate",
+   "subsystem": "src/vfs",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+   "starting_paths": [
+    "src/vfs/base.py",
+    "src/vfs/pattern_matching/grep.py",
+    "src/vfs/pattern_matching/glob.py",
+    "src/vfs/storage/backends/database/scope.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/grep.py",
+    "src/vfs/params.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Failure and recovery attack classes",
+     "reason": "no crash path; this unit is about loop occupancy and gate cardinality"
+    },
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+     "reason": "the chained paths reach storage only through gated self.read and self.stat calls"
+    }
+   ],
+   "reason": "This is a parallel path to grep that the compute unit did not check. Storage grep offloads its verify stage and enforces WALL_TIME_BUDGET (offload.py:1-50). The router's chained grep (base.py:1864-1946) does neither: it reads every absent body through self.read and calls match_texts, which invokes verifier.count_lines/hit_lines with budget=None (grep.py:252,259) synchronously on the event loop. Releasing the GIL does not free the loop thread. That path also reaches the per-hit context duplication candidate with no wall cap at all. A second, distinct root cause from the glob-backtracking candidate is gate cardinality. The globs and globs_not lists are unbounded str_seq values (params.py:251-309), and glean appends one escaped glob per observation (glean.py:261-262). passes_filters/passes_gates then run any() over every gate for every candidate row (glob.py:240-243, scope.py:105-107), and the SQL channel narrowing is dropped when there are more arms than fan_arms (scope.py:160-164). The result is O(candidates x globs) matching on the loop, for batches the 10k contract declares supported."
+  },
+  {
+   "surface": "src/vfs/base.py#glean query text",
+   "boundary": "src/vfs/storage/backends/database/backend.py#_embed_query, the query-vector cache, and glean.py#tokenize term fan-out",
+   "subsystem": "src/vfs/storage",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/lexical.py",
+    "src/vfs/embedding/provider.py",
+    "src/vfs/embedding/openai.py",
+    "src/vfs/embedding/model2vec.py",
+    "src/vfs/params.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Resource accumulation attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Failure and recovery attack classes",
+     "reason": "provider failures are caught and downgraded to a warning (backend.py:641-650)"
+    },
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+     "reason": "BM25 statistics from the visible set are owned by the grep/glean/graph unit"
+    }
+   ],
+   "reason": "The compute unit checked only glean's limit argument; nobody checked the query string. The query has no length cap (params.py:294). The backend's local-provider embed_query runs embed_batch inline on the event loop (provider.py:131, which says 'its one short text inline'), and asyncio.wait_for at backend.py:676 cannot interrupt synchronous CPU. A hosted provider is called once per distinct query with no per-principal quota, which is operator-owned spend open to anonymous callers. The cache _query_vectors keeps up to 256 entries keyed on the full query string (backend.py:171,672-679), so memory is unbounded per entry. tokenize(query) has no cap on distinct terms, and every term drives lexical_stats IN-list probes, _visible_lexicon and decode_summary/select_blocks (glean.py:257-300,480). Statement count and decode work therefore grow with query size."
+  },
+  {
+   "surface": "src/vfs/storage/backends/database/signals.py#centrality prior applied to glean scores",
+   "boundary": "src/vfs/storage/backends/database/glean.py#signal_factors over a whole-corpus graph, with no Visibility filter",
+   "subsystem": "src/vfs/storage",
+   "attack_class": "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/signals.py",
+    "src/vfs/models/signals.py",
+    "crates/vfs-core/src/signals.rs",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/links.py",
+    "src/vfs/storage/ranking.py"
+   ],
+   "selected_companion_blocks": [
+    "AI-AND-LLM.md#Core discipline",
+    "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+    "AI-AND-LLM.md#Universal moves",
+    "AI-AND-LLM.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "MEMORY-SAFETY-AND-BINARY.md#FFI and ABI attack classes",
+     "reason": "centrality_prior's align_to soundness was closed by the pyo3 unit"
+    },
+    {
+     "block": "AI-AND-LLM.md#Tool and action attack classes",
+     "reason": "no model-facing action; this unit is about which documents agents retrieve"
+    }
+   ],
+   "reason": "No unit's checks mention signals or centrality. collect_graph reads every live entry and every reference edge across the whole corpus (signals.py:5-21). signal_factors multiplies each candidate's glean score by the result (glean.py:390-391). Two questions are open. First, any writer can plant .md links (publish_links mints edges even toward targets the author cannot list, a separate candidate) and so raise a chosen entry's prior in every other agent's ranked results, which is retrieval steering. Second, a visible entry's factor reflects edges from rows the caller cannot see, which is an aggregate oracle. The BM25 unit made statistics come from the visible set only; this ranking leg was never held to that rule."
+  },
+  {
+   "surface": "src/vfs/base.py#grants (list grant rows)",
+   "boundary": "src/vfs/storage/backends/database/rights.py#list_grants returns ancestor rows for any holder of read_write",
+   "subsystem": "src/vfs/storage",
+   "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/grants.py"
+   ],
+   "selected_companion_blocks": [
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Deletion, revocation, and lifecycle attack classes",
+     "reason": "grants is a read; revoke freshness is owned by the grant/revoke unit"
+    },
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+     "reason": "the ancestor-prefix IN list is bounded by path depth"
+    }
+   ],
+   "reason": "The grants read verb has no unit. The grant unit's three checks cover only the grant, revoke and posture writes. list_grants (rights.py:965-1001) selects every grant row on the path and on each of its ancestors. A caller holding read_write at the addressed path, which can come from a grant on its own subtree or from the everyone posture (see the confirmed grant-escalation candidate), gets back all principals' rows on '/' and every intermediate prefix: principal ids, levels, granted_by. A caller without read_write gets its own, group and everyone rows through _own_ids. A unit needs to settle whether showing ancestor rows to a subtree admin is intended. It also needs to check that the not_found arm for list-only, owner-floor and road paths matches a truly absent path."
+  }
+ ],
+ "reassign_ids": [
+  "src%2Fvfs%2Fbase.py%23read%20stat%20ls%20tree%20glob::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control",
+  "src%2Fvfs%2Fbase.py%23grep%20glean%20graph::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility%20over%20derived%20copies::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+  "src%2Fvfs%2Fparams.py%23pattern%20query%20edit%20graph%20arguments::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgrep.py%23budgets%20and%20caps::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "resolved_prior_leads": [],
+ "stop": false
+}

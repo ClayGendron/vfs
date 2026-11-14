@@ -1,0 +1,158 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs:permissions:check_writable:subtree-override-not-consulted",
+  "title": "Read-only PermissionMap overrides are bypassed by subtree verbs (delete, sweep, move, copy) addressed at a writable ancestor or destination",
+  "description": "The router's PermissionMap is the per-prefix write policy enforced at the routing chokepoint before dispatch (README.md:127), and the mount-admin spec states that a map 'gates every path beneath'. The write gate resolves only the exact rel a verb addresses. A verb whose effect spans a subtree is checked against the rule that covers its addressed root, and never against a read-only override nested beneath that root. A non-system caller with ordinary row rights (the default fresh-mount posture) is refused on every direct write, edit, delete, sweep, move or copy inside the read-only region. Yet the same caller can: trash the read-only rows with delete(ancestor); purge them permanently with sweep(ancestor), after which restore finds nothing; move the ancestor out, rewrite the formerly read-only file at its new address, and move it back; or plant attacker content inside the read-only region in one call by copying or moving a staged tree onto an absent ancestor. The router already applies a subtree rule for bind sites (_busy_guard with subtree=True) but has no equivalent for permission overrides.",
+  "root_cause": "check_writable (src/vfs/permissions.py:269-321) resolves the gated rel through PermissionMap._resolve. That function matches only overrides whose prefix equals or covers the path (permissions.py:196) and never looks at overrides lying strictly beneath it. _gate_entry (base.py:2902) calls check_writable_composed only for the addressed rels. It does this for every op, subtree-shaped ones included: single-path delete, restore and sweep at base.py:1748 and 2189, move's src and dest and copy's dest at base.py:2535. So a read rule deeper than the target is invisible to the gate.",
+  "intended_behavior": "A read-only override must refuse every write-gated op whose effect lands at or beneath it. For subtree-shaped ops (delete, restore, sweep, move src and dest, copy dest), the gate should refuse with read_only when any layer's map holds a read override strictly beneath the gated rel, or beneath its /.vfs alias. This mirrors how _busy_guard refuses a region that contains a bind site.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 1059,
+    "scope": "AsyncVirtualFileSystem.delete (also restore 1094, sweep 1117, move 1233, copy 1246)",
+    "description": "A non-system caller (anonymous or a named principal) calls delete('/proj'), sweep('/proj'), move('/proj','/x') or copy/move('/stage','/proj') with its own authority"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/base.py",
+    "line": 1748,
+    "scope": "_route_single",
+    "description": "Single-path verbs gate with write_rels=(terminal.rel,), the addressed path only. The busy guard just above (1743) checks bind sites beneath the path, but nothing checks permission rules beneath it"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/base.py",
+    "line": 2535,
+    "scope": "_route_two_path",
+    "description": "move gates (src, dest) and copy gates dest only. These are the roots of the transferred subtree, not the paths that will be written beneath dest or vacated beneath src"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/base.py",
+    "line": 2902,
+    "scope": "_gate_entry",
+    "description": "check_writable_composed(self._permission_layers(full), op) is called once per addressed rel"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/permissions.py",
+    "line": 297,
+    "scope": "check_writable",
+    "description": "Resolution covers only _permission_candidates(rel), meaning the path and its /.vfs alias, through PermissionMap._resolve"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/permissions.py",
+    "line": 196,
+    "scope": "PermissionMap._resolve",
+    "description": "Matches only prefixes that equal or cover the path. '/proj' resolves to the read_write default even though '/proj/locked' is read-only, so the gate returns None"
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/base.py",
+    "line": 1754,
+    "scope": "_route_single -> _dispatch_entry",
+    "description": "Storage runs the subtree delete or sweep, mutating rows under the read-only override. The move and copy subtree transfer is dispatched the same way from _route_two_path"
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/permissions.py",
+    "line": 196,
+    "description": "The override match is 'normalized == prefix or normalized.startswith(prefix + \"/\")' only. Nothing checks for override prefixes beneath the path"
+   },
+   {
+    "file": "src/vfs/base.py",
+    "line": 2902,
+    "description": "The only permission-map call in the gate, invoked with addressed rels only"
+   },
+   {
+    "file": "src/vfs/base.py",
+    "line": 2939,
+    "description": "_busy_guard does consider the subtree (_bindings_beneath when subtree=True) for bind sites. Subtree-shaped effects are recognised for mounts but not for permission overrides"
+   },
+   {
+    "file": "src/vfs/base.py",
+    "line": 122,
+    "description": "_BUSY_GUARDED_OPS = {delete, restore, sweep}: the router's own list of ops that act beneath the addressed site"
+   },
+   {
+    "file": "README.md",
+    "line": 127,
+    "description": "The per-prefix map is documented as enforced at the routing chokepoint before anything dispatches"
+   },
+   {
+    "file": "context/specifications/archive/068-mount-admin-completeness/spec.md",
+    "line": 93,
+    "description": "Declared intent: a parent layer's map 'still gates every path beneath'"
+   },
+   {
+    "file": "agents/v18-p3/artifacts/evidence/subtree-override-bypass.txt",
+    "line": 1,
+    "description": "Verifier's independent sandboxed reproduction (harness and output). All six direct controls are refused read_only; delete, sweep, move-out/write/move-back, copy and move onto the ancestor all succeed against the locked file"
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "system_configuration",
+    "description": "The operator configured a read-only PermissionMap override nested beneath a writable non-root prefix of the same entry, for example read_write(read=['/proj/locked']). A read-only region expressed as a separate child mount is protected by the bind-site busy guard instead. An override whose parent is the mount root is reachable only through copy or move onto a missing ancestor, since the root itself cannot be deleted or moved."
+   },
+   {
+    "kind": "authorization_role",
+    "description": "The caller holds the row rung that delete, sweep or move needs on the writable ancestor, or that copy or move needs at the destination. A fresh storage's default posture is read_write for everyone, anonymous included, so no grant is needed by default. Row grants still apply where postures are tightened."
+   },
+   {
+    "kind": "data_state",
+    "description": "Rows exist under the read-only override (for trash, purge or move-tamper), or the destination ancestor is absent and the caller can stage a tree elsewhere in the same mount (for copy or move planting)."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "A named non-system principal (bob) calls public routed verbs on an AsyncVirtualFileSystem whose root InMemoryStorage carries permissions=read_write(read=['/proj/locked']). The host seeded /proj/locked/policy.txt as 'ORIGINAL' through the storage as Authority.system().",
+   "payloads": [
+    "await fs.delete('/proj', authority=bob)",
+    "await fs.sweep('/proj', authority=bob)",
+    "await fs.move(src='/proj', dest='/tmpx', authority=bob); await fs.write(path='/tmpx/locked/policy.txt', content='TAMPERED', authority=bob); await fs.move(src='/tmpx', dest='/proj', authority=bob)",
+    "await fs.write(path='/stage/locked/policy.txt', content='FORGED', parents=True, authority=bob); await fs.copy(src='/stage', dest='/proj', authority=bob)",
+    "await fs.write(path='/stage/locked/policy.txt', content='FORGED', parents=True, authority=bob); await fs.move(src='/stage', dest='/proj', authority=bob)"
+   ],
+   "instructions": [
+    "Build AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=['/proj/locked'])) and seed /proj/locked/policy.txt='ORIGINAL' via fs._bindings['/'].storage.write(..., parents=True, authority=Authority.system()).",
+    "Controls: as bob, run write, edit, delete('/proj/locked'), sweep('/proj/locked'), move of the locked file, and copy into /proj/locked. Each must classify vfs.read_only.",
+    "Run each payload on a fresh filesystem (planting cases with /proj absent), then read /proj/locked/policy.txt as Authority.system().",
+    "Command: ./tools/sandbox-run.py ./agents/v18-p3/scratch ./.venv/bin/python -I v_subtree.py (InMemoryStorage over private SQLite, no network)."
+   ],
+   "observed_result": "All six controls returned success=False with vfs.read_only. delete('/proj') returned success=True and the locked file read not_found; restore('/proj') then brought back 'ORIGINAL', so this effect is soft. sweep('/proj') returned success=True and the file read not_found; restore('/proj') also returned not_found, so the purge is permanent. The move-out/write/move-back sequence succeeded and the file content became ['TAMPERED']. A direct write into the empty locked region was refused read_only, yet copy('/stage','/proj') and move('/stage','/proj') both succeeded and the file content became ['FORGED']. A follow-up direct write was again refused read_only."
+  },
+  "remediation": {
+   "strategy": "Treat delete, restore, sweep, move (src and dest) and copy (dest) as subtree-shaped in the permission gate. Besides resolving the addressed rel, refuse with read_only when any layer's map holds a 'read' override strictly beneath that rel or beneath its /.vfs alias. Thread a subtree flag from _gate_entry through check_writable_composed to check_writable, mirroring the bind-site busy guard. Add regression tests with read_write(read=['/dir/frozen']) asserting that delete('/dir'), sweep('/dir'), restore('/dir'), move('/dir','/x'), move('/stage','/dir') and copy('/stage','/dir') each classify read_only with no storage call recorded. Apply the same flag in the grouped-observations path (base.py:2189).",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/permissions.py",
+     "fixed_code": "def check_writable_composed(layers: Iterable[PermissionLayer], op: str, *, subtree: bool = False) -> Result | None:\n    for layer in layers:\n        denied = check_writable(layer.permission_map, op, layer.rel, mount_prefix=layer.mount_prefix, subtree=subtree)\n        if denied is not None:\n            return denied\n    return None\n\n\ndef check_writable(permission_map, op, rel, *, mount_prefix=ROOT, subtree=False):\n    if op not in WRITE_GATED_OPS:\n        return None\n    first, *rest = _permission_candidates(rel)\n    resolved = permission_map._resolve(first)\n    for candidate in rest:\n        alternate = permission_map._resolve(candidate)\n        if alternate.rule_prefix is None:\n            continue\n        if resolved.rule_prefix is None or len(alternate.rule_prefix) > len(resolved.rule_prefix):\n            resolved = alternate\n    if resolved.permission == \"read_write\" and subtree:\n        resolved = _read_rule_beneath(permission_map, rel) or resolved\n    if resolved.permission == \"read_write\":\n        return None\n    ...  # unchanged error construction\n\n\ndef _read_rule_beneath(permission_map: PermissionMap, rel: str) -> _Resolution | None:\n    \"\"\"A read-only override strictly beneath *rel* (or its metadata alias), which a subtree verb would reach.\"\"\"\n    for candidate in _permission_candidates(rel):\n        base = \"\" if candidate == \"/\" else candidate\n        for prefix, perm in permission_map.overrides:\n            if perm == \"read\" and prefix.startswith(base + \"/\"):\n                return _Resolution(\"read\", prefix)\n    return None"
+    },
+    {
+     "file_name": "src/vfs/base.py",
+     "fixed_code": "# Mutations whose effect reaches beneath the addressed path.\n_SUBTREE_OPS: frozenset[Op] = frozenset({\"delete\", \"restore\", \"sweep\", \"move\", \"copy\"})\n\n# in _gate_entry:\n            err = check_writable_composed(self._permission_layers(full), op, subtree=op in _SUBTREE_OPS)"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "Requires an operator map with a read-only override nested under a writable prefix, which is an advertised read_write(read=[...]) pattern, and a caller with row rights on the ancestor. A fresh mount's default posture already gives everyone read_write. delete, move and copy are ordinary agent verbs."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "Breaks the integrity and availability of data the operator marked read-only, within one mount. Content can be replaced or planted (move/copy), soft-deleted (delete, which restore can undo) or permanently purged (sweep). Row-level grants still apply, there is no confidentiality loss, and there is no escape across mounts."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "Independently reproduced end to end through public router verbs on InMemoryStorage, with matched refused controls. Source shows the gate never consults overrides beneath the addressed path, and the declared intent (README, spec 068) is that the map gates every path beneath."
+  }
+ }
+}

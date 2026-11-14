@@ -1,0 +1,22 @@
+- publish.yml:release-ref-not-bound-to-main-environment-pypi: PyPI trusted-publishing upload is gated only by writer-editable workflow logic; whether a non-release writer can publish depends on unobserved `pypi` environment and tag protections
+- src/vfs/storage/backends/database/rights.py:grant-refusal:addressed-path-gate-ignores-posture-holes-beneath: grant() is checked only at the addressed path, so a caller with read_write from the everyone posture can grant itself (or anyone) read_write over a private posture hole beneath
+- vfs-core.links.line_context:per-reference-whole-line-fold: markdown_refs folds the whole enclosing line for every reference, so one agent-written markdown line makes reindex hold the mount's writer transaction for quadratic time
+- vfs-core.verify.extend_context:per-hit-context-duplication: Grep context lines are duplicated per hit, so output can grow to (hit lines) × (body size)
+- vfs.base._grep_rows_in_hand:inline-unbudgeted-verify: Chained grep over observations verifies content on the event loop with no wall, candidate or byte budget
+- vfs.pattern_matching.glob._translate:backtracking-wildcards: Glob patterns compile to backtracking regex with unbounded wildcards, so one call can stall the shared event loop
+- vfs.rendering.docx:note-reference-inline-expansion: Repeated docx footnote or comment references copy the note text inline before the character budget applies
+- vfs.rendering.docx:table-gridspan-expansion: A docx table cell's gridSpan value expands into an unbounded cell list before any render limit applies
+- vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked: An xlsx sheet's declared dimension drives empty-row iteration that the 60 s render clock never checks
+- vfs.rendering.xlsx:region-table-quadratic-materialization: xlsx region layout materializes a bounding-box table quadratic in the cell count before any budget check
+- vfs.rendering:ooxml-part-decompression-unbounded: OOXML parts are fully decompressed by the parser libraries with no entry-size or ratio check before render
+- vfs/storage/database/labels:mint-reads-posture-outside-revision-lock-stale-everyone-level: A write, move or copy that read the posture before a tightening commits keeps the old, more open everyone_level after the relabel clears its mark
+- vfs/storage/database/topology-subtree-authorized-before-collection: copy, move, delete and sweep authorize a subtree once, then act on rows collected later, including a concurrent rival's rows
+- vfs/storage/database/write-arbitration-absorb-without-reauthorization: A write that the gate judged as a fresh create (add rung) can overwrite a rival's concurrently created file through insert arbitration
+- vfs/storage/replace.py:fuzzy-replacers-quadratic-inline-in-writer-transaction: edit's fuzzy replacers run quadratic pure-Python matching on the event loop inside the writer transaction, with no size, count or time bound
+- vfs:models/rows.py:_string:principal-columns-unpinned-collation-mysql-family: owner_id and principal columns use the engine's default collation on MariaDB/MySQL, so a case- or accent-variant principal gets another owner's road directories
+- vfs:permissions:check_writable:subtree-override-not-consulted: Read-only PermissionMap overrides are bypassed by subtree verbs (delete cascade, move, copy, sweep, restore) addressed at a writable ancestor or destination
+- vfs:storage/backends/database/links.py:publish_links:target-resolution-ignores-author-rights: Markdown link extraction mints edges to rows the author cannot list, bypassing mkedge's target gate
+- vfs:storage/backends/database/rights.py:grant_rows:uncapped-foreign-grant-rows-inflate-grantee-clause-fan: Uncapped grant rows naming another principal make that principal's glean issue a growing number of statements and stall the shared event loop
+- vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges: glean's centrality prior is built from hidden rows, so a visible score reveals how many hidden entries link to it
+- vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic: Posture writes and relabels rely on bytewise path comparison that Oracle and GENERIC dialects do not pin
+- vfs:storage/database:search-budget-counts-hidden-rows: grep's candidate-budget and scan-overflow truncation records count rows the caller cannot see

@@ -1,0 +1,87 @@
+{
+ "run_id": "vfs-run-1-2026-11-07",
+ "repo": "ClayGendron/vfs",
+ "target": ".",
+ "source_ref": {
+  "commit": "35867501a71f0246d9a9f6b755e1fcf323d58bb4",
+  "branch": "main",
+  "worktree_dirty": true,
+  "dirty_note": "Only untracked examples/pluto-demo/ (not in the wheel or sdist; out of scope). src/, crates/, scripts/, .github/, pyproject.toml are identical to HEAD."
+ },
+ "purpose": "Full security audit for the vfs-py 0.1.0a1 release (context/standards/release.md step 3).",
+ "profile": "standard",
+ "scope_paths": [
+  "src/",
+  "crates/",
+  "scripts/",
+  ".github/workflows/",
+  "pyproject.toml",
+  "Cargo.toml",
+  "Cargo.lock",
+  "uv.lock",
+  "docker/"
+ ],
+ "budget": {
+  "max_agent_invocations": 90,
+  "spent": 83,
+  "plan": {
+   "recon": 4,
+   "wave1_hunters": 11,
+   "critic_c01": 1,
+   "wave2_hunters": 5,
+   "reserved_critics": 2,
+   "phase3_verifiers": "~20",
+   "phase5_verifiers": "~20"
+  },
+  "raise_note": "Raised from 30 to 65 on 2026-11-07 by the developer (chose \"Raise budget, full\") after wave 1 produced 15 candidates. Raised again from 65 to 75 after critic c02 opened a third wave, to keep the standard profile complete as the developer chose; disclosed to the developer. Raised again from 75 to 90 on 2026-11-07 by the developer (chose \"Raise to ~90, hunt it\") after critic c05 opened wave 6."
+ },
+ "agent_model": "opus (every delegated agent, at the developer's request)",
+ "execution_policy": "sandboxed-source-and-local-only",
+ "sandbox": {
+  "launcher": "tools/sandbox-run.py",
+  "profile": "tools/sandbox.sb",
+  "controls": "sandbox-exec: all network denied including loopback; file writes only under the agent's scratch/. env -i equivalent: HOME, TMPDIR, PATH, LANG, PYTHONDONTWRITEBYTECODE, PYTHONPYCACHEPREFIX only. RLIMIT_CPU 60s, RLIMIT_FSIZE 64MiB, RLIMIT_NPROC 256, 120s wall clock (SIGKILL). Memory: macOS refuses RLIMIT_AS/DATA/RSS, so a trusted parent watchdog samples process-group RSS every 50ms and SIGKILLs the group above 2GiB (self-test: 3GiB allocation killed at 2.6GiB).",
+  "self_test": "2026-11-07: env allowlist, repo write blocked, external network blocked, memory watchdog kill, CPU limit set — all passed."
+ },
+ "promotion": {
+  "tool": "tools/promote.py",
+  "self_test": "2026-11-07: regular file promoted; symlink, hard link, traversal refused."
+ },
+ "companions_selected": [
+  "DATA-ISOLATION-AND-LIFECYCLE.md",
+  "MEMORY-SAFETY-AND-BINARY.md",
+  "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md",
+  "SUPPLY-CHAIN-AND-RELEASE.md",
+  "AI-AND-LLM.md"
+ ],
+ "prior_runs": [],
+ "prior_run_note": "No prior vfs run exists under <home>/security-audit-skill/vfs; no compatible prior ledger.",
+ "shared_file_owner": "parent",
+ "run_status": "complete",
+ "safeguard_events": [
+  {
+   "agent": "w5b-meet",
+   "request_id": "req_011CgohRmR4cBGm1ptPrG9hH",
+   "effect": "unit deferred; not retried"
+  }
+ ],
+ "coverage_loop": {
+  "post_wave_critics": [
+   "c01",
+   "c02",
+   "c03",
+   "c04",
+   "c05",
+   "c06"
+  ],
+  "final_clean_critic": "c07-final-clean",
+  "final_clean_result": "stop=true, no missing units, no reassignments",
+  "deferred_units": 1
+ },
+ "phase5": {
+  "records": 23,
+  "verified": 18,
+  "non_material_replacements_applied": 5,
+  "material_replacements": 0
+ }
+}

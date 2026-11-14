@@ -1,0 +1,148 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.rendering.docx:table-gridspan-expansion",
+  "title": "A docx table cell's gridSpan value expands into an unbounded cell list before any render limit applies",
+  "description": "_Writer.table builds rows = [[cell.text for cell in row.cells] for row in table.rows] and only then hands the rows to Builder.table. In the installed python-docx 1.2.0, _Row.cells yields the same _Cell once for each grid column the cell spans (iter_tc_cells: for _ in range(tc.grid_span): yield cell). grid_span is read straight from the w:tcPr/w:gridSpan/@val integer and is never compared with the table's real grid width. The renderer then calls cell.text once for each yielded entry, and each call builds a new string. So one attribute in a document of about 36 KB decides how many tuple entries, cell.text calls and list strings get created. All of this work finishes before Builder sees the first row. The character budget, the ratio guard, the unit cap and the cooperative clock (RenderLimits.seconds, checked only at block boundaries and between table rows) therefore do not bound it. The bytes come from any principal allowed to write(data=...) to a DatabaseStorage mount; the write stores them as render_status='pending'. The expansion runs later, when the operator calls reindex(). It runs on the backend's in-process ThreadPoolExecutor, the pool that grep's verify stage also uses, and a running worker cannot be interrupted. Local run: input size held constant at 36,705 bytes, gridSpan raised from 1e3 to 1e6. cell.text calls grew exactly linearly (1,000 to 1,000,000). Peak RSS rose from 113.6 MiB to 473.0 MiB. Wall time was about 22 s against RenderLimits(seconds=1.0); this is informational only. Spans of 1e5 and above also return status 'empty' with no text, because the header line alone overflows the character budget. Correction to the hunter's wording: a render that completes lands a terminal state and is not retried. A row stays pending, and is retried on every reindex, only when the span is large enough that the render never finishes or the process dies. The schema allows values up to 2^31-1. That size was not executed: by extrapolation it is more than 16 GiB of tuple pointers alone, plus hours of CPU.",
+  "root_cause": "DocxRenderer's table path builds the span-expanded row.cells tuple and one cell.text string per grid position, with no cap and no clamp to the table's declared grid width. RenderLimits are enforced only inside Builder, on text it emits. The materialization runs as one uninterruptible step on the offload thread, before any of those checks.",
+  "intended_behavior": "A render's memory and CPU should stay bounded by RenderLimits and roughly proportional to the input bytes. Per the seam's own docstring, a malformed or hostile docx should end as a classified 'truncated' or 'failed' state within the time budget, not do work set by an attribute value.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 958,
+    "scope": "AsyncVirtualFileSystem.write",
+    "description": "A lower-trust caller with write rights stores arbitrary docx bytes through write(data=...)"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 1181,
+    "scope": "bytes write staging",
+    "description": "The bytes row is stored with render_status='pending' and is not rendered in the writer's call"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1288,
+    "scope": "DatabaseStorage._render_step",
+    "description": "The operator's reindex() renders every pending bytes row via render_rows on the in-process offload ThreadPoolExecutor (call_offloaded)"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/render.py",
+    "line": 294,
+    "scope": "render_rows",
+    "description": "Each pending row goes to registry.render with the configured RenderLimits"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/rendering/registry.py",
+    "line": 107,
+    "scope": "RendererRegistry.render",
+    "description": "Dispatches to DocxRenderer.render; only an Exception raised from inside the renderer becomes a state"
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/rendering/docx.py",
+    "line": 63,
+    "scope": "DocxRenderer.render",
+    "description": "Each body table block goes to _Writer.table after a single boundary() clock check"
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/rendering/docx.py",
+    "line": 128,
+    "scope": "_Writer.table",
+    "description": "rows = [[cell.text for cell in row.cells] for row in table.rows] creates one tuple entry and one cell.text string per spanned grid column, with the count set by w:gridSpan/@val, before Builder.table checks any budget"
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/rendering/docx.py",
+    "line": 128,
+    "description": "The full row matrix is materialized before self._builder.table(rows) runs; there is no cap on len(row.cells) and no clamp to the table grid"
+   },
+   {
+    "file": "src/vfs/rendering/markdown.py",
+    "line": 191,
+    "description": "Builder.table checks out_of_time() and the character budget only while emitting rows that already exist"
+   },
+   {
+    "file": "src/vfs/rendering/seam.py",
+    "line": 67,
+    "description": "RenderLimits caps characters, ratio, embedded objects, units and seconds; none of these bounds parsed structure size or work done before Builder"
+   },
+   {
+    "file": "src/vfs/storage/backends/database/engine.py",
+    "line": 237,
+    "description": "The offload pool is an in-process ThreadPoolExecutor shared with grep's verify stage, so memory and CPU exhaustion affects the whole host process"
+   },
+   {
+    "file": "agents/v08-p3/artifacts/evidence/gridspan-growth.jsonl",
+    "line": 4,
+    "description": "Sandboxed run, constant 36,705-byte input: gridSpan 1e3/1e4/1e5/1e6 gives cell.text calls of exactly 1e3/1e4/1e5/1e6 and peak RSS of 113.6/117.2/148.6/473.0 MiB; wall time 22.4 s at 1e6 against a 1.0 s limit"
+   },
+   {
+    "file": "agents/v08-p3/artifacts/evidence/gridspan.py",
+    "line": 30,
+    "description": "The harness: builds a 1x1 docx with python-docx, sets w:gridSpan/@val, counts _Cell.text calls, and calls RendererRegistry.bundled().render(RenderSource(data, DOCX, 'a.docx'), RenderLimits(seconds=1.0))"
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker can write bytes entries to a DatabaseStorage mount (any subject with write rights on some path)"
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The vfs[docx] extra (python-docx) is installed, so the docx renderer is available"
+   },
+   {
+    "kind": "user_interaction",
+    "description": "The operator or host later runs DatabaseStorage.reindex(), the only place rendering happens"
+   },
+   {
+    "kind": "third_party_dependency",
+    "description": "python-docx 1.2.0 _Row.cells expands a horizontal span into grid_span repeated cells, taken from the unvalidated w:gridSpan/@val"
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "A lower-trust agent or ETL writer with ordinary write rights stores one small .docx entry. The renderer cost lands later on the operator's reindex, in the host process that all agents share.",
+   "payloads": [
+    "A word/document.xml holding one table, one w:tc whose w:tcPr contains <w:gridSpan w:val=\"1000000\"/> and a paragraph of 100 characters (about 36 KB zipped)"
+   ],
+   "instructions": [
+    "Build a 1x1 table docx with python-docx, put 100 characters in the cell, and append w:gridSpan with w:val=N to the cell's w:tcPr",
+    "Call RendererRegistry.bundled().render(RenderSource(data, DOCX, 'a.docx'), RenderLimits(seconds=1.0)) in the sandbox, counting _Cell.text calls and reading ru_maxrss",
+    "Repeat for N = 1e3, 1e4, 1e5, 1e6 with the input size held constant, and stop there (no larger values)"
+   ],
+   "observed_result": "Input stayed at 36,705 bytes. cell.text calls equalled N exactly (1,000 to 1,000,000). Peak RSS grew from 113.6 MiB to 473.0 MiB. Wall time at N=1e6 was 22.4 s against RenderLimits.seconds=1.0, so the clock did not stop the expansion. Statuses were 'ok' for 1e3 and 1e4, and 'empty' ('no text in 1 units') for 1e5 and 1e6. Work and memory grow linearly with the attribute value, not with the input size."
+  },
+  "remediation": {
+   "strategy": "Do not iterate python-docx's span-expanded row.cells. Walk each row's w:tc elements directly. Compute each cell's text once. Clamp each span to the table's declared grid width (len(tblGrid.gridCol_lst), which is proportional to the input bytes) and to the columns that remain in the row. Then repeat the already computed string, so the row length is bounded by bytes actually present. Optionally check builder.out_of_time() between rows during collection, and return 'truncated' when a row is cut.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/rendering/docx.py",
+     "fixed_code": "    def table(self, table: Any) -> None:\n        grid = max(1, len(table._tbl.tblGrid.gridCol_lst))\n        rows: list[list[str]] = []\n        for tr in table._tbl.tr_lst:\n            if rows and self._builder.out_of_time():\n                break\n            cells: list[str] = []\n            for tc in tr.tc_lst:\n                if len(cells) >= grid:\n                    break\n                text = self._docx.table._Cell(tc, table).text\n                cells.extend([text] * max(1, min(tc.grid_span, grid - len(cells))))\n            rows.append(cells)\n        self._builder.table(rows)"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "Any principal with write rights can plant the payload; it is trivial and a few KB. It needs the docx extra installed and fires only when the operator runs reindex, which is routine maintenance."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "Memory and CPU on the operator's reindex grow linearly with an attribute value up to 2^31-1. They run in the in-process offload pool shared with every agent's grep, and that work cannot be interrupted. Observed: 473 MiB and 22 s at 1e6. Extrapolated, not executed: process-wide OOM or hours-long stalls at the maximum, and an un-landed row that is retried on every reindex. This is availability only; no data is disclosed or changed."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The source path is verified line by line. The library behaviour was read from the installed python-docx 1.2.0, and linear growth at constant input size was reproduced in the approved sandbox with counted calls. Only the maximum-span process exhaustion is extrapolated, not observed."
+  }
+ }
+}

@@ -1,0 +1,234 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23write%28entries%3D%5BEntry%5D%29%20with%20caller-authored%20body%20metrics%3A%20an%20Entry%28source%3D%27bytes%27%2C%20data%3DNone%2C%20content_hash%3DH%29%20keeps%20the%20caller%27s%20H%2C%20and%20the%20MEASURED_BODY%20validation%20context%20lets%20a%20caller-built%20Entry%20vouch%20any%20hash%20for%20real%20bytes::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frender.py%23cached_renderings%20and%20render_rows%20lend%20a%20settled%20rendering%20per%20%28content_hash%2C%20generation%29%20across%20rows%20with%20no%20principal%20or%20rights%20term%2C%20and%20land_renderings%20guards%20only%20on%20the%20receiving%20row%27s%20own%20content_hash%3B%20the%20same%20key%20is%20also%20used%20by%20rerank.py%23merge_ranked%20cross-mount%20dedup%20and%20versions.py%23_mint_rows%20history%20skip::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::DATA-ISOLATION-AND-LIFECYCLE.md%23Composite-key%20and%20namespace%20collision",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/models/entry.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/staging.py",
+    "src/vfs/storage/backends/database/render.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/storage/backends/database/versions.py",
+    "src/vfs/rerank.py",
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w5a-content-hash",
+     "reviewed_paths": [
+      "src/vfs/models/entry.py",
+      "src/vfs/base.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/staging.py"
+     ],
+     "invariant": "Storage must measure or verify a row's content_hash from the body it actually stores, never accept a caller-authored value.",
+     "method": "source",
+     "result": "Entry._derive_and_measure measures only when data is not None or source=='text'; a bodiless bytes Entry keeps the caller's content_hash and mime_type, and MEASURED_BODY context is taken on trust. _route_entry_batch accepts any Entry instance and only path-gates it. write_rows/put_file/stage_* copy entry.content_hash into the staged row, and _material_values writes it. _replace_bodies skips a row with neither content nor data, so a bodiless overwrite keeps the old blob under the new hash. No layer re-measures.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w5a-content-hash",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/render.py"
+     ],
+     "invariant": "A rendering lent between rows must be bound to the receiving row's real bytes, or to a principal and rights term.",
+     "method": "source",
+     "result": "cached_renderings picks the lowest-id settled donor per (content_hash, render_generation). It has no owner or rights filter and no deleted_at filter, so trashed rows still donate. render_rows reuses a page twin by the same key. The land_renderings stamp guard checks only that the receiving row's own content_hash equals the key, and a forged hash satisfies that.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w5a-content-hash",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/storage/backends/database/render.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "A caller without read on another principal's file must not obtain its rendered text through the dedup cache.",
+     "method": "local",
+     "result": "Confirmed on InMemoryStorage. Setup: posture / none; bob has read_write on /bob, alice on /alice. Alice gets not_found on bob's PDF. She writes a bodiless Entry(source='bytes', content_hash=H_bob, mime_type='application/pdf') at /alice/x.pdf. After the operator's reindex (report cached=1), alice's read returns bob's rendered text, and grep finds it under her path. A wrong-guess hash stays 'pending' with an unavailable error: an existence oracle. The reverse case also works: alice plants a donor of her own bytes with a vouched H (MEASURED_BODY); bob's later upload of the document with hash H is served alice's text.",
+     "artifact": "agents/w5a-content-hash/artifacts/evidence/render-lend-poc-output.txt"
+    },
+    {
+     "agent_id": "w5a-content-hash",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/render.py",
+      "src/vfs/storage/backends/database/versions.py"
+     ],
+     "invariant": "Variants must be established independently: a donor planted without the Python-only context, the version-history skip, and trashed donors.",
+     "method": "local",
+     "result": "(C) Using only JSON-shaped model_validate dicts, alice writes her own bytes honestly, then overwrites the row bodiless with content_hash=H. The old blob is retained, reindex renders her bytes and stamps them under H, and bob's later upload of the H document gets her text. (D) Two files in a contribute region: an honest overwrite by alice mints 1 version of bob's v1, while an overwrite with a vouched hash equal to v1's hash mints 0. Bob's prior body is unrecoverable. (E) Bob trashes his PDF, and a bodiless H row of alice's still borrows its rendering.",
+     "artifact": "agents/w5a-content-hash/artifacts/evidence/content-hash-variants-output.txt"
+    },
+    {
+     "agent_id": "w5a-content-hash",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/reads.py",
+      "src/vfs/rerank.py"
+     ],
+     "invariant": "How a lower-trust caller learns H, and other uses of the same key.",
+     "method": "source",
+     "result": "reads.py LIST_FIELDS={path,kind} for list-level rows and ROAD_FIELDS, so content_hash surfaces only to callers who can already read the row. Learning H otherwise requires knowing the exact bytes (a public or shared document) or an outside leak. The render_status pending-to-ok transition is an existence oracle for a guessed H. rerank._union drops later cross-mount rows whose content_hash was already seen, in dispatch order, so a forged row could shadow another principal's identical-hash row in a multi-mount glean. This was observed from source only, not run.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs/storage/database/write-trusts-caller-authored-content-hash"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "confirmed",
+   "fingerprint": "vfs/storage/database/write-trusts-caller-authored-content-hash",
+   "title": "Caller-authored content_hash is stored unverified and keys cross-principal render lending and version skipping",
+   "description": "write(entries=[...]) stores the content_hash carried on the caller's Entry without measuring the body it stores. A bodiless bytes Entry keeps any hash, and so does an Entry built with the MEASURED_BODY validation context. The reindex render cache then lends a settled rendering per (content_hash, generation) with no owner or rights term, and the landing guard checks only the receiving row's own (forged) hash. Two effects follow. First, a principal who cannot read another's file but knows its hash obtains its rendered text, and can test whether the mount holds a given document. Second, a principal can plant a donor so that another principal's later upload of a known document is served attacker-chosen text through read, grep and glean. This is an integrity break in another principal's model-facing content. The same trust lets a contributor skip version minting and erase the prior body's history.",
+   "root_cause": "The storage write path (writes.py write_rows → staging.put_file → _material_values) takes entry.content_hash, which Entry's validator leaves caller-supplied for bodiless bytes entries and for MEASURED_BODY-vouched entries, as the row's hash. It never re-measures the stored body. render.py treats that hash as proof of byte identity when choosing a donor and when guarding the landing.",
+   "intended_behavior": "A row's content_hash must always be the hash of the body storage holds for it. A bodiless authored Entry must be refused, or must keep the stored row's measured metrics. Render and version dedup must depend only on storage-measured hashes, and must not draw donors from tombstoned rows.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/base.py",
+     "line": 2601,
+     "scope": "AsyncVirtualFileSystem._route_entry_batch",
+     "description": "Accepts any Entry instance from write(entries=...), path-gates it and dispatches it unchanged."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/models/entry.py",
+     "line": 228,
+     "scope": "Entry._derive_and_measure",
+     "description": "Measures only when data is not None or source=='text'. Otherwise the caller's content_hash stands, and MEASURED_BODY context overrides measurement."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 163,
+     "scope": "write_rows",
+     "description": "Passes entry.content_hash into WritePlan.put_file and the staged row."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 1172,
+     "scope": "_material_values",
+     "description": "Persists the staged content_hash. _replace_bodies keeps the old blob for a bodiless row."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/render.py",
+     "line": 184,
+     "scope": "cached_renderings",
+     "description": "Lowest-id settled donor per (content_hash, generation), with no principal, rights or deleted_at term."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/render.py",
+     "line": 336,
+     "scope": "land_renderings",
+     "description": "The stamp guard compares the key only to the receiving row's own content_hash, so the lent text lands as that row's content."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/models/entry.py",
+     "line": 238,
+     "description": "The text branch measures unless MEASURED_BODY is present. The bytes branch at 228 runs only when data is not None."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/render.py",
+     "line": 204,
+     "description": "The donor WHERE clause has only hash, source, stamp and status predicates."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/render.py",
+     "line": 283,
+     "description": "render_rows reuses seen[(hash, generation)] for any row in the page."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/versions.py",
+     "line": 145,
+     "description": "The pre-image version is skipped when its measured hash equals the staged (caller-supplied) hash."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/reads.py",
+     "line": 107,
+     "description": "List-level rows expose only path and kind, so H is not leaked to list-only callers. The attacker needs it from elsewhere."
+    }
+   ],
+   "conditions": [
+    {
+     "kind": "authorization_role",
+     "description": "The attacker is a named subject with write (add or higher) somewhere on the same mount as the victim's file. No rights on the victim's path are needed."
+    },
+    {
+     "kind": "data_state",
+     "description": "The attacker knows the exact sha-256 of the target document's bytes, for example a publicly distributed or shared document. For the reverse case, the attacker's donor must be the lowest-id settled row for that hash."
+    },
+    {
+     "kind": "system_configuration",
+     "description": "The operator runs reindex on the storage. This is routine and needed for any bytes rendering."
+    }
+   ],
+   "execution": {
+    "attacker_perspective": "Named subject alice with read_write only on /alice. Posture / is none, and bob owns /bob.",
+    "payloads": [
+     "Entry.model_validate({'path':'/alice/x.pdf','source':'bytes','content_hash':H_bob,'mime_type':'application/pdf'})",
+     "Entry.model_validate({'path':'/alice/d.pdf','source':'bytes','content_hash':H_public,'mime_type':'application/pdf'}) written over a row holding alice's own PDF bytes"
+    ],
+    "instructions": [
+     "In the sandbox on InMemoryStorage, set posture / to none and grant bob and alice read_write on their own prefixes.",
+     "Bob writes a dummy PDF. Run reindex. Confirm that alice's read and stat of bob's file return not_found.",
+     "Alice writes the bodiless Entry naming bob's hash. Run reindex. Alice reads her own path.",
+     "Separately, alice overwrites her own PDF row bodiless with the hash of a public document. Run reindex. Bob uploads that public document. Run reindex. Bob reads his file."
+    ],
+    "observed_result": "Alice's /alice/x.pdf returned render_status ok with bob's text ('BOB-SECRET salary 123456'), with the rendering report showing cached=1. A wrong-guess hash stayed pending. Bob's /bob/form.pdf returned alice's chosen text, and bob's grep for it hit his own file. A forged-hash overwrite in a contribute region minted 0 versions, against 1 for an honest overwrite."
+   },
+   "remediation": {
+    "strategy": "Measure at the storage seam. In write_rows, refuse a content-kind Entry that carries neither content nor data (or ignore its metrics and keep the stored row's). Recompute content_hash, size and lines from the staged body in the storage layer or the offload pool, never from the Entry. Reserve MEASURED_BODY for router-internal use, for example a private sentinel object rather than a public context key. In cached_renderings, add entry.deleted_at IS NULL. A rights-independent fix is that lending is safe once hashes are storage-measured.",
+    "code_changes": [
+     {
+      "file_name": "src/vfs/storage/backends/database/writes.py",
+      "fixed_code": "# in write_rows, before put_file:\nif entry.kind in CONTENT_KINDS and entry.content is None and entry.data is None:\n    plan.errors.append(classified(ErrorKind.invalid, entry.path, detail='a file write needs a body'))\n    continue\nmetrics = measure_bytes(entry.data) if entry.data is not None else measure_text(entry.content)\n# pass metrics.content_hash / size_bytes / lines instead of entry.*"
+     }
+    ]
+   },
+   "severity": {
+    "likelihood": {
+     "score": "low",
+     "reason": "The attacker needs a writable path on the victim's mount and the exact hash of the target bytes. Without read access that mostly means a known or shared document. The poisoning case also needs to win the lowest-id donor race."
+    },
+    "impact": {
+     "score": "medium",
+     "reason": "It crosses a principal boundary in both directions. One direction discloses another principal's rendered text and gives an existence oracle. The other plants attacker-chosen text as another principal's file content, which reaches their agents' context through read, grep and glean. Version history can also be erased."
+    },
+    "overall_severity": "medium"
+   },
+   "confidence": {
+    "score": "high",
+    "reason": "Complete source lineage, and bounded local reproduction of every variant on InMemoryStorage through the public router API with dummy data."
+   }
+  }
+ ],
+ "hardening": [
+  "cached_renderings draws donors from tombstoned (trashed) rows because it has no deleted_at predicate. This is shown in the variant evidence, and it should be filtered even after hashes are storage-measured.",
+  "The render_status pending-to-ok transition on a bodiless row reveals whether any row on the mount holds a given hash. Measuring hashes at storage removes this oracle.",
+  "rerank._union cross-mount dedup keeps the first-dispatched row per content_hash. Once hashes are storage-measured this is benign, but today a forged hash could shadow another mount's row in a multi-mount glean. This was observed from source only."
+ ],
+ "uncovered": [
+  {
+   "surface": "src/vfs/storage/backends/database/indexing.py chunk fingerprint-skip law (content_hash == chunk_source_hash) under a caller-authored content_hash",
+   "boundary": "chunk and index freshness versus the stored body when the row's hash is forged",
+   "subsystem": "src/vfs/storage/backends/database",
+   "attack_class": "Search, cache, and index ACL drift",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/indexing.py",
+    "src/vfs/storage/backends/database/writes.py"
+   ],
+   "reason": "The same root cause may leave derived chunks out of step with the stored body. This was not traced or run here, and it should be checked under its own unit once the write-path fix is designed."
+  }
+ ]
+}

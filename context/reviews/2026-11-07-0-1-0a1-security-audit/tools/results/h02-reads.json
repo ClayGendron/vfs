@@ -1,0 +1,146 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23grep%20glean%20graph::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility%20over%20derived%20copies::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/grep.py",
+    "src/vfs/storage/backends/database/scope.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/lexical.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h02-reads",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/grep.py",
+      "src/vfs/storage/backends/database/scope.py"
+     ],
+     "invariant": "grep's result, including its truncation records, depends only on rows the caller's Visibility admits",
+     "method": "source",
+     "result": "The candidate budget (grep.py:254-255, nominated_count from the unfiltered posting kernel) and the scan-tier overflow flag (scope.py:279-295, LIMIT limit+1 with no view predicate) are computed before the per-row view.holds check (grep.py:260-262, 301-305). The grep_rows docstring (grep.py:185-186) already says hidden candidates count against the budget. A bounded local run under the sandbox showed the truncation record appearing or not depending on hidden rows that a direct read reports as not_found.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h02-reads",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/glean.py",
+      "src/vfs/storage/backends/database/lexical.py"
+     ],
+     "invariant": "glean's BM25 statistics come from the visible set for a caller with partial rights",
+     "method": "source",
+     "result": "_visible_lexicon (glean.py:709-776) recomputes N, avg_dl and per-term df over the chunks the view admits, so corpus-wide lex_df/lex_stats are not exposed to a partial caller. The overlay fetch (glean.py entries_for_scan with OVERLAY_BUDGET) has the same pre-view overflow shape as grep's scan side. I recorded it as a variant of the same root cause and did not investigate it further.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs:storage/database:search-budget-counts-hidden-rows"
+   ],
+   "unresolved": [
+    "graph.py node/edge filtering (lead 3, markdown link edges toward hidden targets) not reviewed",
+    "src/vfs/rerank.py cross-mount rerank not reviewed",
+    "vector-leg top-k ordering relative to the view filter only partly read (glean.py:596-680)"
+   ]
+  },
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23read%20stat%20ls%20tree%20glob::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control",
+   "disposition": "blocked",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/grants.py",
+    "src/vfs/authority.py",
+    "src/vfs/ops.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h02-reads",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/reads.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/grants.py",
+      "src/vfs/authority.py",
+      "src/vfs/ops.py"
+     ],
+     "invariant": "read/stat/ls/tree/glob show a row only after Visibility.shows/reads, and hidden rows read exactly as absent",
+     "method": "source",
+     "result": "_viewed (backend.py:1511-1557) resolves rights and refuses anonymous callers before any read, then passes a Visibility. In reads.py, _point_rows, _screen, _classify_unresolved, _children_by_parent, tree_rows (_visible_rows) and glob_rows each judge every fetched row in Python. Rows the caller can only list come back bare, and hidden ancestors go through seen_kinds, so a miss is classified the same way an absent row is. glob max_count truncates after filtering. Tombstones keep their label and owner, and the trash view (_trash_roots, the trashed road) applies the same view, so I found no extra visibility through /.vfs/trash. The RightsCache key (subject_names) cannot collide between anonymous and named callers, because the names are reserved (authority.py Principal.__post_init__). No candidate found in what I read.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": [
+    "Review was cut short. Road derivation helpers _owned_beneath/_open_beneath (rights.py) and descent.classify_miss were not read in full, so equal answers for hidden and absent rows on every miss path are not fully established."
+   ]
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs:storage/database:search-budget-counts-hidden-rows",
+   "title": "grep's candidate-budget and scan-overflow truncation records count rows the caller cannot see",
+   "description": "For a caller with partial rights, grep (and, by the same shape, glean's overlay) computes whether a call hit its budget from candidate rows before the per-row Visibility check. Whether a truncation warning appears, and how many rows come back, can therefore change with the presence or content of rows the caller cannot read, even though a direct read of those rows reports not_found. This breaks the stated rule that hidden rows read exactly as absent, for derived search outputs.",
+   "claimed_root_cause": "nominated_count (grep.py:254) comes from the posting kernel over all entries in the glob allow-list, and entries_for_scan (scope.py:279-295) sets overflow from an unfiltered LIMIT limit+1. Both happen before view.holds (grep.py:260-262, 301-305), so the truncation records and the remaining budget take hidden rows into account.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 495,
+     "scope": "DatabaseStorage.grep",
+     "description": "grep runs under _viewed with a partial Visibility"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 243,
+     "scope": "grep_rows",
+     "description": "index-side candidate ids and nominated_count come from the unfiltered posting kernel"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/scope.py",
+     "line": 279,
+     "scope": "entries_for_scan",
+     "description": "scan-tier fetch with LIMIT limit+1 and no view predicate sets overflow"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 367,
+     "scope": "grep_rows",
+     "description": "truncation records built from those hidden-inclusive counts are returned to the caller"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 185,
+     "description": "Docstring says the candidate budget still counts hidden candidates"
+    },
+    {
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 260,
+     "description": "The view check runs only after the budget has been computed"
+    },
+    {
+     "file": "src/vfs/storage/backends/database/scope.py",
+     "line": 281,
+     "description": "Overflow is set from the unfiltered row count"
+    }
+   ],
+   "blockers": [
+    "My run was halted before I could write a promoted evidence artifact, so no local check is attached and the local observation needs independent reproduction.",
+    "The glean overlay variant (OVERLAY_BUDGET) was identified from source only and not run."
+   ],
+   "validation_plan": {
+    "local": "With InMemoryStorage under the sandbox, as a named caller with no rights under one prefix, compare grep's truncation records and row counts for calls whose scope includes that hidden prefix, with and without a hidden row present. If they differ, the finding is confirmed. Fix: compute budgets and overflow only after view.holds, or push the visibility predicate into the nomination and scan statements, and replace the 'counts hidden candidates' docstring note with a regression test showing grep output is identical whether or not hidden rows are present."
+   }
+  }
+ ],
+ "hardening": [
+  "glean partial-caller BM25 statistics are computed over the visible set (glean.py _visible_lexicon), so the corpus-wide lex_df/lex_stats rows are not exposed to a partial caller; keep a parity test for this."
+ ],
+ "uncovered": []
+}

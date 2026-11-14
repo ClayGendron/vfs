@@ -12,8 +12,10 @@ behaviour or the clock; everything is a file read and a string match.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 from pathlib import Path
+from typing import Any
 
 # The unwrap script stands alone under scripts/; the lint borrows its tree walk and
 # its fence rule rather than keeping a second copy of either.
@@ -30,6 +32,7 @@ PROCESS_START = "2026-10-29"
 LAYER_LINES_START = "2026-11-13"
 markdown_files = unwrap_context.markdown_files
 FENCE_RE: re.Pattern[str] = unwrap_context.FENCE_RE
+AUDIT_RUN_SUFFIX: str = unwrap_context.AUDIT_RUN_SUFFIX
 
 # Direct files in the dated folders that are not documents of the process.
 FIXED_NAMES = frozenset({"README.md", "STATUS.md", "MINING.md"})
@@ -95,8 +98,25 @@ CODE_REVIEW_SECTIONS = (
 LENS_SUBSECTIONS = ("Contract", "Scale", "Tests", "Ownership", "Adversarial")
 # Each opening line of the Ownership subsection, and the word that says what the diff did to the gate.
 LAYER_LINES = (("Layer map:", "ladder"), ("Size:", "allowlist"))
+SECURITY_AUDIT_SECTIONS = (
+    "Run",
+    "Security posture",
+    "Confirmed findings",
+    "Needs validation",
+    "Hardening notes",
+    "Positive source patterns",
+    "Coverage",
+    "Verdict",
+)
 SPEC_REVIEW_VERDICTS = ("Fit to build", "Not yet")
 CODE_REVIEW_VERDICTS = ("Lands", "Does not land yet")
+SECURITY_AUDIT_VERDICTS = ("Clears the release", "Blocks the release")
+# The run folder's files the lint requires; the skill's two validators read the last two and hold the rest.
+AUDIT_RUN_FILES = ("run-metadata.json", "findings.json", "coverage-ledger.json")
+# The verdicts and the severities a confirmed record clears at, spelled as the skill's schema spells them;
+# critical, high and any value the schema does not spell, such as a mis-cased "High", block the release.
+AUDIT_VERDICTS = ("confirmed", "needs_validation", "rejected")
+AUDIT_CLEARING_SEVERITIES = ("informational", "low", "medium")
 PIPELINE_STAGES = ("intent", "research", "spec", "review", "code", "review", "commit")
 
 
@@ -232,8 +252,18 @@ def section_order_errors(name: str, found: list[str], required: tuple[str, ...],
 
 
 def name_errors() -> list[str]:
-    """Every direct document is dated and descriptive; nothing anywhere is numbered."""
+    """Every direct document is dated and descriptive; nothing anywhere is numbered.
+
+    A release audit's run folder, which the walk prunes, stands beside its review file, so its name is
+    held by that file's.
+    """
     errors: list[str] = []
+    runs = (CONTEXT / "reviews").glob(f"*{AUDIT_RUN_SUFFIX}")
+    errors += [
+        f"{relative(p)}: a run folder with no review file {p.name}.md beside it"
+        for p in sorted(runs)
+        if p.is_dir() and not p.with_name(f"{p.name}.md").is_file()
+    ]
     for folder in DATED_FOLDERS:
         errors += [
             f"{relative(p)}: not named YYYY-MM-DD-descriptive-slug.md"
@@ -287,10 +317,12 @@ def spec_errors(path: Path) -> list[str]:
 
 
 def review_errors(path: Path) -> list[str]:
-    """A review is a spec review or a code review, with its headings in order and a verdict word."""
+    """A review is a spec review, a code review or a release audit, with its headings in order and a verdict word."""
     name = relative(path)
     text = path.read_text()
     found = headings(text)
+    lines = [line.strip() for line in section_text(text, "Verdict").splitlines() if line.strip()]
+    first = lines[0] if lines else ""
     if path.name.endswith("-spec-review.md"):
         errors = section_order_errors(name, found, SPEC_REVIEW_SECTIONS, SPEC_REVIEW_OPTIONAL)
         verdicts = SPEC_REVIEW_VERDICTS
@@ -301,10 +333,12 @@ def review_errors(path: Path) -> list[str]:
             errors.append(f"{name}: Lenses subsections are {lenses}, not {list(LENS_SUBSECTIONS)}")
         errors += layer_line_errors(name, path.name[:10], text)
         verdicts = CODE_REVIEW_VERDICTS
+    elif path.name.endswith(f"{AUDIT_RUN_SUFFIX}.md"):
+        errors = section_order_errors(name, found, SECURITY_AUDIT_SECTIONS, frozenset())
+        errors += audit_run_errors(name, path.with_suffix(""), first)
+        verdicts = SECURITY_AUDIT_VERDICTS
     else:
-        return [f"{name}: a review is named …-spec-review.md or …-code-review.md"]
-    lines = [line.strip() for line in section_text(text, "Verdict").splitlines() if line.strip()]
-    first = lines[0] if lines else ""
+        return [f"{name}: a review is named …-spec-review.md, …-code-review.md or …-security-audit.md"]
     if not first.startswith(verdicts):
         errors.append(f"{name}: the Verdict's first line does not begin with one of {verdicts}")
     return errors
@@ -324,6 +358,79 @@ def layer_line_errors(name: str, date: str, text: str) -> list[str]:
         for label, word in LAYER_LINES
         if not any(line.startswith(label) and re.search(rf"\b{word}\b", line) for line in lines)
     ]
+
+
+def audit_run_errors(name: str, folder: Path, first: str) -> list[str]:
+    """A release audit's run folder sits beside it whole, and its first verdict word is the one the run gives.
+
+    *first* is the Verdict's first line. The word is judged only when the folder is whole and the line
+    begins with one of the two words; a dated re-sign line below it is its reader's, and is not judged.
+    """
+    shown = f"{relative(folder)}/"
+    if not folder.is_dir():
+        return [f"{name}: no run folder at {shown} beside it"]
+    absent = [file for file in AUDIT_RUN_FILES if not (folder / file).is_file()]
+    missing = [f"{name}: the run folder {shown} holds no {file}" for file in absent]
+    if missing or not first.startswith(SECURITY_AUDIT_VERDICTS):
+        return missing
+    try:
+        run_clears = audit_run_clears(folder)
+    except AuditRunFaultError as fault:
+        return [f"{name}: {shown}{fault}; a run the lint cannot read never clears"]
+    clears, blocks = SECURITY_AUDIT_VERDICTS
+    expected = clears if run_clears else blocks
+    if first.startswith(expected):
+        return []
+    return [
+        f"{name}: the Verdict's first line must begin '{expected}': a run clears only when run_status is "
+        "complete and every confirmed record is informational, low or medium"
+    ]
+
+
+class AuditRunFaultError(ValueError):
+    """A run folder file the lint cannot read as the skill's schema shapes it; the message names the file."""
+
+
+def audit_run_clears(folder: Path) -> bool:
+    """Whether a run clears: ``run_status`` is ``complete`` and every confirmed record clears.
+
+    An incomplete run blocks, because the skill keeps a candidate it never validated out of ``findings.json``.
+    Raises ``AuditRunFaultError`` for a file that is not JSON or not the schema's shape, a missing
+    ``run_status``, and a record with no verdict the schema spells or, when confirmed, no severity.
+    """
+    metadata = audit_run_json(folder / "run-metadata.json")
+    findings = audit_run_json(folder / "findings.json")
+    if not isinstance(metadata, dict):
+        raise AuditRunFaultError("run-metadata.json is not a JSON object")
+    if not isinstance(findings, list):
+        raise AuditRunFaultError("findings.json is not a JSON array")
+    if "run_status" not in metadata:
+        raise AuditRunFaultError("run-metadata.json holds no run_status")
+    blocking = [number for number, record in enumerate(findings, 1) if audit_record_blocks(number, record)]
+    return metadata["run_status"] == "complete" and not blocking
+
+
+def audit_run_json(path: Path) -> Any:
+    """The JSON value of one run folder file, or ``AuditRunFaultError`` naming it."""
+    try:
+        return json.loads(path.read_text())
+    except (ValueError, RecursionError) as error:
+        raise AuditRunFaultError(f"{path.name} is not JSON: {error}") from error
+
+
+def audit_record_blocks(number: int, record: Any) -> bool:
+    """Whether the *number*-th record of ``findings.json`` blocks: a confirmed one at a severity that does not clear."""
+    where = f"findings.json holds record {number}"
+    if not isinstance(record, dict):
+        raise AuditRunFaultError(f"{where}, which is not a JSON object")
+    if record.get("verdict") not in AUDIT_VERDICTS:
+        raise AuditRunFaultError(f"{where}, whose verdict the skill's schema does not spell")
+    if record["verdict"] != "confirmed":
+        return False
+    severity = record.get("severity")
+    if not isinstance(severity, dict) or "overall_severity" not in severity:
+        raise AuditRunFaultError(f"{where}, confirmed with no severity.overall_severity")
+    return severity["overall_severity"] not in AUDIT_CLEARING_SEVERITIES
 
 
 def open_question_hits(text: str) -> list[str]:

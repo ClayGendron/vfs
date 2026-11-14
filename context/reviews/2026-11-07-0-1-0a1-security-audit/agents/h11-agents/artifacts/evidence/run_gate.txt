@@ -1,0 +1,61 @@
+# command: ./tools/sandbox-run.py ./agents/h11-agents/scratch ./.venv/bin/python -I run_gate.py (cwd scratch; limits: no network, empty env, CPU 60s, wall 120s, RSS 2GiB)
+# ---- script ----
+"""Lead 1: does run reach a SupportsRun backend under read-only maps / deny_ops / anonymous?"""
+import asyncio
+from vfs import AsyncVirtualFileSystem
+from vfs.authority import Authority, Principal
+from vfs.permissions import read_only
+from vfs.results import Result
+from vfs.models import Observation
+from vfs.storage.protocol import storage_ops
+
+
+class Runner:
+    name = "runner"
+    description = "scratch SupportsRun double"
+
+    def __init__(self):
+        self.calls = []
+
+    def capabilities(self):
+        return frozenset({"read", "stat", "ls", "tree", "run"})
+
+    async def read(self, *, authority=None, **kw):
+        return Result(ops=("read",))
+    async def stat(self, *, authority=None, **kw):
+        return Result(ops=("stat",))
+    async def ls(self, *, authority=None, **kw):
+        return Result(ops=("ls",))
+    async def tree(self, *, authority=None, **kw):
+        return Result(ops=("tree",))
+    async def run(self, *, path=None, arguments=None, authority=None, **kw):
+        self.calls.append((str(path), arguments, authority.actor.sub if authority else None))
+        return Result(ops=("run",), observations=[Observation(path=path, kind="file")])
+
+
+async def case(label, **mount_kw):
+    root = AsyncVirtualFileSystem()
+    r = Runner()
+    await root.add_mount(r, "/tools", **mount_kw)
+    out = await root.run("/tools/deploy", arguments={"x": 1})
+    anon = await root.run("/tools/deploy")
+    ann = await root.run("/tools/deploy", authority=Authority.of(Principal("ann")))
+    print(f"{label}: success={out.success} errs={[e.kind.value for e in out.errors]} anon_success={anon.success} ann_success={ann.success} backend_calls={r.calls}")
+    await root.close()
+
+
+async def main():
+    await case("default read_write map")
+    await case("permissions='read'", permissions="read")
+    await case("permissions=read_only()", permissions=read_only())
+    await case("deny_ops=('run',)", deny_ops=("run",))
+    await case("deny_ops=('write',)", deny_ops=("write",))
+
+asyncio.run(main())
+# ---- output ----
+default read_write map: success=True errs=[] anon_success=True ann_success=True backend_calls=[('/deploy', {'x': 1}, 'anon'), ('/deploy', None, 'anon'), ('/deploy', None, 'ann')]
+permissions='read': success=True errs=[] anon_success=True ann_success=True backend_calls=[('/deploy', {'x': 1}, 'anon'), ('/deploy', None, 'anon'), ('/deploy', None, 'ann')]
+permissions=read_only(): success=True errs=[] anon_success=True ann_success=True backend_calls=[('/deploy', {'x': 1}, 'anon'), ('/deploy', None, 'anon'), ('/deploy', None, 'ann')]
+deny_ops=('run',): success=False errs=['vfs.unsupported'] anon_success=False ann_success=False backend_calls=[]
+deny_ops=('write',): success=True errs=[] anon_success=True ann_success=True backend_calls=[('/deploy', {'x': 1}, 'anon'), ('/deploy', None, 'anon'), ('/deploy', None, 'ann')]
+# exit: 0

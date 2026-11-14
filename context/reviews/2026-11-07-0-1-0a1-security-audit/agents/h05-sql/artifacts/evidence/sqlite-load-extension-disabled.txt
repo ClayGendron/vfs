@@ -1,0 +1,3 @@
+write True
+vec_version v0.1.9
+load_extension refused: OperationalError (sqlite3.OperationalError) not authorized

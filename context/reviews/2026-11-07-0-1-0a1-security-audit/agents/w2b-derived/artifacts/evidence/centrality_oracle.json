@@ -1,0 +1,334 @@
+{
+ "hidden_links=0": {
+  "anonymous_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "anonymous_glean_scores": {
+   "/kb/pub/a.md": 0.6875,
+   "/kb/pub/b.md": 1.0,
+   "/kb/pub/c.md": 0.0
+  },
+  "anonymous_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XWNFD0W4DXVXE6V2F3DB",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "anonymous_glob_alice": [],
+  "anonymous_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "anonymous_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "bob_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "bob_glean_scores": {
+   "/kb/pub/a.md": 0.6875,
+   "/kb/pub/b.md": 1.0,
+   "/kb/pub/c.md": 0.0
+  },
+  "bob_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XWNFD0W4DXVXE6V2F3DB",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "bob_glob_alice": [],
+  "bob_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "bob_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "system_glean_scores": {
+   "/kb/pub/a.md": 0.6875,
+   "/kb/pub/b.md": 1.0,
+   "/kb/pub/c.md": 0.0
+  }
+ },
+ "hidden_links=1": {
+  "anonymous_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "anonymous_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 1.0,
+   "/kb/pub/c.md": 0.0
+  },
+  "anonymous_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XWVE2C3QQAA9K4VS8DZ6",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "anonymous_glob_alice": [],
+  "anonymous_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "anonymous_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "bob_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "bob_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 1.0,
+   "/kb/pub/c.md": 0.0
+  },
+  "bob_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XWVE2C3QQAA9K4VS8DZ6",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "bob_glob_alice": [],
+  "bob_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "bob_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "system_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 1.0,
+   "/kb/pub/c.md": 0.0
+  }
+ },
+ "hidden_links=2": {
+  "anonymous_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "anonymous_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 0.889041006,
+   "/kb/pub/c.md": 0.0
+  },
+  "anonymous_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XX1ZC5SWHF7BG2D30CVS",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "anonymous_glob_alice": [],
+  "anonymous_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "anonymous_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "bob_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "bob_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 0.889041006,
+   "/kb/pub/c.md": 0.0
+  },
+  "bob_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XX1ZC5SWHF7BG2D30CVS",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "bob_glob_alice": [],
+  "bob_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "bob_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "system_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 0.889041006,
+   "/kb/pub/c.md": 0.0
+  }
+ },
+ "hidden_links=5": {
+  "anonymous_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "anonymous_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 0.812914902,
+   "/kb/pub/c.md": 0.0
+  },
+  "anonymous_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XX7W58DPT05GF3S79FQ8",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "anonymous_glob_alice": [],
+  "anonymous_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "anonymous_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "bob_glean_errors": [
+   "vfs.unavailable"
+  ],
+  "bob_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 0.812914902,
+   "/kb/pub/c.md": 0.0
+  },
+  "bob_glean_signals_legs": {
+   "centrality": {
+    "applied": true,
+    "entries": 3,
+    "generation": "01M6V2XX7W58DPT05GF3S79FQ8",
+    "transform": "Linear()",
+    "weight": 0.5
+   }
+  },
+  "bob_glob_alice": [],
+  "bob_graph_inbound_a": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/a.md"
+   }
+  ],
+  "bob_graph_inbound_b": [
+   {
+    "edge_target": null,
+    "path": "/kb/pub/b.md"
+   },
+   {
+    "edge_target": null,
+    "path": "/kb/pub/c.md"
+   },
+   {
+    "edge_target": "/kb/pub/b.md",
+    "path": "/kb/pub/c.md"
+   }
+  ],
+  "system_glean_scores": {
+   "/kb/pub/a.md": 1.0,
+   "/kb/pub/b.md": 0.812914902,
+   "/kb/pub/c.md": 0.0
+  }
+ }
+}

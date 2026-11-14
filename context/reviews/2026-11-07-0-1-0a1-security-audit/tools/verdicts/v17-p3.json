@@ -1,0 +1,104 @@
+{
+ "decision": "needs_validation",
+ "record": {
+  "verdict": "needs_validation",
+  "fingerprint": "vfs:models/rows.py:_string:principal-columns-unpinned-collation-mysql-family",
+  "title": "owner_id uses the engine's default collation on MariaDB, so a principal whose sub differs from another's only by case, accents or trailing spaces sees that owner's road directories",
+  "description": "vfs compares principal identities exactly in Python: Principal.sub, grants.resolve and Rights.admits all use exact string equality. The SQL owner-arm predicate entry.owner_id == :owner runs on a column that gets a bytewise collation only on MSSQL. On MariaDB, owner_id compiles as a plain VARCHAR(255), so it inherits the database's default collation. path and name, by contrast, are pinned to VARBINARY there. MariaDB 11.8, the image the test leg uses, is expected to default to utf8mb4_uca1400_ai_ci, which ignores case and accents and pads trailing spaces; this was not observed in this audit. Principal.__post_init__ accepts subs such as 'ALICE', 'alice ' or 'Alicé'. Visibility.road asks SQL, through _owned_beneath, which hidden directories hold a row that each owner arm's sub owns, and Python never re-checks that answer. So a case-, accent- or space-variant principal is shown the victim's road directories in glob, ls and stat, including the trash view, and a write into such a directory fails as permission_denied instead of not_found. That reveals the names and existence of directories, which the principal could otherwise not see. File rows, content and grep results stay hidden, because the fetched rows pass Rights.admits/holds, which compare owner_id exactly. Grant and membership rows are re-keyed by exact sub in Python, so this does not escalate to inherited grants or groups. A second SQL-only consumer of the same predicate is the lexical aggregate in glean._visible_lexicon (glean.py:776, built from ranges.py:128-130). There the victim's chunks would also be counted into the BM25 corpus statistics. That is a minor statistical side channel, and it was not demonstrated. MySQL community is not a supported dialect per AGENTS.md and is served as GENERIC, but its DDL is the same VARCHAR. Postgres deterministic collations compare exactly and are not affected. Oracle is affected only under NLS_COMP=LINGUISTIC with a case-insensitive NLS_SORT. I reproduced this on SQLite, independently of the hunter, using a different tree (/hr/q3/alice-review.txt owned by 'alice', posture '/' none). With owner_id rewritten to COLLATE NOCASE, 'ALICE' sees /hr and /hr/q3 in glob and ls, stat('/hr/q3') succeeds, and its write into the directory returns permission_denied. With COLLATE RTRIM, 'alice ' sees the same. In both cases read is refused. The control 'bob' and the stock BINARY collation leak nothing (not_found).",
+  "claimed_root_cause": "_string() (src/vfs/models/rows.py:179-188) adds a collation variant only for 'mssql'. On the mysql family (and Oracle under linguistic NLS settings), principal-bearing columns such as entries.owner_id (rows.py:471) and grants.principal_id are plain VARCHAR, and equality on them follows the server's collation. BytewiseString pins path and name to VARBINARY there (rows.py:224) but is not used for principal columns. The authority model treats subs as exact strings (grants.py:497, 629, 638-641). So the SQL-only owner predicates (rights.py:1250 in _owned_beneath for the road, and ranges.py:128-130 and rights.py:1220 for listing and aggregates) can admit rows that the Python authority would refuse. Where Python re-checks fetched rows (holds/admits), the gap closes. Where Python consumes the SQL result directly (the road directories, the lexicon aggregate), it leaks.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/authority.py",
+    "line": 88,
+    "scope": "Principal.__post_init__",
+    "description": "The host builds Principal(sub) from its identity provider. Only empty or blank subs, '*', 'group:'-prefixed subs and the reserved names are refused, so 'ALICE', 'alice ' and 'Alicé' are accepted as principals distinct from 'alice'."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/grants.py",
+    "line": 641,
+    "scope": "resolve (owner floor)",
+    "description": "A named subject gets OwnerArm(sub, trimmed), keyed by its exact sub ('ALICE'), covering the mount outside its shared grants."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/reads.py",
+    "line": 378,
+    "scope": "glob (also ls, stat and the trash view through the same road call)",
+    "description": "Directories the view does not show are passed to view.road(), and every path it returns is emitted as a road observation."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 576,
+    "scope": "Visibility.road",
+    "description": "For each owner arm, _owned_beneath asks SQL which candidate directories hold a row owned by that owner. The result is added to the visible set with no Python re-check."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 1250,
+    "scope": "_owned_beneath",
+    "description": "The predicate is row.c.owner_id == owner. Its equality follows the column's collation, so under a case-, accent- or pad-insensitive collation 'ALICE' or 'alice ' matches rows owned by 'alice'."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/models/rows.py",
+    "line": 471,
+    "scope": "build_vfs_tables entries.owner_id",
+    "description": "Column('owner_id', _string(255)) compiles to 'owner_id VARCHAR(255)' on mariadb/mysql, with no COLLATE and no binary type (confirmed by the hunter's DDL compile). Its comparisons therefore follow the server's default collation."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/models/rows.py",
+    "line": 188,
+    "description": "_string returns String(length).with_variant(String(length, collation=MSSQL_UTF8_COLLATION), 'mssql'). Only MSSQL gets a binary collation."
+   },
+   {
+    "file": "src/vfs/models/rows.py",
+    "line": 224,
+    "description": "BytewiseString gives the mysql family VARBINARY(n) for path and name. Keys are pinned to bytewise comparison there; principal and owner columns are not."
+   },
+   {
+    "file": "src/vfs/storage/grants.py",
+    "line": 497,
+    "description": "Rights.admits does self._owned.get(owner_id), an exact dict lookup. This is why file rows stay hidden while road directories leak: the SQL and Python sides of the same rule disagree."
+   },
+   {
+    "file": "src/vfs/storage/grants.py",
+    "line": 629,
+    "description": "Grant rows are grouped by principal_id and looked up by exact sub and group name. Case-variant grant or membership rows that a collation-insensitive fetch returns are dropped in Python, so grant inheritance is not affected."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 545,
+    "description": "The narrow() docstring says fetched rows still pass holds() at the view's rung. That Python re-check covers listing rows but not road(), which returns SQL-derived directory paths directly."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 776,
+    "description": "_visible_lexicon aggregates count and sum(dl) in SQL over the visible-entries union, which uses owner_id == owner (ranges.py:128-130) with no row-level re-check. Under a case-insensitive collation it would count the victim's chunks into the corpus statistics. This is a minor side channel and was not demonstrated."
+   },
+   {
+    "file": "docker/compose.test.yml",
+    "line": 53,
+    "description": "The MariaDB leg runs image mariadb:11.8 with no charset or collation override, and nothing in src sets mysql_collate or charset on the tables. The engine tests never use a case-variant principal, so no test pins this."
+   },
+   {
+    "file": "agents/v17-p3/artifacts/evidence/owner-collation-verify.txt",
+    "line": 1,
+    "description": "Independent SQLite simulation (sandboxed). Under BINARY, only 'alice' sees anything. Under NOCASE, 'ALICE' sees glob ['/hr','/hr/q3'] and ls /hr ['/hr/q3'], stat /hr/q3 succeeds, read is refused, and a write into the directory returns permission_denied. Under RTRIM, 'alice ' sees the same. 'bob' sees nothing and gets not_found throughout."
+   }
+  ],
+  "blockers": [
+   "No real MariaDB or MySQL engine may run in this audit's sandbox (no Docker and no network, loopback included). The behavior was shown only on SQLite, with owner_id rewritten to COLLATE NOCASE or RTRIM as stand-ins for MariaDB's case-, accent- and pad-insensitive default collation. That MariaDB 11.8's actual default makes 'ALICE' = 'alice' and 'alice ' = 'alice' on the compiled column was not observed.",
+   "Whether a deployment exposes this depends on two facts outside source. The first is the production schema's database or table default collation. The second is whether the host's identity provider can issue a sub that differs from another principal's only by case, accents or trailing spaces."
+  ],
+  "validation_plan": {
+   "local": "Start a disposable mariadb:11.8 container from docker/compose.test.yml (profile mariadb, default collation). First run SELECT @@collation_database and SHOW FULL COLUMNS FROM vfs_entries to record owner_id's collation. Then use DatabaseStorage(url='mariadb+aiomysql://vfs:vfs@localhost:<compose port>/vfs'). As Authority.system(), write /hr/q3/alice-review.txt with owner_id='alice' (parents=True) and set posture('/', 'none'). Next, as Authority.of(Principal(x)) for x in 'ALICE', 'alice ', 'Alicé', with 'bob' as the control, call glob(patterns=('/**',)), ls('/hr'), stat('/hr/q3'), read('/hr/q3/alice-review.txt') and write('/hr/q3/planted.txt'). Expected if real: the variants see /hr and /hr/q3 and stat succeeds, the write returns permission_denied, and read is refused, while bob gets empty results and not_found. To check a fix: pin owner_id and the grants and memberships principal and group columns (plus granted_by and actor columns) to a bytewise type on the mysql family, either VARBINARY as BytewiseString does or COLLATE utf8mb4_bin. Rerun the probe and expect every variant to match bob. Add an engine-leg regression test asserting that a case-variant principal sees no road directory.",
+   "deployment": "The owner runs SELECT @@collation_database and SHOW FULL COLUMNS FROM vfs_entries LIKE 'owner_id' on the production MariaDB or MySQL schema. On Oracle, the owner checks NLS_COMP and NLS_SORT for the session. The owner then confirms whether the identity provider or host mapping can mint subs that differ from existing ones only by case, accents or trailing spaces, for example user-chosen usernames or emails without normalisation."
+  }
+ }
+}

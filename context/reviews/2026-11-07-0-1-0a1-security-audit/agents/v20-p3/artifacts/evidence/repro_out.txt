@@ -1,0 +1,9 @@
+A. ann stat plan: FAIL [('vfs.not_found', '/private')]
+B. ann mkedge -> plan: FAIL [('vfs.not_found', '/private')]
+C. ann write link doc: ok rows=[('/pub/ann.md', 'file')]
+D. bob inbound before: ok rows=[('/private/bob/plan.md', 'file')]
+E. reindex: True [{'leg': 'links', 'sources': 4, 'edges': 1, 'unresolved': 1}]
+F. ann outbound own doc: ok rows=[('/pub/ann.md', 'file')]
+G. bob inbound after: ok rows=[('/private/bob/plan.md', 'file'), ('/pub/ann.md', 'file'), ('/pub/ann.md', None)]
+H. plan row unchanged on ('updated_at', 'content_hash', 'owner_id') : True
+I. bob rmedge: FAIL [('vfs.permission_denied', '/pub/ann.md')]

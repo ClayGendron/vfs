@@ -1,0 +1,125 @@
+# command: ./tools/sandbox-run.py ./agents/h01-grants/scratch ./.venv/bin/python -I grant_escalation.py
+# limits: sandbox-run.py defaults (no network incl. loopback, empty env, scratch-only writes, CPU 60s, wall 120s, RSS 2GiB, files 64MiB, 256 procs)
+# target commit: 3586750 (working tree; src/ unmodified)
+# ---- script ----
+"""h01-grants: does a grant at /P, gated only at /P, reach a posture hole /P/Q?"""
+import asyncio
+
+from vfs.authority import Authority, Principal
+from vfs.base import AsyncVirtualFileSystem
+from vfs.models import Entry
+from vfs.paths import Path
+from vfs.storage.backends.memory import InMemoryStorage
+
+SYSTEM = Authority.system()
+ANON = Authority.anonymous()
+MALLORY = Authority.of(Principal("mallory"))
+
+
+def kind(r):
+    return "ok" if r.success else str(r.errors[0].kind)
+
+
+async def direct():
+    s = InMemoryStorage()
+    print("== direct storage, explicit authorities ==")
+    w = await s.write(entries=[Entry(path=Path("/P/Q/secret.md"), content="SECRET-Q"),
+                               Entry(path=Path("/P/open.md"), content="open")], parents=True, authority=SYSTEM)
+    print("seed write:", kind(w))
+    print("posture / read_write (system):", kind(await s.posture(path=Path("/"), posture="read_write", authority=SYSTEM)))
+    print("posture /P/Q none (system):", kind(await s.posture(path=Path("/P/Q"), posture="none", authority=SYSTEM)))
+    print("BEFORE mallory read /P/Q/secret.md:", kind(await s.read(path=Path("/P/Q/secret.md"), authority=MALLORY)))
+    print("BEFORE mallory grant /P/Q mallory read_write:",
+          kind(await s.grant(path=Path("/P/Q"), principal="mallory", level="read_write", authority=MALLORY)))
+    print("BEFORE mallory posture /P/Q read_write:",
+          kind(await s.posture(path=Path("/P/Q"), posture="read_write", authority=MALLORY)))
+    print("BEFORE mallory delete /P (subtree check):", kind(await s.delete(path=Path("/P"), authority=MALLORY)) if hasattr(s, "delete") else "n/a")
+    g = await s.grant(path=Path("/P"), principal="mallory", level="read_write", authority=MALLORY)
+    print("ATTACK mallory grant /P mallory read_write:", kind(g), getattr(g, "model_extra", {}).get("grants"))
+    r = await s.read(path=Path("/P/Q/secret.md"), authority=MALLORY)
+    print("AFTER mallory read /P/Q/secret.md:", kind(r), repr(r.one().content) if r.success else "")
+    wr = await s.write(entries=[Entry(path=Path("/P/Q/secret.md"), content="OVERWRITTEN")], authority=MALLORY)
+    print("AFTER mallory overwrite /P/Q/secret.md:", kind(wr))
+    print("AFTER mallory posture /P/Q read_write:",
+          kind(await s.posture(path=Path("/P/Q"), posture="read_write", authority=MALLORY)))
+    await s.close()
+
+
+async def via_router_anonymous():
+    print("== router, no authority passed (anonymous fallback) ==")
+    s = InMemoryStorage()
+    fs = AsyncVirtualFileSystem(storage=s)
+    w = await s.write(entries=[Entry(path=Path("/P/Q/secret.md"), content="SECRET-Q")], parents=True, authority=SYSTEM)
+    print("seed write:", kind(w))
+    print("posture /P/Q none (system, direct):", kind(await s.posture(path=Path("/P/Q"), posture="none", authority=SYSTEM)))
+    print("BEFORE anon read /P/Q/secret.md:", kind(await fs.read("/P/Q/secret.md")))
+    print("BEFORE anon grant /P/Q mallory:", kind(await fs.grant("/P/Q", "mallory", "read_write")))
+    g = await fs.grant("/P", "mallory", "read_write")
+    print("ATTACK anon grant /P mallory read_write:", kind(g))
+    r = await fs.read("/P/Q/secret.md", authority=MALLORY)
+    print("AFTER mallory (router) read /P/Q/secret.md:", kind(r), repr(r.one().content) if r.success else "")
+    await s.close()
+
+
+async def control_named_grant_holder():
+    print("== control: grant-derived read_write is not an escalation ==")
+    s = InMemoryStorage()
+    await s.write(entries=[Entry(path=Path("/P/Q/secret.md"), content="S")], parents=True, authority=SYSTEM)
+    await s.posture(path=Path("/"), posture="none", authority=SYSTEM)
+    await s.grant(path=Path("/P"), principal="ann", level="read_write", authority=SYSTEM)
+    await s.posture(path=Path("/P/Q"), posture="none", authority=SYSTEM)
+    ann = Authority.of(Principal("ann"))
+    print("ann (granted /P) read /P/Q/secret.md:", kind(await s.read(path=Path("/P/Q/secret.md"), authority=ann)))
+    await s.close()
+
+
+async def revoke_variant():
+    print("== variant: revoke gated at the addressed path only ==")
+    s = InMemoryStorage()
+    await s.write(entries=[Entry(path=Path("/P/Q/secret.md"), content="S")], parents=True, authority=SYSTEM)
+    await s.grant(path=Path("/P"), principal="bob", level="read_write", authority=SYSTEM)
+    await s.posture(path=Path("/P/Q"), posture="none", authority=SYSTEM)
+    bob = Authority.of(Principal("bob"))
+    print("BEFORE bob read /P/Q/secret.md:", kind(await s.read(path=Path("/P/Q/secret.md"), authority=bob)))
+    print("mallory revoke bob at /P/Q (no row there, gate at /P/Q):",
+          kind(await s.revoke(path=Path("/P/Q"), principal="bob", authority=MALLORY)))
+    print("ATTACK mallory revoke bob at /P:", kind(await s.revoke(path=Path("/P"), principal="bob", authority=MALLORY)))
+    print("AFTER bob read /P/Q/secret.md:", kind(await s.read(path=Path("/P/Q/secret.md"), authority=bob)))
+    await s.close()
+
+
+async def main():
+    await revoke_variant()
+    await direct()
+    await via_router_anonymous()
+    await control_named_grant_holder()
+
+asyncio.run(main())
+# ---- output ----
+== variant: revoke gated at the addressed path only ==
+BEFORE bob read /P/Q/secret.md: ok
+mallory revoke bob at /P/Q (no row there, gate at /P/Q): vfs.not_found
+ATTACK mallory revoke bob at /P: ok
+AFTER bob read /P/Q/secret.md: vfs.not_found
+== direct storage, explicit authorities ==
+seed write: ok
+posture / read_write (system): ok
+posture /P/Q none (system): ok
+BEFORE mallory read /P/Q/secret.md: vfs.not_found
+BEFORE mallory grant /P/Q mallory read_write: vfs.not_found
+BEFORE mallory posture /P/Q read_write: vfs.not_found
+BEFORE mallory delete /P (subtree check): vfs.permission_denied
+ATTACK mallory grant /P mallory read_write: ok [{'principal_id': 'mallory', 'path_prefix': '/P', 'level': 'read_write', 'granted_by': 'mallory', 'granted_at': <ts>, 'revision': 5}]
+AFTER mallory read /P/Q/secret.md: ok 'SECRET-Q'
+AFTER mallory overwrite /P/Q/secret.md: ok
+AFTER mallory posture /P/Q read_write: ok
+== router, no authority passed (anonymous fallback) ==
+seed write: ok
+posture /P/Q none (system, direct): ok
+BEFORE anon read /P/Q/secret.md: vfs.unauthenticated
+BEFORE anon grant /P/Q mallory: vfs.unauthenticated
+ATTACK anon grant /P mallory read_write: ok
+AFTER mallory (router) read /P/Q/secret.md: ok 'SECRET-Q'
+== control: grant-derived read_write is not an escalation ==
+ann (granted /P) read /P/Q/secret.md: ok
+# exit: 0

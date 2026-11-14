@@ -22,10 +22,13 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Final
 
 REPO = Path(__file__).resolve().parents[1]
 CONTEXT = REPO / "context"
 SKIPPED_DIRS = frozenset({"experiments", "__pycache__"})
+# A release audit's run folder, directly under reviews/: the skill's machine record, held by its own validators.
+AUDIT_RUN_SUFFIX: Final = "-security-audit"
 
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING_RE = re.compile(r"^#{1,6}\s")
@@ -40,10 +43,15 @@ INDENTED_RE = re.compile(r"^( {4,}|\t)")
 
 
 def markdown_files(root: Path = CONTEXT) -> list[Path]:
-    """Every ``*.md`` under *root*; experiment folders and caches are pruned, not visited."""
+    """Every ``*.md`` under *root*; experiment folders, caches and release-audit run folders are pruned, not visited.
+
+    A run folder is pruned only as a direct child of *root*'s own ``reviews/`` whose name ends ``-security-audit``.
+    """
     found: list[Path] = []
+    reviews = root / "reviews"
     for folder, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIPPED_DIRS]
+        in_reviews = Path(folder) == reviews
+        dirs[:] = [d for d in dirs if d not in SKIPPED_DIRS and not (in_reviews and d.endswith(AUDIT_RUN_SUFFIX))]
         found += [Path(folder) / f for f in files if f.endswith(".md")]
     return sorted(found)
 

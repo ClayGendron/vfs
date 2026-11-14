@@ -1,0 +1,104 @@
+# command: ./tools/sandbox-run.py ./agents/h04-router/scratch ./.venv/bin/python -I t1_subtree.py
+# repo commit 3586750; harness source follows
+"""Do subtree-shaped mutations bypass a read-only PermissionMap override beneath the addressed path?"""
+import asyncio
+from vfs import AsyncVirtualFileSystem, InMemoryStorage, Authority, Principal
+from vfs.permissions import read_write
+
+ALICE = Authority.of(Principal("alice"))
+
+async def fresh():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=["/dir/frozen"]))
+    sysa = Authority.system()
+    # seed as the host's system actor before the policy matters: write directly through storage
+    st = fs._bindings["/"].storage
+    from vfs.models import Entry
+    r = await st.write(entries=[Entry(path="/dir"), Entry(path="/dir/frozen"), Entry(path="/dir/frozen/ledger.md", content="LOCKED v1")], parents=True, authority=sysa)
+    assert r.success, r
+    return fs
+
+def show(label, r):
+    print(f"{label}: success={r.success} errors={[ (e.kind.value, str(e.path)) for e in r.errors]} obs={[str(o.path) for o in r.observations][:6]}")
+
+async def main():
+    # control: direct writes into the read-only region are refused
+    fs = await fresh()
+    show("control write /dir/frozen/ledger.md", await fs.write(path="/dir/frozen/ledger.md", content="TAMPERED", authority=ALICE))
+    show("control delete /dir/frozen/ledger.md", await fs.delete("/dir/frozen/ledger.md", authority=ALICE))
+    show("control delete /dir/frozen", await fs.delete("/dir/frozen", authority=ALICE))
+    show("control move /dir/frozen -> /x", await fs.move(src="/dir/frozen", dest="/x", authority=ALICE))
+
+    # 1. cascade delete of the parent
+    fs = await fresh()
+    show("delete /dir cascade", await fs.delete("/dir", authority=ALICE))
+    show("  read /dir/frozen/ledger.md after", await fs.read("/dir/frozen/ledger.md", authority=Authority.system()))
+
+    # 2. move the parent out, then edit the frozen file at its new address, move it back
+    fs = await fresh()
+    show("move /dir -> /moved", await fs.move(src="/dir", dest="/moved", authority=ALICE))
+    show("  write /moved/frozen/ledger.md", await fs.write(path="/moved/frozen/ledger.md", content="TAMPERED", authority=ALICE))
+    show("  move /moved -> /dir", await fs.move(src="/moved", dest="/dir", authority=ALICE))
+    r = await fs.read("/dir/frozen/ledger.md", authority=Authority.system())
+    show("  read /dir/frozen/ledger.md", r)
+    print("  content now:", [o.content for o in r.observations])
+
+    # 3. sweep (purge) the parent
+    fs = await fresh()
+    show("sweep /dir", await fs.sweep("/dir", authority=ALICE))
+    show("  read /dir/frozen/ledger.md after", await fs.read("/dir/frozen/ledger.md", authority=Authority.system()))
+
+asyncio.run(main())
+# ---- output ----
+control write /dir/frozen/ledger.md: success=False errors=[('vfs.read_only', '/dir/frozen/ledger.md')] obs=[]
+control delete /dir/frozen/ledger.md: success=False errors=[('vfs.read_only', '/dir/frozen/ledger.md')] obs=[]
+control delete /dir/frozen: success=False errors=[('vfs.read_only', '/dir/frozen')] obs=[]
+control move /dir/frozen -> /x: success=False errors=[('vfs.read_only', '/dir/frozen')] obs=[]
+delete /dir cascade: success=True errors=[] obs=['/dir']
+  read /dir/frozen/ledger.md after: success=False errors=[('vfs.not_found', '/dir')] obs=[]
+move /dir -> /moved: success=True errors=[] obs=['/moved']
+  write /moved/frozen/ledger.md: success=True errors=[] obs=['/moved/frozen/ledger.md']
+  move /moved -> /dir: success=True errors=[] obs=['/dir']
+  read /dir/frozen/ledger.md: success=True errors=[] obs=['/dir/frozen/ledger.md']
+  content now: ['TAMPERED']
+sweep /dir: success=True errors=[] obs=['/dir']
+  read /dir/frozen/ledger.md after: success=False errors=[('vfs.not_found', '/dir')] obs=[]
+exit=0
+
+# ===== second harness: t3_copy.py (destination subtree) =====
+# command: ./tools/sandbox-run.py ./agents/h04-router/scratch ./.venv/bin/python -I t3_copy.py
+"""Copy/move whose destination subtree contains a read-only override."""
+import asyncio
+from vfs import AsyncVirtualFileSystem, InMemoryStorage, Authority, Principal
+from vfs.models import Entry
+from vfs.permissions import read_write
+
+ALICE = Authority.of(Principal("alice"))
+SYS = Authority.system()
+
+def show(label, r):
+    print(f"{label}: success={r.success} errors={[(e.kind.value, str(e.path)) for e in r.errors]} obs={[str(o.path) for o in r.observations][:8]}")
+
+async def main():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=["/dir/frozen"]))
+    show("alice builds /stage/frozen/ledger.md", await fs.write(path="/stage/frozen/ledger.md", content="FORGED", parents=True, authority=ALICE))
+    show("control write /dir/frozen/ledger.md", await fs.write(path="/dir/frozen/ledger.md", content="FORGED", parents=True, authority=ALICE))
+    show("copy /stage -> /dir", await fs.copy(src="/stage", dest="/dir", authority=ALICE))
+    r = await fs.read("/dir/frozen/ledger.md", authority=SYS)
+    show("  read /dir/frozen/ledger.md", r); print("  content:", [o.content for o in r.observations])
+    fs2 = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=["/dir/frozen"]))
+    await fs2.write(path="/stage/frozen/ledger.md", content="FORGED", parents=True, authority=ALICE)
+    show("move /stage -> /dir", await fs2.move(src="/stage", dest="/dir", authority=ALICE))
+    r = await fs2.read("/dir/frozen/ledger.md", authority=SYS)
+    show("  read /dir/frozen/ledger.md", r); print("  content:", [o.content for o in r.observations])
+
+asyncio.run(main())
+# ---- output ----
+alice builds /stage/frozen/ledger.md: success=True errors=[] obs=['/stage/frozen/ledger.md']
+control write /dir/frozen/ledger.md: success=False errors=[('vfs.read_only', '/dir/frozen/ledger.md')] obs=[]
+copy /stage -> /dir: success=True errors=[] obs=['/dir']
+  read /dir/frozen/ledger.md: success=True errors=[] obs=['/dir/frozen/ledger.md']
+  content: ['FORGED']
+move /stage -> /dir: success=True errors=[] obs=['/dir']
+  read /dir/frozen/ledger.md: success=True errors=[] obs=['/dir/frozen/ledger.md']
+  content: ['FORGED']
+exit=0

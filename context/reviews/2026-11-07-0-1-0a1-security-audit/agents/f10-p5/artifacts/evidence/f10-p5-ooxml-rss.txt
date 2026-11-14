@@ -1,0 +1,35 @@
+docx stored_bytes 34248 member_MiB 0
+docx stored_bytes 238259 member_MiB 200
+Traceback (most recent call last):
+  File "context/reviews/2026-11-07-0-1-0a1-security-audit/agents/f10-p5/scratch/build.py", line 5, in <module>
+    src = docx_bytes(["hello quokka"]) if kind == "docx" else pptx_bytes([["hello quokka"]])
+                                                              ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "./tests/support/documents.py", line 177, in pptx_bytes
+    for index, (title, lines) in enumerate(slides):
+               ^^^^^^^^^^^^^^
+ValueError: not enough values to unpack (expected 2, got 1)
+Traceback (most recent call last):
+  File "context/reviews/2026-11-07-0-1-0a1-security-audit/agents/f10-p5/scratch/build.py", line 5, in <module>
+    src = docx_bytes(["hello quokka"]) if kind == "docx" else pptx_bytes([["hello quokka"]])
+                                                              ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "./tests/support/documents.py", line 177, in pptx_bytes
+    for index, (title, lines) in enumerate(slides):
+               ^^^^^^^^^^^^^^
+ValueError: not enough values to unpack (expected 2, got 1)
+docx d0.docx stored 34248 status ok text 'hello quokka\n' growth_MiB 5 x 153.6
+docx d200.docx stored 238259 status ok text 'hello quokka\n' growth_MiB 406 x 1786.8
+Traceback (most recent call last):
+  File "context/reviews/2026-11-07-0-1-0a1-security-audit/agents/f10-p5/scratch/render.py", line 6, in <module>
+    data = open(path, "rb").read()
+           ~~~~^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'p0.pptx'
+Traceback (most recent call last):
+  File "context/reviews/2026-11-07-0-1-0a1-security-audit/agents/f10-p5/scratch/render.py", line 6, in <module>
+    data = open(path, "rb").read()
+           ~~~~^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'p200.pptx'
+e2e write True reindex True render_status ok stored 238259 growth_MiB 444
+pptx stored_bytes 28161 member_MiB 0
+pptx stored_bytes 232139 member_MiB 200
+pptx p0.pptx stored 28161 status ok text '<!-- slide 1 -->\n\n## Deck\n\nhello quokka\n' growth_MiB 0 x 36.7
+pptx p200.pptx stored 232139 status ok text '<!-- slide 1 -->\n\n## Deck\n\nhello quokka\n' growth_MiB 400 x 1811.3

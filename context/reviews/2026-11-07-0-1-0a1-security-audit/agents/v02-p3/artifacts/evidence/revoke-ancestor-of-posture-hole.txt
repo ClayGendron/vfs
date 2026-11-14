@@ -1,0 +1,6 @@
+system grant bob /team read_write: ok
+posture /team/hr none: ok
+bob read hr: ok
+eve read hr: vfs.not_found
+eve revoke bob /team: ok
+bob read hr after: vfs.not_found

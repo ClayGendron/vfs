@@ -1,0 +1,152 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Franges.py%23hole_free%20and%20range%20predicates::src%2Fvfs%2Fmodels%2Frows.py%23BytewiseString%20collation%20pin%20%28absent%20on%20Oracle%20and%20GENERIC%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::ATTACK-CLASSES.md%23Access%20control",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/models/rows.py",
+    "src/vfs/storage/backends/database/ranges.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/labels.py",
+    "src/vfs/storage/backends/database/dialects.py",
+    "src/vfs/storage/backends/database/descent.py",
+    "src/vfs/storage/grants.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2e-collation",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/grants.py",
+      "src/vfs/storage/backends/database/ranges.py"
+     ],
+     "invariant": "Every row-returning read pushdown (Visibility.narrow / entries / clauses) is followed by a Python Rights.admits re-check, so a non-binary path comparison can only drop rows or over-fetch rows that are then filtered out.",
+     "method": "source",
+     "result": "Holds for narrow(): rights.py:540-551 says fetched rows still pass holds(), and Rights.admits (grants.py:485-498) compares Python str values, which is bytewise. The places where SQL decides alone are: (a) the road EXISTS probes in _beneath (rights.py:1277-1302), which decide which hidden directory names are shown; (b) the keyset paging in WriteGate._refused_beneath (rights.py:763-781), which decides which rows the Python check sees; (c) the posture upsert key in _upsert_grant (rights.py:1376-1379); (d) the relabel UPDATE in _relabel_opens (labels.py:470-507), whose literal-OR form runs on Oracle and GENERIC; (e) the LIKE-based subtree collection that topology and descendant_filter use (descent.py:198-207).",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2e-collation",
+     "reviewed_paths": [
+      "src/vfs/models/rows.py",
+      "src/vfs/storage/backends/database/dialects.py"
+     ],
+     "invariant": "Path columns compare bytewise on every served dialect.",
+     "method": "source",
+     "result": "BytewiseString.load_dialect_impl (rows.py:221-228) pins collation on postgresql, mssql and the mysql family, and SQLite pins case_sensitive_like (dialects.py:400). Oracle and every dialect served as GENERIC (dialects.py:553-579) get a plain String with no collation pin. The rows.py docstring calls this an accepted degradation for ordering and byte budgeting. The rights.py module docstring (lines 45-49) says instead that every engine compares bytewise. Nothing at runtime checks the collation.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2e-collation",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/labels.py",
+      "src/vfs/storage/backends/database/rights.py"
+     ],
+     "invariant": "A posture change at path P rewrites only the labels and the posture row inside P's own region.",
+     "method": "source",
+     "result": "Under a case-insensitive comparison, both SQL-only writers can match a binary-distinct case variant of P. _upsert_grant updates the everyone row WHERE path_prefix = P, so it can overwrite another owner's posture row at a case variant. relabel_spans / _relabel_opens set everyone_level on the rows WHERE path > P/ AND path < P0, so they can relabel the case variant's subtree. The posture gate (_grant_refusal, rights.py:1305-1336) checks reach at P in Python only. A bounded SQLite analogue run in scratch (COLLATE NOCASE on path columns, literal-OR profile) showed it: a caller allowed at a case variant raised the label on another owner's private row, and a third user could then read that row. In the control run with stock collation, the row stayed hidden. The run was not promoted, so it is reported as analogue context only.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic",
+   "title": "Posture writes and relabels rely on bytewise path comparison that Oracle and GENERIC dialects do not pin",
+   "description": "Row rights trust the everyone_level label stored on each row. A posture change writes its posture row (_upsert_grant) and relabels its subtree (relabel_spans / _relabel_opens) through SQL predicates on path alone, and no Python re-check follows. Oracle and unknown dialects keep a path column with no collation pin. If the engine compares path case- or accent-insensitively (for example Oracle with NLS_COMP=LINGUISTIC and a _CI or _AI NLS_SORT, a schema DEFAULT_COLLATION, or a GENERIC engine whose default collation is case-insensitive), then a caller who passes the Python gate at path P can overwrite a case-variant posture row and relabel a case-variant subtree that belongs to another owner. That can expose the other owner's private rows to everyone. The posture gate itself is evaluated bytewise in Python, so the gate and the SQL write disagree about which region they mean.",
+   "claimed_root_cause": "BytewiseString pins bytewise collation only for postgresql, mssql and the mysql family (rows.py:221-228). Oracle and GENERIC fall back to the engine's default comparison. Meanwhile the posture upsert key (rights.py:1376) and the relabel range UPDATE (labels.py:500-507, plus the membership points in relabel_spans) decide which rows they mutate in SQL alone. They assume bytewise semantics that rights.py:45-49 declares but nothing enforces.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1026,
+     "scope": "DatabaseStorage.posture",
+     "description": "A named caller asks for a posture at path P."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 1305,
+     "scope": "_grant_refusal",
+     "description": "Reach at P is judged in Python, bytewise. Posture rows found through a CI IN-list at a case variant do not affect the Python label_of lookup."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 1376,
+     "scope": "_upsert_grant",
+     "description": "UPDATE grants WHERE principal_id='*' AND path_prefix=P. A CI comparison can match and rewrite another owner's case-variant posture row."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/labels.py",
+     "line": 307,
+     "scope": "Relabeller._advance",
+     "description": "The planned spans for P are rewritten by relabel_spans."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/labels.py",
+     "line": 504,
+     "scope": "_relabel_opens (Oracle/GENERIC literal OR)",
+     "description": "UPDATE entries SET everyone_level WHERE path > lo AND path < hi. A non-binary comparison widens this to rows outside P's binary region. Rights.admits then trusts the label (grants.py:491)."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/models/rows.py",
+     "line": 228,
+     "description": "Oracle and unknown dialects get a plain String with no collation pin. The docstring at 214-219 accepts this only as an ordering and byte-budget degradation."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 45,
+     "description": "The module contract says each bound goes through the path column's type 'so every engine compares bytewise'. That is not true for Oracle or GENERIC."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/labels.py",
+     "line": 504,
+     "description": "The literal-OR relabel used by Oracle and the generic floor, with no Python re-check of the rows it updates."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 1376,
+     "description": "The posture upsert key compares path_prefix in SQL alone."
+    },
+    {
+     "file": "src/vfs/storage/grants.py",
+     "line": 491,
+     "description": "Rights.admits accepts any row whose stored label meets the rung, unless the row lies in a hole."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/dialects.py",
+     "line": 553,
+     "description": "GENERIC has no range source and no collation knowledge. profile_for serves any unknown dialect from it."
+    }
+   ],
+   "blockers": [
+    "Whether a supported Oracle deployment actually runs with NLS_COMP=LINGUISTIC and a case- or accent-insensitive NLS_SORT, or with a non-binary schema DEFAULT_COLLATION, cannot be observed locally. Real engines are prohibited in this run.",
+    "Which collation python-oracledb (thin or thick) sessions inherit from the database, from logon triggers, or from NLS_LANG is not source-visible.",
+    "Which non-tuned SQLAlchemy dialects a host would plausibly serve as GENERIC, and what their default path collation is, is outside source.",
+    "The only local demonstration is a SQLite COLLATE NOCASE analogue. It was not promoted as evidence, and column-level NOCASE on SQLite also makes the unique path index case-insensitive, which differs from Oracle session-level linguistic comparison."
+   ],
+   "validation_plan": {
+    "local": "In the conformance suite's Oracle leg (db_test skill, owner-run Docker), set the session to NLS_COMP=LINGUISTIC with NLS_SORT=BINARY_CI. Create a private posture-none subtree at /projects owned by user B under an open read_write root. Have user A set a posture at /Projects. Then check whether B's posture row at /projects was rewritten and whether a third user can read /projects/secret.md. Repeat with stock NLS settings as the control.",
+    "deployment": "The owner should confirm which NLS_COMP, NLS_SORT and DEFAULT_COLLATION settings are supported for Oracle mounts, and whether unknown dialects are expected to compare bytewise. If not, pin a binary collation on Oracle (for example COLLATE BINARY on the path columns, or an ALTER SESSION in session_settings), and refuse or probe GENERIC engines whose comparison is not bytewise."
+   }
+  }
+ ],
+ "hardening": [
+  "WriteGate._refused_beneath (rights.py:763-781) pages with ORDER BY path plus path > last. On Oracle, ORDER BY follows NLS_SORT while comparisons follow NLS_COMP. A linguistic NLS_SORT (the default for a non-English NLS_LANGUAGE) with NLS_COMP=BINARY can make keyset paging skip rows. The subtree authorization check would then not see every row beneath the root. The fix: pin a binary ordering (ORDER BY NLSSORT(path,'NLS_SORT=BINARY')), or pin the session in ORACLE.session_settings.",
+  "The road probes in _beneath (rights.py:1296) decide hidden-directory names in SQL alone. Under a case-insensitive comparison they can show a hidden directory's name because of a public row under its case variant. The leak is limited to the name and kind.",
+  "WriteGate.subtrees skips the per-row check when rights.covers_subtree(root) is true in Python (bytewise). The subtree verbs then act on rows collected with a LIKE that is case-insensitive under a linguistic Oracle session. The same pin fixes this; a regression test should cover a case-variant sibling subtree.",
+  "Neither the ORACLE profile nor the GENERIC floor runs a startup probe (for example SELECT CASE WHEN 'a' < 'B' ...) to prove bytewise comparison before serving row rights."
+ ],
+ "uncovered": []
+}

@@ -1,0 +1,274 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23grep%20glean%20graph::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility%20over%20derived%20copies::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/graph.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/rerank.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/scope.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/graph.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "graph (outbound, inbound, neighborhood, meet) names a node only at list, shows it whole only at read, and never returns, counts or measures an edge whose far endpoint the caller cannot name; depth/limit truncation and the meet components record count only nameable nodes",
+     "method": "source",
+     "result": "Holds. backend._viewed builds the view at the graph traverse rung (list) and passes None only when read is whole (backend.py:1530-1556). resolve_seeds keeps a seed only if holds(list) or it is a road directory; hidden, tombstoned and unknown seeds give the same empty result (graph.py:201-234). Every hop is view.narrow'ed and each far row is re-judged with holds(list) before it joins the frontier (graph.py:299-308). The un-narrowed road probe only admits hidden directories that view.road names, which the listing verbs show too (graph.py:553-569). All four methods share hop(); meet_walk claims, meetings and bridges are built only from those judged rows (graph.py:378-410). induced_edges keeps only edges whose two endpoints are both kept, already-admitted nodes (graph.py:451-475). _observe_edge drops weight and distance unless both endpoints are read-whole (graph.py:583-593). Walk.more, nodes_found and depth_reached come from visible nodes only (graph.py:347-351, 494-502). components counts the visible graph only (graph.py:417, 503-514). Liveness and the fs-type exclusion are on every hop (graph.py:270-277).",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/graph.py"
+     ],
+     "invariant": "an edge from a hidden row into a visible node does not appear in graph inbound for a partial or anonymous caller, while a visible edge does",
+     "method": "local",
+     "result": "In a SQLite mount where five of alice's private files /alice/n*.md link to /pub/a.md: bob's and anonymous's graph('inbound','/kb/pub/a.md') return only the seed row, with no edge. graph('inbound','/kb/pub/b.md') returns the seed, /kb/pub/c.md, and the visible c->b edge. bob's glob('/kb/alice/**') returns nothing.",
+     "artifact": "agents/w2b-derived/artifacts/evidence/centrality_oracle.json"
+    },
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/rerank.py",
+      "src/vfs/base.py"
+     ],
+     "invariant": "the cross-mount rerank uses only rows and statistics the caller may see, with the same authority on every mount",
+     "method": "source",
+     "result": "Holds, apart from the prior covered in unit 2. _route_fanout sends the one caller authority to every binding (base.py:1799-1808). _rank_fanout passes only those per-mount results to merge_ranked (base.py:3187-3201). merge_ranked rescoring reads only returned rows' Match text and each mount's exported lexical_stats (rerank.py:266-316). Under a partial view, glean.py:417-421 builds that export from the visible lexicon. content_hash dedup and the duplicates count cover returned visible rows only. Residual, same root cause as the unit-2 candidate: the order law keeps each mount's own order (rerank.py:170-187). That order already carries the whole-corpus centrality factor. legs.mounts also forwards each mount's signals explain (rerank.py:243).",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/glean.py",
+      "src/vfs/storage/backends/database/rights.py"
+     ],
+     "invariant": "in the glean vector leg, hidden chunks cannot take ORDER BY distance LIMIT k slots from visible chunks, and cannot change hits, truncation or scores",
+     "method": "source",
+     "result": "Holds. Under a partial view, every vector statement carries one view.clauses() predicate inside the ORDER BY distance LIMIT statement (glean.py:648-649). So only rows the clause admits get a distance and fill the window. The per-clause lists are merged by _nearest (glean.py:656-673). visibility_clauses/_units compile the rights exactly, as everyone_level, path pieces and owner arms (rights.py:417-444, 1203-1233). It returns None only for whole rights, and then the backend passes view=None. passes() then re-judges with holds(view.need) (glean.py:652-653, 676-679). Deepening counts only admitted entries (glean.py:670-671). The vector leg emits no truncation record, and legs.vector.hits is len(vector_hits), visible entries only. The lexical leg also holds: candidates are intersected with the visible chunks, and N, avg_dl, df and idf come from _visible_lexicon (glean.py:297-299, 314-320, 701-756). Variant of the known candidate vfs:storage/database:search-budget-counts-hidden-rows, not re-reported: the glean overlay calls entries_for_scan with no view (scope.py:233-266, glean.py:366-385). Hidden NOT-encoded rows therefore use up the 500-row overlay budget and are counted in the 'overlay budget' truncation's data.scanned.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  },
+  {
+   "coverage_id": "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fsignals.py%23centrality%20prior%20applied%20to%20glean%20scores::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fglean.py%23signal_factors%20over%20a%20whole-corpus%20graph%2C%20with%20no%20Visibility%20filter::src%2Fvfs%2Fstorage::AI-AND-LLM.md%23Context%2C%20retrieval%2C%20and%20memory%20attack%20classes",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/signals.py",
+    "src/vfs/models/signals.py",
+    "crates/vfs-core/src/signals.rs",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/ranking.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/signals.py",
+      "src/vfs/models/signals.py",
+      "crates/vfs-core/src/signals.rs",
+      "src/vfs/storage/backends/database/glean.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "a partial caller's glean scores are not moved by rows it cannot see (glean.py:249-251, 'a hidden row never moves a visible score')",
+     "method": "source",
+     "result": "Violated. collect_graph reads every live entry and every non-fs edge, with no Visibility (signals.py:72-118). reindex runs it once per mount (backend.py:1332-1338). The kernel counts in-degree, PageRank or Katz over that whole graph, smooths through directory means that include hidden files, and min-max scales over all files (models/signals.py:28-61, signals.rs:71, 251-252). glean then multiplies every visible candidate's fused score by the stored factor (glean.py:390-392) before the final min-max (glean.py:393, 984-987). signal_factors takes no view at all (signals.py:194-263). Its explain also reports applied/'no entry earned a value' from the corpus-wide row_count.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/signals.py",
+      "src/vfs/storage/backends/database/glean.py"
+     ],
+     "invariant": "a visible entry's glean score for bob/anonymous is the same whether or not hidden rows link to it",
+     "method": "local",
+     "result": "Violated. Each world has three visible /pub files and one visible edge c->b, and differs only in k hidden alice files with mkedge'd edges to /pub/a.md. bob's (and anonymous's) glean('zebra', globs=/kb/pub/**) gives a/b: k=0 0.6875/1.0, k=1 1.0/1.0, k=2 1.0/0.889041006, k=5 1.0/0.812914902. These are identical to the system answer. In every world bob's graph inbound on a.md shows no edge and his glob of /kb/alice/** is empty.",
+     "artifact": "agents/w2b-derived/artifacts/evidence/centrality_oracle.json"
+    },
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/signals.py"
+     ],
+     "invariant": "hidden bodies (markdown links extracted at write/reindex) do not move visible scores",
+     "method": "local",
+     "result": "Violated. With no mkedge for the hidden files, writing k hidden /alice files whose body contains '[ann](/pub/a.md)' gives bob a/b = 0.6875/1.0 (k=0), 1.0/0.889041006 (k=2), 1.0/0.812914902 (k=5). So a hidden body's content (that it references a.md) can be read back through a visible score.",
+     "artifact": "agents/w2b-derived/artifacts/evidence/centrality_markdown_links.json"
+    },
+    {
+     "agent_id": "w2b-derived",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/ranking.py"
+     ],
+     "invariant": "writer steering of other principals' rankings is limited to rows the victim can see",
+     "method": "source",
+     "result": "mkedge requires only modify on the source and read on the target (backend.py:924-952). So a writer can mint any number of edges from files only they can see into any target they can read. After the next reindex this raises the target's prior for every principal, and the victim can neither see nor audit the cause through graph, ls or glob. Steering through visible edges is the designed PageRank behaviour. Steering through hidden rows is the same root cause as the oracle. The prior is opt-in: the default Ranker declares no signals (ranking.py:385-391), so this needs the operator to declare a link signal.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "confirmed",
+   "fingerprint": "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges",
+   "title": "glean's centrality prior is built from hidden rows, so a visible score reveals how many hidden entries link to it",
+   "description": "The link-centrality signal is computed at reindex over the whole corpus: every live entry, every reference edge, the hierarchy smoothing, and min-max over all files. It ignores the caller's view. At query time glean multiplies each visible candidate's fused score by the stored factor. Any partial caller, anonymous included, can therefore compare a visible file's score against a calibrator with a known visible in-degree, and read back whether, and how many, hidden entries reference that file. The same holds for references extracted from hidden markdown bodies. graph inbound on the same file correctly shows no such edges, so the two verbs disagree. The same path also lets a writer use rows only they can see as a link farm, invisibly steering every other principal's ranking of a target they can read.",
+   "root_cause": "signals.collect_graph (signals.py:72-118) and the kernel (models/signals.py:28, signals.rs:71) build one corpus-wide prior with no Visibility. glean_rows applies signal_factors to every candidate whatever the caller's view (glean.py:390-392). The visible-set treatment that glean gives N, avg_dl and df (_visible_lexicon) is never applied to the signal leg.",
+   "intended_behavior": "Under a partial view, a hidden row never moves a visible score (glean.py:249-251, the ADR 065 rule 5 visible-set rule). Degree counts and stored link signals are read-class and should count only edges whose endpoints the caller may see (context/research/2026-10-14-the-permission-ladder-list-and-contribute.md:98). Archived spec 009 invariant 6 states this outright: centrality and pagerank must be computed over the visible subgraph only. The prior research names this exact leak and asks for the visible-set treatment or a documented exemption (2026-09-28-search-statistics-under-permissions-precedent.md:349). No exemption exists in any spec.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/base.py",
+     "line": 1469,
+     "scope": "AsyncVirtualFileSystem.glean",
+     "description": "A partial or anonymous caller issues glean(query, authority=...); the router fans out with that authority."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1332,
+     "scope": "DatabaseStorage.reindex signal phase",
+     "description": "Reindex collects the graph once, with no authority or view, and computes and publishes each declared signal."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/signals.py",
+     "line": 105,
+     "scope": "collect_graph",
+     "description": "Every non-fs edge between live entries is collected, including edges from rows hidden from the eventual reader."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/models/signals.py",
+     "line": 46,
+     "scope": "centrality_prior",
+     "description": "The Rust kernel computes the measure, smooths through directory means that include hidden files, and min-max scales over all files."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/signals.py",
+     "line": 263,
+     "scope": "signal_factors",
+     "description": "Stored values for visible candidates become 1+beta*t(v) multipliers. There is no view parameter."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/glean.py",
+     "line": 392,
+     "scope": "glean_rows",
+     "description": "Each visible entry's fused score is multiplied by the hidden-influenced factor, min-max scaled (glean.py:393, 984-987) and returned as Observation.score."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/storage/backends/database/glean.py",
+     "line": 251,
+     "description": "The docstring promises 'a hidden row never moves a visible score' under a partial view."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/glean.py",
+     "line": 390,
+     "description": "signal_factors is called with no view, after both visibility-filtered legs."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/signals.py",
+     "line": 72,
+     "scope_note": null,
+     "description": "collect_graph has no authority or view parameter and pages every live entry and edge."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/graph.py",
+     "line": 307,
+     "description": "The control that graph applies, and that the signal leg lacks: an edge's far endpoint must pass holds(list), so hidden in-links are omitted from graph inbound."
+    },
+    {
+     "file": "context/specifications/archive/009-cloud-style-sharing-and-access-control/spec.md",
+     "line": 254,
+     "description": "Stated policy: centrality and pagerank are computed over the visible subgraph only, and no aggregate over hidden nodes leaks into visible-node scores."
+    },
+    {
+     "file": "context/research/2026-09-28-search-statistics-under-permissions-precedent.md",
+     "line": 349,
+     "description": "Names this leak ('A visible file's centrality can reveal hidden in-links') and requires visible-set treatment or a documented exemption. None exists."
+    }
+   ],
+   "conditions": [
+    {
+     "kind": "system_configuration",
+     "description": "The operator declares a link signal (InDegree, PageRank or Katz) on the mount's Ranker. The default Ranker declares none (ranking.py:385-391)."
+    },
+    {
+     "kind": "data_state",
+     "description": "reindex has run since the hidden edges or hidden markdown links were written. Some hidden rows reference a visible file, and the caller can read at least one calibrator file with a known visible in-degree that matches the same query."
+    },
+    {
+     "kind": "authorization_role",
+     "description": "The reader is any named or anonymous principal without whole-mount read. For the steering variant, the writer needs only modify on their own files and read on the target."
+    }
+   ],
+   "execution": {
+    "attacker_perspective": "bob (or anonymous), who can read /pub but not /alice, learns how many of alice's private files reference /pub/a.md by comparing glean scores. alice, as writer, can raise /pub/a.md for everyone through links from files only she can see.",
+    "payloads": [
+     "DatabaseStorage(url='sqlite+aiosqlite:///w.db', ranker=Ranker(signals=(Signal('centrality', weight=0.5),)))",
+     "system writes /pub/a.md 'zebra report alpha', /pub/b.md 'zebra report gamma', /pub/c.md 'zebra report delta with many more filler words so the body is longer', /alice/n0..n4.md; posture / none, /pub read; grant alice read_write on /alice; mkedge /pub/c.md -> /pub/b.md (visible calibrator)",
+     "alice: mkedge [/alice/n{i}.md -> /pub/a.md for i < k]  (or: hidden bodies containing '[ann](/pub/a.md)')",
+     "storage.reindex(); kernel.add_mount(storage, '/kb'); kernel.glean('zebra', globs=('/kb/pub/**',), authority=Authority.of(Principal('bob')))"
+    ],
+    "instructions": [
+     "Ran scratch/centrality_oracle.py (and scratch/markdown_variant.py <k>) under tools/sandbox-run.py: no network, empty env, scratch-only writes, CPU 60 s, wall 120 s, RSS 2 GiB. Interpreter: .venv/bin/python -I. SQLite files only.",
+     "For k in {0,1,2,5} hidden links, recorded bob's and anonymous's glean scores, bob's graph inbound on a.md and b.md, bob's glob of /kb/alice/**, and the system glean scores."
+    ],
+    "observed_result": "bob, anonymous and system get the same scores. a.md/b.md: k=0 0.6875/1.0; k=1 1.0/1.0; k=2 1.0/0.889041006; k=5 1.0/0.812914902. b.md's score falls strictly as k rises, so bob can read off whether a.md's hidden in-degree is below, equal to or above b.md's one visible in-link, and its size. The hidden-markdown-body variant gives the same values for k=0,2,5. bob's graph inbound on a.md shows no edges, and bob's glob of /kb/alice/** is empty."
+   },
+   "remediation": {
+    "strategy": "Never apply a whole-corpus prior to a partial caller. Smallest fix: in glean_rows, apply signal_factors only when view is None. Under a partial view, skip the signal leg and add a fixed info record with a constant explain that is the same whether any edges exist, so applied/'no entry earned a value' stops leaking. The fuller design stores per-visibility-class priors, for example one computed over the rows everyone may read for anonymous and posture-only callers, or computes a visible-subgraph prior at query time. Regression test: two worlds that differ only in hidden edges or hidden link-bearing bodies must give a partial caller byte-identical glean observations and legs.signals.",
+    "code_changes": [
+     {
+      "file_name": "src/vfs/storage/backends/database/glean.py",
+      "fixed_code": "    fused = _fuse(ranker, hits, vector_hits)\n    if view is None:\n        signals = await signal_factors(session, tables, profile, membership_budget, ranker, list(fused.entries))\n    else:\n        # The stored priors count every row; a partial caller's scores must not carry them.\n        signals = SignalFactors({}, [], {signal.name: {\"applied\": False, \"reason\": \"partial view\"} for signal in ranker.signals})\n    for entry_id, factor in signals.factors.items():\n        fused.entries[entry_id] *= factor"
+     }
+    ]
+   },
+   "severity": {
+    "likelihood": {
+     "score": "low",
+     "reason": "Requires an operator to opt in to a link signal on the Ranker, and a reindex after the hidden links exist. Once that holds, any reader, including anonymous, can query it repeatedly with no special rights."
+    },
+    "impact": {
+     "score": "low",
+     "reason": "Discloses link metadata of hidden rows (existence and count of hidden entries referencing a visible file, including references extracted from hidden bodies), not their bodies. It also allows invisible ranking manipulation, but only of documents the victim may already read."
+    },
+    "overall_severity": "low"
+   },
+   "confidence": {
+    "score": "high",
+    "reason": "Complete source lineage with no visibility parameter anywhere on the path, a stated contrary policy in code and specs, and a bounded local run that shows a visible score changing monotonically with the hidden link count while graph hides those edges."
+   }
+  }
+ ],
+ "hardening": [
+  "Variant of the known candidate vfs:storage/database:search-budget-counts-hidden-rows (not re-reported): glean's overlay calls entries_for_scan with no view (glean.py:366-385, scope.py:233-266). Hidden NOT-encoded rows take up the 500-row OVERLAY_BUDGET ahead of visible ones, and the 'overlay budget' truncation's data.scanned counts them. Fix it with the same view-narrowed scan the grep fix uses.",
+  "rerank.py preserves each mount's internal order (order law, rerank.py:170-187) and forwards each mount's legs.signals explain (rerank.py:243). Once the centrality fix lands, mount orders are clean. No separate rerank change is needed.",
+  "_visible_lexicon reads every block of each query term and resolves the visibility of every chunk those blocks name (glean.py:701-756). Work therefore grows with corpus-wide document frequency, not with what the caller sees. This is already acknowledged in the docstring, and the answer stays exact."
+ ],
+ "uncovered": []
+}

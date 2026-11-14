@@ -1,0 +1,64 @@
+# v11-p3 local observation (sandbox-run.py, commit 3586750)
+## build.py 400 bomb400.docx -> stored_bytes 442096 (one rel-referenced part word/media/big.bin, 400 MiB of zeros, deflate)
+## build.py 0 base.docx -> stored_bytes 34419 (control)
+## render.py base.docx
+status ok; maxrss growth 5 MiB
+## render.py bomb400.docx (RendererRegistry.bundled().render, default RenderLimits)
+status ok text 'hello quokka
+'; maxrss_before 106 MiB, after 912 MiB, growth 805 MiB = 1909.6x stored bytes
+## e2e.py bomb400.docx (DatabaseStorage sqlite: write(data=...) then reindex())
+write_success True; reindex_success True render_status ok; maxrss growth during reindex 807 MiB for 442096 stored bytes
+
+----- build.py
+import sys, zipfile, io
+sys.path.insert(0, ".")
+from tests.support.documents import docx_bytes
+MB = int(sys.argv[1]); out = sys.argv[2]
+base = zipfile.ZipFile(io.BytesIO(docx_bytes(["hello quokka"])))
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for info in base.infolist():
+        data = base.read(info.filename)
+        if info.filename == "[Content_Types].xml":
+            data = data.replace(b"<Default ", b'<Default Extension="bin" ContentType="application/octet-stream"/><Default ', 1)
+        if info.filename == "word/_rels/document.xml.rels":
+            data = data.replace(b"</Relationships>", b'<Relationship Id="rIdBig" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/big.bin"/></Relationships>')
+        z.writestr(info.filename, data)
+    with z.open("word/media/big.bin", "w", force_zip64=True) as f:
+        chunk = b"\0" * (1 << 20)
+        for _ in range(MB): f.write(chunk)
+import os; print("stored_bytes", os.path.getsize(out), "declared_uncompressed_MiB", MB)
+----- render.py
+import sys, resource, asyncio
+sys.path.insert(0, ".")
+from vfs.rendering import RendererRegistry, RenderLimits, RenderSource
+from vfs.models.media import DOCX
+data = open(sys.argv[1], "rb").read()
+reg = RendererRegistry.bundled()
+before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+r = reg.render(RenderSource(data, DOCX, "x.docx"), RenderLimits())
+after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print("stored_bytes", len(data))
+print("status", r.status, "text", repr(r.text[:60]))
+print("maxrss_before_MiB", before >> 20, "maxrss_after_MiB", after >> 20, "growth_MiB", (after - before) >> 20)
+print("growth_over_stored", round((after - before) / len(data), 1))
+----- e2e.py
+import sys, resource, asyncio, os
+sys.path.insert(0, ".")
+from vfs.models import Entry
+from vfs.paths import Path
+from vfs.storage.backends.database import DatabaseStorage
+async def main():
+    data = open(sys.argv[1], "rb").read()
+    db = os.path.join(os.getcwd(), "e2e.sqlite")
+    if os.path.exists(db): os.remove(db)
+    st = DatabaseStorage(url=f"sqlite+aiosqlite:///{db}")
+    w = await st.write(entries=[Entry(path=Path("/up/report.docx"), data=data)], parents=True)
+    print("write_success", w.success)
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    res = await st.reindex()
+    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    stat = (await st.stat(path=Path("/up/report.docx"))).observations[0]
+    print("reindex_success", res.success, "render_status", stat.render_status)
+    print("stored_bytes", len(data), "maxrss_growth_MiB_during_reindex", (after - before) >> 20)
+    await st.close() if hasattr(st, "close") else None
+asyncio.run(main())

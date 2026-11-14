@@ -1,0 +1,42 @@
+# command: ./tools/sandbox-run.py ./agents/h04-router/scratch ./.venv/bin/python -I t2_parents.py (repo commit 3586750)
+"""Ancestor minting/revival under parents=True and read-only regions."""
+import asyncio
+from vfs import AsyncVirtualFileSystem, InMemoryStorage, Authority, Principal
+from vfs.models import Entry
+from vfs.paths import Path
+from vfs.permissions import read_only
+
+ALICE = Authority.of(Principal("alice"))
+SYS = Authority.system()
+
+def show(label, r):
+    print(f"{label}: success={r.success} errors={[(e.kind.value, str(e.path)) for e in r.errors]} obs={[(str(o.path), getattr(o,'status',None)) for o in r.observations][:8]}")
+
+async def main():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_only(write=["/a/b/c"]))
+    show("control mkdir /a", await fs.mkdir("/a", authority=ALICE))
+    show("write /a/b/c/new.md parents=True", await fs.write(path="/a/b/c/new.md", content="x", parents=True, authority=ALICE))
+    show("  ls / (system)", await fs.ls("/", authority=SYS))
+    show("  ls /a (system)", await fs.ls("/a", authority=SYS))
+
+    # revival: seed then tombstone the read-only ancestor as system storage-direct
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_only(write=["/a/b"]))
+    st = fs._bindings["/"].storage
+    show("seed", await st.write(entries=[Entry(path="/a"), Entry(path="/a/other.md", content="secret"), Entry(path="/a/b")], parents=True, authority=SYS))
+    show("sys delete /a", await st.delete(path=Path("/a"), cascade=True, authority=SYS))
+    show("write /a/b/new.md parents=True", await fs.write(path="/a/b/new.md", content="x", parents=True, authority=ALICE))
+    show("  read /a/other.md (system)", await fs.read("/a/other.md", authority=SYS))
+    show("  ls /a (system)", await fs.ls("/a", authority=SYS))
+
+asyncio.run(main())
+# ---- output ----
+control mkdir /a: success=False errors=[('vfs.read_only', '/a')] obs=[]
+write /a/b/c/new.md parents=True: success=True errors=[] obs=[('/a/b/c/new.md', 'created')]
+  ls / (system): success=True errors=[] obs=[('/a', None)]
+  ls /a (system): success=True errors=[] obs=[('/a/b', None)]
+seed: success=True errors=[] obs=[('/a', 'created'), ('/a/other.md', 'created'), ('/a/b', 'created')]
+sys delete /a: success=True errors=[] obs=[('/a', 'deleted')]
+write /a/b/new.md parents=True: success=False errors=[('vfs.not_found', '/a')] obs=[]
+  read /a/other.md (system): success=False errors=[('vfs.not_found', '/a')] obs=[]
+  ls /a (system): success=False errors=[('vfs.not_found', '/a')] obs=[]
+exit=0

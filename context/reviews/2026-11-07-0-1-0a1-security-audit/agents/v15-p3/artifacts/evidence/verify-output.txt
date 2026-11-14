@@ -1,0 +1,22 @@
+== 1. forward: dave (no rights on /carol) borrows carol's rendering via JSON-shaped bodiless Entry ==
+carol write: success=True obs=[('/carol/n.pdf', None, '', None)] errors=[]
+dave read carol (control): success=False obs=[] errors=[('vfs.not_found', '/carol')]
+entry data None: True hash kept: True
+dave write bodiless: success=True obs=[('/dave/y.pdf', None, '', None)] errors=[]
+rendering: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+dave read own: success=True obs=[('/dave/y.pdf', 'ok', '<!-- page 1 -->\nCAROL-PRIVATE note 98765\n', 'c801a9046c')] errors=[]
+dave grep: success=True obs=[('/dave/y.pdf', 'ok', '', 'c801a9046c')] errors=[]
+-- trashed donor --
+carol delete: success=True obs=[('/carol/n.pdf', None, '', None)] errors=[]
+dave write bodiless 2: success=True obs=[('/dave/z.pdf', None, '', None)] errors=[]
+rendering: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+dave read z: success=True obs=[('/dave/z.pdf', 'ok', '<!-- page 1 -->\nCAROL-PRIVATE note 98765\n', 'c801a9046c')] errors=[]
+== 2. reverse (no MEASURED_BODY): dave plants donor; carol's later upload is served dave's text ==
+dave write own bytes: success=True obs=[('/dave/p.pdf', None, '', None)] errors=[]
+dave overwrite bodiless with H: success=True obs=[('/dave/p.pdf', None, '', None)] errors=[]
+rendering: {'rendered': 1, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 0, 'unrendered': 0}
+dave read p: success=True obs=[('/dave/p.pdf', 'ok', '<!-- page 1 -->\nPLANTED text by dave\n', '657141da83')] errors=[]
+carol uploads public: success=True obs=[('/carol/b.pdf', None, '', None)] errors=[]
+rendering: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+carol reads hers: success=True obs=[('/carol/b.pdf', 'ok', '<!-- page 1 -->\nPLANTED text by dave\n', '657141da83')] errors=[]
+carol grep PLANTED: success=True obs=[('/carol/b.pdf', 'ok', '', '657141da83')] errors=[]

@@ -1,0 +1,13 @@
+python 3.13.11
+ctx=0 L=250 body_bytes=2500 hits=250 match_content_chars=2250 ratio_to_body=0.9 secs=0.009 maxrss_bytes=120537088 errors=[]
+ctx=0 L=500 body_bytes=5000 hits=500 match_content_chars=4500 ratio_to_body=0.9 secs=0.010 maxrss_bytes=121307136 errors=[]
+ctx=0 L=1000 body_bytes=10000 hits=1000 match_content_chars=9000 ratio_to_body=0.9 secs=0.008 maxrss_bytes=122126336 errors=[]
+ctx=0 L=2000 body_bytes=20000 hits=2000 match_content_chars=18000 ratio_to_body=0.9 secs=0.010 maxrss_bytes=123568128 errors=[]
+ctx=0 L=4000 body_bytes=40000 hits=4000 match_content_chars=36000 ratio_to_body=0.9 secs=0.051 maxrss_bytes=124960768 errors=[]
+ctx=2147483647 L=250 body_bytes=2500 hits=250 match_content_chars=624750 ratio_to_body=249.9 secs=0.006 maxrss_bytes=126320640 errors=[]
+ctx=2147483647 L=500 body_bytes=5000 hits=500 match_content_chars=2499500 ratio_to_body=499.9 secs=0.009 maxrss_bytes=131710976 errors=[]
+ctx=2147483647 L=1000 body_bytes=10000 hits=1000 match_content_chars=9999000 ratio_to_body=999.9 secs=0.018 maxrss_bytes=153223168 errors=[]
+ctx=2147483647 L=2000 body_bytes=20000 hits=2000 match_content_chars=39998000 ratio_to_body=1999.9 secs=0.049 maxrss_bytes=240943104 errors=[]
+ctx=2147483647 L=4000 body_bytes=40000 hits=4000 match_content_chars=159996000 ratio_to_body=3999.9 secs=0.179 maxrss_bytes=633667584 errors=[]
+invert_match no allow_scan L=2000 body_bytes=20000 hits=2000 match_content_chars=39998000 maxrss_bytes=210550784 errors=[]
+invert_match no allow_scan L=4000 body_bytes=40000 hits=4000 match_content_chars=159996000 maxrss_bytes=605454336 errors=[]

@@ -1,0 +1,120 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.rendering:ooxml-part-decompression-unbounded",
+  "title": "OOXML parts are fully decompressed into host memory before any render limit applies, so a small docx can cost hundreds of times its size in RSS during reindex",
+  "description": "The docx and pptx renderers pass the stored bytes straight to docx.Document and pptx.Presentation. vfs checks no zip entry sizes, compression ratios or member counts first. When python-docx 1.2.0 opens a package, it walks every internal relationship and calls ZipFile.read on each target part. python-pptx 1.0.2 goes further and reads every zip member, referenced or not, into a dict. Every RenderLimits check runs inside Builder, on output characters, after this expansion has already happened. The RENDER_RATIO comment calls the ratio the decompression-bomb guard, but a part that decompresses large and yields no text never reaches it. Rendering runs on the DatabaseStorage offload ThreadPoolExecutor, which is inside the host process all agents share. I reproduced this locally. One docx stored at 442,096 bytes, holding one relationship-referenced 400 MiB part of zeros, raised peak RSS by 805 MiB in a direct registry render and by 807 MiB in a real write-then-reindex on SQLite. That is about 1,900 times the stored size. The render still returned status ok with text 'hello quokka', and no limit fired. Because deflate tops out near 1000:1 and the library holds the blob, a stored body of a few MiB can be enough to exhaust the host's memory.",
+  "root_cause": "DocxRenderer.render (docx.py:50) and PptxRenderer.render (pptx.py:38) open caller-supplied zip containers with libraries that eagerly decompress part blobs (docx/opc/pkgreader.py:79 via phys_pkg.py:83 ZipFile.read; pptx/opc/serialized.py:195 reads every member). vfs does no central-directory inspection before that call. Every RenderLimits check (chars, ratio, units, seconds) lives in Builder, which measures emitted text after expansion, so input-side decompression has no bound at all.",
+  "intended_behavior": "A render's memory should be bounded by declared limits relative to the stored input, as the seam's 'decompression-bomb guard' comment says. An OOXML body whose declared total uncompressed size, single-entry size, member count or compression ratio exceeds a RenderLimits cap should be refused as a classified 'failed' or 'corrupt' state before the parsing library decompresses anything.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1287,
+    "scope": "DatabaseStorage._render_step",
+    "description": "During reindex, each dirty bytes row that any writer stored through write(data=...) gets rendered. render_rows runs on the shared offload ThreadPoolExecutor via call_offloaded at line 1288, inside the host process."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/models/media.py",
+    "line": 89,
+    "scope": "sniff_mime",
+    "description": "The PK\\x03\\x04 magic marks the body as a zip, and the .docx/.pptx extension or the declared type then selects the Office media type and its renderer (lines 104-108)."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/rendering/docx.py",
+    "line": 50,
+    "scope": "DocxRenderer.render",
+    "description": "docx.Document(BytesIO(source.data)) runs with no prior zip inspection. python-docx reads every relationship-referenced part fully into memory. pptx.py:38 has the same shape, and python-pptx reads every member."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/rendering/seam.py",
+    "line": 43,
+    "description": "The comment calls RENDER_RATIO 'the decompression-bomb guard', but every RenderLimits field bounds output or the walk, never decompressed input."
+   },
+   {
+    "file": "src/vfs/rendering/markdown.py",
+    "line": 287,
+    "description": "The ratio check compares emitted characters (self._chars) with ratio * input_bytes after parsing. A large part that yields no text is invisible to it."
+   },
+   {
+    "file": "src/vfs/rendering/pptx.py",
+    "line": 38,
+    "description": "pptx.Presentation(BytesIO(source.data)) has no prior inspection. The installed python-pptx 1.0.2 _ZipPkgReader._blobs (pptx/opc/serialized.py:192-195) reads every zip member into a dict, including unreferenced ones. This is source-read only; I did not run the pptx path."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/engine.py",
+    "line": 227,
+    "description": "offload_executor is a ThreadPoolExecutor, so the decompressed blobs are allocated in the shared host process, not in an isolated worker."
+   },
+   {
+    "file": "agents/v11-p3/artifacts/evidence/ooxml-part-bomb-rss.txt",
+    "line": 1,
+    "description": "Sandboxed reproduction log and scripts. A 442,096-byte docx with one 400 MiB referenced part grew max RSS by 805 MiB in a registry render and by 807 MiB in a DatabaseStorage write-then-reindex; render_status stayed ok. The 34,419-byte control docx grew it by 5 MiB."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker is any principal allowed to write a bytes body into a DatabaseStorage-backed mount (for example a named agent subject with write rights). The cost is not paid in the writer's call."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The vfs[docx] or vfs[pptx] extra is installed, so a bundled Office renderer is available. The operator or host runs DatabaseStorage.reindex(), which is routine index maintenance."
+   },
+   {
+    "kind": "data_state",
+    "description": "The stored body starts with PK\\x03\\x04 and carries an Office extension or declared type, so sniff_mime selects DOCX or PPTX. For docx, the large part must be a relationship target; for pptx, any zip member works."
+   },
+   {
+    "kind": "third_party_dependency",
+    "description": "This depends on how python-docx 1.2.0 and python-pptx 1.0.2 load parts, which is eager and unbounded. I observed this for python-docx only. For python-pptx it comes from reading the source. openpyxl (read_only=True) was not shown to be affected."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "A lower-trust writer stores one small docx. Inside it is a highly compressible part that the main document's relationships point to. Later, the operator's reindex renders it inside the host process that every agent shares.",
+   "payloads": [
+    "docx built from tests.support.documents.docx_bytes(['hello quokka']), plus [Content_Types].xml <Default Extension=\"bin\" ContentType=\"application/octet-stream\"/>, plus a word/_rels/document.xml.rels <Relationship Id=\"rIdBig\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/big.bin\"/>, plus word/media/big.bin = 400 MiB of 0x00, deflate level 9; stored size 442,096 bytes"
+   ],
+   "instructions": [
+    "Build the payload with scratch build.py (args 400 bomb400.docx), and build a control with args 0 base.docx.",
+    "Under tools/sandbox-run.py, run render.py on each file. It calls RendererRegistry.bundled().render(RenderSource(data, DOCX, 'x.docx'), RenderLimits()) and records ru_maxrss before and after.",
+    "Under tools/sandbox-run.py, run e2e.py on bomb400.docx. It opens DatabaseStorage on a scratch SQLite file, writes /up/report.docx with data=..., records ru_maxrss around reindex(), and then stats render_status.",
+    "Stop at that first clear ratio. Do not scale the payload toward OOM."
+   ],
+   "observed_result": "Control docx (34,419 bytes): RSS grew by 5 MiB. Payload docx (442,096 bytes), direct render: status ok, text 'hello quokka', max RSS 106 MiB before and 912 MiB after, a growth of 805 MiB, which is 1,909.6 times the stored bytes. End to end: write succeeded, reindex succeeded, render_status was ok, and max RSS grew by 807 MiB during reindex. No RenderLimits check fired."
+  },
+  "remediation": {
+   "strategy": "Before calling any OOXML library, open the body with zipfile.ZipFile and inspect infolist(). Refuse with a classified failed/corrupt Rendering when any of these exceeds a declared RenderLimits field: the member count, any entry's file_size, the sum of file_size, or the file_size/compress_size ratio. Because a central directory can lie, also bound the actual decompression, either by streaming each member through a size-capped reader or by trusting only the verified caps. Apply the same pre-check to xlsx for defense in depth. Then correct the RENDER_RATIO comment so that it describes an output guard.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/rendering/seam.py",
+     "fixed_code": "RENDER_PACKAGE_BYTES: Final = 256 * 1024 * 1024\nRENDER_PACKAGE_MEMBERS: Final = 10_000\nRENDER_MEMBER_RATIO: Final = 200\n\ndef package_refusal(data: bytes, limits: RenderLimits) -> str | None:\n    \"\"\"Why a zip container is refused before any library decompresses it, or None.\"\"\"\n    try:\n        infos = zipfile.ZipFile(BytesIO(data)).infolist()\n    except zipfile.BadZipFile as exc:\n        return f\"not a zip container: {exc}\"\n    if len(infos) > limits.package_members:\n        return f\"{len(infos)} members exceed {limits.package_members}\"\n    total = sum(i.file_size for i in infos)\n    if total > limits.package_bytes:\n        return f\"{total} uncompressed bytes exceed {limits.package_bytes}\"\n    for i in infos:\n        if i.file_size > limits.member_ratio * max(1, i.compress_size) and i.file_size > RENDER_RATIO_FLOOR:\n            return f\"{i.filename} expands {i.file_size}/{i.compress_size}\"\n    return None"
+    },
+    {
+     "file_name": "src/vfs/rendering/docx.py",
+     "fixed_code": "        refusal = package_refusal(source.data, limits)\n        if refusal is not None:\n            return failure(\"failed\", refusal)\n        try:\n            document = docx.Document(BytesIO(source.data))"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "It needs only ordinary write rights to a database mount and a routine operator reindex with the Office extras installed. The attacker's work is tiny: a 442 KB file, made with standard tools."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "I observed about 1,900x memory amplification in the host process that every agent shares, and no limit fired. Extrapolation says a few MiB stored is enough for multi-GiB allocations, which could OOM the shared process during maintenance. I did not demonstrate OOM itself, or that the row stays pending after a crash. The effect is availability only, with no data exposure."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "For docx, both the direct renderer and the real DatabaseStorage write-then-reindex path reproduced the result, measured against a control. For pptx, the eager read of every member was confirmed in the installed library source but not executed. For xlsx, the effect was not established."
+  }
+ }
+}

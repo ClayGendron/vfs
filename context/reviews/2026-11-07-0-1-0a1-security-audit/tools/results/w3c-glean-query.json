@@ -1,0 +1,71 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23glean%20query%20text::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23_embed_query%2C%20the%20query-vector%20cache%2C%20and%20glean.py%23tokenize%20term%20fan-out::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes",
+   "disposition": "blocked",
+   "reviewed_paths": [
+    "src/vfs/params.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/lexical.py",
+    "src/vfs/storage/backends/database/offload.py",
+    "src/vfs/embedding/provider.py",
+    "src/vfs/embedding/hashing.py",
+    "src/vfs/embedding/model2vec.py",
+    "src/vfs/embedding/openai.py",
+    "src/vfs/storage/backends/memory.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w3c-glean-query",
+     "reviewed_paths": [
+      "src/vfs/params.py",
+      "src/vfs/base.py",
+      "src/vfs/storage/backends/database/glean.py",
+      "src/vfs/storage/backends/database/lexical.py"
+     ],
+     "invariant": "Fact 1: whether the glean query length or its count of distinct terms is capped before tokenize and the lexical_stats IN-list probes",
+     "method": "source",
+     "result": "No cap exists. params.py:294 declares query as a plain 'str' with no length or term-count bound, and the router's glean (base.py:1469-1527) only runs the params gate. glean.py:257 deduplicates tokenize(query) and passes every term on. lexical.py:121-126 runs one chunked IN probe per membership_budget terms (32,668 on SQLite), so the statement count grows linearly and stays bounded per statement. In an unpromoted sandbox run (scratch/run1.json), 40k distinct terms took 12 statements with 2 lex_df probes, and 80k took 13 statements with 3 probes. Tokenize took 3.1 ms and 6.0 ms. Who pays: the statement count is linear and chunked as designed, so the caller pays for it. The wider inline cost per call was not fully attributed before this session stopped.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w3c-glean-query",
+     "reviewed_paths": [
+      "src/vfs/embedding/provider.py",
+      "src/vfs/embedding/hashing.py",
+      "src/vfs/embedding/model2vec.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/memory.py"
+     ],
+     "invariant": "Fact 2: whether a local provider's embed_query runs inline on the event loop, and whether asyncio.wait_for bounds it",
+     "method": "source",
+     "result": "Yes, it runs inline. provider.py:131-132 implements LocalEmbeddingProvider.embed_query as a synchronous self.embed_batch([text]) call, with no executor hop. The class docstring says so. backend.py:676 wraps it in asyncio.wait_for(..., glean_wall_seconds), but wait_for cannot interrupt synchronous work. Hash and model2vec both inherit this path. InMemoryStorage uses HashEmbeddingProvider by default (memory.py:57), so the default router root embeds inline. _vector_leg_for runs at backend.py:571, before the _viewed authority step. In the unpromoted run, a direct hash_embedding call took 38 ms at 40k terms and 77 ms at 80k, which is linear. In the same run the whole glean showed a largest loop gap of 0.73 s at 40k and 1.45 s at 80k, but most of that gap comes from other inline stages, not the embed. Who pays: the shared event loop and host, scaling linearly with query length.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w3c-glean-query",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "Fact 3: memory held by each entry of the 256-entry query-vector cache keyed by the full query string",
+     "method": "source",
+     "result": "backend.py:171 caps the cache by count (256), not by bytes. Keys at backend.py:671 are (model_id, full query), and entries are only stored when the embed succeeds (backend.py:676-679). Local providers accept any length, so retained memory is about 256 x (query size + vector). In the unpromoted run (tracemalloc), 256 queries of 2,000 terms held 10.66 MB (41.6 KB per entry). Queries of 4,000 terms held 20.68 MB (80.8 KB per entry). That is linear in key length and has no byte bound. Hosted OpenAI rejects inputs over 8,192 tokens, so those failures are never cached, which bounds the hosted case. Who pays: host memory, which persists across callers until entries are evicted. Hosted spend per distinct query belongs to the operator; one router glean asks the provider once per uncached mount.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": [
+    "This session stopped before it could fully attribute the inline event-loop time per glean call or turn the measurements into a reported candidate. The local measurements above are in scratch/run1.json, which is not under scratch/evidence/ and has not been promoted. A fresh hunter should repeat the n and 2n loop-gap measurement under scratch/evidence/ and attribute every inline stage."
+   ]
+  }
+ ],
+ "candidates": [],
+ "hardening": [
+  "Bound QUERY_VECTOR_CACHE by total bytes, or key it by a digest of the query, so 256 long local-provider queries cannot hold memory that grows with query length (backend.py:171, 671-679).",
+  "Move LocalEmbeddingProvider.embed_query to the executor, the same hop embed_documents takes, so asyncio.wait_for can actually bound it (provider.py:131-132).",
+  "Add a declared maximum query length or distinct-term count in the glean params gate (params.py:294)."
+ ],
+ "uncovered": []
+}

@@ -1,0 +1,114 @@
+{
+ "missing_units": [
+  {
+   "surface": "src/vfs/base.py#grant (and revoke) naming another principal or a group id, repeated over many distinct path prefixes the granter holds read_write on (the path need not hold a row)",
+   "boundary": "src/vfs/storage/backends/database/rights.py#resolve_authority -> _grant_rows -> Resolution.compile -> visibility_clauses: the grantee's own per-call rights compile and per-clause statement fan-out, with revision.py#stamp_principals retiring the grantee's RightsCache entry on every grant",
+   "subsystem": "src/vfs/storage",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Resource accumulation attack classes",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/grants.py",
+    "src/vfs/storage/backends/database/revision.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/dialects.py",
+    "src/vfs/storage/backends/database/scope.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Resource accumulation attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes",
+     "reason": "grant attenuation and gate correctness are owned by the grant/revoke unit and its confirmed candidate; this unit is only about the cost the grantee bears"
+    },
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Failure and recovery attack classes",
+     "reason": "no crash path is claimed; this unit is about per-call work and statement count growing with rows another principal plants"
+    },
+    {
+     "block": "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+     "reason": "no HTTP, token, session or identity protocol exists in source"
+    },
+    {
+     "block": "CLIENT-SIDE.md#Core discipline",
+     "reason": "no browser code in source"
+    },
+    {
+     "block": "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+     "reason": "no IaC or runtime deployment config in source"
+    },
+    {
+     "block": "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline",
+     "reason": "no RPC or broker in source"
+    },
+    {
+     "block": "DESKTOP-MOBILE-AND-LOCAL-IPC.md#Core discipline",
+     "reason": "no native app or IPC in source"
+    }
+   ],
+   "reason": "No unit covers how many grant rows one principal can plant against another principal. _grant_refusal (rights.py:1305-1336) needs only read_write at the addressed path, and its docstring says the path need not hold a row. grant_rows (rights.py:894-920) has no count cap, so any read_write holder (anonymous too, under the default read_write posture) can write unlimited rows naming any sub or any group: id, at distinct sub-paths of its own subtree. On every cache miss, the victim's resolve_authority (rights.py:322-378) reads every row naming its subjects and groups with no cap (_grant_rows, rights.py:1176-1186). It then compiles them in Python on the event loop. visibility_clauses (rights.py:418-445) turns the resulting spans into ceil(spans/bind_cap) OR-clauses, and the read verbs run each statement once per clause. bind_cap is membership_budget/2, about 500 on Oracle. Each grant also calls stamp_principals([principal]) (rights.py:918), which retires the grantee's cached compile, so the attacker can force a recompile on the victim's next call. A grant to a group spreads the cost to every member. The open questions: is the per-call cost linear in the planted rows, does the clause count grow without limit (AGENTS.md says no statement count may grow with batch size), and does the RightsCache byte budget evict other principals' entries. The grants-listing unit excluded only the ancestor-prefix IN list, and no candidate shares this root cause."
+  },
+  {
+   "surface": "src/vfs/base.py#graph method='meet' minimal=True over edges the caller mints (mkedge from its own rows, or extracted markdown links)",
+   "boundary": "src/vfs/storage/backends/database/graph.py#prune, _strip_leaves and _articulation_points, which run synchronously inside DatabaseStorage.graph with no budget or offload; meet ignores limit until the seeds join",
+   "subsystem": "src/vfs/storage",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/graph.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/params.py",
+    "src/vfs/storage/backends/database/edges.py",
+    "src/vfs/base.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+     "reason": "graph node and edge visibility were closed by the grep/glean/graph unit; this unit is about cost only"
+    },
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Resource accumulation attack classes",
+     "reason": "prune leaves no state behind after the call; the cost is event-loop CPU during it"
+    },
+    {
+     "block": "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+     "reason": "no HTTP, token, session or identity protocol exists in source"
+    },
+    {
+     "block": "CLIENT-SIDE.md#Core discipline",
+     "reason": "no browser code in source"
+    },
+    {
+     "block": "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+     "reason": "no IaC or runtime deployment config in source"
+    },
+    {
+     "block": "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline",
+     "reason": "no RPC or broker in source"
+    },
+    {
+     "block": "DESKTOP-MOBILE-AND-LOCAL-IPC.md#Core discipline",
+     "reason": "no native app or IPC in source"
+    }
+   ],
+   "reason": "The params/grep-budgets unit closed as covered, but its own source check found an unbounded, superlinear cost. prune (graph.py:422-448) removes one node per loop iteration. Each iteration rebuilds _adjacency over every edge the walk saw (graph.py:587-594) and reruns _articulation_points. _strip_leaves (graph.py:596-608) rebuilds adjacency on every leaf round. Total work is O(K x (E + K)), all synchronous on the event loop: prune is called at graph.py:186 inside backend.graph and is not offloaded, unlike the grep, render and signal stages (backend.py:528, 585, 1288, 1336). The check result (tools/results/w2c-compute.json) recorded it as hardening only because 'growth was not measured locally this run'. That reason does not settle the security question. Three candidates of the same shape were confirmed after measurement: glob backtracking, fuzzy edit replacers and links line_context. Any writer can build a ladder graph among its own rows with mkedge (gate: modify on source, read on target) and then call meet minimal=True, so one agent can stall the shared loop. A bounded n/2n local measurement settles it either way. No candidate shares this root cause."
+  }
+ ],
+ "reassign_ids": [],
+ "resolved_prior_leads": [
+  "src%2Fvfs%2Fbase.py%23glean%20query%20text::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23_embed_query%2C%20the%20query-vector%20cache%2C%20and%20glean.py%23tokenize%20term%20fan-out::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes :: Do not reassign. Its three source facts already settle the question. Every inline stage is linear in the caller's own query. hash_embedding (embedding/hashing.py) does one tokenize and one blake2b per token and per bigram. LocalEmbeddingProvider.embed_query (provider.py:131-132) is one embed_batch on one text. tokenize is linear. lexical_stats chunks its IN probes by membership_budget, so each statement is bounded and the count is linear. The query-vector cache is capped at 256 entries, so retained memory is 256 x the largest query the host accepts. Event-loop time is therefore proportional to the request size the caller chose, with no amplification over stored data or other principals. The open n/2n attribution would only give a constant, not change the verdict. The result is hardening: offload embed_query to the executor as embed_documents already does, and cap query length or byte-bound the cache. It is not a candidate.",
+  "src%2Fvfs%2Fparams.py%23pattern%20query%20edit%20graph%20arguments::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgrep.py%23budgets%20and%20caps::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes :: The deep-nesting RecursionError lead is settled as hardening. A later grep on the same object succeeded, so the effect stays in the caller's own task. The graph meet minimal=True lead from this unit is not settled; it is split out above as its own narrow unit, not reassigned whole.",
+  "Reviewed and not proposed :: RightsCache revocation freshness. Every grant and revoke stamps its grantee and every membership write stamps its member (rights.py:918, 961, 1080, 1111). The cache key is the max stamp over the subjects plus the closure groups found at the last compile (rights.py:352-358). A group revoke or membership change therefore retires each affected compile, and posture changes reach named callers through entry labels and in-flight marks. The chunk splitter (chunking.py _recursive_split) is linear. The Rust accumulators return only doc-order and sealed errors, so no caller body can poison a reindex. Content rows are keyed by entry_id, not deduplicated across principals."
+ ],
+ "stop": false
+}

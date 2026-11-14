@@ -1,0 +1,129 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23grants%20%28list%20grant%20rows%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23list_grants%20returns%20ancestor%20rows%20for%20any%20holder%20of%20read_write::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/base.py",
+    "src/vfs/ops.py",
+    "context/specifications/archive/058-row-level-permission-grants/spec.md",
+    "context/specifications/active/165-the-permission-ladder-list-and-contribute/spec.md",
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/base.py",
+      "src/vfs/ops.py",
+      "context/specifications/archive/058-row-level-permission-grants/spec.md",
+      "context/specifications/active/165-the-permission-ladder-list-and-contribute/spec.md"
+     ],
+     "invariant": "A caller holding read_write at a subtree path seeing every principal's grant rows on that path's ancestors must be declared policy, not an overreach",
+     "method": "source",
+     "result": "Intended. list_grants (rights.py:965-1001) returns every row on the path and its ancestors only when resolution.at('read_write').reaches(path); otherwise it filters to _own_ids (the subjects, their groups, everyone). This matches the base.py grants docstring ('A caller holding read_write at path sees every row; any other caller sees only its own, its groups', and the everyone rows'), spec 058 line 76 ('all rows if it holds read_write there'), and the active spec 165 rung table line 38 ('own rows at read, every row at read_write; a list path answers not_found'). VERB_RUNGS['grants'] is Needs('read') (ops.py:162). Descendant rows are never listed. No candidate.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "The not_found arm of grants answers identically for list-only, owner-floor, road, hidden and truly absent paths, and never depends on whether a row exists",
+     "method": "local",
+     "result": "Identical. As bob (world: root posture none, bob list at /lst, bob read at /pub, bob owns /hr/bob.txt, hidden /hr/other.md and /zz/x.md), grants on /hr/other.md, /hr/absent.md, /hr/bob.txt (owner floor), /hr (road), /lst and /lst/f.md (list-only), /zz/x.md and /nz/x.md (absent) all answered vfs.not_found with message 'Not found', no data, at the addressed path. Absent /pub/x/y inside coverage answered the same rows as /pub. The decision reads only the rights compile and the committed posture rows on the chain (rights.py:986-995), never entries, so no row-existence oracle exists. Anonymous got vfs.unauthenticated uniformly where the posture is below read, hidden or absent alike. The subject-set pair saw the same not_found shapes.",
+     "artifact": "agents/w2a-visibility/artifacts/evidence/probe_visibility.out.json"
+    },
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/rights.py"
+     ],
+     "invariant": "grants resolves the caller's authority (not system) and applies the anonymous refusal before any disclosure",
+     "method": "source",
+     "result": "backend.py:1054-1067 builds the WriteGate from self._named(authority) at VERB_RUNGS['grants']; list_grants runs unauthenticated_at before the coverage check; _own_ids on an authority_budget failure degrades to subjects plus everyone (less disclosure, not more). Holds.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  },
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23read%20stat%20ls%20tree%20glob::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/descent.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/grants.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/protocol.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/descent.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/grants.py"
+     ],
+     "invariant": "The descent ladder classifies a hidden row exactly as an absent one: the road helpers name only directories leading to a row the caller may name, and the trashed hint rides only on a tombstone the caller may read",
+     "method": "source",
+     "result": "Holds. classify_miss (descent.py:92-110) walks the ancestor chain against a kinds map; Visibility.seen_kinds (rights.py:583-596) fills it only with live rows the caller shows at list, road directories, and the root, so a hidden ancestor (directory or file) is missing at the same component as an absent one. road() (rights.py:553-581) derives three sources that each mirror an arm of Rights.admits (grants.py:485-497): existing span roots' ancestors, _owned_beneath (owner_id == member and path within that member's owner pieces, on the requested tombstone side), and _open_beneath (everyone_level >= list, outside relabel holes, on the requested side); _beneath uses the bytewise (d/, d0) range per candidate directory. tombstones(rows, 'read') gates the vfs.trashed hint. Anonymous derives no road (road=not is_anonymous in backend._viewed and WriteGate).",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/reads.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/descent.py"
+     ],
+     "invariant": "read, stat, ls, tree and glob (path and observations= targets) answer a hidden row and an absent one identically in kind, locus, message, severity, data and count, across list-only, owner-floor, road and trash-view paths, for a named caller, anonymous, and a subject set",
+     "method": "local",
+     "result": "Identical on every pair. 12 hidden/absent pairs x 4 verbs x 3 authorities (bob, anonymous, bob+ann pair) on InMemoryStorage: hidden file under an owner-floor road dir, hidden dir off the road, a hidden file used as an ancestor, a hidden top-level dir, hidden tombstones on the live side (no trashed hint), and trash-view addresses /.vfs/trash/... all matched their absent twin (same kind vfs.not_found, same 'Not found' message, the locus at the same component, the same vfs.target data). The only difference was the control /op, a hidden dir legitimately on the road via an everyone-read row beneath it, which showed as a bare directory. Globs over /hr/** /zz/** /nz/** returned only nameable rows (bob saw only /hr/bob.txt); observations= batches mixing hidden and absent paths matched per row; anonymous got vfs.unauthenticated uniformly (posture-judged, row-independent). A list-only row showed bare (path, kind) and read refused it permission_denied, as declared.",
+     "artifact": "agents/w2a-visibility/artifacts/evidence/probe_visibility.out.json"
+    },
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/reads.py"
+     ],
+     "invariant": "The live road and the trash road never name a hidden directory unless a row the caller may name lies beneath it on that side",
+     "method": "local",
+     "result": "Holds, with one benign wrinkle. A hidden tombstoned directory whose only nameable row is bob's own tombstone answers not_found on the live side, the same as an absent path, and shows bare only under /.vfs/trash; its hidden tombstoned sibling answers the same as an absent child. Wrinkle: _existing_roots (rights.py:611-617) fetches grant-root rows without a tombstone term, so after bob's only granted row /zz/x.md was deleted, /zz stayed on the live road (ls / listed /zz bare; ls /zz was empty). The only thing disclosed is that a directory still exists live, and bob already knows its name from his own grant prefix. Recorded as hardening.",
+     "artifact": "agents/w2a-visibility/artifacts/evidence/probe_roots.out.json"
+    },
+    {
+     "agent_id": "w2a-visibility",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/storage/protocol.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "Router paths into these verbs (observations= grouping, tree region descents, glob root probes, locate(exists=True)) carry the caller's authority and add no second answer that separates hidden from absent",
+     "method": "source",
+     "result": "Holds. _route_single and _dispatch_grouped_observations (base.py:1715-1809) forward the caller's authority; targets_of (protocol.py:490-501) uses only each observation's path. _tree_region dispatches with the caller's authority, and descents are mount structure. Glob and grep root probes (base.py:2387-2449) stat under the caller's authority, so they reuse the same ladder. locate(exists=True) treats any not_found family as exists=False (base.py:2803-2814). _probe_bind_site uses the admin authority only for host-side bind.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  }
+ ],
+ "candidates": [],
+ "hardening": [
+  "Visibility._existing_roots (src/vfs/storage/backends/database/rights.py:611-617) reads grant-root rows with no deleted_at term, so a tombstoned grant root keeps its live ancestors on the live road (local: after the only granted row /zz/x.md was deleted, ls / still listed /zz bare and ls /zz was empty). This tells the caller only that a directory named in its own grant prefix is still live. Passing the requested tombstone side into the roots fetch would align it with _owned_beneath and _open_beneath.",
+  "An anonymous refusal for a trash-view address names the stored path, not the address the caller sent (stat /.vfs/trash/hr/delme.md answered vfs.unauthenticated at /hr/delme.md). backend._viewed judges at address_of(path).stored (backend.py:1528). Hidden and absent answer alike, so this is a coordinate inconsistency, not a leak.",
+  "list_grants filters a non-read_write caller's rows by the union of all subjects' ids (_own_ids, rights.py:1382-1389), while its rights are the meet. A service actor acting on_behalf_of {ann, bob} therefore lists each member's own and group grant rows on the ancestors. The docstring calls this 'its own', so it is declared behavior, not a finding.",
+  "ls /.vfs/trash (_trash_roots, reads.py:940-957) shows only tombstoned roots the caller may name. A hidden tombstoned root that holds the caller's own tombstone beneath it is omitted from the head listing, although stat /.vfs/trash/<root> shows it on the trash road. This is under-sharing, not disclosure."
+ ],
+ "uncovered": []
+}

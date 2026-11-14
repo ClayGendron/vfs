@@ -1,0 +1,103 @@
+{
+ "decision": "needs_validation",
+ "record": {
+  "verdict": "needs_validation",
+  "fingerprint": "publish.yml:release-ref-not-bound-to-main-environment-pypi",
+  "title": "PyPI trusted-publishing upload is gated in source only by writer-editable workflow logic; whether a writer without release authority can publish depends on unobserved `pypi` environment, tag and PyPI publisher settings",
+  "description": "publish.yml uploads to PyPI with OIDC trusted publishing whenever a GitHub release is published (publish.yml:13-16, 86-92, 130-131). The only gate visible in source is scripts/check_release_tag.py. It compares the tag string with the [project] version in the checked-out pyproject.toml, and nothing else (check_release_tag.py:36-39). It reads no git state, so it cannot check the tagged commit's ancestry, signer or creator. Nothing in the workflow binds the tagged commit to main, although release.md:133 says the release creates the tag on main. Take a principal who has write access but no release authority: a collaborator, an installed app, or a stolen writer token. On GitHub the write role can create releases. That principal could push a side branch whose code is modified and whose version line matches, then publish a release on a tag pointing at that branch. The workflow would check out the tag's commit, pass the tag check, build it, and upload it as vfs-py. The `if: github.event_name == 'release'` guard on the publish job (publish.yml:87) and the tag-check steps are read from the workflow file at the triggering ref, so a writer also controls them on their own branch. Only hosted controls decide whether the upload can happen: protection rules on the `pypi` environment (required reviewers, deployment branch and tag policy), tag rulesets for v*, branch protection on main, the collaborator and app list, and the PyPI trusted-publisher record. None of these is in source. The repository does not record them either: the roadmap audit (07-release-ci-and-repo-hygiene.md:106) and spec 166 criterion 12 list the trusted-publisher check as a pending item, and release.md has no such note yet. Fork and PR contributors cannot reach this path. publish.yml has no pull_request, pull_request_target or workflow_run trigger, and both releasing and dispatching need write access. The prior code review (2026-11-06-the-release-lane-to-0-1-0-code-review.md:73-75) also found no lower-trust principal below a repository writer. Whether any writer who lacks release authority exists is the deciding fact.",
+  "claimed_root_cause": "Inside the workflow, the release's source identity (the tagged commit and the triggering ref) is never bound to reviewed main. The only in-source gate is a string comparison between the tag and the version, and it reads only pyproject.toml. The `pypi` environment's protection rules and the PyPI trusted-publisher record are the only controls that could bind the release to a release owner and an approved ref, and neither is in source.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": ".github/workflows/publish.yml",
+    "line": 13,
+    "scope": "on: release published / workflow_dispatch",
+    "description": "Anyone who can publish a release, or dispatch the workflow on any ref, starts the run. Both need write access. Neither event is restricted to main or to a tag pattern in source."
+   },
+   {
+    "kind": "propagation",
+    "file": ".github/workflows/publish.yml",
+    "line": 32,
+    "scope": "wheels job checkout",
+    "description": "actions/checkout with no ref checks out GITHUB_SHA: the release tag's commit, or the dispatched ref. That commit need not be reachable from main."
+   },
+   {
+    "kind": "propagation",
+    "file": ".github/workflows/publish.yml",
+    "line": 46,
+    "scope": "tag check step (also :74 sdist, :106 publish)",
+    "description": "Runs scripts/check_release_tag.py \"$TAG\", with the tag passed through env and quoted. This is the only source gate before the build and the upload."
+   },
+   {
+    "kind": "propagation",
+    "file": "scripts/check_release_tag.py",
+    "line": 38,
+    "scope": "main",
+    "description": "Returns 0 when tag == 'v' + the version in the checked-out pyproject.toml. It reads no git state: no ancestry from main, no signer, no tag creator."
+   },
+   {
+    "kind": "propagation",
+    "file": ".github/workflows/publish.yml",
+    "line": 48,
+    "scope": "maturin-action build (sdist at :76)",
+    "description": "Builds the wheels, and at :76 the sdist, from the checked-out commit's code."
+   },
+   {
+    "kind": "propagation",
+    "file": ".github/workflows/publish.yml",
+    "line": 87,
+    "scope": "publish job",
+    "description": "Runs with `if: github.event_name == 'release'`, environment pypi and permission id-token: write. The guard comes from the workflow file at the triggering ref, which a writer can edit on their own branch."
+   },
+   {
+    "kind": "sink",
+    "file": ".github/workflows/publish.yml",
+    "line": 131,
+    "scope": "Publish to PyPI",
+    "description": "`uv publish --trusted-publishing always` mints a PyPI upload token from the job's OIDC identity and uploads dist/ as vfs-py."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "context/standards/release.md",
+    "line": 133,
+    "description": "States the intended policy: the GitHub release creates the vX.Y.Z tag on main. The workflow does not enforce it."
+   },
+   {
+    "file": "context/standards/release.md",
+    "line": 47,
+    "description": "'The workflow runs no tests. It trusts main is green.' The publish path assumes its source is main and never checks it. The tag check is named as its only gate."
+   },
+   {
+    "file": ".github/workflows/publish.yml",
+    "line": 90,
+    "description": "`environment: pypi` is the only hook for a hosted approval or a deployment-ref policy. Its protection rules are not in source."
+   },
+   {
+    "file": "context/research/studies/2026-10-28-the-0-1-0-roadmap-audits/07-release-ci-and-repo-hygiene.md",
+    "line": 106,
+    "description": "A pending roadmap item, not a record: trusted publishing is still to be confirmed for ClayGendron/vfs, publish.yml and environment pypi. Spec 166 criterion 12 (context/specifications/archive/166-the-release-lane-to-0-1-0/spec.md:177) has the same status, and release.md does not carry the note yet. Even when it is configured, a PyPI trusted-publisher record names the repository, the workflow file and, optionally, the environment. It does not name a git ref, so the environment's own rules decide."
+   },
+   {
+    "file": "scripts/check_release_tag.py",
+    "line": 38,
+    "description": "The check is string equality between the tag and the version. The script reads only pyproject.toml (lines 24-27, 36)."
+   },
+   {
+    "file": "context/reviews/2026-11-06-the-release-lane-to-0-1-0-code-review.md",
+    "line": 73,
+    "description": "The prior review found no lower-trust principal below a repository writer. This agrees with the candidate: the finding is reachable only if some writer lacks release authority."
+   }
+  ],
+  "blockers": [
+   "The protection rules of the GitHub environment `pypi` cannot be seen from source: required reviewers, whether admins can bypass them, and the policy for deployment branches and tags (for example, only tags matching v*, or only main).",
+   "It cannot be seen whether a ruleset limits creating, updating or deleting tags matching v* to release owners, or whether branch protection on main stops a writer from pushing straight to main. Without branch protection, binding the release to main would not be enough on its own.",
+   "The list of collaborators, teams and installed apps cannot be seen, so neither can whether any principal with write access but no release authority exists. If Clay is the only writer and no app has write access, no lower-trust principal exists and the candidate is hardening only.",
+   "It cannot be seen whether the PyPI trusted publisher for vfs-py exists and names environment `pypi`. The repository records this only as a pending item. Without the environment binding, any job in publish.yml on any ref, including one that skips the environment, could mint an upload token."
+  ],
+  "validation_plan": {
+   "local": "Optional, and it shows only the source half. In a harmless fixture under scratch, with no network, write a pyproject.toml whose [project] version is 9.9.9a1. Run `./.venv/bin/python -I scripts/check_release_tag.py v9.9.9a1 --pyproject <fixture>/pyproject.toml` under tools/sandbox-run.py and expect exit 0. The script reads no git state (check_release_tag.py:24-39), so the commit's position in the graph cannot change the result, and reading the source already establishes this. The hosted half needs the owner checks.",
+   "deployment": "Owner-observed only. Make no release, tag, dispatch or upload. (1) Settings > Environments > pypi: confirm that Required reviewers lists only release owners, that admin bypass is off, and that 'Deployment branches and tags' is restricted, for example to tags matching v*, backed by a tag ruleset. (2) Settings > Rules: confirm that a tag ruleset limits creating, updating and deleting v* tags to release owners, and that main has branch protection or a ruleset requiring review. (3) Settings > Collaborators and teams, and Settings > GitHub Apps: list every principal with write, maintain or admin access, or with release-creation permission. (4) PyPI vfs-py > Settings > Publishing: confirm that the trusted publisher names owner ClayGendron, repository vfs, workflow publish.yml and environment pypi, and that no other publisher or long-lived API token exists. Close the candidate as hardening if (3) shows no writer without release authority, or if (1) has required reviewers limited to release owners and (4) names the environment. Otherwise any such writer can reach the upload. Source defence in depth: on the release event, have the publish job check out with fetch-depth: 0 and fail unless `git merge-base --is-ancestor \"$GITHUB_SHA\" origin/main` succeeds. Add this on top of the environment deployment rule that limits deployments to v* tags, not in place of it."
+  }
+ }
+}

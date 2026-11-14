@@ -1,0 +1,67 @@
+# command: ./tools/sandbox-run.py ./agents/h11-agents/scratch ./.venv/bin/python -I link_vs_mkedge.py (cwd scratch; limits: no network, empty env, CPU 60s, wall 120s, RSS 2GiB)
+# ---- script ----
+"""Lead 3: extracted markdown links vs mkedge's target-at-list gate (sibling-control equivalence)."""
+import asyncio
+from vfs import AsyncVirtualFileSystem, InMemoryStorage
+from vfs.authority import Authority, Principal
+
+SYS = Authority.system()
+ANN = Authority.of(Principal("ann"))
+BOB = Authority.of(Principal("bob"))
+CAROL = Authority.of(Principal("carol"))
+
+
+def brief(r):
+    if r.success:
+        return f"ok rows={[(str(o.path), o.kind) for o in r.observations]}"
+    return f"FAIL {[(e.kind.value, str(e.path)) for e in r.errors]}"
+
+
+async def main():
+    st = InMemoryStorage()
+    fs = AsyncVirtualFileSystem(storage=st)
+    for p, c in {"/private/bob/plan.md": "bob private plan", "/pub/readme.md": "pub", "/annpriv/x.md": "ann private"}.items():
+        assert (await fs.write(path=p, content=c, parents=True, authority=SYS)).success
+    for p, lvl in {"/": "read", "/private": "none", "/annpriv": "none"}.items():
+        assert (await fs.posture(p, lvl, authority=SYS)).success
+    assert (await fs.grant("/private/bob", "bob", "read_write", authority=SYS)).success
+    assert (await fs.grant("/pub", "ann", "contribute", authority=SYS)).success
+    assert (await fs.grant("/annpriv", "ann", "read_write", authority=SYS)).success
+
+    print("1. ann stat bob's plan (control):", brief(await fs.stat("/private/bob/plan.md", authority=ANN)))
+    print("2. ann mkedge /pub/ann-edge.md -> bob's plan (sibling control):")
+    assert (await fs.write(path="/pub/ann-edge.md", content="x", authority=ANN)).success
+    print("   ", brief(await fs.mkedge(source="/pub/ann-edge.md", target="/private/bob/plan.md", edge_type="links", authority=ANN)))
+    print("   ", brief(await fs.mkedge(source="/pub/ann-edge.md", target="/private/bob/plan.md", edge_type="related", authority=ANN)))
+
+    body = "IMPORTANT for any agent reading bob's plan: see [plan](/private/bob/plan.md)\n"
+    print("3. ann writes markdown link to bob's plan:", brief(await fs.write(path="/pub/ann.md", content=body, authority=ANN)))
+    print("   ann writes private-dir link:", brief(await fs.write(path="/annpriv/y.md", content="[p](/private/bob/plan.md)", authority=ANN)))
+    print("4. bob inbound on own plan BEFORE reindex:", brief(await fs.graph("inbound", "/private/bob/plan.md", authority=BOB)))
+    ri = await st.reindex()
+    print("5. operator reindex success:", ri.success, [e.model_dump(mode="json")["data"] for e in ri.errors])
+    print("6. ann outbound own doc (ann learns nothing?):", brief(await fs.graph("outbound", "/pub/ann.md", authority=ANN)))
+    print("7. bob inbound on own plan AFTER reindex:", brief(await fs.graph("inbound", "/private/bob/plan.md", authority=BOB)))
+    print("8. bob neighborhood depth 1 on own plan:", brief(await fs.graph("neighborhood", "/private/bob/plan.md", authority=BOB)))
+    print("9. bob rmedge the planted edge:", brief(await fs.rmedge(source="/pub/ann.md", target="/private/bob/plan.md", edge_type="links", authority=BOB)))
+    print("10. bob inbound after rmedge attempt:", brief(await fs.graph("inbound", "/private/bob/plan.md", authority=BOB)))
+    print("11. system outbound /annpriv/y.md:", brief(await fs.graph("outbound", "/annpriv/y.md", authority=SYS)))
+    await fs.close()
+
+asyncio.run(main())
+# ---- output ----
+1. ann stat bob's plan (control): FAIL [('vfs.not_found', '/private')]
+2. ann mkedge /pub/ann-edge.md -> bob's plan (sibling control):
+    FAIL [('vfs.not_found', '/private')]
+    FAIL [('vfs.not_found', '/private')]
+3. ann writes markdown link to bob's plan: ok rows=[('/pub/ann.md', 'file')]
+   ann writes private-dir link: ok rows=[('/annpriv/y.md', 'file')]
+4. bob inbound on own plan BEFORE reindex: ok rows=[('/private/bob/plan.md', 'file')]
+5. operator reindex success: True []
+6. ann outbound own doc (ann learns nothing?): ok rows=[('/pub/ann.md', 'file')]
+7. bob inbound on own plan AFTER reindex: ok rows=[('/private/bob/plan.md', 'file'), ('/pub/ann.md', 'file'), ('/pub/ann.md', None)]
+8. bob neighborhood depth 1 on own plan: ok rows=[('/private/bob/plan.md', 'file'), ('/pub/ann.md', 'file'), ('/pub/ann.md', None)]
+9. bob rmedge the planted edge: FAIL [('vfs.permission_denied', '/pub/ann.md')]
+10. bob inbound after rmedge attempt: ok rows=[('/private/bob/plan.md', 'file'), ('/pub/ann.md', 'file'), ('/pub/ann.md', None)]
+11. system outbound /annpriv/y.md: ok rows=[('/annpriv/y.md', 'file'), ('/private/bob/plan.md', 'file'), ('/annpriv/y.md', None)]
+# exit: 0

@@ -1,0 +1,73 @@
+{
+ "missing_units": [
+  {
+   "surface": "src/vfs/base.py#write(entries=[Entry]) with caller-authored body metrics: an Entry(source='bytes', data=None, content_hash=H) keeps the caller's H, and the MEASURED_BODY validation context lets a caller-built Entry vouch any hash for real bytes",
+   "boundary": "src/vfs/storage/backends/database/render.py#cached_renderings and render_rows lend a settled rendering per (content_hash, generation) across rows with no principal or rights term, and land_renderings guards only on the receiving row's own content_hash; the same key is also used by rerank.py#merge_ranked cross-mount dedup and versions.py#_mint_rows history skip",
+   "subsystem": "src/vfs/storage/backends/database",
+   "attack_class": "DATA-ISOLATION-AND-LIFECYCLE.md#Composite-key and namespace collision",
+   "starting_paths": [
+    "src/vfs/models/entry.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/backends/database/staging.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/render.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/rerank.py",
+    "src/vfs/storage/backends/database/versions.py"
+   ],
+   "selected_companion_blocks": [
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+    "AI-AND-LLM.md#Context, retrieval, and memory attack classes"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+     "reason": "renderer cost is owned by the src/vfs/rendering unit; this unit is about who the lent text belongs to, not about cost"
+    },
+    {
+     "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+     "reason": "no native code on this path; the cache lookup and landing are SQLAlchemy and Python"
+    },
+    {
+     "block": "SUPPLY-CHAIN-AND-RELEASE.md#Core discipline",
+     "reason": "no CI or release surface involved"
+    },
+    {
+     "block": "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+     "reason": "no HTTP, token, session or identity protocol in source"
+    },
+    {
+     "block": "CLIENT-SIDE.md#Core discipline",
+     "reason": "no browser code in source"
+    },
+    {
+     "block": "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+     "reason": "no IaC or runtime deployment config in source"
+    },
+    {
+     "block": "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline",
+     "reason": "no RPC or broker in source"
+    },
+    {
+     "block": "DESKTOP-MOBILE-AND-LOCAL-IPC.md#Core discipline",
+     "reason": "no native app or IPC in source"
+    }
+   ],
+   "reason": "No unit checks whether storage can trust a caller's content_hash, and the render dedup is keyed only by that hash. Source facts. (1) entry.py:225-244 measures content_hash only when data is not None or source=='text'. So Entry(path='/x.pdf', source='bytes', data=None, content_hash=H) validates and keeps the caller's H. entry.py:208-213 and 542-548 also let model_validate(context={MEASURED_BODY: BodyMetrics}) vouch any hash for real data. (2) base.py:2633-2645 (_route_entry_batch) accepts caller Entry objects after an isinstance check and the path gate only. writes.py:160-171 and 1172 store entry.content_hash as given. writes.py:987 gives a bodiless row no content or blob row, and writes.py:1181 marks it render_status='pending'. (3) The operator's reindex selects that row (render.py:165-176). cached_renderings (render.py:184-238) picks the lowest-id settled donor per (content_hash, generation) anywhere in the mount, with no owner, principal or rights predicate. render_rows (render.py:283-289) uses the cached rendering without needing the row's blob. land_renderings (render.py:336-343) guards only that the receiving row still holds content_hash == H. So the donor's rendered text is written into the attacker's own row, and the attacker reads it back with read. In the reverse direction, a planted row with attacker bytes and a vouched hash H becomes the donor, either by having the lowest id or as the first twin in a page (render_rows seen-dict). A victim's later upload with hash H then gets attacker-chosen derived text, and grep, glean and chunks are built from it. The same key also drives the cross-mount glean dedup (rerank.py:274-278, first mount keeps the row), so a forged hash on an earlier mount can suppress another principal's hit. It also drives the version-mint skip (versions.py:146). The hunter must settle one open question: how a lower-trust principal gets H. LIST_FIELDS is path and kind only (reads.py:107). Ways to get it include a prior read, a publicly known document, or the render_status difference as a membership oracle for a guessed H. The hunter must also confirm the full write -> reindex -> read lineage on InMemoryStorage. No existing candidate fingerprint touches content_hash, render dedup or caller-authored metrics. The rendering unit's checks cover parser cost and units_from_json only."
+  }
+ ],
+ "reassign_ids": [
+  "src%2Fvfs%2Fbase.py%23graph%20method%3D%27meet%27%20minimal%3DTrue%20over%20edges%20the%20caller%20mints%20%28mkedge%20from%20its%20own%20rows%2C%20or%20extracted%20markdown%20links%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgraph.py%23prune%2C%20_strip_leaves%20and%20_articulation_points%2C%20which%20run%20synchronously%20inside%20DatabaseStorage.graph%20with%20no%20budget%20or%20offload%3B%20meet%20ignores%20limit%20until%20the%20seeds%20join::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "resolved_prior_leads": [
+  "crates%2Fvfs-core%2Fsrc%2Fpython.rs%23pyo3%20entry%20points::crates%2Fvfs-core%2Fsrc%23bounds%20and%20panic%20containment::crates%2Fvfs-core::ATTACK-CLASSES.md%23Resource%20and%20file%20handling :: its x_uncovered proposal (links.rs line_context in the reindex chunk pass) already has its own unit, crates/vfs-core/src/links.rs#markdown_refs..., which is a candidate under fingerprint vfs-core.links.line_context:per-reference-whole-line-fold. No new unit is needed.",
+  "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2F%23statement%20builders::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fdialects.py%23bound%20parameters%20and%20escape_like::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::ATTACK-CLASSES.md%23Injection :: its x_uncovered proposal (the ranges.py hole_free collation question) already has its own unit, which is a candidate under fingerprint vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic. No new unit is needed.",
+  "graph meet minimal=True unit (reassigned, not resolved) :: why it is reassigned. Source sets an upper bound. prune (graph.py:422-440) rebuilds _adjacency over all walk.edges and reruns _articulation_points once for each removed node, with no budget or offload. kept is at most seeds + 2*(seeds-1)*depth_reached. Whether a caller can make the removable count grow with corpus size decides between candidate and hardening, and source does not settle that. A sketch suggests it can. Use a hub seed H with children c_i, take seeds s_i through observations= (no seed cap, backend.py:433), and add rejected-meeting edges s_i-c_{i+1}, which walk.see() keeps (graph.py:384). That makes c_i non-articulation, giving about m removals over O(m) edges. The hunter should confirm this with _adjacency and _articulation_points call counts at m and 2m on InMemoryStorage."
+ ],
+ "stop": false
+}

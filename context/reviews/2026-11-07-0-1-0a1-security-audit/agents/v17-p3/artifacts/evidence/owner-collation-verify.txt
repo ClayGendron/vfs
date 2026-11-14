@@ -1,0 +1,20 @@
+setup write True
+setup posture True
+[BINARY] sub='alice' glob=['/hr', '/hr/q3', '/hr/q3/alice-review.txt'] ls/hr=['/hr/q3'] stat/hr/q3=True read=True write_into=False ['vfs.permission_denied']
+[BINARY] sub='ALICE' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']
+[BINARY] sub='alice ' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']
+[BINARY] sub='bob' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']
+setup write True
+setup posture True
+[NOCASE] integrity ok ['owner_id VARCHAR(255) COLLATE NOCASE,']
+[NOCASE] sub='alice' glob=['/hr', '/hr/q3', '/hr/q3/alice-review.txt'] ls/hr=['/hr/q3'] stat/hr/q3=True read=True write_into=False ['vfs.permission_denied']
+[NOCASE] sub='ALICE' glob=['/hr', '/hr/q3'] ls/hr=['/hr/q3'] stat/hr/q3=True read=False write_into=False ['vfs.permission_denied']
+[NOCASE] sub='alice ' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']
+[NOCASE] sub='bob' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']
+setup write True
+setup posture True
+[RTRIM] integrity ok ['owner_id VARCHAR(255) COLLATE RTRIM,']
+[RTRIM] sub='alice' glob=['/hr', '/hr/q3', '/hr/q3/alice-review.txt'] ls/hr=['/hr/q3'] stat/hr/q3=True read=True write_into=False ['vfs.permission_denied']
+[RTRIM] sub='ALICE' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']
+[RTRIM] sub='alice ' glob=['/hr', '/hr/q3'] ls/hr=['/hr/q3'] stat/hr/q3=True read=False write_into=False ['vfs.permission_denied']
+[RTRIM] sub='bob' glob=[] ls/hr=[] stat/hr/q3=False read=False write_into=False ['vfs.not_found']

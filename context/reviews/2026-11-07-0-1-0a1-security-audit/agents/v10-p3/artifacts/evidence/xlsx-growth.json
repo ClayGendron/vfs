@@ -1,0 +1,92 @@
+[
+ {
+  "shape": "diagonal n=500",
+  "cells": 500,
+  "file_bytes": 8204,
+  "table_entries": 251001,
+  "overlaps_calls": 0,
+  "peak_traced_bytes": 3237764,
+  "status": "ok",
+  "text_chars": 759906
+ },
+ {
+  "shape": "diagonal n=1000",
+  "cells": 1000,
+  "file_bytes": 11889,
+  "table_entries": 1002001,
+  "overlaps_calls": 0,
+  "peak_traced_bytes": 10609120,
+  "status": "failed",
+  "text_chars": 0
+ },
+ {
+  "shape": "diagonal n=2000",
+  "cells": 2000,
+  "file_bytes": 17823,
+  "table_entries": 4004001,
+  "overlaps_calls": 0,
+  "peak_traced_bytes": 34926518,
+  "status": "failed",
+  "text_chars": 0
+ },
+ {
+  "shape": "L R=2000 C=1000",
+  "cells": 2999,
+  "file_bytes": 18775,
+  "table_entries": 2003001,
+  "overlaps_calls": 0,
+  "peak_traced_bytes": 20622625,
+  "status": "failed",
+  "text_chars": 0
+ },
+ {
+  "shape": "L R=4000 C=2000",
+  "cells": 5999,
+  "file_bytes": 30928,
+  "table_entries": 8006001,
+  "overlaps_calls": 0,
+  "peak_traced_bytes": 68349677,
+  "status": "truncated",
+  "text_chars": 2096343
+ },
+ {
+  "shape": "L R=8000 C=4000",
+  "cells": 11999,
+  "file_bytes": 56978,
+  "table_entries": 32012001,
+  "overlaps_calls": 0,
+  "peak_traced_bytes": 270673235,
+  "status": "truncated",
+  "text_chars": 2088768
+ },
+ {
+  "shape": "isolated grid 20x20",
+  "cells": 400,
+  "file_bytes": 5831,
+  "table_entries": 1600,
+  "overlaps_calls": 79800,
+  "peak_traced_bytes": 361497,
+  "status": "ok",
+  "text_chars": 14066
+ },
+ {
+  "shape": "isolated grid 40x40",
+  "cells": 1600,
+  "file_bytes": 8430,
+  "table_entries": 6400,
+  "overlaps_calls": 1279200,
+  "peak_traced_bytes": 825957,
+  "status": "ok",
+  "text_chars": 56906
+ },
+ {
+  "shape": "isolated grid 80x80",
+  "cells": 6400,
+  "file_bytes": 18341,
+  "table_entries": 25600,
+  "overlaps_calls": 20476800,
+  "peak_traced_bytes": 2782687,
+  "status": "ok",
+  "text_chars": 231386
+ }
+]

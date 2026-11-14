@@ -1,0 +1,28 @@
+{
+ "cpu_count": 10,
+ "stored_body_bytes": 975000,
+ "pattern": "(\\w|\\s){60}Q",
+ "chained_same_path_x10": {
+  "success": true,
+  "hits": 0,
+  "elapsed_s": 0.67,
+  "max_loop_gap_s": 0.654
+ },
+ "chained_same_path_x20": {
+  "success": true,
+  "hits": 0,
+  "elapsed_s": 1.236,
+  "max_loop_gap_s": 1.222
+ },
+ "chained_same_path_x40": {
+  "success": true,
+  "hits": 0,
+  "elapsed_s": 2.718,
+  "max_loop_gap_s": 2.703
+ },
+ "storage_scan_tier_x1": {
+  "success": true,
+  "elapsed_s": 0.428,
+  "max_loop_gap_s": 0.013
+ }
+}

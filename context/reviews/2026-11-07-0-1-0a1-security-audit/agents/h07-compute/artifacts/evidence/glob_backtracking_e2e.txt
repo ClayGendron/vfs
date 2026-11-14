@@ -1,0 +1,22 @@
+python 3.13.11
+pattern='*?*?*?*?[Q]' k=4 stored_name_len=64 glob_seconds=0.0071 rows=0 errors=[] max_event_loop_gap_seconds=0.0042
+pattern='*?*?*?*?[Q]' k=4 stored_name_len=128 glob_seconds=0.0595 rows=0 errors=[] max_event_loop_gap_seconds=0.0564
+pattern='*?*?*?*?*?[Q]' k=5 stored_name_len=32 glob_seconds=0.0047 rows=0 errors=[] max_event_loop_gap_seconds=0.0019
+pattern='*?*?*?*?*?[Q]' k=5 stored_name_len=64 glob_seconds=0.0532 rows=0 errors=[] max_event_loop_gap_seconds=0.0498
+python 3.13.11
+pattern='*?*?[/]' regex='(?s:/[^/]*[^/][^/]*[^/]\\[/\\])\\Z' like=None
+  k=2 n=32 seconds=0.00001
+  k=2 n=64 seconds=0.00001 ratio_vs_n/2=2.5
+  k=2 n=128 seconds=0.00004 ratio_vs_n/2=3.2
+pattern='*?*?*?[/]' regex='(?s:/[^/]*[^/][^/]*[^/][^/]*[^/]\\[/\\])\\Z' like=None
+  k=3 n=32 seconds=0.00004
+  k=3 n=64 seconds=0.00024 ratio_vs_n/2=6.7
+  k=3 n=128 seconds=0.00173 ratio_vs_n/2=7.3
+pattern='*?*?*?*?[/]' regex='(?s:/[^/]*[^/][^/]*[^/][^/]*[^/][^/]*[^/]\\[/\\])\\Z' like=None
+  k=4 n=32 seconds=0.00028
+  k=4 n=64 seconds=0.00403 ratio_vs_n/2=14.4
+  k=4 n=128 seconds=0.05779 ratio_vs_n/2=14.3
+pattern='/**/a/**/a/**/a/**/[/]' regex='(?s:/(?:.+/)?a/(?:.+/)?a/(?:.+/)?a/(?:.+/)?\\[/\\])\\Z'
+  segments=16 pathlen=32 seconds=0.00004
+  segments=32 pathlen=64 seconds=0.00052 ratio_vs_n/2=12.9
+  segments=64 pathlen=128 seconds=0.00760 ratio_vs_n/2=14.7

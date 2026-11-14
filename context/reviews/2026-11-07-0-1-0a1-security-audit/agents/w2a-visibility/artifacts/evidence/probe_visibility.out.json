@@ -1,0 +1,6030 @@
+{
+ "pairs": [
+  {
+   "who": "bob",
+   "hidden": "/hr/other.md",
+   "absent": "/hr/absent.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/hr/sub",
+   "absent": "/hr/nosub",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/hr/sub/x.md",
+   "absent": "/hr/nosub/x.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/sub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/nosub",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/zz",
+   "absent": "/nz",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/zz/x.md",
+   "absent": "/nz/x.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/hr/delme.md",
+   "absent": "/hr/never.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/delme.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/never.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/delme.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/never.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/delme.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/never.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/delme.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/never.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/zz/delme.md",
+   "absent": "/nz/delme.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/.vfs/trash/hr/delme.md",
+   "absent": "/.vfs/trash/hr/never.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/.vfs/trash/zz/delme.md",
+   "absent": "/.vfs/trash/nz/delme.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/.vfs/trash/zz",
+   "absent": "/.vfs/trash/nz",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/hr/other.md/child",
+   "absent": "/hr/absent.md/child",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/other.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr/absent.md",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "bob",
+   "hidden": "/op",
+   "absent": "/np",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.wrong_kind",
+        "path": "/op",
+        "msg": "Wrong kind: directory",
+        "sev": "error",
+        "data": {
+         "kind": "directory"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    },
+    "stat": {
+     "hidden": {
+      "errs": [],
+      "obs": [
+       [
+        "/op",
+        "directory",
+        [
+         "kind",
+         "path"
+        ]
+       ]
+      ]
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    },
+    "ls": {
+     "hidden": {
+      "errs": [],
+      "obs": [
+       [
+        "/op/deep",
+        "directory",
+        [
+         "content_hash",
+         "created_at",
+         "deleted_at",
+         "kind",
+         "mime_type",
+         "path",
+         "render_status",
+         "size_bytes",
+         "source",
+         "updated_at",
+         "version"
+        ]
+       ]
+      ]
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    },
+    "tree": {
+     "hidden": {
+      "errs": [],
+      "obs": [
+       [
+        "/op/deep",
+        "directory",
+        [
+         "content_hash",
+         "created_at",
+         "deleted_at",
+         "kind",
+         "mime_type",
+         "path",
+         "render_status",
+         "size_bytes",
+         "source",
+         "updated_at",
+         "version"
+        ]
+       ],
+       [
+        "/op/deep/y.md",
+        "file",
+        [
+         "content_hash",
+         "created_at",
+         "deleted_at",
+         "kind",
+         "mime_type",
+         "path",
+         "render_status",
+         "size_bytes",
+         "source",
+         "updated_at",
+         "version"
+        ]
+       ]
+      ]
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/hr/other.md",
+   "absent": "/hr/absent.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/hr/sub",
+   "absent": "/hr/nosub",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/hr/sub/x.md",
+   "absent": "/hr/nosub/x.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/sub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/nosub/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/zz",
+   "absent": "/nz",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/zz/x.md",
+   "absent": "/nz/x.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/x.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/hr/delme.md",
+   "absent": "/hr/never.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/zz/delme.md",
+   "absent": "/nz/delme.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/.vfs/trash/hr/delme.md",
+   "absent": "/.vfs/trash/hr/never.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/never.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/.vfs/trash/zz/delme.md",
+   "absent": "/.vfs/trash/nz/delme.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz/delme.md",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/.vfs/trash/zz",
+   "absent": "/.vfs/trash/nz",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/zz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/nz",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/hr/other.md/child",
+   "absent": "/hr/absent.md/child",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/other.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/hr/absent.md/child",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "anon",
+   "hidden": "/op",
+   "absent": "/np",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/op",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/np",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/op",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/np",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/op",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/np",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/op",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.unauthenticated",
+        "path": "/np",
+        "msg": "Unauthenticated",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/hr/other.md",
+   "absent": "/hr/absent.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/hr/sub",
+   "absent": "/hr/nosub",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/hr/sub/x.md",
+   "absent": "/hr/nosub/x.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/sub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/nosub/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/zz",
+   "absent": "/nz",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/zz/x.md",
+   "absent": "/nz/x.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/x.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/hr/delme.md",
+   "absent": "/hr/never.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/zz/delme.md",
+   "absent": "/nz/delme.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/.vfs/trash/hr/delme.md",
+   "absent": "/.vfs/trash/hr/never.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/hr/never.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/.vfs/trash/zz/delme.md",
+   "absent": "/.vfs/trash/nz/delme.md",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/zz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/.vfs/trash/nz/delme.md"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/.vfs/trash/zz",
+   "absent": "/.vfs/trash/nz",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/zz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/.vfs/trash/nz",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/hr/other.md/child",
+   "absent": "/hr/absent.md/child",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "stat": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "ls": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    },
+    "tree": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/other.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/hr",
+        "msg": "Not found",
+        "sev": "error",
+        "data": {
+         "vfs.target": "/hr/absent.md/child"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": true
+    }
+   }
+  },
+  {
+   "who": "pair",
+   "hidden": "/op",
+   "absent": "/np",
+   "verbs": {
+    "read": {
+     "hidden": {
+      "errs": [
+       {
+        "kind": "vfs.wrong_kind",
+        "path": "/op",
+        "msg": "Wrong kind: directory",
+        "sev": "error",
+        "data": {
+         "kind": "directory"
+        }
+       }
+      ],
+      "obs": []
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    },
+    "stat": {
+     "hidden": {
+      "errs": [],
+      "obs": [
+       [
+        "/op",
+        "directory",
+        [
+         "kind",
+         "path"
+        ]
+       ]
+      ]
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    },
+    "ls": {
+     "hidden": {
+      "errs": [],
+      "obs": [
+       [
+        "/op/deep",
+        "directory",
+        [
+         "content_hash",
+         "created_at",
+         "deleted_at",
+         "kind",
+         "mime_type",
+         "path",
+         "render_status",
+         "size_bytes",
+         "source",
+         "updated_at",
+         "version"
+        ]
+       ]
+      ]
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    },
+    "tree": {
+     "hidden": {
+      "errs": [],
+      "obs": [
+       [
+        "/op/deep",
+        "directory",
+        [
+         "content_hash",
+         "created_at",
+         "deleted_at",
+         "kind",
+         "mime_type",
+         "path",
+         "render_status",
+         "size_bytes",
+         "source",
+         "updated_at",
+         "version"
+        ]
+       ],
+       [
+        "/op/deep/y.md",
+        "file",
+        [
+         "content_hash",
+         "created_at",
+         "deleted_at",
+         "kind",
+         "mime_type",
+         "path",
+         "render_status",
+         "size_bytes",
+         "source",
+         "updated_at",
+         "version"
+        ]
+       ]
+      ]
+     },
+     "absent": {
+      "errs": [
+       {
+        "kind": "vfs.not_found",
+        "path": "/np",
+        "msg": "Not found",
+        "sev": "error",
+        "data": null
+       }
+      ],
+      "obs": []
+     },
+     "same_shape": false
+    }
+   }
+  }
+ ],
+ "grants": [
+  {
+   "who": "bob",
+   "path": "/hr/other.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/other.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/hr/absent.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/absent.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/hr/bob.txt",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/bob.txt",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/hr",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/lst/f.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/lst/f.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/lst",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/lst",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/zz/x.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz/x.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/nz/x.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz/x.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "bob",
+   "path": "/pub",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "bob",
+     "path_prefix": "/pub",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.164321"
+    }
+   ]
+  },
+  {
+   "who": "bob",
+   "path": "/pub/x/y",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "bob",
+     "path_prefix": "/pub",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.164321"
+    }
+   ]
+  },
+  {
+   "who": "bob",
+   "path": "/op/deep/y.md",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "*",
+     "path_prefix": "/op/deep",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.153130"
+    }
+   ]
+  },
+  {
+   "who": "anon",
+   "path": "/hr/other.md",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/other.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/hr/absent.md",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/absent.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/hr/bob.txt",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/bob.txt",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/hr",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/lst/f.md",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/lst/f.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/lst",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/lst",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/zz/x.md",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/zz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/nz/x.md",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/nz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/pub",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/pub",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/pub/x/y",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/pub/x/y",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "anon",
+   "path": "/op/deep/y.md",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "*",
+     "path_prefix": "/op/deep",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.153130"
+    }
+   ]
+  },
+  {
+   "who": "pair",
+   "path": "/hr/other.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/other.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/hr/absent.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/absent.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/hr/bob.txt",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/bob.txt",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/hr",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/lst/f.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/lst/f.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/lst",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/lst",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/zz/x.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz/x.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/nz/x.md",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz/x.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "grants": []
+  },
+  {
+   "who": "pair",
+   "path": "/pub",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "ann",
+     "path_prefix": "/pub",
+     "level": "read_write",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.166934"
+    },
+    {
+     "principal_id": "bob",
+     "path_prefix": "/pub",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.164321"
+    }
+   ]
+  },
+  {
+   "who": "pair",
+   "path": "/pub/x/y",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "ann",
+     "path_prefix": "/pub",
+     "level": "read_write",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.166934"
+    },
+    {
+     "principal_id": "bob",
+     "path_prefix": "/pub",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.164321"
+    }
+   ]
+  },
+  {
+   "who": "pair",
+   "path": "/op/deep/y.md",
+   "errs": [],
+   "grants": [
+    {
+     "principal_id": "*",
+     "path_prefix": "/",
+     "level": "none",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.131091"
+    },
+    {
+     "principal_id": "*",
+     "path_prefix": "/op/deep",
+     "level": "read",
+     "granted_by": "system",
+     "granted_at": "2026-11-07 13:25:38.153130"
+    }
+   ]
+  }
+ ],
+ "glob": [
+  {
+   "who": "bob",
+   "pattern": "/hr/**",
+   "errs": [],
+   "obs": [
+    [
+     "/hr/bob.txt",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "bob",
+   "pattern": "/zz/**",
+   "errs": [],
+   "obs": []
+  },
+  {
+   "who": "bob",
+   "pattern": "/nz/**",
+   "errs": [],
+   "obs": []
+  },
+  {
+   "who": "bob",
+   "pattern": "/**",
+   "errs": [],
+   "obs": [
+    [
+     "/hr",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/hr/bob.txt",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/lst",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/lst/f.md",
+     "file",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/op",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/op/deep",
+     "directory",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/op/deep/y.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/pub",
+     "directory",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "bob",
+   "pattern": "/.vfs/trash/**",
+   "errs": [],
+   "obs": [
+    [
+     "/pub/gone.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "anon",
+   "pattern": "/hr/**",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "anon",
+   "pattern": "/zz/**",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/zz",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "anon",
+   "pattern": "/nz/**",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/nz",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "anon",
+   "pattern": "/**",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "anon",
+   "pattern": "/.vfs/trash/**",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "pair",
+   "pattern": "/hr/**",
+   "errs": [],
+   "obs": []
+  },
+  {
+   "who": "pair",
+   "pattern": "/zz/**",
+   "errs": [],
+   "obs": []
+  },
+  {
+   "who": "pair",
+   "pattern": "/nz/**",
+   "errs": [],
+   "obs": []
+  },
+  {
+   "who": "pair",
+   "pattern": "/**",
+   "errs": [],
+   "obs": [
+    [
+     "/op",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/op/deep",
+     "directory",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/op/deep/y.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/pub",
+     "directory",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ],
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "pair",
+   "pattern": "/.vfs/trash/**",
+   "errs": [],
+   "obs": [
+    [
+     "/pub/gone.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  }
+ ],
+ "observations": [
+  {
+   "who": "bob",
+   "verb": "read",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/other.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/absent.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/zz/x.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/nz/x.md"
+     }
+    }
+   ],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content",
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "bob",
+   "verb": "stat",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/other.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/absent.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/zz/x.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/nz/x.md"
+     }
+    }
+   ],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "bob",
+   "verb": "ls",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/other.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr/absent.md",
+     "msg": "Not found",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/zz/x.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/nz/x.md"
+     }
+    }
+   ],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "anon",
+   "verb": "read",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/other.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/absent.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/pub/readme.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/zz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/nz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "anon",
+   "verb": "stat",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/other.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/absent.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/pub/readme.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/zz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/nz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "anon",
+   "verb": "ls",
+   "errs": [
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/other.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/hr/absent.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/pub/readme.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/zz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    },
+    {
+     "kind": "vfs.unauthenticated",
+     "path": "/nz/x.md",
+     "msg": "Unauthenticated",
+     "sev": "error",
+     "data": null
+    }
+   ],
+   "obs": []
+  },
+  {
+   "who": "pair",
+   "verb": "read",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/hr/other.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/hr/absent.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/zz/x.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/nz/x.md"
+     }
+    }
+   ],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content",
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "pair",
+   "verb": "stat",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/hr/other.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/hr/absent.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/zz/x.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/nz/x.md"
+     }
+    }
+   ],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "who": "pair",
+   "verb": "ls",
+   "errs": [
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/hr/other.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/hr",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/hr/absent.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/zz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/zz/x.md"
+     }
+    },
+    {
+     "kind": "vfs.not_found",
+     "path": "/nz",
+     "msg": "Not found",
+     "sev": "error",
+     "data": {
+      "vfs.target": "/nz/x.md"
+     }
+    }
+   ],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  }
+ ],
+ "controls": [
+  {
+   "ls": "/",
+   "errs": [],
+   "obs": [
+    [
+     "/hr",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/lst",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/op",
+     "directory",
+     [
+      "kind",
+      "path"
+     ]
+    ],
+    [
+     "/pub",
+     "directory",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "ls": "/hr",
+   "errs": [],
+   "obs": [
+    [
+     "/hr/bob.txt",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "ls": "/pub",
+   "errs": [],
+   "obs": [
+    [
+     "/pub/readme.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  },
+  {
+   "ls": "/lst",
+   "errs": [],
+   "obs": [
+    [
+     "/lst/f.md",
+     "file",
+     [
+      "kind",
+      "path"
+     ]
+    ]
+   ]
+  },
+  {
+   "ls": "/.vfs/trash",
+   "errs": [],
+   "obs": [
+    [
+     "/pub/gone.md",
+     "file",
+     [
+      "content_hash",
+      "created_at",
+      "deleted_at",
+      "kind",
+      "mime_type",
+      "path",
+      "render_status",
+      "size_bytes",
+      "source",
+      "updated_at",
+      "version"
+     ]
+    ]
+   ]
+  }
+ ],
+ "shape_diffs": [
+  [
+   "bob",
+   "/op",
+   "read"
+  ],
+  [
+   "bob",
+   "/op",
+   "stat"
+  ],
+  [
+   "bob",
+   "/op",
+   "ls"
+  ],
+  [
+   "bob",
+   "/op",
+   "tree"
+  ],
+  [
+   "pair",
+   "/op",
+   "read"
+  ],
+  [
+   "pair",
+   "/op",
+   "stat"
+  ],
+  [
+   "pair",
+   "/op",
+   "ls"
+  ],
+  [
+   "pair",
+   "/op",
+   "tree"
+  ]
+ ]
+}

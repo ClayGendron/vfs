@@ -1,0 +1,5 @@
+{
+ "w6a-embed": [
+  "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23reindex%20embed%20step%20loop%20%28keyset%20pages%20from%20last%3D0%2C%20break%20on%20outcome.failure%29%20over%20chunk%20rows%20that%20any%20writer%27s%20body%20produces::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fembed.py%23token_batched%20and%20truncated_for%20metered%20by%20estimate_tokens%20%28ceil%28len%2F4%29%2C%20provider.py%3A94-96%29%20against%20the%20shipped%20OpenAI%20hard%20caps%20%28openai.py%20MAX_BATCH_TOKENS%3D300000%2C%20MAX_INPUT_TOKENS%3D8192%29%2C%20with%20no%20per-batch%20split%2C%20skip%20or%20quarantine%20on%20a%20deterministic%20provider%20refusal::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Failure%20and%20recovery%20attack%20classes"
+ ]
+}

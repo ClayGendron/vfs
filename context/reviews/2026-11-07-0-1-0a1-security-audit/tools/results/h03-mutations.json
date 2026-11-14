@@ -1,0 +1,337 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23delete%20restore%20sweep%20move%20copy::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Ftrash.py%23subtree%20checks::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Chained%20vulnerabilities%20and%20trust%20boundaries",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/base.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/trash.py",
+    "src/vfs/storage/backends/database/topology.py",
+    "src/vfs/storage/backends/database/serialized.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/labels.py",
+    "src/vfs/storage/backends/database/versions.py",
+    "src/vfs/models/version.py",
+    "src/vfs/storage/backends/database/dialects.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/trash.py",
+      "src/vfs/storage/backends/database/labels.py"
+     ],
+     "invariant": "restore re-authorizes the tombstoned root under current rights and labels, and a directory restore needs read_write on every row beneath it",
+     "method": "source",
+     "result": "The restore permit (backend.py:798-828) checks list visibility, then read_write on the root at its own path, owner and stored label. For a directory it also runs subtrees(read_write) over every live and tombstoned row beneath. Relabels also rewrite tombstoned rows (labels.py:35), so a stored label always matches the current posture. The revived set (rows whose trash_root_id is the root) always lies inside the root's subtree, because tombstoned sources cannot be moved (topology.py:160-163). Restore and delete both serialize on the lock row (trash.py:299). No stale-rights restore path was found.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/trash.py",
+      "src/vfs/storage/backends/database/versions.py",
+      "src/vfs/models/version.py",
+      "src/vfs/base.py"
+     ],
+     "invariant": "sweep at the trash head needs whole-mount read_write; the purge arm needs read_write on the target and its whole subtree; history left after delete or sweep cannot be read",
+     "method": "source",
+     "result": "Sweep at TRASH_ROOT runs subtrees([ROOT], read_write) (backend.py:857-859). Any other address runs targets(modify) plus subtrees(read_write) (backend.py:860-862). This matches the documented developer-plane contract, under which the purge of live rows is intended. The purge deletes the content, blob, version, version_subject, chunk, segment and edge rows for each id (trash.py:567-591). vfs_versions has no reader anywhere in src (only the mint at versions.py:151-153 and the purge at trash.py:581), and base.py exposes no history verb, so retained versions of tombstoned rows are not disclosed through any verb.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/topology.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "move/copy never replace an occupant; moved and copied rows take the destination's posture label; a copy is owned by the copier",
+     "method": "source",
+     "result": "Any occupied destination, tombstoned or live, is refused with exists (topology.py:173-177). Move stamps label_of(destination postures) on the root and all descendants (topology.py:315,370-377). Copy stamps owner_for(authority) and the destination label (topology.py:452-453) and copies only live rows. Copying readable data to a place where others can read it is ordinary read-then-write capability and is intended. When the subtree is judged sequentially, these paths are sound.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/topology.py",
+      "src/vfs/storage/backends/database/trash.py",
+      "src/vfs/storage/backends/database/serialized.py",
+      "src/vfs/storage/backends/database/dialects.py"
+     ],
+     "invariant": "the rows a topology verb mutates or duplicates are exactly the rows its subtree gate authorized",
+     "method": "local",
+     "result": "Sequential controls work: alice (owner floor only) is denied when copying, sweeping or deleting her directory once bob's file is inside it. With a deterministic schedule that inserts bob's legitimate write on the same session after WriteGate.subtrees passes, each of the three verbs succeeds and acts on bob's row. The copy duplicated bob's unreadable file into /mine/c, owned by alice, and alice then read 'BOB SECRET'. The sweep destroyed bob's file permanently, and the delete tombstoned it. The sandbox is SQLite only, and SQLite's BEGIN IMMEDIATE serializes all writers, so a real concurrent commit cannot happen here.",
+     "artifact": "agents/h03-mutations/artifacts/evidence/topology-subtree-race.txt"
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs/storage/database/topology-subtree-authorized-before-collection"
+   ],
+   "unresolved": []
+  },
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23write%20edit%20mkdir%20mkedge::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23WriteGate::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/grants.py",
+    "src/vfs/ops.py",
+    "src/vfs/storage/backends/database/labels.py",
+    "src/vfs/authority.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/staging.py",
+    "src/vfs/storage/backends/database/topology.py",
+    "src/vfs/storage/backends/database/edges.py",
+    "src/vfs/storage/backends/database/links.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/params.py",
+    "src/vfs/base.py",
+    "src/vfs/storage/backends/database/dialects.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/grants.py",
+      "src/vfs/ops.py",
+      "src/vfs/storage/backends/database/labels.py"
+     ],
+     "invariant": "WriteGate._decide never lets a creation-rung (add) caller land on an occupied row it cannot modify; a hidden target reads as absent; a write onto a tombstone is judged as a restore",
+     "method": "source",
+     "result": "A creation passes when Rights.reaches holds: the add-level spans cover the path, or the posture label is at least add (grants.py:477-479). Add spans are a subset of list spans, and a stored label equals the current posture label: relabels rewrite tombstones too, and in-flight relabels compile as covers or holes (labels.py:35, rights.py:372-375). So any occupant at a reachable path is visible, and the gate judges it at the primary rung (contribute/read_write) with the owner floor (rights.py:873-875). A tombstone the caller can list is judged at the restore rung (rights.py:876-880). A road directory admits only list legs (rights.py:870-872), and a creation under a road parent is denied (rights.py:884). Any refusal fails the whole batch (backend.py:700). The sequential gate is sound.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/authority.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/staging.py",
+      "src/vfs/storage/backends/database/topology.py"
+     ],
+     "invariant": "only the system actor may stamp a declared owner_id",
+     "method": "source",
+     "result": "owner_for returns the declared owner only when authority.is_system, and otherwise the single subject or None (authority.py:216-227). It is applied at insert (writes.py:1205) and at copy (topology.py:452). An edit stages the row's existing owner (writes.py:259-268). Clobber columns exclude owner_id (writes.py:100-121).",
+     "artifact": null
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/edges.py",
+      "src/vfs/storage/backends/database/links.py",
+      "src/vfs/params.py",
+      "src/vfs/base.py"
+     ],
+     "invariant": "mkedge/rmedge need contribute on the source and list on the target; a caller-chosen provenance cannot reach a trust decision",
+     "method": "source",
+     "result": "mkedge gates the source in modify mode and the target in read mode at traverse=list (backend.py:937-938). rmedge gates the source and folds unnamed targets into the absent warning (backend.py:966-970, edges.py:212-214). The provenance choices are user/agent/system; 'extracted' is refused (params.py:214-221). Provenance is read only by links.py:137, where extracted rows are deleted by source, so an authored provenance never feeds authorization.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/edges.py",
+      "src/vfs/storage/backends/database/topology.py"
+     ],
+     "invariant": "sequential sad paths: owner_id spoofing, mixed batch, edit/overwrite of another's row, hidden ancestor, mkedge to a hidden target, write-revive/restore/sweep of another's tombstone",
+     "method": "local",
+     "result": "All were refused as expected. owner_id='bob' from alice was stamped 'alice'. A mixed batch failed whole and created nothing. Overwrite and edit of bob's file were permission_denied. A hidden /secret ancestor answered not_found. An mkedge to a hidden target answered not_found. A write-revive, restore or sweep of bob's tombstone by alice was permission_denied, and bob's own restore succeeded.",
+     "artifact": "agents/h03-mutations/artifacts/evidence/gate-sad-paths.txt"
+    },
+    {
+     "agent_id": "h03-mutations",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/dialects.py"
+     ],
+     "invariant": "insert arbitration never applies a creation-rung caller's body to a rival's row the gate never judged",
+     "method": "local",
+     "result": "alice holds only add on /drop. Sequentially, her overwrite of bob's /drop/report.txt is permission_denied. When bob's create of the same path is injected after alice's gate (same session, before _apply), alice's write succeeds, and the stored body of bob's row becomes 'ALICE'. This happened both under the SQLite upsert path and with the profile forced to arbitration=catch_retry, which uses the absorb path that MSSQL, Oracle and the generic floor take.",
+     "artifact": "agents/h03-mutations/artifacts/evidence/write-arbitration-clobber.txt"
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs/storage/database/write-arbitration-absorb-without-reauthorization"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs/storage/database/topology-subtree-authorized-before-collection",
+   "title": "copy, move, delete and sweep authorize a subtree once, then act on rows collected later, including a concurrent rival's rows",
+   "description": "The topology and trash verbs judge the caller's rung over the source subtree once, inside the gate (WriteGate.subtrees). Later statements re-collect the rows they act on, live: copy and move fetch the subtree, delete stamps every live descendant by LIKE, and the sweep purge loops until its scope reads empty. The serialization point blocks only other serialized verbs; ordinary writes never wait on it. A row that another principal writes into the subtree between the gate and the collection is therefore copied, moved, tombstoned or permanently purged, although the caller holds no rung on it. Example: alice holds rights over her directory only through the owner floor, and bob holds add there. If bob's write lands in the window, alice's copy duplicates bob's file (which she cannot read) into her own space, owned by her, and she can then read it. Alice's sweep in the same window destroys bob's file for good. Run sequentially, all of these operations are permission_denied. A likely fix: inside the mutation, re-check each collected row with resolution.at(rung).admits(path, owner_id, everyone_level) and redrive or refuse on a miss. Alternatively, make child creations take a shared lock on the serialization row.",
+   "claimed_root_cause": "The authorization decision (WriteGate.subtrees, rights.py:730-781) runs over a point-in-time read. The mutation scope is re-collected afterwards by path pattern (topology.py:186 _fetch_subtree, topology.py:397 _descendant_rewrites, trash.py:483 _tombstone_descendants, trash.py:567 the _purge loop). Writes do not serialize with these verbs (serialized.py:115-118), and the server engines' topology isolation is READ COMMITTED (dialects.py:437,503). Nothing re-judges rows that arrived after the gate.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1692,
+     "scope": "DatabaseStorage._execute_transfer.gate",
+     "description": "A copy or move source is authorized by subtrees(sources, passing) at read or read_write. Delete (backend.py:763) and sweep (backend.py:862) make the same call."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 763,
+     "scope": "WriteGate._refused_beneath",
+     "description": "Pages through the rows that exist beneath the root at that moment and checks each with rights.admits. A row created afterwards is never seen."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/serialized.py",
+     "line": 117,
+     "scope": "serialize",
+     "description": "The lock row is read only by serialized verbs, so ordinary writes and creations commit concurrently with copy, move, delete and sweep on every server engine."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/topology.py",
+     "line": 186,
+     "scope": "transfer_rows",
+     "description": "After the gate, the subtree is re-read live by subtree_filter. Under READ COMMITTED it includes a rival's newly committed rows."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/trash.py",
+     "line": 567,
+     "scope": "_purge",
+     "description": "The sweep purge arm repeats its collection until the scope is empty, specifically to catch late children, and hard-deletes them without any authorization check."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/topology.py",
+     "line": 452,
+     "scope": "_execute_copy",
+     "description": "Every collected row, including the rival's, is minted at the destination with owner_id set to the copier and the destination label, and its body is copied (topology.py:479-515). The copier can then read it."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/storage/backends/database/trash.py",
+     "line": 483,
+     "description": "_tombstone_descendants stamps every live row under the claimed directory, and its docstring states that a child a rival landed after the snapshot rides with its parent."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/trash.py",
+     "line": 381,
+     "description": "The sweep purge arm calls _purge with subtree_filter and no proof predicate."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/topology.py",
+     "line": 397,
+     "scope_note": null,
+     "description": "A move rewrites descendants collected live after the root claim, so a late arrival is relocated to the destination with the destination's label."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/dialects.py",
+     "line": 437,
+     "description": "PostgreSQL topology_isolation is READ COMMITTED (MariaDB matches at line 503), so each statement sees rows committed after the gate."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 754,
+     "description": "subtrees skips the read only when the caller's spans cover the subtree whole. The gap is reachable exactly where rights are partial: an owner floor, or a deeper posture narrowing a region that is still empty."
+    }
+   ],
+   "blockers": [
+    "The decisive interleaving needs a real concurrent commit on a server engine (PostgreSQL, MSSQL, MariaDB or Oracle). Real engines and Docker are prohibited in this sandbox. SQLite's BEGIN IMMEDIATE serializes all writers, so the race cannot happen locally.",
+    "The local evidence injects the rival's write on the victim's own session after WriteGate.subtrees. It simulates READ COMMITTED visibility; it is not an observed commit from a second connection.",
+    "The exact window per verb on each engine is unobserved: copy (gate to _fetch_subtree), move (gate to point_row, after which the root version guard applies), delete (gate to fetch_snapshot, after which the root version guard applies), and sweep (gate to the last purge collect)."
+   ],
+   "validation_plan": {
+    "local": "Add an engine-leg test to tests/storage/database/test_races.py, run through the db_test skill against the postgres, mssql, mariadb and oracle legs. Posture '/' is none. Alice writes /team/alice/a.txt while holding add on /team; that grant is then revoked. Bob is granted add on /team/alice, and alice add on /mine. Install a self-clearing handler on 'transfer:post-snapshot' that commits bob's write of /team/alice/s.txt on its own session, then run alice's copy of /team/alice to /mine/c. Assert the copy is refused, or that /mine/c/s.txt does not exist. Repeat for sweep on 'purge:post-collect' and assert bob's row survives. For delete, add a seam between the gate and fetch_snapshot."
+   }
+  },
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs/storage/database/write-arbitration-absorb-without-reauthorization",
+   "title": "A write that the gate judged as a fresh create (add rung) can overwrite a rival's concurrently created file through insert arbitration",
+   "description": "write gates each target in upsert mode. A path absent at the gate is judged only at the create rung (add), which per ops.py lets a caller alter only its own rows. Occupied rows need contribute. If another principal creates the same path between the gate and alice's insert, the insert conflicts. On catch_retry engines (MSSQL, Oracle and the generic floor, all at the default READ COMMITTED), the occupant probe sees the rival's row and staged.absorb switches the create into a clobbering update of the rival's row. The update is guarded only by path and liveness, so an add-only caller replaces another owner's body. Sequentially, the same overwrite is permission_denied. The owner_id stays the rival's, and the replaced body goes to vfs_versions, which no verb reads. Under PostgreSQL's REPEATABLE READ pin the ON CONFLICT update should raise a serialization failure and redrive, and MariaDB's snapshot-blinded probe raises StaleSnapshot. Those engines are likely not affected, but this is unverified. A likely fix: when arbitration resolves to absorb or clobber for a non-whole authority, raise StaleSnapshot so that the redriven gate judges the occupant at contribute; or re-check the occupant's owner_id and everyone_level against the contribute rights before absorbing.",
+   "claimed_root_cause": "WriteGate._decide authorizes an absent target at the create rung (rights.py:881-886). Insert arbitration in writes.py (_resolve_rows absorb at writes.py:628-631, and the upsert on_conflict_do_update at writes.py:489) then adopts a rival's row as the write target without re-applying the primary-rung check that an occupied target requires.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 700,
+     "scope": "DatabaseStorage.write.run",
+     "description": "gate.targets(..., 'upsert') runs on the committed state at that moment, and the target path is absent."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 884,
+     "scope": "WriteGate._decide",
+     "description": "An absent target passes when minting.reaches holds at the create rung (add). Contribute is never asked."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 444,
+     "scope": "_insert_creates",
+     "description": "catch_retry engines insert under a savepoint; the rival's committed row raises an IntegrityError, and the chunk is redriven row by row."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 631,
+     "scope": "_resolve_rows",
+     "description": "With overwrite (the default), a non-directory occupant at the same path is absorbed: the staged create becomes an update of the rival's entry_id."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 690,
+     "scope": "_update_materials",
+     "description": "The absorb arm updates the rival's row without a version guard, and _replace_bodies writes the caller's body into it. mint_versions (writes.py:404) records the rival's replaced body."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/ops.py",
+     "line": 150,
+     "description": "write needs contribute on an occupied target and add for a fresh name; the add rung alters only one's own rows (ops.py:117-121)."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/dialects.py",
+     "line": 468,
+     "description": "MSSQL is catch_retry with no op_isolation pin, so the server default READ COMMITTED applies. Oracle (line 533) and the GENERIC floor (line 557) are the same."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/dialects.py",
+     "line": 436,
+     "description": "PostgreSQL pins op_isolation to REPEATABLE READ, which should turn a concurrent ON CONFLICT update into a retryable serialization failure (unverified)."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 100,
+     "description": "The clobber columns replace the material state and clear the tombstone, but keep the rival's owner_id."
+    }
+   ],
+   "blockers": [
+    "The decisive race needs a second connection committing on MSSQL or Oracle at their default isolation (and a check of whether RCSI changes the probe's view). Real engines are prohibited in this sandbox, and SQLite serializes writers with BEGIN IMMEDIATE.",
+    "The local evidence forces arbitration=catch_retry on SQLite and injects the rival write on the same session before _apply. It shows the code path; it does not show engine behavior.",
+    "Whether PostgreSQL REPEATABLE READ and MariaDB actually redrive, rather than clobber, is unobserved."
+   ],
+   "validation_plan": {
+    "local": "Add a race test to tests/storage/database/test_races.py and run it with the db_test skill on the mssql, oracle, postgres and mariadb legs. Posture '/' is none, and alice and bob each hold add on /drop. Install a self-clearing handler on 'write:before-apply' that commits bob's write of /drop/report.txt ('bob') on its own session, then run alice's write of /drop/report.txt ('ALICE'). Assert alice is refused (permission_denied after the redrive) and that a system read still returns 'bob'."
+   }
+  }
+ ],
+ "hardening": [
+  "mkedge stamps edge provenance from a caller-chosen argument that defaults to 'system' for any non-system authority (base.py:1168, backend.py:928). Nothing authorizes on it today (only links.py:137 reads it, and only for 'extracted', which params.py refuses). The edge's author class is still unauthenticated: derive it from authority.provenance or the actor kind rather than accepting 'system' from user and agent callers.",
+  "The existing concurrency pins in tests/storage/database/test_races.py check consistency (no torn rows) but not authorization. No race test uses two principals with different rungs, so neither TOCTOU above would be caught. Add rival-principal variants of the write:before-apply, transfer:post-snapshot and purge:post-collect seams.",
+  "Restoring a directory needs read_write on every row beneath it, including other principals' rows that were tombstoned separately (backend.py:822-824, rights.py:752-760). An owner who deleted their own directory can then be unable to restore it. This is an availability nuisance, not a disclosure."
+ ],
+ "uncovered": []
+}

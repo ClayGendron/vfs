@@ -1,0 +1,21 @@
+== md_scale
+N=  2000 one-line   20000 B refs=  2000     126.8 ms (x2 ratio -) | N lines refs=  2000    24.8 ms
+N=  4000 one-line   40000 B refs=  4000     442.0 ms (x2 ratio 3.48x) | N lines refs=  4000    47.9 ms
+N=  8000 one-line   80000 B refs=  8000    1640.4 ms (x2 ratio 3.71x) | N lines refs=  8000   118.2 ms
+N= 16000 one-line  160000 B refs= 16000    6478.3 ms (x2 ratio 3.95x) | N lines refs= 16000   206.8 ms
+exit=0
+
+== harness: md_scale.py
+"""Doubling probe of markdown_refs on N links in one line vs N links on N lines (research timing, not a test)."""
+import time
+from vfs import _native as n
+def t(body):
+    s = time.perf_counter(); refs = n.markdown_refs([body])[0]; return time.perf_counter() - s, len(refs)
+prev = None
+for N in (2000, 4000, 8000, 16000):
+    one = (b"[a](b.md) " * N)
+    many = (b"[a](b.md)\n" * N)
+    t1, r1 = t(one); t2, r2 = t(many)
+    ratio = f"{t1/prev:.2f}x" if prev else "-"
+    print(f"N={N:6d} one-line {len(one):7d} B refs={r1:6d} {t1*1e3:9.1f} ms (x2 ratio {ratio}) | N lines refs={r2:6d} {t2*1e3:7.1f} ms")
+    prev = t1

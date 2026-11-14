@@ -1,0 +1,150 @@
+=== OUTPUT ===
+[ddl mariadb] path VARBINARY(1024) NOT NULL,
+[ddl mariadb] owner_id VARCHAR(255),
+[ddl mariadb grants] principal_id VARCHAR(255) NOT NULL,
+[ddl mysql] path VARBINARY(1024) NOT NULL,
+[ddl mysql] owner_id VARCHAR(255),
+[ddl mysql grants] principal_id VARCHAR(255) NOT NULL,
+[ddl postgresql] path VARCHAR(1024) COLLATE "C" NOT NULL,
+[ddl postgresql] owner_id VARCHAR(255),
+[ddl postgresql grants] principal_id VARCHAR(255) NOT NULL,
+[ddl mssql] path VARCHAR(1024) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
+[ddl mssql] owner_id VARCHAR(255) COLLATE Latin1_General_100_BIN2_UTF8 NULL,
+[ddl mssql grants] principal_id VARCHAR(255) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
+[ddl oracle] path VARCHAR2(1024 CHAR) NOT NULL,
+[ddl oracle] owner_id VARCHAR2(255 CHAR),
+[ddl oracle grants] principal_id VARCHAR2(255 CHAR) NOT NULL,
+[setup] write success True []
+[setup] posture none success True []
+[binary-collation] glob as alice: ['/private', '/private/alice-notes.txt'] errors: []
+[binary-collation] read as alice: success=True content: ['alice secret payroll 42'] errors: []
+[binary-collation] grep as alice: [('/private/alice-notes.txt', [None])] errors: []
+[binary-collation] glob as ALICE: [] errors: []
+[binary-collation] read as ALICE: success=False content: [] errors: ['vfs.not_found']
+[binary-collation] grep as ALICE: [] errors: []
+[simulate] entries.owner_id now: ['owner_id VARCHAR(255) COLLATE NOCASE,']
+[simulate] integrity: ok
+[case-insensitive-owner_id] glob as alice: ['/private', '/private/alice-notes.txt'] errors: []
+[case-insensitive-owner_id] read as alice: success=True content: ['alice secret payroll 42'] errors: []
+[case-insensitive-owner_id] grep as alice: [('/private/alice-notes.txt', [None])] errors: []
+[case-insensitive-owner_id] glob as ALICE: ['/private'] errors: []
+[case-insensitive-owner_id] read as ALICE: success=False content: [] errors: ['vfs.not_found']
+[case-insensitive-owner_id] grep as ALICE: [] errors: []
+--- follow-up (collation_probe2.py) on the simulated case-insensitive DB ---
+ls / as alice: ['/private'] []
+ls /private as alice: ['/private/alice-notes.txt'] []
+stat /private as alice: success=True []
+tree / as alice: ['/private', '/private/alice-notes.txt'] []
+ls / as ALICE: ['/private'] []
+ls /private as ALICE: [] []
+stat /private as ALICE: success=True []
+tree / as ALICE: [] []
+ls / as bob: [] []
+ls /private as bob: [] ['vfs.not_found']
+stat /private as bob: success=False ['vfs.not_found']
+tree / as bob: [] []
+
+=== collation_probe.py ===
+"""Probe: owner_id compared in SQL under a case-insensitive collation vs Python exact compare.
+
+Part 1 compiles the entries DDL for the MariaDB/MySQL dialects (no connection) to show
+which columns carry a bytewise type/collation and which do not.
+Part 2 simulates a case-insensitive owner_id column on SQLite (COLLATE NOCASE, the
+analogue of MariaDB's default utf8mb4_uca1400_ai_ci) and asks, as principal 'ALICE',
+for rows owned by 'alice'.
+"""
+import asyncio, os, sqlite3, sys
+from sqlalchemy.schema import CreateTable
+from sqlalchemy.dialects import mysql, postgresql, mssql, oracle
+from sqlalchemy.dialects.mysql import base as mysql_base
+
+from vfs.authority import Authority, Principal
+from vfs.models import Entry
+from vfs.models.rows import build_vfs_tables
+from vfs.paths import Path
+from vfs.storage.backends.database import DatabaseStorage
+
+out = []
+def say(*a):
+    line = " ".join(str(x) for x in a)
+    out.append(line); print(line)
+
+tables = build_vfs_tables()
+for name, dialect in [("mariadb", mysql.dialect(is_mariadb=True)), ("mysql", mysql.dialect()), ("postgresql", postgresql.dialect()), ("mssql", mssql.dialect()), ("oracle", oracle.dialect())]:
+    ddl = str(CreateTable(tables.entry).compile(dialect=dialect))
+    for col in ("path ", "owner_id "):
+        line = next(l.strip() for l in ddl.splitlines() if l.strip().startswith(col))
+        say(f"[ddl {name}] {line}")
+    gddl = str(CreateTable(tables.grants).compile(dialect=dialect))
+    line = next(l.strip() for l in gddl.splitlines() if l.strip().startswith("principal_id"))
+    say(f"[ddl {name} grants] {line}")
+
+SYSTEM = Authority.system()
+ALICE = Authority.of(Principal("alice"))
+ALICE_UPPER = Authority.of(Principal("ALICE"))
+ALICE_PAD = Authority.of(Principal("alice "))
+db = os.path.join(os.getcwd(), "collation.sqlite")
+for suffix in ("", "-wal", "-shm"):
+    try: os.remove(db + suffix)
+    except FileNotFoundError: pass
+url = f"sqlite+aiosqlite:///{db}"
+
+async def setup():
+    s = DatabaseStorage(url=url)
+    r = await s.write(entries=[Entry(path=Path("/private/alice-notes.txt"), content="alice secret payroll 42", owner_id="alice")], parents=True, authority=SYSTEM)
+    say("[setup] write success", r.success, [e.message for e in r.errors])
+    r = await s.posture(path=Path("/"), posture="none", authority=SYSTEM)
+    say("[setup] posture none success", r.success, [e.message for e in r.errors])
+    await s.close()
+
+async def probe(label):
+    s = DatabaseStorage(url=url)
+    for who, auth in (("alice", ALICE), ("ALICE", ALICE_UPPER)):
+        g = await s.glob(patterns=("/**",), authority=auth)
+        say(f"[{label}] glob as {who}:", sorted(str(o.path) for o in g.observations), "errors:", [e.kind for e in g.errors])
+        rd = await s.read(path=Path("/private/alice-notes.txt"), authority=auth)
+        say(f"[{label}] read as {who}: success={rd.success}", "content:", [o.content for o in rd.observations], "errors:", [str(e.kind) for e in rd.errors])
+        gr = await s.grep(pattern="payroll", authority=auth)
+        say(f"[{label}] grep as {who}:", [(str(o.path), [m.preview for m in (o.matches or [])]) for o in gr.observations], "errors:", [str(e.kind) for e in gr.errors])
+    await s.close()
+
+asyncio.run(setup())
+asyncio.run(probe("binary-collation"))
+con = sqlite3.connect(db)
+sql = con.execute("select sql from sqlite_master where name='vfs_entries'").fetchone()[0]
+assert "owner_id VARCHAR(255)," in sql, sql
+con.execute("PRAGMA writable_schema=ON")
+con.execute("update sqlite_master set sql=replace(sql, 'owner_id VARCHAR(255),', 'owner_id VARCHAR(255) COLLATE NOCASE,') where name='vfs_entries'")
+con.commit(); con.close()
+con = sqlite3.connect(db); con.execute("REINDEX"); con.commit()
+say("[simulate] entries.owner_id now:", [l.strip() for l in con.execute("select sql from sqlite_master where name='vfs_entries'").fetchone()[0].splitlines() if 'owner_id' in l])
+say("[simulate] integrity:", con.execute("pragma integrity_check").fetchone()[0])
+con.close()
+asyncio.run(probe("case-insensitive-owner_id"))
+with open(os.path.join(os.getcwd(), "evidence", "collation_probe.txt"), "w") as f:
+    f.write("\n".join(out) + "\n")
+
+=== collation_probe2.py ===
+"""Follow-up on the simulated case-insensitive owner_id DB left by collation_probe.py: ls/tree/stat/glean as 'ALICE'."""
+import asyncio, os
+from vfs.authority import Authority, Principal
+from vfs.paths import Path
+from vfs.storage.backends.database import DatabaseStorage
+out = []
+def say(*a):
+    line = " ".join(str(x) for x in a); out.append(line); print(line)
+db = os.path.join(os.getcwd(), "collation.sqlite")
+async def main():
+    s = DatabaseStorage(url=f"sqlite+aiosqlite:///{db}")
+    for who in ("alice", "ALICE", "bob"):
+        a = Authority.of(Principal(who))
+        r = await s.ls(path=Path("/"), authority=a); say(f"ls / as {who}:", [str(o.path) for o in r.observations], [str(e.kind) for e in r.errors])
+        r = await s.ls(path=Path("/private"), authority=a); say(f"ls /private as {who}:", [str(o.path) for o in r.observations], [str(e.kind) for e in r.errors])
+        r = await s.stat(path=Path("/private"), authority=a); say(f"stat /private as {who}: success={r.success}", [str(e.kind) for e in r.errors])
+        r = await s.tree(path=Path("/"), authority=a); say(f"tree / as {who}:", [str(o.path) for o in r.observations], [str(e.kind) for e in r.errors])
+    await s.close()
+asyncio.run(main())
+with open(os.path.join(os.getcwd(), "evidence", "collation_probe.txt"), "a") as f:
+    f.write("--- follow-up (collation_probe2.py) on the simulated case-insensitive DB ---\n" + "\n".join(out) + "\n")
+=== command ===
+./tools/sandbox-run.py ./agents/h10-obvious/scratch ./.venv/bin/python -I ./collation_probe.py ; then ./collation_probe2.py (cwd = scratch; sandbox: no network, empty env, scratch-only writes, CPU 60s, wall 120s, RSS 2GiB)

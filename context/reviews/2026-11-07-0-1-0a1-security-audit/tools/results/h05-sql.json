@@ -1,0 +1,150 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2F%23statement%20builders::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fdialects.py%23bound%20parameters%20and%20escape_like::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::ATTACK-CLASSES.md%23Injection",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/labels.py",
+    "src/vfs/storage/backends/database/descent.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/storage/backends/database/scope.py",
+    "src/vfs/storage/backends/database/trash.py",
+    "src/vfs/storage/backends/database/topology.py",
+    "src/vfs/storage/backends/database/dialects.py",
+    "src/vfs/storage/backends/database/ranges.py",
+    "src/vfs/storage/backends/database/membership.py",
+    "src/vfs/storage/backends/database/engine.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/graph.py",
+    "src/vfs/storage/backends/database/distance.py",
+    "src/vfs/models/rows.py",
+    "src/vfs/pattern_matching/glob.py",
+    "src/vfs/paths.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/labels.py",
+      "src/vfs/models/rows.py"
+     ],
+     "invariant": "The raw text() relabel UPDATE (labels.py:470-503, OPENJSON on MSSQL, JSON_TABLE on MariaDB) interpolates only operator-trusted or constant text, and every caller-derived value is bound.",
+     "method": "source",
+     "result": "Interpolated positions are entry.fullname (fixed table name vfs_entries plus the operator's schema= argument), column.name (the constant 'path'), MSSQL_UTF8_COLLATION (a module constant) and _BOUND (derived from MAX_PATH_LENGTH). The caller-derived range bounds travel only as the :pairs bind (json.dumps of the open ranges) and :rank as a bind. No caller value reaches an interpolated position. The offline render (see the per-dialect artifact) shows a quote-bearing hi bound only in params. _deeper_postures (labels.py:448-456) uses escape_like plus an explicit ESCAPE.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/descent.py",
+      "src/vfs/storage/backends/database/reads.py",
+      "src/vfs/storage/backends/database/scope.py",
+      "src/vfs/storage/backends/database/trash.py",
+      "src/vfs/storage/backends/database/labels.py",
+      "src/vfs/storage/backends/database/dialects.py",
+      "src/vfs/pattern_matching/glob.py"
+     ],
+     "invariant": "No LIKE pattern built from a caller path or glob widens a subtree or prefix statement beyond the caller's literal path on any declared dialect profile. Rendered offline per dialect.",
+     "method": "local",
+     "result": "escape_like escapes \\, % and _ everywhere, and [ exactly where like_bracket_class is set (MSSQL). Every call site passes escape='\\' explicitly: descendant_filter/descendant_pattern, the trash tombstone bindparam, labels _deeper_postures, scope channel_facts and reads pattern_arm. _glob_like escapes %, _ and \\, and it returns None when the glob contains [. The fallback literal prefix stops at the first [. So no [ ever reaches a LIKE pattern unescaped, MSSQL included. The glob language has no escape character, so translating \\ to a literal is consistent with the regex authority. The offline render with literal paths /a_, /a%, /a\\, /a[b] and a quote/DROP payload covered sqlite, postgresql, mssql, mariadb, oracle and generic. It showed every metacharacter escaped per profile ('/a\\[b]/%' only on mssql) and the payload only in params. The glob arms are a superset prefilter in any case: the Python regex in GlobFilter.matches decides membership, so any looseness costs work only. Key columns use binary collations (BytewiseString: C on Postgres, Latin1_General_100_BIN2_UTF8 on MSSQL, VARBINARY on the mysql family), so LIKE is not widened by case folding either.",
+     "artifact": "agents/h05-sql/artifacts/evidence/offline-like-render-per-dialect.txt"
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/trash.py",
+      "src/vfs/storage/backends/database/topology.py",
+      "src/vfs/storage/backends/database/reads.py"
+     ],
+     "invariant": "On a live SQLite mount, delete, move and glob of directories whose names hold LIKE metacharacters touch only that directory's own subtree. The sibling rows /ab, /aXb, /a%%, /a\\x and /a_z must stay intact.",
+     "method": "local",
+     "result": "glob '/a_/*', '/a%/*' and '/a\\/*' each returned only their own child. delete /a_, delete /a%, move /a\\ -> /moved and delete /a[b] each removed or moved only their own subtree. Every sibling stayed readable afterwards. No widening was observed on SQLite.",
+     "artifact": "agents/h05-sql/artifacts/evidence/sqlite-like-metachar-paths.txt"
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/ranges.py",
+      "src/vfs/storage/backends/database/membership.py"
+     ],
+     "invariant": "Range sources (json_each, unnest, OPENJSON, JSON_TABLE, the Oracle CLOB JSON_TABLE) and chunked membership bind their payload, and the custom @compiles renderers interpolate only constants.",
+     "method": "local",
+     "result": "An offline compile on all five range sources used a path holding quotes, ')', ';', 'DROP TABLE' and '\"]'. The payload appeared only in compiled params and never in the SQL text, for point_rows, open_rows and membership alike. The @compiles renderers interpolate only compiler.process(clauses) (binds) and the constant _BOUND. The hint templates are .format'ed with fixed table and index names and profile constants.",
+     "artifact": "agents/h05-sql/artifacts/evidence/offline-range-sources-bound.txt"
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/engine.py",
+      "src/vfs/storage/backends/database/glean.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/dialects.py",
+      "src/vfs/storage/backends/database/distance.py"
+     ],
+     "invariant": "Every remaining text() and exec_driver_sql site runs constant or bound SQL.",
+     "method": "source",
+     "result": "rights.py:518-520 runs profile.range_settings (constant, e.g. 'SET LOCAL jit = off'). engine.py:422-469 runs profile value_cap_query, file_settings, vector_function install and probe (profile constants). engine.py:655 runs 'BEGIN' or 'BEGIN IMMEDIATE'. glean.py:628-629 runs vector.prelude, which backend.py:655-658 sets only to None or the constant PGVECTOR_ITERATIVE_SCAN. dialects.py:872 runs the constant 'SELECT 1'. dialects.py:889 executes a statement compiled by SQLAlchemy from table columns with bindparams, the values passed as driver parameters. The asyncpg copy_records_to_table gets table.name and table.schema (fixed or operator) and the column names from internal row dicts. lock_rows' WITH (hint) is a profile constant. distance.py's literal_column('COSINE') is a constant. No caller value reaches any of these.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/reads.py",
+      "src/vfs/storage/backends/database/glean.py",
+      "src/vfs/storage/backends/database/graph.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "Caller-supplied field names (the columns= projection) and keys never become SQL identifiers, JSON paths or ORDER BY text.",
+     "method": "source",
+     "result": "effective_columns (reads.py:124-141) intersects the caller's columns with the fixed ENTRY_OBSERVATION_FIELDS, ALWAYS_ON_FIELDS and BODY_FIELDS sets. Graph (backend.py:434-442) uses the same function. Every entry.c[field] lookup resolves to an existing Column object, never to SQL text. Every order_by names fixed columns. JSON path strings ('$[0]', '$[*]') are constants. Edge types and other values travel through bound membership.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/engine.py"
+     ],
+     "invariant": "SQLite extension loading is switched back off after sqlite-vec loads, so no SQL running on a pooled connection can call load_extension().",
+     "method": "local",
+     "result": "_load_sqlite_vec (engine.py:673-690) calls enable_load_extension(False) in a finally block. Live check on a DatabaseStorage SQLite file after a write: vec_version() answered v0.1.9, and SELECT load_extension('/nonexistent/evil') on the same pool raised OperationalError 'not authorized'. Also, no verb executes caller-authored SQL.",
+     "artifact": "agents/h05-sql/artifacts/evidence/sqlite-load-extension-disabled.txt"
+    },
+    {
+     "agent_id": "h05-sql",
+     "reviewed_paths": [
+      "src/vfs/paths.py"
+     ],
+     "invariant": "Trailing-space padding in SQL Server '=' comparisons cannot alias two stored paths.",
+     "method": "source",
+     "result": "paths.py:500 and paths.py:563 strip whitespace from every segment during normalization, so no stored path or caller path ends a segment in a space. MSSQL's ANSI padding therefore cannot collapse two distinct canonical paths.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  }
+ ],
+ "candidates": [],
+ "hardening": [
+  "labels.py:487-502 builds the MSSQL and MariaDB relabel UPDATE with an unquoted f-string of entry.fullname, while every Core statement quotes identifiers through the dialect preparer. The schema is operator-trusted, so this is not an injection path. Still, a schema needing quoting (a hyphen, a reserved word) would break only these two statements. Rendering the table through the compiler's identifier preparer (dialect.identifier_preparer.format_table(entry)) keeps the text() sites identical to Core's quoting.",
+  "The GENERIC floor (dialects.py:553-558) declares like_bracket_class False, and profile_for serves any unknown dialect with it, including write, delete and move. A third-party SQLAlchemy dialect whose LIKE treats [..] as a class (Sybase ASE, SQL Anywhere, Access) would therefore leave [ unescaped. On such an engine, descendant_pattern('/a[b]') = '/a[b]/%' would also match /ab/... in statements with no Python re-check (trash._tombstone_descendants, topology descendant rewrites). The SQLite run shows the intended behaviour on declared profiles. For subtree writes, consider the metacharacter-free byte range (path > d/ AND path < d0) that rights._beneath already uses, or refusing write verbs on unknown dialects whose LIKE semantics are unmodelled. No deployed engine of that family was observed, so this is not a finding."
+ ],
+ "uncovered": [
+  {
+   "surface": "src/vfs/storage/backends/database/ranges.py#hole_free and range predicates",
+   "boundary": "src/vfs/models/rows.py#BytewiseString collation pin (absent on Oracle and GENERIC)",
+   "subsystem": "src/vfs/storage/backends/database",
+   "attack_class": "ATTACK-CLASSES.md#Access control",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/ranges.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/models/rows.py",
+    "src/vfs/storage/backends/database/dialects.py"
+   ],
+   "reason": "Row-rights SQL clauses (hole_free, the (d/, d0) subtree ranges, the literal OR of ranges on Oracle and GENERIC) rely on bytewise string comparison. rows.py:205-212 says Oracle and unknown engines get no collation pin and rest on engine defaults (NLS_COMP/NLS_SORT=BINARY). A linguistic or case-insensitive session collation could misplace a row relative to a private hole. Whether Visibility re-checks every SQL-admitted row in Python on list, read and stat paths is a peer-owned access-control question, not an injection one. It needs its own unit, which can be settled by source review plus an Oracle NLS_COMP=LINGUISTIC owner check."
+  }
+ ]
+}

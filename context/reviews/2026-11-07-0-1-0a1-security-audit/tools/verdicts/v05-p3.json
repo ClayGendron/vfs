@@ -1,0 +1,146 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify",
+  "title": "Chained grep over observations runs regex verification on the event loop with no wall, candidate or byte budget, amplified by duplicate rows",
+  "description": "grep(observations=...) goes to _grep_rows_in_hand. That function reads the content of every listed row that has no content attached, in one self.read call. It then calls match_texts with budget=None, synchronously on the event-loop thread. The storage-tier grep does the same verification work under several controls: a 25,000-candidate budget, 32 MiB content chunks, a 10 s wall deadline, and an offload to an executor (its own comment says 'Verify leaves the loop'). The chained path applies none of these. Rows are not deduplicated, so a caller can list one stored file it may read N times; the file is fetched once and verified N times. Loop occupancy therefore grows linearly with N x body bytes x the per-byte cost of the pattern, and the pattern length has no cap. Every other coroutine on that loop is stalled until the native call returns. That includes every thread sharing one sync VirtualFileSystem facade, which serves all its callers from one loop thread. This was reproduced locally: one stored file of about 0.98 MB, the pattern (\\w|\\s){60}Q, and 10, 20 and 40 duplicate Observations blocked the loop for 0.65 s, 1.22 s and 2.70 s. The storage-tier scan of the same file and pattern never blocked the loop for more than 13 ms.",
+  "root_cause": "_grep_rows_in_hand (src/vfs/base.py:1919) calls pattern_matching.grep.match_texts, which passes budget=None to ContentMatcher.count_lines/hit_lines (src/vfs/pattern_matching/grep.py:252,259). It makes this call inline on the coroutine's thread. It does not use the storage tier's VerifyOffload, byte_chunked(CONTENT_BYTE_BUDGET), CANDIDATE_BUDGET or WALL_TIME_BUDGET controls. The observations list has no length cap and is not deduplicated, and the pattern has no length cap.",
+  "intended_behavior": "Content verification should carry the same bounds whether its rows come from storage or from observations=. That means running off the event loop on the backend's executor, under a wall-time deadline that truncates with a warning, with bodies processed in byte-budgeted batches, and with each distinct body verified at most once per call. The storage tier already declares and enforces exactly this contract.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 1430,
+    "scope": "AsyncVirtualFileSystem.grep",
+    "description": "Once the parameter gate passes and observations is not None, grep dispatches to _grep_rows_in_hand (return at line 1433). No row-count cap and no deduplication apply, and the pattern has no length cap."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/base.py",
+    "line": 1911,
+    "scope": "AsyncVirtualFileSystem._grep_rows_in_hand",
+    "description": "Every candidate row without content is read in a single self.read(observations=absent) call, with no candidate or byte budget. A row that already carries content needs no read at all."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/base.py",
+    "line": 1919,
+    "scope": "AsyncVirtualFileSystem._grep_rows_in_hand",
+    "description": "match_texts runs over every texted row, duplicates included, synchronously on the event-loop thread."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/pattern_matching/grep.py",
+    "line": 252,
+    "scope": "match_texts",
+    "description": "verifier.count_lines (or hit_lines at line 259) is called with budget=None, so no deadline exists."
+   },
+   {
+    "kind": "sink",
+    "file": "crates/vfs-core/src/verify.rs",
+    "line": 195,
+    "scope": "hits_batch / count_batch",
+    "description": "Every body is matched to completion across rayon threads. The binding releases the GIL (python.rs py.detach), but the calling loop thread waits for the whole batch."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 120,
+    "description": "The storage tier declares CANDIDATE_BUDGET 25,000, POSTING_BYTE_BUDGET, WALL_TIME_BUDGET 10.0 s, and (line 126) CONTENT_BYTE_BUDGET 32 MiB."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 325,
+    "description": "Declared intent, 'Verify leaves the loop'. Line 328 builds VerifyOffload(verifier, executor), and lines 329-354 verify in byte_chunked batches against the deadline."
+   },
+   {
+    "file": "src/vfs/pattern_matching/grep.py",
+    "line": 252,
+    "description": "match_texts passes budget=None to the engine (also line 259)."
+   },
+   {
+    "file": "crates/vfs-core/src/python.rs",
+    "line": 143,
+    "description": "A deadline is built only when a budget is given. Even then, verify.rs checks it only before each body starts."
+   },
+   {
+    "file": "src/vfs/base.py",
+    "line": 1811,
+    "description": "_observation_rows only type-checks the batch. It applies no length cap and no deduplication."
+   },
+   {
+    "file": "src/vfs/sync.py",
+    "line": 3,
+    "description": "VirtualFileSystem owns one asyncio loop on one daemon thread (lines 647-648). Every thread that calls one facade shares that loop, so a stall on it is shared within the library itself."
+   },
+   {
+    "file": "agents/v05-p3/artifacts/evidence/growth-output.txt",
+    "line": 17,
+    "description": "Local run: one 975,000-byte stored file, pattern (\\w|\\s){60}Q, files mode. The loop was blocked 0.654 s at 10 duplicate rows, 1.222 s at 20 and 2.703 s at 40. The storage scan tier on the same file had a 0.013 s maximum loop gap (line 23)."
+   },
+   {
+    "file": "agents/v05-p3/artifacts/evidence/growth.py",
+    "line": 1,
+    "description": "The script that produced growth-output.txt. It runs a 1 ms asyncio ticker beside fs.grep(observations=[Observation(path=/data/big.txt)] * N) and records the largest loop gap."
+   },
+   {
+    "file": "agents/v05-p3/artifacts/evidence/patterns-output.txt",
+    "line": 1,
+    "description": "Pattern calibration. Literal-prefiltered patterns finished in milliseconds. (\\w|\\s){60}Q cost about 0.43 s per MB: it blocked the loop on the chained path (gap 0.418-0.465 s) but not on the storage tier (gap 0.012 s)."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The caller must hold read on at least one stored file with content. Alternatively it can attach content to the Observations itself, in which case the bytes are its own. Only an ordinary verb argument (observations=) is needed."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The host serves several agents or principals from one AsyncVirtualFileSystem event loop, or from one sync VirtualFileSystem facade (one loop thread by construction), and passes agent-supplied observations and patterns through without a size limit."
+   },
+   {
+    "kind": "data_state",
+    "description": "The stall scales with the body bytes in the listed rows and with the pattern's per-byte cost. Patterns with a literal prefilter finish quickly; alternation-under-repetition patterns such as (\\w|\\s){60}Q are slow."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "An agent with read access to one roughly 1 MB file, calling grep through a host that shares one vfs event loop among agents.",
+   "payloads": [
+    "fs.grep(r\"(\\w|\\s){60}Q\", observations=[Observation(path=Path(\"/data/big.txt\"), kind=\"file\")] * 40, output_mode=\"files\")"
+   ],
+   "instructions": [
+    "Build AsyncVirtualFileSystem(storage=InMemoryStorage()) and write about 0.98 MB of plain text lines to /data/big.txt.",
+    "Start a coroutine that sleeps 1 ms in a loop and records the largest gap between wakeups.",
+    "Await fs.grep with the payload for N = 10, 20 and 40 duplicate rows, recording the largest ticker gap each time.",
+    "For comparison, await fs.grep with the same pattern and allow_scan=True, output_mode='files'."
+   ],
+   "observed_result": "The chained grep blocked the event loop for 0.654 s, 1.222 s and 2.703 s at N = 10, 20 and 40. That is linear in N, while the stored file was fetched once. The storage-tier scan of the same file and pattern took 0.428 s, but the loop was never blocked for more than 0.013 s, because that tier offloads the work. All calls returned success with no errors and no truncation warning."
+  },
+  "remediation": {
+   "strategy": "Route chained verification through the same controls as the storage tier. First, verify each distinct (path, body) pair once and fan the result out to duplicate rows. Second, run the matcher off the loop through VerifyOffload on an executor, or through asyncio.to_thread when no backend executor is available. Third, pass a wall-time deadline derived from WALL_TIME_BUDGET and truncate with a warning when it trips. Fourth, process bodies in byte_chunked(CONTENT_BYTE_BUDGET) batches, checking the deadline between batches. A host-side cap on observations length and pattern length is additional defense in depth.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/base.py",
+     "fixed_code": "# in _grep_rows_in_hand, replacing the inline match_texts call\ndeadline = monotonic() + WALL_TIME_BUDGET\nunique: dict[tuple[str, str], int] = {}\nbodies: list[tuple[Path, str]] = []\nfor row, text in texted:\n    key = (str(row.path), text)\n    if key not in unique:\n        unique[key] = len(bodies)\n        bodies.append((row.path, text))\nhits_unique, completed = await match_texts_offloaded(\n    bodies, verifier, invert=invert_match, before=before_context, after=after_context,\n    mode=output_mode, cap=max_count, deadline=deadline,\n)  # executor-run, byte-chunked, budget=deadline - monotonic() per batch\nhits = [hits_unique[unique[(str(row.path), text)]] for row, text in texted]\n# append a 'wall-time budget' truncation warning when not completed"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "It needs only an ordinary grep argument and read access to one file, or caller-held content. The pattern and row count are uncapped and duplicates are not collapsed. Whether many principals share one loop depends on how the host deploys vfs."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "This is a temporary availability loss. Every coroutine and every sync-facade caller sharing the loop stalls for a time proportional to N x body size x pattern cost, with no deadline; about 2.7 s was observed at N=40 on 1 MB, and it grows linearly. Nothing persists and no data is exposed, and the loop recovers when the call returns. The synchronous native call cannot be cancelled."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The full trace was checked in source. The storage tier's declared off-loop contract confirms the chained path diverges from intent. The linear loop stall was reproduced locally with a sandboxed, bounded run against InMemoryStorage. The one fact this record leaves to the deployment is how many principals the host puts on one loop."
+  }
+ }
+}

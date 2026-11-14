@@ -1,0 +1,396 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Frendering%23renderers::src%2Fvfs%2Frendering%2Fseam.py%23RenderLimits::src%2Fvfs%2Frendering::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/rendering/seam.py",
+    "src/vfs/rendering/registry.py",
+    "src/vfs/rendering/markdown.py",
+    "src/vfs/rendering/docx.py",
+    "src/vfs/rendering/pdf.py",
+    "src/vfs/rendering/pptx.py",
+    "src/vfs/rendering/xlsx.py",
+    "src/vfs/storage/backends/database/render.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/offload.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/topology.py",
+    "src/vfs/models/media.py",
+    "src/vfs/models/rows.py",
+    "src/vfs/models/chunking.py",
+    "src/vfs/ops.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/render.py",
+      "src/vfs/storage/backends/database/offload.py",
+      "src/vfs/ops.py"
+     ],
+     "invariant": "Who runs rendering: whether caller bytes are rendered in the writer's own call or later on behalf of the operator",
+     "method": "source",
+     "result": "Rendering never runs in the write verb. write(data=...) stores the blob and the row is set to render_status='pending' (writes.py:1181). Rendering happens only inside DatabaseStorage.reindex() (backend.py:1118), which is a storage-maintenance method and not one of the 25 router verbs (ops.py:36-62). _render_step (backend.py:1250-1296) selects every dirty bytes row of every subject (render.py select_render_dirty, with no authority filter) and renders each one serially in render_rows on the shared offload pool through call_offloaded (backend.py:1287-1288). A worker that is already running cannot be interrupted (offload.py docstring). The stamp is landed only after the whole cut has rendered, so a row whose render never finishes stays pending, and every later reindex picks it up again. The cost therefore lands on the operator's maintenance job and on the host process that all agents share, not on the writer. There is no body-size cap on write data; BLOB_PAGE_BYTES (8 MiB, dialects.py:102) only meters the bytes held in flight per cut.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/rendering/seam.py",
+      "src/vfs/rendering/markdown.py",
+      "src/vfs/rendering/registry.py"
+     ],
+     "invariant": "Whether RenderLimits bound memory and CPU during library parsing, or only the emitted text",
+     "method": "source",
+     "result": "Every limit is enforced only inside Builder: the character and ratio checks run in _append (markdown.py:265-279), the clock is checked in boundary()/unit() and between table rows (markdown.py:122-160, 186-200), and the unit cap is checked in unit(). Nothing bounds the work a library or renderer helper does before it hands a value to Builder: zip decompression, XML parsing, python-docx row-cell expansion, openpyxl row iteration, xlsx region and table construction, docx inline note assembly. The RENDER_RATIO comment calls the ratio 'the decompression-bomb guard', but it compares output characters with input bytes after expansion has already happened. The registry catches Exception (registry.py:105-108), so MemoryError comes back as a 'failed' state if it is raised at all, while RecursionError and timeouts never arrive as exceptions.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/rendering/docx.py"
+     ],
+     "invariant": "Whether docx footnote and comment parts parsed with stdlib ElementTree are safe from entity expansion and external entities",
+     "method": "source",
+     "result": "_note_texts calls xml.etree.ElementTree.fromstring(part.blob) (docx.py:90-101). The interpreter in this environment, Python 3.13.11, reports pyexpat.EXPAT_VERSION 'expat_2.6.3'. That was a version read of the third-party library only, with no vfs code run. Expat 2.4.0 and later has built-in protection against billion-laughs amplification, and ElementTree does not resolve external entities. No candidate for entity expansion or external entities. Separate docx footnote amplification is reported as a candidate below.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/rendering/pdf.py"
+     ],
+     "invariant": "Whether the pypdf path bounds stream decompression",
+     "method": "source",
+     "result": "The installed pypdf is 6.19.0. Its filters.py and Configuration declare 75,000,000-byte caps on FlateDecode and LZW output and on declared or array-based stream lengths, plus a 5,000,000-byte recovery input cap. The vfs PdfRenderer catches only PyPdfError as corrupt; anything else, including MemoryError, is caught by the registry. Peak memory per stream is bounded by the library at about 75 MB, and I found no unbounded pdf-specific path in vfs code. A 75 MB cap per stream across many pages is a library-level residual; it is recorded as hardening.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/rendering/seam.py",
+      "src/vfs/storage/backends/database/render.py",
+      "src/vfs/models/rows.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/topology.py"
+     ],
+     "invariant": "Whether caller-shaped JSON can reach units_from_json -> Unit(**item)",
+     "method": "source",
+     "result": "render_units is a row-only column (rows.py:90), so callers never author it. Writes reset it to None (writes.py:1185). Move and copy copy it verbatim between rows (topology.py:98), and only land_renderings writes it, from units_to_json of renderer-produced Unit tuples (render.py:355; seam.py:238-242). json.dumps escapes the attacker-influenced label, for example an xlsx sheet title. No caller path reaches Unit(**item) with keys the caller chose. Covered.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/models/chunking.py"
+     ],
+     "invariant": "Whether the notebook chunker bounds nested or oversized JSON",
+     "method": "source",
+     "result": "split_notebook (chunking.py:327-347) calls json.loads and falls back to the recursive splitter on ValueError, KeyError, TypeError or RecursionError. CPython's json decoder runs in linear time and guards recursion, so deep nesting raises RecursionError, which is caught. The cell walk is linear in the number of cells and the length of their sources. No superlinear path found. Covered.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h08-render",
+     "reviewed_paths": [
+      "src/vfs/rendering/pptx.py"
+     ],
+     "invariant": "Whether the pptx shape walk and tables are bounded",
+     "method": "source",
+     "result": "The group walk is bounded by embedded_depth (pptx.py:79-85). python-pptx row.cells yields only the tc elements present, with no expansion for spans. Text frames go straight to Builder, so pptx-specific amplification is limited to zip-part decompression, which is reported below.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs.rendering.docx:table-gridspan-expansion",
+    "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked",
+    "vfs.rendering.xlsx:region-table-quadratic-materialization",
+    "vfs.rendering.docx:note-reference-inline-expansion",
+    "vfs.rendering:ooxml-part-decompression-unbounded"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs.rendering.docx:table-gridspan-expansion",
+   "title": "A docx table cell's gridSpan value expands into an unbounded cell list before any render limit applies",
+   "description": "_Writer.table builds [cell.text for cell in row.cells] for each table row. In the installed python-docx 1.2.0, _Row.cells yields the same _Cell once per spanned grid column (range(tc.grid_span)), and grid_span is read straight from the w:gridSpan/@val integer. Large values are not rejected. A docx of a few kilobytes can therefore request a tuple and a list whose length is set by one attribute value, with one cell.text string computed per entry. All of this happens before Builder.table sees the first row, so the character budget, the ratio guard and the cooperative clock do not bound it. The work runs inside the operator's reindex on the shared offload pool, and the row never lands a stamp, so every later reindex retries it.",
+   "claimed_root_cause": "The docx renderer passes python-docx's span-expanded row.cells into a list comprehension with no cap on the span-derived cell count. RenderLimits are enforced only on the text that Builder emits.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1287,
+     "scope": "DatabaseStorage._render_step",
+     "description": "Operator reindex renders a pending bytes row that any writer stored, on the offload pool"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/rendering/registry.py",
+     "line": 106,
+     "scope": "RendererRegistry.render",
+     "description": "Dispatches to DocxRenderer.render; only an Exception raised by the renderer is turned into a state"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/rendering/docx.py",
+     "line": 61,
+     "scope": "DocxRenderer.render",
+     "description": "Each body table block goes to _Writer.table"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/rendering/docx.py",
+     "line": 124,
+     "scope": "_Writer.table",
+     "description": "[[cell.text for cell in row.cells] ...] materializes one entry per spanned grid column before Builder.table checks any budget"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/rendering/docx.py",
+     "line": 124,
+     "description": "rows = [[cell.text for cell in row.cells] for row in table.rows] is built in full before self._builder.table(rows)"
+    },
+    {
+     "file": "src/vfs/rendering/markdown.py",
+     "line": 186,
+     "description": "Builder.table checks the clock and budgets only while emitting rows that have already been materialized"
+    },
+    {
+     "file": "src/vfs/rendering/seam.py",
+     "line": 43,
+     "description": "RenderLimits holds no cap on parsed structure size; the ratio guard measures output characters only"
+    }
+   ],
+   "blockers": [
+    "The local bounded growth check was not executed. My attempt to write the fixture harness was stopped by the session's safety classifier, so no measured growth curve exists.",
+    "Library behaviour comes from reading installed python-docx 1.2.0 (docx/table.py _Row.cells, iter_tc_cells: 'for _ in range(tc.grid_span): yield cell'); an executed observation is still needed."
+   ],
+   "validation_plan": {
+    "local": "In the approved sandbox, build a one-table docx with python-docx and set the single cell's w:tcPr/w:gridSpan@val to 1e4, then 1e5. Call RendererRegistry.bundled().render(RenderSource(bytes, DOCX, 'a.docx'), RenderLimits(seconds=1.0)) and record peak RSS growth and wall time against input size. Stop at the first point that shows growth linear in the attribute value with constant input size. Regression: a renderer-side cap on len(row.cells), or reading tc elements directly with span clamped to the layout grid width, returning 'truncated' or 'failed'."
+   }
+  },
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked",
+   "title": "An xlsx sheet's declared dimension drives empty-row iteration that the 60 s render clock never checks",
+   "description": "XlsxRenderer opens workbooks read_only. In openpyxl 3.1.5, ReadOnlyWorksheet takes max_row and max_column from the sheet's <dimension ref>, and _cells_by_row yields a filler row of max_column cells for every row up to max_row, even when sheetData is empty. vfs's _cells() iterates every yielded cell with no clock or budget check. The deadline is consulted only after _cells returns, in Builder.table. A tiny sheet declaring a huge row range therefore makes the render loop run for time proportional to rows times columns. No vfs limit stops it, and the offload worker that runs it cannot be interrupted. The stamp is never landed, so each later reindex starts the same work again.",
+   "claimed_root_cause": "_cells() walks sheet.iter_rows() with no deadline, cell-count or row-count budget. The cooperative clock covers only Builder calls, not openpyxl's dimension-driven iteration.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1287,
+     "scope": "DatabaseStorage._render_step",
+     "description": "Operator reindex renders a writer-supplied pending xlsx row on the offload pool"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 75,
+     "scope": "XlsxRenderer.render",
+     "description": "load_workbook(read_only=True, data_only=True); each sheet calls _cells(sheet) before any Builder clock check"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 160,
+     "scope": "_cells",
+     "description": "for row in sheet.iter_rows(): for cell in row: ... runs with no deadline check"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 160,
+     "description": "_cells iterates all rows and cells openpyxl yields; no limits object is passed in"
+    },
+    {
+     "file": "src/vfs/rendering/markdown.py",
+     "line": 112,
+     "description": "Builder.out_of_time is consulted only from Builder methods, which run after _cells returns"
+    },
+    {
+     "file": "src/vfs/storage/backends/database/offload.py",
+     "line": 1,
+     "description": "The offload docstring states that a running worker finishes into the void; no interrupt exists"
+    }
+   ],
+   "blockers": [
+    "The local check was not executed. The fixture-harness attempt was stopped by the session's safety classifier.",
+    "The openpyxl 3.1.5 read-only padding behaviour (worksheet/_read_only.py _cells_by_row yields empty_row up to max_row from parse_dimensions) comes from reading source; it needs an executed observation."
+   ],
+   "validation_plan": {
+    "local": "In the sandbox, build a one-cell xlsx and rewrite its sheet <dimension ref> to A1:Z{R} for R = 1,000 and then 10,000. Render with RenderLimits(seconds=0.5) and record wall time and status. The claim holds if wall time grows with R at constant input size and exceeds limits.seconds by a wide margin before the status returns. Regression: pass the Builder or deadline into _cells and stop on out_of_time, cap the iterated cell count, or iterate only parsed cells instead of the dimension-padded grid."
+   }
+  },
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs.rendering.xlsx:region-table-quadratic-materialization",
+   "title": "xlsx region layout materializes a bounding-box table quadratic in the cell count before any budget check",
+   "description": "regions() joins cells that touch by corner, so n cells on a diagonal form one region whose bounding box is n by n. _table() then builds header plus body as full Python lists of (bottom-top+1) x (right-left+1) entries before Builder.table emits a single row and checks the budget. Memory and CPU are therefore quadratic in a cell count that compresses to a small file. Separately, _merged() compares each box with every box kept so far, which is quadratic in the number of isolated regions per sheet. Neither path consults the clock or the character budget. The xlsx module docstring says the region pass is linear, but these two steps are not.",
+   "claimed_root_cause": "_table() and _merged() run unbounded, superlinear work on attacker-shaped cell layouts before Builder applies RenderLimits.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1287,
+     "scope": "DatabaseStorage._render_step",
+     "description": "Operator reindex renders a writer-supplied xlsx on the offload pool"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 91,
+     "scope": "XlsxRenderer.render",
+     "description": "for box in regions(cells): builder.table(_table(cells, box, ...))"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 106,
+     "scope": "regions",
+     "description": "Corner adjacency merges a diagonal into one region with an n x n box; _merged runs pairwise over boxes"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 150,
+     "scope": "_table",
+     "description": "The body list comprehension materializes every grid position of the bounding box"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 150,
+     "description": "body = [[str(row), *(cells.get(...) for column in columns)] for row in range(box.top, box.bottom + 1)] is built in full"
+    },
+    {
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 133,
+     "description": "_merged loops over all kept boxes for each box, which is quadratic"
+    },
+    {
+     "file": "src/vfs/rendering/xlsx.py",
+     "line": 12,
+     "description": "The module docstring claims the region pass is linear"
+    }
+   ],
+   "blockers": [
+    "The local growth check was not executed. The fixture-harness attempt was stopped by the session's safety classifier."
+   ],
+   "validation_plan": {
+    "local": "In the sandbox, build xlsx sheets of n = 500 and then 1,000 diagonal cells. Render each and record peak RSS growth and time; quadratic growth against linear input size settles the claim. Regression: stream _table rows lazily into Builder.table, bound box area by the remaining character budget, and replace _merged with a sweep or sort-based merge."
+   }
+  },
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs.rendering.docx:note-reference-inline-expansion",
+   "title": "Repeated docx footnote or comment references copy the note text inline before the character budget applies",
+   "description": "_Writer._inline builds the whole paragraph string by appending _note(...) for every footnoteReference or commentReference. Each call formats a new copy of the referenced note's full text. One paragraph that repeats a reference N times to one long note produces a string of N times the note length. The string is joined and then passed through sanitize and splitlines in Builder.paragraph before _append checks any budget. Peak memory scales with references times note size, while the compressed input stays small.",
+   "claimed_root_cause": "Inline note expansion is unbounded and is assembled in full before Builder enforces RenderLimits.chars.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1287,
+     "scope": "DatabaseStorage._render_step",
+     "description": "Operator reindex renders a writer-supplied docx"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/rendering/docx.py",
+     "line": 113,
+     "scope": "_Writer.paragraph",
+     "description": "text, pictures = self._inline(paragraph._p)"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/rendering/docx.py",
+     "line": 140,
+     "scope": "_Writer._inline",
+     "description": "parts.append(_note(...)) for every reference, then ''.join(parts), with no budget"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/rendering/docx.py",
+     "line": 140,
+     "description": "Each reference appends a fresh formatted copy of the full note text"
+    },
+    {
+     "file": "src/vfs/rendering/markdown.py",
+     "line": 175,
+     "description": "Builder.paragraph runs sanitize(text).splitlines() over the whole string before any per-line budget check"
+    }
+   ],
+   "blockers": [
+    "The local check was not executed. The fixture-harness attempt was stopped by the session's safety classifier."
+   ],
+   "validation_plan": {
+    "local": "In the sandbox, build a docx with one footnote of about 10 KB and a paragraph with 100 and then 1,000 references to it. Record peak RSS growth against input size. Regression: stop appending once the accumulated parts exceed the remaining Builder budget, or emit each note once and reference it by id."
+   }
+  },
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs.rendering:ooxml-part-decompression-unbounded",
+   "title": "OOXML parts are fully decompressed by the parser libraries with no entry-size or ratio check before render",
+   "description": "The docx, pptx and xlsx renderers hand the stored bytes straight to docx.Document, pptx.Presentation and openpyxl.load_workbook. The python-docx and python-pptx OPC readers load part blobs into memory, and lxml parses XML parts in full. vfs checks no zip entry sizes, compression ratios or part counts first. The only stated 'decompression-bomb guard', RENDER_RATIO, compares emitted characters with input bytes. It cannot see a large decompressed part that yields no text. Peak memory per render can be up to deflate's ratio, about 1000:1, times the stored size. That memory is held in the host process every agent shares, on the operator's reindex.",
+   "claimed_root_cause": "No pre-parse inspection of zip central-directory sizes or ratios is done in the OOXML renderers; the ratio guard measures output, not decompressed input.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1287,
+     "scope": "DatabaseStorage._render_step",
+     "description": "Operator reindex renders a writer-supplied zip-container body sniffed as docx, pptx or xlsx"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/models/media.py",
+     "line": 89,
+     "scope": "sniff_mime",
+     "description": "PK magic plus the extension or declared type selects an Office renderer"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/rendering/docx.py",
+     "line": 50,
+     "scope": "DocxRenderer.render",
+     "description": "docx.Document(BytesIO(source.data)) with no prior zip inspection; the same shape appears at pptx.py:38 and xlsx.py:75"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/rendering/seam.py",
+     "line": 41,
+     "description": "The comment calls RENDER_RATIO 'the decompression-bomb guard', but it is applied to output characters in Builder._append"
+    },
+    {
+     "file": "src/vfs/rendering/markdown.py",
+     "line": 276,
+     "description": "The ratio check compares self._chars with ratio * input_bytes, so a part that decompresses large but yields no text is invisible to it"
+    }
+   ],
+   "blockers": [
+    "The peak-RSS measurement was not executed. The fixture-harness attempt was stopped by the session's safety classifier.",
+    "Whether python-docx, python-pptx and openpyxl read unreferenced parts eagerly is inferred from their OPC readers, not observed."
+   ],
+   "validation_plan": {
+    "local": "In the sandbox, take a normal small docx and add one highly compressible part of 20 MB uncompressed. Render it and compare peak RSS growth with the stored input size, stopping at the first clear ratio. Regression: before opening, inspect zipfile.ZipFile(...).infolist() and refuse with 'failed' when the total file_size, a single entry's file_size, or file_size/compress_size exceeds a declared RenderLimits cap."
+   }
+  }
+ ],
+ "hardening": [
+  "RenderLimits.seconds is cooperative and checked only at Builder unit boundaries and table rows. Library parsing (pypdf PdfReader and extract_text per page, python-docx and python-pptx open, openpyxl load) is outside the clock. A single extract_text call on one heavy page can exceed the 60 s budget. A process-level or subprocess render with a hard deadline would bound this.",
+  "pypdf 6.19.0 caps decompression of each stream at 75 MB, but vfs adds no aggregate cap across pages. Total transient memory per pdf render is bounded per stream, not per document.",
+  "The registry catches only Exception, so a RecursionError from deep python-docx vMerge chains (iter_tc_cells recursing through _tc_above) is reported as 'failed'. That is correct, but it costs O(rows^2) _tc_above lookups before the recursion limit trips.",
+  "sniff_mime keeps a caller's declared type when no magic matches, so a caller can route arbitrary bytes to any renderer, for example declaring application/pdf without %PDF-. This is not a finding on its own, because every renderer must already treat its input as hostile."
+ ],
+ "uncovered": []
+}

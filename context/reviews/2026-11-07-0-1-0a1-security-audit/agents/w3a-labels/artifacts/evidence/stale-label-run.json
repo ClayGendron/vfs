@@ -1,0 +1,285 @@
+{
+ "exp2_control_fresh_labels": {
+  "presnapshot_labels": {
+   "/eng/secret.md": 2
+  },
+  "posture_none_result": {
+   "success": true,
+   "relabel": {
+    "rows": 0,
+    "statements": 2,
+    "transactions": 1
+   },
+   "errors": []
+  },
+  "after_posture_settled": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": null,
+   "row_owner": null,
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "write_success": true,
+  "after_write": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": 0,
+   "row_owner": "alice",
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "probes": {
+   "bob_read_success": false,
+   "bob_read_content": [],
+   "bob_read_errors": [
+    [
+     "vfs.not_found",
+     "Not found"
+    ]
+   ],
+   "anon_read_success": false,
+   "anon_read_errors": [
+    [
+     "vfs.unauthenticated",
+     "Unauthenticated"
+    ]
+   ],
+   "anon_grep_paths": [],
+   "anon_grep_errors": [],
+   "bob_grep_paths": [],
+   "anon_glob_paths": [],
+   "bob_overwrite_success": false,
+   "bob_overwrite_errors": [
+    [
+     "vfs.permission_denied",
+     "Permission denied"
+    ]
+   ]
+  }
+ },
+ "exp2_write_presnapshot_labels": {
+  "presnapshot_labels": {
+   "/eng/secret.md": 2
+  },
+  "posture_none_result": {
+   "success": true,
+   "relabel": {
+    "rows": 0,
+    "statements": 2,
+    "transactions": 1
+   },
+   "errors": []
+  },
+  "after_posture_settled": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": null,
+   "row_owner": null,
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "write_success": true,
+  "after_write": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": 2,
+   "row_owner": "alice",
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "probes": {
+   "bob_read_success": true,
+   "bob_read_content": [
+    "TOPSECRET payroll"
+   ],
+   "bob_read_errors": [],
+   "anon_read_success": false,
+   "anon_read_errors": [
+    [
+     "vfs.unauthenticated",
+     "Unauthenticated"
+    ]
+   ],
+   "anon_grep_paths": [
+    "/eng/secret.md"
+   ],
+   "anon_grep_errors": [],
+   "bob_grep_paths": [
+    "/eng/secret.md"
+   ],
+   "anon_glob_paths": [
+    "/eng/secret.md"
+   ],
+   "bob_overwrite_success": false,
+   "bob_overwrite_errors": [
+    [
+     "vfs.permission_denied",
+     "Permission denied"
+    ]
+   ]
+  },
+  "after_rebuild_labels": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": 0,
+   "row_owner": "alice",
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "bob_read_after_rebuild": {
+   "success": false,
+   "errors": [
+    [
+     "vfs.not_found",
+     "Not found"
+    ]
+   ]
+  }
+ },
+ "exp3_move_presnapshot_postures": {
+  "presnapshot_postures": {
+   "/eng/secret.md": "read"
+  },
+  "posture_none_result": {
+   "success": true,
+   "relabel": {
+    "rows": 0,
+    "statements": 2,
+    "transactions": 1
+   },
+   "errors": []
+  },
+  "transfer_success": true,
+  "transfer_errors": [],
+  "after_transfer": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": 2,
+   "row_owner": "alice",
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "probes": {
+   "bob_read_success": true,
+   "bob_read_content": [
+    "TOPSECRET draft"
+   ],
+   "bob_read_errors": [],
+   "anon_read_success": false,
+   "anon_read_errors": [
+    [
+     "vfs.unauthenticated",
+     "Unauthenticated"
+    ]
+   ],
+   "anon_grep_paths": [
+    "/eng/secret.md"
+   ],
+   "anon_grep_errors": [],
+   "bob_grep_paths": [
+    "/eng/secret.md"
+   ],
+   "anon_glob_paths": [
+    "/eng/secret.md"
+   ],
+   "bob_overwrite_success": false,
+   "bob_overwrite_errors": [
+    [
+     "vfs.permission_denied",
+     "Permission denied"
+    ]
+   ]
+  }
+ },
+ "exp3_copy_presnapshot_postures": {
+  "presnapshot_postures": {
+   "/eng/secret.md": "read"
+  },
+  "posture_none_result": {
+   "success": true,
+   "relabel": {
+    "rows": 0,
+    "statements": 2,
+    "transactions": 1
+   },
+   "errors": []
+  },
+  "transfer_success": true,
+  "transfer_errors": [],
+  "after_transfer": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": 2,
+   "row_owner": "alice",
+   "everyone_postures": {
+    "/": "read",
+    "/eng/secret.md": "none"
+   }
+  },
+  "probes": {
+   "bob_read_success": true,
+   "bob_read_content": [
+    "TOPSECRET draft"
+   ],
+   "bob_read_errors": [],
+   "anon_read_success": false,
+   "anon_read_errors": [
+    [
+     "vfs.unauthenticated",
+     "Unauthenticated"
+    ]
+   ],
+   "anon_grep_paths": [
+    "/eng/secret.md",
+    "<tmp>/draft.md"
+   ],
+   "anon_grep_errors": [],
+   "bob_grep_paths": [
+    "/eng/secret.md",
+    "<tmp>/draft.md"
+   ],
+   "anon_glob_paths": [
+    "/eng/secret.md"
+   ],
+   "bob_overwrite_success": false,
+   "bob_overwrite_errors": [
+    [
+     "vfs.permission_denied",
+     "Permission denied"
+    ]
+   ]
+  }
+ },
+ "exp1_sqlite_seam": {
+  "rival_posture_inside_write_window": [
+   {
+    "success": false,
+    "relabel": null,
+    "errors": [
+     [
+      "vfs.conflict",
+      "Conflict: posture kept losing to concurrent changes: a retryable engine conflict outlived 4 attempts"
+     ]
+    ]
+   }
+  ],
+  "victim_write": {
+   "success": true,
+   "errors": []
+  },
+  "after": {
+   "pending_relabel_marks": [],
+   "row_everyone_level": 2,
+   "row_owner": "alice",
+   "everyone_postures": {
+    "/": "read"
+   }
+  }
+ }
+}

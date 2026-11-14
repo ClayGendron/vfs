@@ -1,0 +1,6 @@
+{
+ "w4a-cost": [
+  "src%2Fvfs%2Fbase.py%23grant%20%28and%20revoke%29%20naming%20another%20principal%20or%20a%20group%20id%2C%20repeated%20over%20many%20distinct%20path%20prefixes%20the%20granter%20holds%20read_write%20on%20%28the%20path%20need%20not%20hold%20a%20row%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23resolve_authority%20-%3E%20_grant_rows%20-%3E%20Resolution.compile%20-%3E%20visibility_clauses%3A%20the%20grantee%27s%20own%20per-call%20rights%20compile%20and%20per-clause%20statement%20fan-out%2C%20with%20revision.py%23stamp_principals%20retiring%20the%20grantee%27s%20RightsCache%20entry%20on%20every%20grant::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Resource%20accumulation%20attack%20classes",
+  "src%2Fvfs%2Fbase.py%23graph%20method%3D%27meet%27%20minimal%3DTrue%20over%20edges%20the%20caller%20mints%20%28mkedge%20from%20its%20own%20rows%2C%20or%20extracted%20markdown%20links%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgraph.py%23prune%2C%20_strip_leaves%20and%20_articulation_points%2C%20which%20run%20synchronously%20inside%20DatabaseStorage.graph%20with%20no%20budget%20or%20offload%3B%20meet%20ignores%20limit%20until%20the%20seeds%20join::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ]
+}

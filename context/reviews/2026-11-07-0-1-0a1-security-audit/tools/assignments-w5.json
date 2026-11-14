@@ -1,0 +1,8 @@
+{
+ "w5b-meet": [
+  "src%2Fvfs%2Fbase.py%23graph%20method%3D%27meet%27%20minimal%3DTrue%20over%20edges%20the%20caller%20mints%20%28mkedge%20from%20its%20own%20rows%2C%20or%20extracted%20markdown%20links%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgraph.py%23prune%2C%20_strip_leaves%20and%20_articulation_points%2C%20which%20run%20synchronously%20inside%20DatabaseStorage.graph%20with%20no%20budget%20or%20offload%3B%20meet%20ignores%20limit%20until%20the%20seeds%20join::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "w5a-content-hash": [
+  "src%2Fvfs%2Fbase.py%23write%28entries%3D%5BEntry%5D%29%20with%20caller-authored%20body%20metrics%3A%20an%20Entry%28source%3D%27bytes%27%2C%20data%3DNone%2C%20content_hash%3DH%29%20keeps%20the%20caller%27s%20H%2C%20and%20the%20MEASURED_BODY%20validation%20context%20lets%20a%20caller-built%20Entry%20vouch%20any%20hash%20for%20real%20bytes::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frender.py%23cached_renderings%20and%20render_rows%20lend%20a%20settled%20rendering%20per%20%28content_hash%2C%20generation%29%20across%20rows%20with%20no%20principal%20or%20rights%20term%2C%20and%20land_renderings%20guards%20only%20on%20the%20receiving%20row%27s%20own%20content_hash%3B%20the%20same%20key%20is%20also%20used%20by%20rerank.py%23merge_ranked%20cross-mount%20dedup%20and%20versions.py%23_mint_rows%20history%20skip::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::DATA-ISOLATION-AND-LIFECYCLE.md%23Composite-key%20and%20namespace%20collision"
+ ]
+}

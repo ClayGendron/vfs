@@ -1,0 +1,79 @@
+== command: tools/sandbox-run.py agents/w2d-reindex-edit/scratch .venv/bin/python -I reindex_scale.py  (limits: CPU 60 s, wall 120 s, RSS 2 GiB, no network, empty env)
+== InMemoryStorage, N links on one line (line_context folds the whole line per ref)
+one-line N=4000                    body=  40000B reindex=   558.6 ms ok=True maxloopgap=  21.8 ms | bob write=   217.6 ms ok=True [] read=   16.0 ms ok=True | rival reindex ok=False ['vfs.conflict'] | []
+one-line N=8000                    body=  80000B reindex=  1863.7 ms ok=True maxloopgap=  44.5 ms | bob write=  1508.6 ms ok=True [] read=   20.8 ms ok=True | rival reindex ok=False ['vfs.conflict'] | []
+   ratio x2 -> 3.34x
+one-line N=16000                   body= 160000B reindex=  6819.4 ms ok=True maxloopgap=  84.5 ms | bob write=  6477.5 ms ok=True [] read=   16.1 ms ok=True | rival reindex ok=False ['vfs.conflict'] | []
+   ratio x2 -> 3.66x
+== InMemoryStorage control, N links on N lines (same bytes, same refs)
+N-lines N=4000                     body=  40000B reindex=   165.0 ms ok=True maxloopgap=  22.7 ms | bob write=     7.2 ms ok=True [] read=    3.6 ms ok=True | rival reindex ok=True [] | []
+N-lines N=16000                    body= 160000B reindex=   533.4 ms ok=True maxloopgap=  82.9 ms | bob write=   188.2 ms ok=True [] read=   13.2 ms ok=True | rival reindex ok=False ['vfs.conflict'] | []
+== file-backed SQLite DatabaseStorage (pooled connections), one-line N=16000
+sqlite-file one-line N=16000       body= 160000B reindex=  6721.6 ms ok=True maxloopgap=  84.5 ms | bob write=  6462.7 ms ok=True [] read=    2.3 ms ok=True | rival reindex ok=True [] | []
+exit=0
+
+== harness: reindex_scale.py
+"""Doubling probe: one agent-written markdown body, then the operator's reindex (research timing, not a test).
+
+Per N: a fresh InMemoryStorage; alice writes /doc.md holding N links on ONE line (or, as the control,
+the same N links on N lines). The operator runs storage.reindex(). While it runs, bob issues one
+write and one read of his own file, a second reindex() is attempted, and a ticker records the
+longest event-loop gap. Then a file-backed SQLite DatabaseStorage repeats the largest one-line case
+to show a concurrent writer on a separate connection waits for the chunk pass's writer transaction.
+"""
+import asyncio, os, time
+from vfs.base import AsyncVirtualFileSystem
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.database.backend import DatabaseStorage
+from vfs.authority import Authority, Principal
+
+alice = Authority.of(Principal("alice"))
+bob = Authority.of(Principal("bob"))
+
+async def ticker(stop, gaps):
+    last = time.perf_counter()
+    while not stop.is_set():
+        await asyncio.sleep(0.005)
+        now = time.perf_counter(); gaps.append(now - last); last = now
+
+async def run(storage, label, body):
+    fs = AsyncVirtualFileSystem(storage=storage)
+    assert (await fs.write(path="/bob.txt", content="bob v0", authority=bob)).success
+    assert (await fs.write(path="/b.md", content="target", authority=alice)).success
+    assert (await fs.write(path="/doc.md", content=body, authority=alice)).success
+    stop = asyncio.Event(); gaps = []
+    tick = asyncio.create_task(ticker(stop, gaps))
+    async def bob_ops():
+        await asyncio.sleep(0.3)
+        s = time.perf_counter(); w = await fs.write(path="/bob.txt", content="bob v1", authority=bob); wt = time.perf_counter() - s
+        s = time.perf_counter(); r = await fs.read("/bob.txt", authority=bob); rt = time.perf_counter() - s
+        rival = await storage.reindex()
+        kinds = [str(e.kind) for e in rival.errors]
+        return wt, w.success, [str(e.kind) for e in w.errors], rt, r.success, rival.success, kinds
+    other = asyncio.create_task(bob_ops())
+    s = time.perf_counter(); res = await storage.reindex(); dt = time.perf_counter() - s
+    wt, wok, werr, rt, rok, rivok, rivk = await other
+    stop.set(); await tick
+    info = [e.message[:70] for e in res.errors]
+    print(f"{label:34s} body={len(body):7d}B reindex={dt*1e3:8.1f} ms ok={res.success} maxloopgap={max(gaps)*1e3:6.1f} ms "
+          f"| bob write={wt*1e3:8.1f} ms ok={wok} {werr} read={rt*1e3:7.1f} ms ok={rok} | rival reindex ok={rivok} {rivk} | {info}")
+    await fs.close()
+    return dt
+
+async def main():
+    print("== InMemoryStorage, N links on one line (line_context folds the whole line per ref)")
+    prev = None
+    for N in (4000, 8000, 16000):
+        dt = await run(InMemoryStorage(), f"one-line N={N}", "[a](b.md) " * N)
+        if prev: print(f"   ratio x2 -> {dt/prev:.2f}x")
+        prev = dt
+    print("== InMemoryStorage control, N links on N lines (same bytes, same refs)")
+    for N in (4000, 16000):
+        await run(InMemoryStorage(), f"N-lines N={N}", "[a](b.md)\n" * N)
+    print("== file-backed SQLite DatabaseStorage (pooled connections), one-line N=16000")
+    db = os.path.join(os.environ["TMPDIR"], "probe.db")
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(db + suffix): os.remove(db + suffix)
+    await run(DatabaseStorage(url=f"sqlite+aiosqlite:///{db}"), "sqlite-file one-line N=16000", "[a](b.md) " * 16000)
+
+asyncio.run(main())

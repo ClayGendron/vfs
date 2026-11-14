@@ -1,0 +1,2 @@
+note_chars=100000 refs=100000 compressed_docx_bytes=13970 implied_inline_chars=10000000000
+note_chars=1000000 refs=100000 compressed_docx_bytes=15713 implied_inline_chars=100000000000

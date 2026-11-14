@@ -1,0 +1,51 @@
+# command: ./tools/sandbox-run.py ./agents/h04-router/scratch ./.venv/bin/python -I t4_normalize.py (repo commit 3586750)
+"""Path-form differential probe: does any spelling of a read-only path pass the map yet land on the protected row?
+Also: reserved trees and another mount's prefix reached by alternate spellings."""
+import asyncio, unicodedata
+from vfs import AsyncVirtualFileSystem, InMemoryStorage, Authority, Principal
+from vfs.models import Entry
+from vfs.permissions import PermissionMap
+
+ALICE = Authority.of(Principal("alice"))
+SYS = Authority.system()
+CAFE_NFD = unicodedata.normalize("NFD", "café")
+
+async def main():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=PermissionMap(default="read_write", overrides=(("/dir/frozen", "read"), (f"/{CAFE_NFD}/ro", "read"))))
+    st = fs._bindings["/"].storage
+    await st.write(entries=[Entry(path="/dir/frozen/ledger.md", content="LOCKED"), Entry(path="/café/ro/x.md", content="LOCKED")], parents=True, authority=SYS)
+    await fs.add_mount(InMemoryStorage(), "/m", permissions="read")
+    spellings = ["/dir/frozen/ledger.md", "dir/frozen/ledger.md", "/dir/ frozen /ledger.md", "/dir/./frozen/ledger.md",
+                 "/x/../dir/frozen/ledger.md", "//dir//frozen//ledger.md", "/../../dir/frozen/ledger.md", "/dir/frozen\t/ledger.md",
+                 "/café/ro/x.md", f"/{CAFE_NFD}/ro/x.md", "/m/a.md", "/m /a.md", "/x/../m/a.md", "/.vfs", "/.vfs/trash/dir/frozen/ledger.md",
+                 "/m/.vfs/trash/a.md", "/.vfs/./trash/x.md", "/a/../.vfs/trash/x.md"]
+    for p in spellings:
+        r = await fs.write(path=p, content="TAMPERED", authority=ALICE)
+        print(repr(p), "->", r.success, [(e.kind.value, str(e.path)) for e in r.errors])
+    for p in ["/dir/frozen/ledger.md", "/café/ro/x.md"]:
+        r = await fs.read(p, authority=SYS)
+        print("final", p, [o.content for o in r.observations])
+
+asyncio.run(main())
+# ---- output ----
+'/dir/frozen/ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'dir/frozen/ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'/dir/ frozen /ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'/dir/./frozen/ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'/x/../dir/frozen/ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'//dir//frozen//ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'/../../dir/frozen/ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'/dir/frozen\t/ledger.md' -> False [('vfs.read_only', '/dir/frozen/ledger.md')]
+'/café/ro/x.md' -> False [('vfs.read_only', '/café/ro/x.md')]
+'/café/ro/x.md' -> False [('vfs.read_only', '/café/ro/x.md')]
+'/m/a.md' -> False [('vfs.read_only', '/m/a.md')]
+'/m /a.md' -> False [('vfs.read_only', '/m/a.md')]
+'/x/../m/a.md' -> False [('vfs.read_only', '/m/a.md')]
+'/.vfs' -> False [('vfs.invalid', 'None')]
+'/.vfs/trash/dir/frozen/ledger.md' -> False [('vfs.invalid', 'None')]
+'/m/.vfs/trash/a.md' -> False [('vfs.invalid', '/m/.vfs/trash/a.md')]
+'/.vfs/./trash/x.md' -> False [('vfs.invalid', 'None')]
+'/a/../.vfs/trash/x.md' -> False [('vfs.invalid', 'None')]
+final /dir/frozen/ledger.md ['LOCKED']
+final /café/ro/x.md ['LOCKED']
+exit=0

@@ -1,0 +1,190 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23chained%20glob%20and%20grep%20over%20rows%20in%20hand%20%28_glob_rows_in_hand%2C%20_grep_rows_in_hand%2C%20observations%3D%29::src%2Fvfs%2Fpattern_matching%2Fgrep.py%23match_texts%20with%20budget%3DNone%2C%20and%20scope.py%23passes_gates%20per%20candidate%20times%20per%20gate::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Quota%20and%20scheduling%20attack%20classes",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/base.py",
+    "src/vfs/pattern_matching/grep.py",
+    "src/vfs/storage/backends/database/grep.py",
+    "crates/vfs-core/src/verify.rs",
+    "crates/vfs-core/src/python.rs"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2c-compute",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/pattern_matching/grep.py",
+      "src/vfs/storage/backends/database/grep.py",
+      "crates/vfs-core/src/verify.rs",
+      "crates/vfs-core/src/python.rs"
+     ],
+     "invariant": "Content verification has the same bounds whether rows come from storage or from observations=: offloaded from the event loop, a wall-time budget, a candidate budget, and content-byte chunking",
+     "method": "source",
+     "result": "The storage tier (database/grep.py:120-126, 215, 328-354) caps candidates at 25,000, splits content into 32 MiB chunks, sets a 10 s deadline, and sends verification to an executor through VerifyOffload. The chained path (base.py:1864-1946) reads every absent row's content with self.read, then calls match_texts (pattern_matching/grep.py:226-260) with budget=None, directly on the event-loop thread. The Rust binding (python.rs:114-160) releases the GIL with py.detach, but the awaiting coroutine still blocks the loop until the whole batch finishes. Even when a deadline is set, it is only checked before each body starts (verify.rs:170-205), never during one. Regex-crate matching is linear in body bytes, with a per-byte cost that grows with pattern size, and pattern length has no cap. So loop occupancy is bounded only by the total bytes of rows the caller can read, which the observations list does not limit.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w2c-compute",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/pattern_matching/glob.py"
+     ],
+     "invariant": "Chained glob gate cardinality is bounded",
+     "method": "source",
+     "result": "_glob_rows_in_hand (base.py:1845-1862) compiles one filter per arm and per globs_not entry, then applies all of them to every row: work is |arms + globs_not| × |rows|, with no cap on either list beyond expand_channel's per-pattern arm cap. Each compiled filter goes through the known backtracking glob root cause (vfs.pattern_matching.glob._translate:backtracking-wildcards), so this path reaches an existing root cause. No new fingerprint for the glob leg.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify"
+   ],
+   "unresolved": []
+  },
+  {
+   "coverage_id": "src%2Fvfs%2Fbase.py%23glean%20query%20text::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23_embed_query%2C%20the%20query-vector%20cache%2C%20and%20glean.py%23tokenize%20term%20fan-out::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes",
+   "disposition": "blocked",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2c-compute",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "Glean query text is length-bounded before embedding, caching and term fan-out",
+     "method": "source",
+     "result": "Partial review only. backend.py:641-650 catches provider failures and downgrades them to a warning. I did not trace the params.py:294 length gate, the inline embed_query in embedding/provider.py:131, the 256-entry query-vector cache keyed by the full query string (backend.py:171, 672-679), or how many lexical_stats IN-list chunks each distinct tokenize() term triggers (glean.py:257-300, 480) far enough to settle the claim this run.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": [
+    "Whether params.py or the router caps glean query length or distinct-term count before tokenize and lexical_stats (params.py:294, glean.py:257-300)",
+    "Whether a local embedding provider's embed_query is offloaded or runs on the event loop, and how its cost scales with query length (embedding/provider.py:131, embedding/model2vec.py)",
+    "Per-entry memory retained by the 256-entry query-vector cache when keys are very long query strings (backend.py:171, 672-679)"
+   ]
+  },
+  {
+   "coverage_id": "src%2Fvfs%2Fparams.py%23pattern%20query%20edit%20graph%20arguments::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgrep.py%23budgets%20and%20caps::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "src/vfs/pattern_matching/grep.py",
+    "src/vfs/storage/backends/database/grep.py",
+    "src/vfs/storage/backends/database/graph.py",
+    "src/vfs/base.py",
+    "crates/vfs-core/src/verify.rs"
+   ],
+   "checks": [
+    {
+     "agent_id": "w2c-compute",
+     "reviewed_paths": [
+      "src/vfs/pattern_matching/grep.py",
+      "src/vfs/storage/backends/database/grep.py",
+      "src/vfs/base.py"
+     ],
+     "invariant": "A deeply nested grep pattern is refused as a classified Result rather than escaping the verb",
+     "method": "local",
+     "result": "Nesting depth 50 matches normally. Depth 400 (sre_parse succeeds, the regex crate refuses it at its nest limit) returns a classified vfs.invalid Result on both tiers. Depth 1000 and depth 5000 raise RecursionError out of fs.grep on both tiers. The error starts in sre_parse.parse at _gate (pattern_matching/grep.py:292) and is not caught: compile_verifier catches only PatternError, and the storage tier re-raises it through _route_fanout / raise_lone_or_group. A normal grep on the same filesystem object afterwards succeeds, so the effect stays in the caller's own task. This is a contract break (an unclassified exception), not shared availability, so it is recorded as hardening.",
+     "artifact": "agents/w2c-compute/artifacts/evidence/grep_nested_pattern_recursion.txt"
+    },
+    {
+     "agent_id": "w2c-compute",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/graph.py"
+     ],
+     "invariant": "graph meet minimal=True pruning cost is bounded relative to the walked set",
+     "method": "source",
+     "result": "prune (graph.py:422-448) removes one non-articulation node per iteration. Each iteration rebuilds _adjacency over every walk edge and reruns _articulation_points. After each removal, _strip_leaves rebuilds adjacency again on every leaf round (graph.py:596-618). Total cost is about O(K × (E + K)), where K is the kept bridge-path set and E is all edges seen by the walk, not only the kept ones. That is quadratic in the walked set, runs synchronously on the event loop, and has no budget. The walked set is limited only by depth (meet ignores limit until the seeds join) and by the edges the caller can list. Growth was not measured locally this run, so this is hardening, not a candidate.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify",
+   "title": "Chained grep over observations verifies content on the event loop with no wall, candidate or byte budget",
+   "description": "grep(observations=...) fetches the content of every listed row the caller can read and runs the regex verifier over the whole batch synchronously on the event-loop thread, with budget=None. The storage-tier grep bounds the same work with a 25,000-candidate budget, 32 MiB content chunks, a 10 s deadline, and an executor offload. The chained path has none of these, so one call can occupy the host's shared event loop in proportion to the total bytes the caller lists, times a pattern-dependent per-byte cost.",
+   "claimed_root_cause": "_grep_rows_in_hand calls match_texts (budget=None) inline instead of going through the storage tier's VerifyOffload, byte_chunked(CONTENT_BYTE_BUDGET), CANDIDATE_BUDGET and WALL_TIME_BUDGET controls. The observations list and the pattern length are uncapped.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/base.py",
+     "line": 1433,
+     "scope": "AsyncVirtualFileSystem.grep",
+     "description": "With observations not None, grep dispatches to _grep_rows_in_hand after the parameter gate; no row-count cap applies."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/base.py",
+     "line": 1909,
+     "scope": "_grep_rows_in_hand",
+     "description": "Every candidate row without content is read in one self.read(observations=absent) call, with no candidate or byte budget."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/base.py",
+     "line": 1919,
+     "scope": "_grep_rows_in_hand",
+     "description": "match_texts runs over every texted row, synchronously on the coroutine's thread."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/pattern_matching/grep.py",
+     "line": 250,
+     "scope": "match_texts",
+     "description": "verifier.hit_lines / count_lines is called with budget=None."
+    },
+    {
+     "kind": "sink",
+     "file": "crates/vfs-core/src/verify.rs",
+     "line": 195,
+     "scope": "hits_batch",
+     "description": "Every body is matched to completion; the GIL is released, but the event loop waits on the call."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 120,
+     "description": "The storage tier declares CANDIDATE_BUDGET 25,000, POSTING_BYTE_BUDGET, WALL_TIME_BUDGET 10.0 s and CONTENT_BYTE_BUDGET 32 MiB."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 328,
+     "description": "The storage tier verifies through VerifyOffload(verifier, executor) in byte-budgeted chunks against the deadline."
+    },
+    {
+     "file": "src/vfs/pattern_matching/grep.py",
+     "line": 250,
+     "description": "match_texts passes budget=None to the engine."
+    },
+    {
+     "file": "crates/vfs-core/src/python.rs",
+     "line": 143,
+     "description": "A deadline exists only when a budget is given, and it is checked only before each body starts."
+    }
+   ],
+   "blockers": [
+    "No bounded local growth measurement of loop stall versus total listed bytes was captured this run",
+    "Whether a deployed host runs many agents on one event loop and passes agent-supplied observations through unchanged is outside the repository"
+   ],
+   "validation_plan": {
+    "local": "In the sandbox, write N rows of B bytes to an InMemoryStorage, run fs.grep(pattern, observations=[Observation(path=...) for each row]) next to a 1 ms asyncio ticker, and record the largest loop gap at total size S and 2S. Compare with fs.grep(pattern, allow_scan=True) over the same rows, which should stay offloaded and budgeted.",
+    "deployment": "Owner confirms whether the host runs several agents' verbs on one shared event loop and whether agent-controlled observations lists or patterns are size-limited before they reach vfs."
+   }
+  }
+ ],
+ "hardening": [
+  "A grep pattern nested about 500 or more groups deep raises an uncaught RecursionError from sre_parse inside _gate (src/vfs/pattern_matching/grep.py:292) on both the storage and chained tiers, instead of a classified vfs.invalid Result. Fix: catch RecursionError next to re.error in _gate and raise PatternError, or refuse patterns past a nesting depth before calling sre_parse.",
+  "graph meet minimal=True prune (src/vfs/storage/backends/database/graph.py:422-448) recomputes adjacency over all walk edges plus articulation points once per removed node, so cost is about O(K × (E + K)) on the event loop with no budget. Fix: compute articulation points once on the kept subgraph and remove every non-cut node in one deterministic pass, or keep adjacency incremental.",
+  "Chained glob (src/vfs/base.py:1845-1862) applies every arm and globs_not filter to every row with no cap on either list, and so reaches the known glob backtracking root cause through observations=."
+ ],
+ "uncovered": []
+}

@@ -1,0 +1,241 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fparams.py%23pattern%20query%20edit%20graph%20arguments::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgrep.py%23budgets%20and%20caps::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/pattern_matching/glob.py",
+    "src/vfs/storage/backends/database/reads.py",
+    "src/vfs/base.py",
+    "src/vfs/pattern_matching/grep.py",
+    "src/vfs/storage/backends/database/grep.py",
+    "src/vfs/storage/backends/database/offload.py",
+    "crates/vfs-core/src/verify.rs",
+    "crates/vfs-core/src/python.rs",
+    "src/vfs/params.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "crates/vfs-core/src/vectors.rs",
+    "crates/vfs-core/src/lexical.rs",
+    "src/vfs/storage/backends/database/graph.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h07-compute",
+     "reviewed_paths": [
+      "src/vfs/pattern_matching/glob.py",
+      "src/vfs/storage/backends/database/reads.py",
+      "src/vfs/base.py"
+     ],
+     "invariant": "A caller's glob pattern costs time roughly proportional to path length × pattern length, and it cannot block the event loop shared by other agents.",
+     "method": "local",
+     "result": "Confirmed. _translate turns each '*' into a backtracking [^/]* with no cap on how many wildcards a pattern may contain. A '[...]' class makes the SQL LIKE prefilter fall back to an empty prefix, so every row in the mount becomes a candidate. The regex runs inline on the event loop, before view.shows. Doubling n multiplies the time by about 2^k (about 14x at k=4, n=64 to 128), so the cost is O(n^k). The longest event-loop stall roughly equals the full glob time.",
+     "artifact": "agents/h07-compute/artifacts/evidence/glob_backtracking_e2e.txt"
+    },
+    {
+     "agent_id": "h07-compute",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/grep.py",
+      "src/vfs/pattern_matching/grep.py"
+     ],
+     "invariant": "Grep's WALL_TIME_BUDGET bounds the cost of matching grep's globs/globs_not.",
+     "method": "source",
+     "result": "Not bounded. The glob gates (passes_gates, the same compile_filter regex) run inline per candidate, and the deadline is checked only between stages. This is the same root cause as the glob finding (variant), capped at CANDIDATE_BUDGET=25,000 candidates per call.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h07-compute",
+     "reviewed_paths": [
+      "crates/vfs-core/src/verify.rs",
+      "crates/vfs-core/src/python.rs",
+      "src/vfs/storage/backends/database/offload.py",
+      "src/vfs/params.py"
+     ],
+     "invariant": "Grep output in lines mode is bounded by the size of the body, regardless of the context-line arguments.",
+     "method": "source",
+     "result": "Not bounded, per source. extend_context gives every hit line its own span of up to before/after lines (params allow up to 2^31-1), and python.rs copies each span into a separate PyBytes. Overlapping contexts are never merged, so output can reach about (hit lines) × (body bytes). Not run locally.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h07-compute",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/glean.py",
+      "crates/vfs-core/src/vectors.rs",
+      "crates/vfs-core/src/lexical.rs"
+     ],
+     "invariant": "A huge glean limit does not allocate memory before any rows are read.",
+     "method": "source",
+     "result": "Holds. vector_depth = 10×limit only feeds SQL LIMIT. cosine_topk and lexical score do not pre-allocate by k, and the lexical depth uses FUSION_K. Cost stays linear in the authorized corpus.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs.pattern_matching.glob._translate:backtracking-wildcards",
+    "vfs-core.verify.extend_context:per-hit-context-duplication"
+   ],
+   "unresolved": [
+    "The grep gate's sre_parse recursion on deeply nested patterns (RecursionError vs PatternError classification) was not settled.",
+    "The superlinear cost of graph meet minimal=True pruning (prune/_articulation_points rerun per removed node) relative to the walked-set size was not measured."
+   ]
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "confirmed",
+   "fingerprint": "vfs.pattern_matching.glob._translate:backtracking-wildcards",
+   "title": "Glob patterns compile to backtracking regex with unbounded wildcards, so one call can stall the shared event loop",
+   "description": "A caller who can run glob (or grep/glean with globs) supplies a short pattern with k wildcards. Matching it against each stored name or path of length n costs O(n^k) in CPython re. The match runs synchronously on the event loop for every candidate row, before visibility filtering. A '[...]' class disables the SQL prefilter, so every row in the mount is a candidate.",
+   "root_cause": "_translate emits backtracking [^/]* and (?:.+/)? for wildcards with no cap on wildcard count or pattern length. compile_glob uses Python re, not the linear-time Rust engine. The match runs inline on the loop with no deadline.",
+   "intended_behavior": "Glob matching is linear in subject length, like the Rust regex engine that grep already uses, or it is bounded by a wildcard cap and a deadline, and it never blocks other callers on the shared loop.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/base.py",
+     "line": 1263,
+     "scope": "AsyncVirtualFileSystem.glob",
+     "description": "Accepts a caller pattern with no length or wildcard cap."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/reads.py",
+     "line": 523,
+     "scope": "pattern_arm",
+     "description": "A '[' class makes _glob_like return None. The prefilter becomes an empty literal prefix plus '%', so every row is a candidate."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/reads.py",
+     "line": 368,
+     "scope": "glob_rows",
+     "description": "passes_row_filters runs the compiled regex per candidate, inline, before view.shows."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/pattern_matching/glob.py",
+     "line": 555,
+     "scope": "_translate_component",
+     "description": "Each '*' becomes a backtracking [^/]*, compiled with Python re at line 208."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/pattern_matching/glob.py",
+     "line": 208,
+     "description": "compile_glob uses Python re.compile."
+    },
+    {
+     "file": "src/vfs/pattern_matching/glob.py",
+     "line": 536,
+     "description": "A '**' component becomes (?:.+/)?, which also backtracks across segments."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/reads.py",
+     "line": 985,
+     "description": "_glob_like returns None for any '[' class."
+    }
+   ],
+   "conditions": [
+    {
+     "kind": "authorization_role",
+     "description": "The caller can invoke glob on a mount. A fresh storage's posture lets anonymous callers do this."
+    },
+    {
+     "kind": "data_state",
+     "description": "The mount holds at least one row whose name or path is moderately long (tens of characters or more). Paths can be up to 1024 bytes."
+    },
+    {
+     "kind": "system_configuration",
+     "description": "The host serves several agents from one process or event loop."
+    }
+   ],
+   "execution": {
+    "attacker_perspective": "An agent with glob access on a shared AsyncVirtualFileSystem.",
+    "payloads": [
+     "glob pattern '*?' * k + '[Q]' against a stored name 'a' * n (k=4: n=64,128; k=5: n=32,64)"
+    ],
+    "instructions": [
+     "In the sandbox, build an AsyncVirtualFileSystem(storage=InMemoryStorage()) and write one file whose name is n characters long.",
+     "Run a 1 ms asyncio ticker, call fs.glob(pattern), and record the glob duration and the largest gap between ticks."
+    ],
+    "observed_result": "k=4: 0.0071 s at n=64 and 0.0595 s at n=128. k=5: 0.0047 s at n=32 and 0.0532 s at n=64. The largest event-loop gap matched the glob time (0.056 s and 0.050 s). A direct regex check gave ratios of about 7x (k=3) and about 14x (k=4) per doubling, which fits O(n^k)."
+   },
+   "remediation": {
+    "strategy": "Match globs with the linear-time Rust regex engine already in vfs-core, or with a non-backtracking glob matcher. Until then, cap the wildcard count per pattern and pattern length in expand_pattern. Add a regression test that counts matcher steps or runs a fixed-size adversarial pattern under an operation-count assertion."
+   },
+   "severity": {
+    "likelihood": {
+     "score": "medium",
+     "reason": "The input is short and every name in the mount is a target; the only requirement is glob access."
+    },
+    "impact": {
+     "score": "medium",
+     "reason": "Each call stalls the shared event loop for every co-hosted agent. Growth is polynomial in pattern length, with no deadline."
+    },
+    "overall_severity": "medium"
+   },
+   "confidence": {
+    "score": "high",
+    "reason": "Shown end to end through the public API with bounded growth points inside the sandbox."
+   }
+  },
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs-core.verify.extend_context:per-hit-context-duplication",
+   "title": "Grep context lines are duplicated per hit, so output can grow to (hit lines) × (body size)",
+   "description": "In lines mode with large before_context/after_context (allowed up to 2^31-1), every hit line receives its own context span, which can be the whole body, and each span is copied into a separate PyBytes and then a str. A body where many lines match yields output quadratic in its size.",
+   "claimed_root_cause": "extend_context computes one span per hit without merging overlapping contexts, python.rs copies each span, and no output-byte budget exists. CONTENT_BYTE_BUDGET bounds input batches, not output.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/params.py",
+     "line": 270,
+     "scope": "grep before_context/after_context",
+     "description": "Accepts up to INT_CEILING."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 348,
+     "scope": "grep_rows",
+     "description": "Passes context sizes to verify.hit_lines with cap=max_count (None by default)."
+    },
+    {
+     "kind": "propagation",
+     "file": "crates/vfs-core/src/verify.rs",
+     "line": 243,
+     "scope": "extend_context",
+     "description": "Builds a full context span per hit line."
+    },
+    {
+     "kind": "sink",
+     "file": "crates/vfs-core/src/python.rs",
+     "line": 154,
+     "scope": "hit_lines",
+     "description": "Copies each span into a new PyBytes."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "crates/vfs-core/src/verify.rs",
+     "line": 243,
+     "description": "One span per hit; overlapping spans are not merged."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/grep.py",
+     "line": 124,
+     "description": "CONTENT_BYTE_BUDGET bounds input only."
+    }
+   ],
+   "blockers": [
+    "Not executed locally: the quadratic output growth has not been observed."
+   ],
+   "validation_plan": {
+    "local": "In the sandbox, grep a small file of L short lines that all match, with before/after context set high, at L and 2L. Sum the bytes of the returned match content and check that it grows about 4x per doubling."
+   }
+  }
+ ],
+ "hardening": [
+  "Glean: limit up to 2^31-1 sets SQL LIMIT to 10×limit, so a single call can fetch every authorized chunk row; consider capping limit.",
+  "Grep: the wall-time deadline is checked only between stages or bodies, never inside one Rust match. Matching is linear-time, so this is bounded."
+ ],
+ "uncovered": []
+}

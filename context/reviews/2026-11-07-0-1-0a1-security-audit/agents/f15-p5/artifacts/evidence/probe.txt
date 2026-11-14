@@ -1,0 +1,34 @@
+#### InMemoryStorage
+control exact L=8000       bytes=  16001 edit_ms=    33.3 lev_cells=        0 max_gap_ms=     4.6 success=True err=None unchanged=? 
+anchor L=3000              bytes=   6005 edit_ms=   164.6 lev_cells=        0 max_gap_ms=   160.0 success=False err=vfs.invalid unchanged=? 
+anchor L=6000              bytes=  12005 edit_ms=   640.7 lev_cells=        0 max_gap_ms=   638.2 success=False err=vfs.invalid unchanged=? 
+   ratio 3.89
+anchor L=12000             bytes=  24005 edit_ms=  2522.6 lev_cells=        0 max_gap_ms=  2520.3 success=False err=vfs.invalid unchanged=? 
+   ratio 3.94
+lev M=600                  bytes=   1209 edit_ms=    65.7 lev_cells=   361201 max_gap_ms=    63.3 success=False err=vfs.invalid unchanged=? 
+lev M=1200                 bytes=   2409 edit_ms=   271.3 lev_cells=  1442401 max_gap_ms=   268.9 success=False err=vfs.invalid unchanged=? 
+   ratio 4.13
+lev M=2400                 bytes=   4809 edit_ms=  1137.5 lev_cells=  5764801 max_gap_ms=  1133.9 success=False err=vfs.invalid unchanged=? 
+   ratio 4.19
+trim L=3000                bytes=   6003 edit_ms=   260.0 lev_cells=        0 max_gap_ms=   257.7 success=False err=vfs.invalid unchanged=? 
+trim L=6000                bytes=  12003 edit_ms=  1012.1 lev_cells=        0 max_gap_ms=  1009.6 success=False err=vfs.invalid unchanged=? 
+   ratio 3.89
+trim L=12000               bytes=  24003 edit_ms=  3991.8 lev_cells=        0 max_gap_ms=  3987.3 success=False err=vfs.invalid unchanged=? 
+   ratio 3.94
+#### file SQLite DatabaseStorage (rival BEGIN IMMEDIATE at +150ms, timeout 0)
+control exact L=8000       bytes=  16001 edit_ms=    11.4 lev_cells=        0 max_gap_ms=     2.6 success=True err=None unchanged=? acquired
+anchor L=3000              bytes=   6005 edit_ms=   161.2 lev_cells=        0 max_gap_ms=   159.4 success=False err=vfs.invalid unchanged=? acquired
+anchor L=6000              bytes=  12005 edit_ms=   637.8 lev_cells=        0 max_gap_ms=   633.2 success=False err=vfs.invalid unchanged=? refused: database is locked
+   ratio 3.96
+anchor L=12000             bytes=  24005 edit_ms=  2577.5 lev_cells=        0 max_gap_ms=  2562.5 success=False err=vfs.invalid unchanged=? refused: database is locked
+   ratio 4.04
+lev M=600                  bytes=   1209 edit_ms=    67.4 lev_cells=   361201 max_gap_ms=    64.5 success=False err=vfs.invalid unchanged=? acquired
+lev M=1200                 bytes=   2409 edit_ms=   272.0 lev_cells=  1442401 max_gap_ms=   267.5 success=False err=vfs.invalid unchanged=? refused: database is locked
+   ratio 4.03
+lev M=2400                 bytes=   4809 edit_ms=  1132.9 lev_cells=  5764801 max_gap_ms=  1130.6 success=False err=vfs.invalid unchanged=? refused: database is locked
+   ratio 4.17
+trim L=3000                bytes=   6003 edit_ms=   268.6 lev_cells=        0 max_gap_ms=   263.7 success=False err=vfs.invalid unchanged=? refused: database is locked
+trim L=6000                bytes=  12003 edit_ms=  1046.2 lev_cells=        0 max_gap_ms=  1041.7 success=False err=vfs.invalid unchanged=? refused: database is locked
+   ratio 3.89
+trim L=12000               bytes=  24003 edit_ms=  3985.5 lev_cells=        0 max_gap_ms=  3982.8 success=False err=vfs.invalid unchanged=? refused: database is locked
+   ratio 3.81

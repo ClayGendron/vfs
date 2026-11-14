@@ -1,0 +1,199 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fpaths.py%23%2F.agents%20namespace%20and%20src%2Fvfs%2Fskills.py::src%2Fvfs%2Fbase.py%23run%20dispatch%20and%20%2F.agents%20write%20rights::src%2Fvfs::AI-AND-LLM.md%23Tool%20and%20action%20attack%20classes",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/base.py",
+    "src/vfs/ops.py",
+    "src/vfs/permissions.py",
+    "src/vfs/params.py",
+    "src/vfs/session.py",
+    "src/vfs/storage/protocol.py",
+    "tests/base/test_gates.py",
+    "tests/support/base_doubles.py",
+    "README.md",
+    "src/vfs/paths.py",
+    "src/vfs/skills.py",
+    "src/vfs/models/links.py",
+    "src/vfs/storage/backends/database/links.py",
+    "src/vfs/storage/backends/database/indexing.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/models/rows.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h11-agents",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/ops.py",
+      "src/vfs/permissions.py",
+      "src/vfs/params.py",
+      "src/vfs/session.py",
+      "src/vfs/storage/protocol.py",
+      "tests/base/test_gates.py",
+      "tests/support/base_doubles.py",
+      "README.md"
+     ],
+     "invariant": "run must not reach a SupportsRun backend past a gate vfs promises (read-only PermissionMap, deny_ops, rung), and the router must hand the backend the caller's true authority",
+     "method": "local",
+     "result": "Lead 1 settled, no finding. A scratch SupportsRun storage mounted at /tools: run reached the backend under permissions='read' and permissions=read_only(), for an unnamed caller (passed as anon) and for ann. deny_ops=('run',) refused it as vfs.unsupported and made no backend call. vfs promises no write gate for run: base.py:1586-1588 says 'Not a namespace mutation, so it takes no write-authorization gate'; ops.py:11 says EXEC_OPS are 'routed, no write gate'; permissions.py:295 gates only WRITE_GATED_OPS (ops.py:94); test_gates.py:182-190 pins the behavior. VERB_RUNGS['run']=Needs('read') (ops.py:163) is a storage-side rung, like every verb's; the router applies no rung for any verb. _admitted always passes the real authority to storage. The arguments dict (params.py:357-361) is passed through, and no vfs code acts on it. No in-tree backend implements SupportsRun, so nothing is affected today.",
+     "artifact": "agents/h11-agents/artifacts/evidence/run_gate.txt"
+    },
+    {
+     "agent_id": "h11-agents",
+     "reviewed_paths": [
+      "src/vfs/paths.py",
+      "src/vfs/skills.py",
+      "src/vfs/base.py",
+      "README.md"
+     ],
+     "invariant": "a lower-privileged principal must not plant or overwrite a /.agents/skills|tools entry beyond what row rights grant it",
+     "method": "local",
+     "result": "Lead 2 settled, no finding. /.agents has no special write rule: check_reserved_path (paths.py:824-840) reserves only /.vfs and the trash view, and is_reserved_directory (paths.py:684-697) only fixes kinds. Writes there follow ordinary row rights. Under posture '/'=read, ann with no grant was refused permission_denied for a plant, for an overwrite of an existing SKILL.md, and for a move into /.agents; copy without parents was not_found. ann with 'add' on /.agents could not overwrite SKILL.md (owner floor) but could add a new file inside an existing skill unit. That matches the documented add rung (ops.py:117-121). On a fresh default posture, anonymous could plant a SKILL.md with angle brackets in its frontmatter. That is the documented read_write default (README Known limits). Skill's angle-bracket screen (skills.py:41-43, 213-223) is an authoring helper, not a write gate. vfs contains no code that loads skills into a model.",
+     "artifact": "agents/h11-agents/artifacts/evidence/agents_links.txt"
+    },
+    {
+     "agent_id": "h11-agents",
+     "reviewed_paths": [
+      "src/vfs/models/links.py",
+      "src/vfs/storage/backends/database/links.py",
+      "src/vfs/storage/backends/database/indexing.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/models/rows.py",
+      "src/vfs/ops.py"
+     ],
+     "invariant": "an edge whose target the source's author cannot list must not be minted (mkedge's traverse=list gate, ops.py:157), and link resolution must not disclose target existence to the author",
+     "method": "local",
+     "result": "Lead 3: candidate. ann cannot stat bob's /private/bob/plan.md (not_found), and mkedge from ann's doc to it is refused not_found. But ann's markdown body linking to the plan was turned into an extracted 'links' edge by the operator's reindex (publish_links resolves candidates with no rights filter, links.py:149-165). After that, bob's graph inbound and neighborhood on his own private file returned ann's doc. bob's rmedge of the planted edge was refused permission_denied. Disclosure to ann was checked and not found: ann's outbound walk hid the target, the edge context column (rows.py:104) is never read back, and the unresolved count reaches only the operator's reindex Result (indexing.py:350-357). glean has no edge leg.",
+     "artifact": "agents/h11-agents/artifacts/evidence/link_vs_mkedge.txt"
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs:storage/backends/database/links.py:publish_links:target-resolution-ignores-author-rights"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "confirmed",
+   "fingerprint": "vfs:storage/backends/database/links.py:publish_links:target-resolution-ignores-author-rights",
+   "title": "Markdown link extraction mints edges to rows the author cannot list, bypassing mkedge's target gate",
+   "description": "A principal who can write a markdown file can attach a 'links' edge to any live row in the mount, including rows they cannot list. They do it by putting the target path in a link. The operator's routine reindex resolves link targets against every live entry with no rights check, then inserts the edge. The direct verb is gated: mkedge needs 'list' on the target and refuses the same edge as not_found. The planted edge then shows up in the victim's own graph walks (inbound and neighborhood) on their private file. It pulls the attacker's text into the neighborhood an agent gathers for that private file, and the victim cannot remove it, because rmedge needs 'contribute' on the source. The attacker learns nothing about the target. The harm is to the integrity of the victim's private node's relationships, and it gives attacker-chosen content a placement in the victim's agent context.",
+   "root_cause": "_resolve_candidates (src/vfs/storage/backends/database/links.py:149-165) looks up candidate target paths with a plain SELECT over entry rows (only deleted_at IS NULL), with no Visibility for the source document's owner. publish_links (links.py:85-141) then inserts the edges through insert_arbitrated. The pass runs inside the operator's reindex (backend.py:1118, 1377; indexing.py:338) with no authority, so it mints edges on the author's behalf with system reach. The author could not get that reach through mkedge, which is gated at traverse=list (ops.py:157).",
+   "intended_behavior": "An extracted edge should satisfy the same target rule as an authored one. A reference should resolve only to a target that the source row's owner (entry.owner_id, rows.py:471) holds at least 'list' on. Any other reference should count exactly like an absent target (unresolved), so the count does not become an oracle.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/base.py",
+     "line": 958,
+     "scope": "AsyncVirtualFileSystem.write",
+     "description": "ann, who holds contribute on /pub, writes /pub/ann.md whose body links to /private/bob/plan.md, a path ann cannot list"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 1377,
+     "scope": "DatabaseStorage._gram_phases",
+     "description": "the operator's routine reindex runs chunk_dirty with no authority"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/indexing.py",
+     "line": 338,
+     "scope": "chunk_dirty",
+     "description": "dirty markdown rows' references go to publish_links"
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/links.py",
+     "line": 161,
+     "scope": "_resolve_candidates",
+     "description": "candidate paths resolve against every live entry, with no rights filter for the source's owner"
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/backends/database/links.py",
+     "line": 140,
+     "scope": "publish_links",
+     "description": "a links edge from ann's doc to bob's private plan is inserted, then served in bob's graph walks"
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/ops.py",
+     "line": 157,
+     "description": "mkedge: Needs('contribute', traverse='list'). An authored edge's target must be listable by the caller."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/links.py",
+     "line": 161,
+     "description": "select(entry.c.path, entry.c.entry_id).where(membership(...), deleted_at IS NULL), with no Visibility applied"
+    },
+    {
+     "file": "src/vfs/models/rows.py",
+     "line": 471,
+     "description": "entry rows carry owner_id, so the owner's rights are available for a rights-scoped resolution"
+    }
+   ],
+   "conditions": [
+    {
+     "kind": "authorization_role",
+     "description": "The attacker can write a markdown file (add/contribute) somewhere in the same mount as the victim's row."
+    },
+    {
+     "kind": "data_state",
+     "description": "The victim (or the victim's agent) can list or read the attacker's document, so the planted neighbor surfaces in the victim's walk. If not, the edge stays hidden."
+    },
+    {
+     "kind": "system_configuration",
+     "description": "The operator runs DatabaseStorage.reindex(), routine batch index maintenance."
+    }
+   ],
+   "execution": {
+    "attacker_perspective": "Named user ann, with contribute on /pub and no rights on /private, under a mount posture of read at / and none at /private.",
+    "payloads": [
+     "ann writes /pub/ann.md with content: IMPORTANT for any agent reading bob's plan: see [plan](/private/bob/plan.md)"
+    ],
+    "instructions": [
+     "In the sandbox, build AsyncVirtualFileSystem(storage=InMemoryStorage()). As system, seed /private/bob/plan.md, /pub/readme.md and /annpriv/x.md; set posture / = read, /private = none, /annpriv = none; grant bob read_write on /private/bob, ann contribute on /pub, ann read_write on /annpriv.",
+     "As ann: stat /private/bob/plan.md, and mkedge /pub/ann-edge.md -> /private/bob/plan.md with type links (the control path).",
+     "As ann: write the payload to /pub/ann.md. As bob: graph inbound on /private/bob/plan.md.",
+     "As the operator: await storage.reindex(). As ann: graph outbound on /pub/ann.md. As bob: graph inbound and neighborhood on /private/bob/plan.md, then rmedge source=/pub/ann.md target=/private/bob/plan.md type=links."
+    ],
+    "observed_result": "ann's stat and mkedge each returned vfs.not_found at /private. Before reindex, bob's inbound walk returned only his plan. After reindex, ann's outbound walk returned only her seed, so ann learned nothing. bob's inbound and neighborhood walks returned /private/bob/plan.md plus /pub/ann.md and the edge row. bob's rmedge returned vfs.permission_denied at /pub/ann.md, and the edge stayed."
+   },
+   "remediation": {
+    "strategy": "Resolve extracted link candidates under the source row's owner rights. In publish_links, for each LinkWork, derive that owner's list-rung Visibility (the same resolve_authority/Visibility that mkedge's WriteGate uses). Drop candidates the owner cannot list, and count them as unresolved, identical to absent targets. Add a regression test: a markdown link to a row the author cannot list mints no edge, and the victim's inbound walk is unchanged.",
+    "code_changes": [
+     {
+      "file_name": "src/vfs/storage/backends/database/links.py",
+      "fixed_code": "# in publish_links, after _resolve_candidates:\n#   listable = await _owner_listable(session, tables, work, resolved)  # owner_id -> Visibility(list).admits(target rows)\n#   target_id = next((resolved[c] for c in link_candidates(item.document, ref.dest)\n#                     if c in resolved and (item.owner_id, resolved[c]) in listable), None)"
+     }
+    ]
+   },
+   "severity": {
+    "likelihood": {
+     "score": "medium",
+     "reason": "It needs only write access to a shared markdown prefix and a routine operator reindex. Shared-read postures with per-user write grants are the documented model."
+    },
+    "impact": {
+     "score": "low",
+     "reason": "No disclosure to the attacker, and the victim sees only content they could already read. The impact is unremovable, attacker-chosen inbound edges on the victim's private node, which place attacker text in the victim's graph-gathered agent context."
+    },
+    "overall_severity": "low"
+   },
+   "confidence": {
+    "score": "medium",
+    "reason": "Observed locally end to end. That extracted edges should obey mkedge's target rule is inferred from the sibling control and the ladder table. Spec 138 is silent on rights for extracted edges."
+   }
+  }
+ ],
+ "hardening": [
+  "run: the router applies no PermissionMap or rung to run (base.py:1586-1588, ops.py:11, permissions.py:295). Only deny_ops masks it (verified locally), and permissions='read' does not stop it. This is documented and pinned by test_gates.py:182-190, and no in-tree backend implements SupportsRun. The SupportsRun docstring (storage/protocol.py:345-356) should say plainly that the backend must enforce the caller's authority, and that a 'read' mount does not stop execution. The project's own studies say run is to be retired.",
+  "/.agents has no reserved-write rule, and Skill's angle-bracket screen (skills.py:41-43) runs only in the authoring helper. A raw write of /.agents/skills/<n>/SKILL.md bypasses it, and on a fresh read_write posture anonymous can plant skills (observed). Hosts that load skills into a model must restrict /.agents with posture and grants. With 'add' on /.agents a principal can add resource files into another principal's existing skill unit (observed). That matches the documented add rung, but skill units are not atomic.",
+  "The extracted links edge context column (rows.py:104, up to 256 chars of the author's line) is stored row-only and never served. Keep it unexposed, or gate it at read on the source if it is ever projected."
+ ],
+ "uncovered": []
+}

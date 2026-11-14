@@ -1,0 +1,179 @@
+{
+ "units": [
+  {
+   "coverage_id": "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fwrites.py%23_apply%20labels_for%20at%20mint%2C%20and%20topology.py%23posture_beneath%20at%20move%2Fcopy%2Frestore::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Flabels.py%23everyone_level%2C%20a%20stored%20copy%20of%20the%20posture%2C%20kept%20in%20step%20by%20Relabeller%20under%20the%20revision%20lock::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::DATA-ISOLATION-AND-LIFECYCLE.md%23Deletion%2C%20revocation%2C%20and%20lifecycle%20attack%20classes",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    "src/vfs/storage/backends/database/labels.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/topology.py",
+    "src/vfs/storage/backends/database/revision.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/serialized.py",
+    "src/vfs/storage/backends/database/dialects.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/engine.py",
+    "src/vfs/storage/backends/database/seams.py",
+    "src/vfs/storage/backends/database/trash.py",
+    "src/vfs/storage/grants.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "w3a-labels",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/labels.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/topology.py",
+      "src/vfs/storage/backends/database/revision.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/backends/database/serialized.py",
+      "src/vfs/storage/backends/database/dialects.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/database/trash.py",
+      "src/vfs/storage/grants.py"
+     ],
+     "invariant": "A row minted (write/mkdir/copy) or relocated (move) after a posture change commits must carry the label of the posture in force, or stay covered by a standing relabel mark until it is relabelled. The mint must not stamp a label from a posture read that predates a posture commit whose Relabeller has already passed the row's path.",
+     "method": "source",
+     "result": "Posture writes bump the revision lock (backend.py:1594) and plant the mark in the same transaction (rights.py:1032-1034). Each Relabeller chunk takes hold_revision (labels.py:248), rewrites only rows its statement can see (labels.py:350 and the range form), and the last chunk deletes the mark and bumps the revision (labels.py:265-266). The mint paths take no lock and check nothing: writes.py:379 labels_for and topology.py:197 posture_beneath are plain SELECTs of the grants rows (labels.py:117,456). They also do not re-check relabels marks. Writes run in _execute_write under op_isolation REPEATABLE READ on Postgres and MariaDB (dialects.py:436,500; backend.py:1666-1673), so the snapshot is pinned at the write's first statement, well before labels_for. Topology runs under READ COMMITTED behind the lock-table point (serialized.py serialize), and that point is not the revision lock. Once the mark clears, Rights.admits trusts the stored label outside holes (grants.py:491). No src path reconciles labels: rebuild_labels has no caller in src. The anonymous direct-path refusal (rights.py:394, unauthenticated_at) reads the posture rows and still holds. List and search verbs (grep, glob) and every named caller's reads trust the label. On SQLite, BEGIN IMMEDIATE holds the writer lock from the plan's first read (engine.py:649-654), so the posture commit and its relabel cannot fall inside a write's window. On Postgres REPEATABLE READ, a write whose parent row the relabel rewrote fails its guarded parent bump with 40001 and redrives, which closes the window by accident. That leaves the posture-at-the-created-path case open (parent outside the region), along with the move/copy cases under READ COMMITTED.",
+     "artifact": null
+    },
+    {
+     "agent_id": "w3a-labels",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/seams.py",
+      "src/vfs/storage/backends/database/engine.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/backend.py"
+     ],
+     "invariant": "On SQLite, can a posture commit plus its relabel be staged inside a write's window through the real write:before-apply seam?",
+     "method": "local",
+     "result": "No. The rival posture(/eng/secret.md, none), run on its own session from the seam inside alice's write, failed with vfs.conflict ('a retryable engine conflict outlived 4 attempts') because the write holds BEGIN IMMEDIATE. The write committed with label 2 and the posture was never written, so the stored state is consistent. SQLite's writer serialization prevents the real interleaving locally.",
+     "artifact": "agents/w3a-labels/artifacts/evidence/stale-label-run.json"
+    },
+    {
+     "agent_id": "w3a-labels",
+     "reviewed_paths": [
+      "src/vfs/storage/backends/database/labels.py",
+      "src/vfs/storage/backends/database/writes.py",
+      "src/vfs/storage/backends/database/topology.py",
+      "src/vfs/storage/backends/database/rights.py",
+      "src/vfs/storage/grants.py"
+     ],
+     "invariant": "Consequence check. When the mint stamps a label read from a snapshot taken before the posture commit (emulated by passing the real labels_for/posture_beneath output from before the commit), is the row exposed after the mark clears, with nothing left to correct it?",
+     "method": "local",
+     "result": "Yes, in all three mint paths (write, move, copy). Setup: root posture read, then posture none at /eng/secret.md, settled (relabel rows=0, marks=[]). Alice's write of /eng/secret.md then stamped everyone_level=2 with no pending mark. bob (no grants) read it successfully and got content 'TOPSECRET payroll'. Anonymous grep and glob listed /eng/secret.md. Anonymous direct read was refused (unauthenticated), as expected. Move and copy behaved the same. Control (real fresh labels): label 0, and bob got not_found. Running rebuild_labels set the label to 0 and bob was refused, which shows the stored label is the sole cause.",
+     "artifact": "agents/w3a-labels/artifacts/evidence/stale_label.py"
+    }
+   ],
+   "candidate_fingerprints": [
+    "vfs/storage/database/labels:mint-reads-posture-outside-revision-lock-stale-everyone-level"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "vfs/storage/database/labels:mint-reads-posture-outside-revision-lock-stale-everyone-level",
+   "title": "A write, move or copy that read the posture before a tightening commits keeps the old, more open everyone_level after the relabel clears its mark",
+   "description": "entries.everyone_level is a derived copy of the everyone posture. Once no relabel mark covers a row, readers trust it outright. Posture writes and Relabeller chunks serialize on the revision lock. The mint paths do not: write/mkdir labels_for at writes.py:379, and move/copy posture_beneath at topology.py:197 feeding lines 315, 373 and 453. They read the grants rows with plain SELECTs, outside that lock, and never re-check the relabels table. Take a write W whose snapshot predates a posture commit P that tightens a path to none. Postgres and MariaDB pin W's snapshot at its first statement, under op_isolation REPEATABLE READ. P's Relabeller runs and clears the mark while W is still open. The relabel cannot see W's uncommitted rows, so it skips them. W then commits its rows stamped with the old level, and no mark remains. Any named principal with no grant (bob) can then read the row, and anonymous grep and glob list it, although the posture says none. Where the old level was read_write, the stale label also admits modification. The label stays wrong until some later posture change covers that path, because nothing in src calls rebuild_labels. Locally, the consequence is shown on SQLite by passing the mint its pre-commit posture read. SQLite's BEGIN IMMEDIATE prevents the real interleaving, as the real seam showed.",
+   "claimed_root_cause": "labels_for and posture_beneath read the everyone posture rows without the revision lock (or any shared lock on it) and without consulting inflight relabel marks. The Relabeller rewrites only rows visible to its own statement, then clears the mark. A mint whose posture read predates a posture commit, and whose commit follows the relabel's pass over its path, therefore stamps a stale label that no mark covers.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": "src/vfs/storage/backends/database/backend.py",
+     "line": 686,
+     "scope": "DatabaseStorage.write",
+     "description": "The write verb runs its plan via _execute_write (backend.py:1666-1673) with op_execution_options. On Postgres and MariaDB that stamps REPEATABLE READ (dialects.py:436,500), so the snapshot is fixed at the first statement."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/writes.py",
+     "line": 379,
+     "scope": "_apply",
+     "description": "After staging, labels_for is called for the creates. No hold_revision, no locking read, no relabels check precedes it in the write transaction."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/labels.py",
+     "line": 117,
+     "scope": "posture_rows",
+     "description": "A plain SELECT of the '*' grants rows. Under the write's snapshot it returns the posture as it stood before a concurrent posture commit."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/topology.py",
+     "line": 197,
+     "scope": "transfer_rows",
+     "description": "Move and copy compute posture_beneath with the same unlocked read (labels.py:456). They stamp it at topology.py:315 (moved root), 373 (descendants) and 453 (copied rows). The serialize() point is the lock table, not the revision lock."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 1034,
+     "scope": "set_posture",
+     "description": "The posture write commits the row and the relabel mark together under the revision bump (backend.py:1594). The mark protects readers only while it stands."
+    },
+    {
+     "kind": "propagation",
+     "file": "src/vfs/storage/backends/database/labels.py",
+     "line": 248,
+     "scope": "Relabeller.step",
+     "description": "Each chunk takes hold_revision and rewrites rows its statement sees (labels.py:350 and the range form). It cannot see the concurrent write's uncommitted rows. The last chunk deletes the mark and bumps the revision (labels.py:265-266)."
+    },
+    {
+     "kind": "sink",
+     "file": "src/vfs/storage/grants.py",
+     "line": 491,
+     "scope": "Rights.admits",
+     "description": "With no hole standing, a row whose stored everyone_level is at least the needed rung is admitted. Visibility and WriteGate (rights.py:747, backend.py:821) and grep's per-row filter (grep.py:261) admit bob and anonymous to the stale-labeled row."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "src/vfs/storage/backends/database/labels.py",
+     "line": 1,
+     "description": "The module doc says the label is derived and in step by construction: 'stamped at every mint' from the posture rows, with the mark in force until the relabel settles. Nothing ties the mint's read to the lock that orders posture commits."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/revision.py",
+     "line": 60,
+     "scope_note": "",
+     "description": "hold_revision is the lock that relabel chunks take so that 'a chunk never writes a level a rival posture change has already replaced'. The mint paths do not take it."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/dialects.py",
+     "line": 436,
+     "description": "Postgres pins op_isolation REPEATABLE READ for every op connection, writers included. MariaDB does the same at line 500. The write's posture read therefore comes from its first statement's snapshot."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/rights.py",
+     "line": 394,
+     "description": "The strongest visible control: anonymous calls addressing a path are judged from the posture rows, not the label. So an anonymous direct read stays refused, but list and search verbs and every named principal's reads trust the label."
+    },
+    {
+     "file": "src/vfs/storage/backends/database/engine.py",
+     "line": 654,
+     "description": "On SQLite, writers open BEGIN IMMEDIATE, so a posture commit cannot land inside a write's window. That is why the real interleaving is unobservable locally (the seam rival got vfs.conflict)."
+    }
+   ],
+   "blockers": [
+    "The decisive interleaving is impossible on SQLite. Writers hold BEGIN IMMEDIATE from the first read (engine.py:649-654), and the real write:before-apply seam rival posture failed with vfs.conflict. Real engines (Postgres, MariaDB, MSSQL, Oracle) are prohibited in this sandbox. Locally only the consequence was demonstrated, by passing the mint its pre-commit posture read.",
+    "Postgres REPEATABLE READ: when the created row's existing parent lies inside the tightened region, the relabel rewrites the parent. The write's guarded parent bump (writes.py:1026) should then fail with 40001 and redrive with a fresh snapshot. That would leave only the cases where the posture is set at the created path itself (or at a directory the batch itself creates), plus move/copy under READ COMMITTED. This engine behaviour is unobserved.",
+    "MariaDB: whether innodb_snapshot_isolation (default ON from 11.6, error 1020) turns the parent bump into a restart, and whether a Relabeller range UPDATE (a current read with next-key locks) blocks on and then relabels a concurrently moved row's new path index entry, are both unobserved.",
+    "MSSQL: under default locking READ COMMITTED (no op_isolation), the relabel UPDATE would block on the writer's uncommitted inserted key and then relabel it. That would narrow the window to the gap between labels_for and the insert statement. Under READ_COMMITTED_SNAPSHOT the row-versioned scan would skip it. Which mode a deployment runs is a database setting outside source.",
+    "Oracle: the statement-level consistent read in the relabel UPDATE is expected to skip uncommitted inserted or moved rows, leaving the window from labels_for or posture_beneath to commit. Unobserved."
+   ],
+   "validation_plan": {
+    "local": "Rerun agents/w3a-labels/artifacts/evidence/stale_label.py under the sandbox. Experiments exp2 and exp3 show the consequence on SQLite: bob reads 'TOPSECRET payroll', and anonymous grep and glob list /eng/secret.md, at everyone_level=2 under posture none with no pending marks. rebuild_labels repairs it. exp1 shows SQLite refusing the interleaving through the real seam.",
+    "deployment": "Owner-run on the db_test containers (VFS_TEST_POSTGRES_URL etc.), following tests/storage/database/test_races.py. Grant alice read_write at /, set root posture read and mkdir /eng. Install a self-clearing handler on 'write:before-apply' that awaits storage.posture(path=/eng/secret.md, posture='none', authority=system) to completion on its own session, then have alice write /eng/secret.md. After commit, assert relabels is empty and read everyone_level for /eng/secret.md. Expected if vulnerable: 2. Then assert storage.read(path=/eng/secret.md, authority=Authority.of(Principal('bob'))) succeeds. Repeat on 'transfer:post-collect' with move and copy <tmp>/draft.md to /eng/secret.md. Repeat with the posture on an existing directory /eng to observe whether the parent-bump 40001 or 1020 redrive closes that case on each engine."
+   }
+  }
+ ],
+ "hardening": [
+  "The smallest fix: before reading posture rows, labels_for and posture_beneath (or _apply and transfer_rows) take a shared lock on the revision row, for example SELECT grant_revision FROM meta WHERE id=1 FOR SHARE (HOLDLOCK on T-SQL; inert on SQLite). Writers do not block each other. A posture write or relabel chunk waits for in-flight mints. Under REPEATABLE READ, a revision row updated after the snapshot raises a serialization failure, so the mint redrives on fresh posture. Alternatively, re-read relabels and refuse to commit when a mark appeared or cleared after the snapshot. Regression: the seam-staged real-engine test in validation_plan, asserting label 0 or a redrive, never a stale label.",
+  "rebuild_labels has no caller in src. Once a label is wrong it is corrected only when a later posture change covers that path. A maintenance entry point or a periodic consistency check would bound how long a stale label can live.",
+  "The anonymous direct-path refusal (rights.py:394) reads posture rows rather than the stored label and stays correct under a stale label. The same posture-row recheck is absent for named callers and for list and search verbs, which trust the label alone."
+ ],
+ "uncovered": []
+}

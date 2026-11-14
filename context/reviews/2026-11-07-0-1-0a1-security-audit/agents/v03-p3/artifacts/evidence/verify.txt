@@ -1,0 +1,10 @@
+== native.markdown_refs: same links, one paragraph; separator space (one line) vs newline (N lines)
+N=  4000 refs=4000/4000 one-line=   459.6 ms  n-lines=   49.3 ms  ctx_len_one=256
+N=  8000 refs=8000/8000 one-line=  1705.8 ms  n-lines=  103.3 ms  ctx_len_one=256
+N= 16000 refs=16000/16000 one-line=  6624.5 ms  n-lines=  215.8 ms  ctx_len_one=256
+== InMemoryStorage end to end (alice writes /doc.md, operator reindex, bob writes /bob.txt at +250 ms)
+mem one-line N=4000            body=  40000B reindex=   592.6 ms ok=True | bob write waited    295.0 ms ok=True []
+mem one-line N=8000            body=  80000B reindex=  1930.3 ms ok=True | bob write waited   1645.5 ms ok=True []
+mem one-line N=16000           body= 160000B reindex=  7044.2 ms ok=True | bob write waited   6684.9 ms ok=True []
+mem n-lines N=16000            body= 160000B reindex=   591.8 ms ok=True | bob write waited    284.1 ms ok=True []
+sqlite-file one-line N=16000   body= 160000B reindex=  7089.9 ms ok=True | bob write waited   6920.4 ms ok=True []

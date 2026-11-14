@@ -1,0 +1,24 @@
+== command: tools/sandbox-run.py agents/w2d-reindex-edit/scratch .venv/bin/python -I md_rootcause.py  (limits: CPU 60 s, wall 120 s, RSS 2 GiB, no network, empty env)
+path-shaped `a.md` N=  8000 body=  56000B refs=  8000   1146.3 ms (x2 ratio -)
+path-shaped `a.md` N= 16000 body= 112000B refs= 16000   4458.2 ms (x2 ratio 3.89x)
+not-a-path `a b`  N=  8000 body=  48000B refs=     0     41.6 ms (x2 ratio -)
+not-a-path `a b`  N= 16000 body=  96000B refs=     0     84.4 ms (x2 ratio 2.03x)
+exit=0
+
+== harness: md_rootcause.py
+"""Root-cause split for markdown_refs on one long line (research timing, not a test).
+
+Same inline-parse shape twice: path-shaped code spans (each becomes a ref and folds the line)
+versus code spans with a space inside (parsed identically, path_shaped refuses, no line_context).
+"""
+import time
+from vfs import _native as n
+def t(body):
+    s = time.perf_counter(); refs = n.markdown_refs([body])[0]; return time.perf_counter() - s, len(refs)
+for label, unit in (("path-shaped `a.md`", b"`a.md` "), ("not-a-path `a b` ", b"`a b` ")):
+    prev = None
+    for N in (8000, 16000):
+        dt, r = t(unit * N)
+        ratio = f"{dt/prev:.2f}x" if prev else "-"
+        print(f"{label} N={N:6d} body={len(unit)*N:7d}B refs={r:6d} {dt*1e3:8.1f} ms (x2 ratio {ratio})")
+        prev = dt

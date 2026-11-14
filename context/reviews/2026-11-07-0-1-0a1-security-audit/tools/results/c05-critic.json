@@ -1,0 +1,70 @@
+{
+ "missing_units": [
+  {
+   "surface": "src/vfs/storage/backends/database/backend.py#reindex embed step loop (keyset pages from last=0, break on outcome.failure) over chunk rows that any writer's body produces",
+   "boundary": "src/vfs/storage/backends/database/embed.py#token_batched and truncated_for metered by estimate_tokens (ceil(len/4), provider.py:94-96) against the shipped OpenAI hard caps (openai.py MAX_BATCH_TOKENS=300000, MAX_INPUT_TOKENS=8192), with no per-batch split, skip or quarantine on a deterministic provider refusal",
+   "subsystem": "src/vfs/storage/backends/database",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Failure and recovery attack classes",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/embed.py",
+    "src/vfs/embedding/provider.py",
+    "src/vfs/embedding/openai.py",
+    "src/vfs/embedding/langchain.py",
+    "src/vfs/storage/backends/database/indexing.py",
+    "src/vfs/models/chunking.py"
+   ],
+   "selected_companion_blocks": [
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Core discipline",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Failure and recovery attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Quota and scheduling attack classes",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Universal moves",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+     "reason": "reindex CPU cost on agent bodies is already a candidate (links.rs line_context); this unit is about progress after a provider failure, not cost"
+    },
+    {
+     "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes",
+     "reason": "vector-leg visibility was closed by the grep/glean/graph derived-copies unit; content_hash vector lending is the write-trusts-caller-authored-content-hash candidate"
+    },
+    {
+     "block": "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+     "reason": "retrieval poisoning through glean is owned by existing units; this unit is about the freshness of the embedding index"
+    },
+    {
+     "block": "MEMORY-SAFETY-AND-BINARY.md#FFI and ABI attack classes",
+     "reason": "the embed step is pure Python over the provider client; the Rust vector kernel was closed by the pyo3 unit"
+    },
+    {
+     "block": "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+     "reason": "no HTTP, token or session protocol in source; the provider client is operator-supplied"
+    },
+    {
+     "block": "CLIENT-SIDE.md#Core discipline",
+     "reason": "no browser code in source"
+    },
+    {
+     "block": "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+     "reason": "no IaC or runtime deployment config in source"
+    },
+    {
+     "block": "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline",
+     "reason": "no RPC or broker in source"
+    },
+    {
+     "block": "DESKTOP-MOBILE-AND-LOCAL-IPC.md#Core discipline",
+     "reason": "no native app or IPC in source"
+    }
+   ],
+   "reason": "No unit owns how the reindex embed step recovers from a failure. The wildcard unit touched embed.py and said 'Peer units own resource exhaustion, so no further checks here.' The glean-query unit covers only the query side. Source facts: every reindex starts the embed loop at last=0 (backend.py:1441). It selects embedding IS NULL rows by ascending chunk id (embed.py:172-182). It stops the whole step at the first page that has a provider failure (backend.py:1466-1468: stopped_by, then break). A failed batch is never split, skipped or marked. So a batch the provider refuses every time is retried at the head of every run, and the chunks after it are never embedded. That includes chunks other principals write later, because new chunks get higher ids. Batches are sized by estimate_tokens = ceil(len/4) with 5/6 headroom (embed.py:60,108-129), but the shipped OpenAI provider declares hard caps of 300,000 tokens per request and 8,192 per input. Text at about 1 to 4 tokens per character (CJK, rare scripts, emoji) fills a batch planned at about 250k estimated tokens, which is about 1M characters, with far more real tokens than the cap. truncated_for (embed.py:136-143) uses the same estimate, so it does not catch per-input overflow either. Hypothesis for the hunter: any principal that can write ordinary text can stop vector-index freshness for every principal on the store. Glean's vector leg then goes stale, and reindex reports warnings forever. This is the catalogue's poison-record and head-of-line class. Settle it offline with a fake provider that enforces the declared caps by byte or character count: check whether the loop wedges, whether later principals' chunks stay unembedded, and whether any per-row quarantine exists, like the render pass's quarantined path (backend.py:1317)."
+  }
+ ],
+ "reassign_ids": [],
+ "resolved_prior_leads": [
+  "src%2Fvfs%2Fbase.py%23write%28entries%3D%5BEntry%5D%29%20with%20caller-authored%20body%20metrics%3A%20an%20Entry%28source%3D%27bytes%27%2C%20data%3DNone%2C%20content_hash%3DH%29%20keeps%20the%20caller%27s%20H%2C%20and%20the%20MEASURED_BODY%20validation%20context%20lets%20a%20caller-built%20Entry%20vouch%20any%20hash%20for%20real%20bytes::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frender.py%23cached_renderings%20and%20render_rows%20lend%20a%20settled%20rendering%20per%20%28content_hash%2C%20generation%29%20across%20rows%20with%20no%20principal%20or%20rights%20term%2C%20and%20land_renderings%20guards%20only%20on%20the%20receiving%20row%27s%20own%20content_hash%3B%20the%20same%20key%20is%20also%20used%20by%20rerank.py%23merge_ranked%20cross-mount%20dedup%20and%20versions.py%23_mint_rows%20history%20skip::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::DATA-ISOLATION-AND-LIFECYCLE.md%23Composite-key%20and%20namespace%20collision :: its x_uncovered lead (the chunk fingerprint skip, content_hash == chunk_source_hash at indexing.py:553-558, under a forged hash) has the same root cause as candidate vfs/storage/database/write-trusts-caller-authored-content-hash. It is one more consequence of the same unverified caller-authored content_hash on the write path, and the same fix (measure or refuse the hash in storage) closes it. The same holds for caller-authored size_bytes on a bodiless overwrite (staging.py:445 base_size_bytes metering): it is the same unverified-body-metrics root cause, not a new unit."
+ ],
+ "stop": false
+}

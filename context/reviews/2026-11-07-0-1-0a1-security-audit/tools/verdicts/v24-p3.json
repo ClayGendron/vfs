@@ -1,0 +1,175 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs:storage/database:search-budget-counts-hidden-rows",
+  "title": "grep and glean count rows the caller cannot read toward their budgets, so the warnings and row counts reveal hidden rows and, through the gram index, what they contain",
+  "description": "Take a caller with partial rights in DatabaseStorage or InMemoryStorage, such as a named user granted read on one prefix. For that caller, grep and glean work out whether a call hit its candidate or overlay budget from candidate rows that have not yet passed the per-row Visibility check. Hidden rows therefore use up budget slots and then get dropped. That has two visible effects. First, a truncated warning appears or disappears. Second, a matching row the caller can see goes missing from the results. Both change with rows the caller cannot see, even though a direct read of those rows answers not_found. There are three variants, all reproduced at the shipped budgets. (1) grep scan tier, used for unindexed rows or allow_scan: any hidden unindexed row in scope that sorts before the visible rows triggers the 'candidate budget' warning and drops one visible match. (2) grep index tier: whether a hidden indexed row contains the searched literal changes the row count (25,000 vs 24,999) and the warning text. That is a content oracle on rows the caller cannot read. (3) glean overlay: one hidden unindexed row triggers the 'overlay budget' warning and drops one visible hit, at a threshold of only 500 rows.",
+  "root_cause": "In grep_rows, the index side caps doc_ids at CANDIDATE_BUDGET and sets nominated_count from the posting kernel (grep.py:243-254). The scan side gets its overflow flag from entries_for_scan, which runs SELECT ... ORDER BY path LIMIT limit+1 with no visibility predicate (scope.py:279-294). The per-row view.holds filter runs only afterwards (grep.py:261, 303; glean.py:380). So hidden rows take budget slots and set the truncation flags (grep.py:254, 269, 299; glean.py:384) before they are thrown away. The rights module says a statement with a LIMIT should carry the visibility pushdown (rights.py:38-39), and that hidden rows should read as absent. entries_for_scan and the nomination kernel do neither.",
+  "intended_behavior": "For a caller with partial rights, every grep and glean output (rows, row count, truncation records) should depend only on rows the caller's Visibility admits. A hidden row should affect search output exactly as a row that does not exist. The rights module states this: hidden reads exactly as absent, a road directory reveals nothing beyond the visible rows' own paths, and SQL statements with a LIMIT carry the visibility pushdown.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 495,
+    "scope": "DatabaseStorage.grep",
+    "description": "A named or anonymous caller with partial rights calls grep. The backend resolves a partial Visibility through _viewed and passes it to grep_rows as view."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 243,
+    "scope": "grep_rows",
+    "description": "The index tier gets candidate doc ids and nominated_count from the posting kernel over every indexed row in scope, hidden rows included. The ids are capped at CANDIDATE_BUDGET before any visibility check."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 254,
+    "scope": "grep_rows",
+    "description": "The 'candidate budget' truncation is recorded from nominated_count, which includes hidden rows."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 261,
+    "scope": "grep_rows",
+    "description": "view.holds drops hidden rows only after they have used candidate slots. remaining (line 269) is then computed from the visible rows that survived."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/scope.py",
+    "line": 279,
+    "scope": "entries_for_scan",
+    "description": "The scan and overlay fetch is SELECT ... ORDER BY path LIMIT limit+1 with no visibility predicate. Hidden rows fill the window, and overflow is set from the unfiltered count (scope.py:281, 294)."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 299,
+    "scope": "grep_rows",
+    "description": "The scan-side overflow, which includes hidden rows, adds the 'candidate budget' truncation. view.holds at line 303 then removes the hidden rows that displaced visible ones."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 380,
+    "scope": "glean_rows",
+    "description": "The glean overlay applies view.holds after entries_for_scan(limit=OVERLAY_BUDGET=500). At line 384 it records 'overlay budget' from the overflow flag, which includes hidden rows."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 369,
+    "scope": "grep_rows",
+    "description": "The truncation records built from those counts, and the shortened row list, are returned to the partial caller as warning errors on the Result."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 185,
+    "description": "The grep_rows docstring admits that the candidate budget still counts hidden candidates. The behaviour is known, but it is not treated as a disclosure, and no other layer compensates for it."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 120,
+    "description": "CANDIDATE_BUDGET is 25,000, the threshold at which grep's index and scan variants flip."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 143,
+    "description": "OVERLAY_BUDGET is 500, a much lower threshold for the glean variant."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/scope.py",
+    "line": 290,
+    "scope_note": null,
+    "description": "The unscoped scan statement orders by path and limits to limit+1 with no visibility pushdown, so hidden rows that sort earlier take the window."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 38,
+    "description": "The stated design is that SQL predicates are pushdowns that narrow toward the Visibility wherever a statement's shape needs one, a LIMIT included. entries_for_scan has a LIMIT and no such pushdown."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 796,
+    "description": "The stated policy is that hidden reads exactly as absent. The search budgets break this for derived search outputs."
+   },
+   {
+    "file": "agents/v24-p3/artifacts/evidence/grep_scan_tier_budget25000.txt",
+    "line": 1,
+    "description": "Observed at the real budget of 25,000, scan tier. No hidden row: 25,000 rows, no warning. One hidden row, either content: 24,999 rows and a 'candidate budget' truncated warning. Direct read of the hidden row: not_found."
+   },
+   {
+    "file": "agents/v24-p3/artifacts/evidence/grep_index_tier_budget25000.txt",
+    "line": 1,
+    "description": "Observed at the real budget of 25,000, index tier after reindex. No hidden row, or a hidden row without 'needle': 25,000 rows and the 'overlay not consulted' warning. Hidden row containing 'needle': 24,999 rows and the plain 'candidate budget' warning. This is a content oracle on an unreadable row."
+   },
+   {
+    "file": "agents/v24-p3/artifacts/evidence/glean_overlay_budget500.txt",
+    "line": 1,
+    "description": "Observed at the real OVERLAY_BUDGET of 500. No hidden row: 500 rows, no warning. One hidden unindexed row: 499 rows and an 'overlay budget' truncated warning."
+   },
+   {
+    "file": "agents/v24-p3/artifacts/evidence/repro_grep.py",
+    "line": 1,
+    "description": "The grep reproduction script. It sets posture none at /, grants alice read on /pub, and as system writes N visible '/pub' files plus an optional hidden '/aaa-sec/h.txt'. It then compares alice's grep output."
+   },
+   {
+    "file": "agents/v24-p3/artifacts/evidence/repro_glean.py",
+    "line": 1,
+    "description": "The glean reproduction script, using the same world shape with 500 visible unindexed files."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker is a named, group, or anonymous principal with partial rights: read on some prefixes and no rights on the target prefix. A system caller is not affected."
+   },
+   {
+    "kind": "data_state",
+    "description": "The grep variants need about 25,000 visible entries in the call's scope that match the pattern on the index tier, or are unindexed on the scan tier. The glean variant needs 500 visible unindexed entries. The attacker can create these with add or write rights on any prefix in the same mount, or an existing visible corpus can supply them. Globs let the attacker scope the call to its own prefix plus the target prefix."
+   },
+   {
+    "kind": "data_state",
+    "description": "Ordering decides which rows are displaced. On the scan tier and the glean overlay, hidden rows must sort by path before the window's visible rows, and the attacker chooses its own path names. On the index tier, the hidden row's doc id must fall inside the first CANDIDATE_BUDGET ids. The scan and overlay variants also need the hidden rows to be unindexed, that is before reindex publishes them."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "Alice holds read only on /pub (root posture none). She is not allowed to learn whether rows exist under /aaa-sec, or what they contain. A direct read of /aaa-sec/h.txt answers not_found.",
+   "payloads": [
+    "storage.grep(pattern=\"needle\", output_mode=\"files\", allow_scan=True, authority=Authority.of(Principal(\"alice\")))",
+    "storage.glean(query=\"lantern\", limit=1000, authority=Authority.of(Principal(\"alice\")))"
+   ],
+   "instructions": [
+    "Create an InMemoryStorage and call first_touch. As Authority.system(), set posture('/', 'none') and grant alice 'read' on /pub.",
+    "As system, optionally write a hidden /aaa-sec/h.txt, in one world containing 'needle secret' and in another 'other text'. Then write 25,000 visible /pub/vNNNNNN.txt files containing 'needle visible'. For the index tier, call reindex().",
+    "As alice, call grep(pattern='needle', output_mode='files', allow_scan=True). Record the row count and the truncated warnings. Confirm that read('/aaa-sec/h.txt') as alice returns not_found.",
+    "For glean, write 500 visible unindexed /pub files containing 'lantern', with and without one hidden /aaa-sec row. Call glean(query='lantern') as alice and compare.",
+    "Run everything under tools/sandbox-run.py with the repo .venv python -I. The scripts are agents/v24-p3/artifacts/evidence/repro_grep.py (args: 25000 scan, or 25000 index none|without|with) and repro_glean.py."
+   ],
+   "observed_result": "All runs used the unpatched shipped budgets. Scan tier: 25,000 rows and no warning without a hidden row; 24,999 rows and a 'candidate budget' truncated warning with one hidden row of any content. Index tier: 25,000 rows and the 'overlay not consulted' warning when no hidden row matches; 24,999 rows and the plain 'candidate budget' warning when the hidden row contains 'needle'. Glean: 500 rows and no warning, against 499 rows and an 'overlay budget' warning when one hidden row is present. In every world, alice's direct read of the hidden row answered not_found."
+  },
+  "remediation": {
+   "strategy": "Apply the caller's Visibility before counting anything toward a budget. In entries_for_scan, add the visibility_clauses / visible_entries pushdown to the WHERE clause, so LIMIT limit+1 and overflow count only rows the caller may see. Thread view into entries_for_scan from grep_rows and glean_rows. On the index tier, restrict the allow-list or the kernel's candidate ids to visible entries before the CANDIDATE_BUDGET cap and the nominated_count comparison. This could be done by computing allow_list_ids under the view pushdown, or by filtering doc ids through the view before capping. Replace the grep_rows docstring note that the budget counts hidden candidates with a regression test. The test should assert that grep and glean output (rows and truncation records) is identical for a partial caller whether or not hidden rows are present, both just below and at each budget.",
+   "code_changes": []
+  },
+  "severity": {
+   "likelihood": {
+    "score": "low",
+    "reason": "The attacker needs partial rights plus about 25,000 matching or unindexed visible entries in scope for grep, or 500 unindexed entries for glean. Typically that means add rights to create padding. Ordering conditions also apply. Each query yields about one bit."
+   },
+   "impact": {
+    "score": "low",
+    "reason": "This is a one-bit-per-query oracle across the row-rights boundary. It reveals whether hidden rows exist in a scope, and on the index tier whether a hidden row contains the searched grams, which can be repeated to probe content. It also silently drops visible matches. It does not read hidden bodies or paths directly."
+   },
+   "overall_severity": "low"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The path is fully visible in the source, including the docstring that admits the behaviour. All three variants were reproduced locally under the sandbox at the shipped CANDIDATE_BUDGET of 25,000 and OVERLAY_BUDGET of 500, with a not_found direct-read control on the same row."
+  }
+ }
+}

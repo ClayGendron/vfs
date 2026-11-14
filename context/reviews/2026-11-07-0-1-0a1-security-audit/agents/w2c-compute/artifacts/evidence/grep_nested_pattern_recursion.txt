@@ -1,0 +1,10 @@
+python 3.13.11 recursionlimit 1000
+storage-tier grep depth=50 len=201: Result errors=[] rows=1
+chained grep depth=50: Result errors=[] rows=1
+storage-tier grep depth=400 len=1601: Result errors=['kind=<ErrorKind.invalid: \'vfs.invalid\'> message="Invalid: grep pattern \'(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?'] rows=0
+chained grep depth=400: Result errors=['kind=<ErrorKind.invalid: \'vfs.invalid\'> message="Invalid: grep pattern \'(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?'] rows=0
+storage-tier grep depth=1000 len=4001: RAISED RecursionError: maximum recursion depth exceeded via ['vfs/storage/backends/database/backend.py:1555:run', 'vfs/storage/backends/database/grep.py:194:grep_rows', 'vfs/pattern_matching/grep.py:196:compile_verifier', 'vfs/pattern_matching/grep.py:292:_gate']
+chained grep depth=1000: RAISED RecursionError: maximum recursion depth exceeded via ['vfs/base.py:1433:grep', 'vfs/base.py:1898:_grep_rows_in_hand', 'vfs/pattern_matching/grep.py:196:compile_verifier', 'vfs/pattern_matching/grep.py:292:_gate']
+storage-tier grep depth=5000 len=20001: RAISED RecursionError: maximum recursion depth exceeded via ['vfs/storage/backends/database/backend.py:1555:run', 'vfs/storage/backends/database/grep.py:194:grep_rows', 'vfs/pattern_matching/grep.py:196:compile_verifier', 'vfs/pattern_matching/grep.py:292:_gate']
+chained grep depth=5000: RAISED RecursionError: maximum recursion depth exceeded via ['vfs/base.py:1433:grep', 'vfs/base.py:1898:_grep_rows_in_hand', 'vfs/pattern_matching/grep.py:196:compile_verifier', 'vfs/pattern_matching/grep.py:292:_gate']
+follow-up normal grep: Result errors=[] rows=1

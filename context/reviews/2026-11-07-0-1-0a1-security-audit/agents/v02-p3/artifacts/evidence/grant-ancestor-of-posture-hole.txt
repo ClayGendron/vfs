@@ -1,0 +1,20 @@
+== direct, default root posture (no explicit posture at /) ==
+seed ok
+posture /team/hr none ok
+eve read /team/notes.md (control, open): ok
+eve read hr: vfs.not_found
+eve grant /team/hr: vfs.not_found
+eve delete /team: vfs.permission_denied
+eve grant / eve read: ok
+eve read hr after root read grant: ok 'DUMMY-PRIVATE'
+eve grant /team eve read_write: ok
+eve overwrite hr: ok
+eve reopen /team/hr posture: ok
+anon read hr after reopen: ok
+== router, no authority ==
+seed ok
+posture /team/hr none ok
+anon read hr: vfs.unauthenticated
+anon grant /team/hr eve: vfs.unauthenticated
+anon grant /team eve read: ok
+eve read hr via router: ok 'DUMMY-PRIVATE'

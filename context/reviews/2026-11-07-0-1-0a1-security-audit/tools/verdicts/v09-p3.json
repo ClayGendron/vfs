@@ -1,0 +1,125 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked",
+  "title": "An xlsx sheet's declared dimension and far-off row index drive padded cell iteration that the render clock never checks",
+  "description": "XlsxRenderer opens workbooks with read_only=True. In openpyxl 3.1.5, ReadOnlyWorksheet takes max_column and max_row from the sheet's <dimension ref>. Then _cells_by_row yields a padding row (one shared tuple of max_column EMPTY_CELLs) for every missing row between two populated rows. vfs's _cells() walks every yielded cell and checks no clock, cell budget or row budget. The deadline is consulted only after _cells returns, in Builder.table and Builder.unit. So a file of about 4.7 KB, with one cell at A1, one cell at A<R> and a dimension of A1:ZZZ<R>, makes one render iterate 18,278 x R cells. Columns are capped at ZZZ (18,278) by openpyxl; the row index is a plain int with no cap. Measured in the sandbox, with RenderLimits(seconds=0.5): 365,560,000 cells took 3.24 s, and 50,000,000 padded rows took 3.34 s, both about 6.5x over the limit. Cost is linear at about 9 ns per cell, so A1:ZZZ1048576 projects to roughly 170 s, and a row index of 10^8 projects to hours, all against the 60 s RENDER_SECONDS default. This happens during the operator's reindex, on an offload worker that cannot be interrupted. The single-runner reindex lease keeps its heartbeat, so the lease stays held and every other subject's pending render, chunk and posting work waits behind it. The row is landed only after its cut finishes, so a run that is abandoned leaves the row pending, and the next reindex starts the same work again. Correction to the hunter: an empty sheetData, or a lone A1 with a huge dimension, does NOT pad. openpyxl's tail-padding guard is 'max_row < idx' (_read_only.py:100), so the trailing rows are never yielded; this was measured as 26 cells for dimension A1:Z100000 with only A1. The attack needs a second populated row at the far end, which uses the in-between gap padding (_read_only.py:92).",
+  "root_cause": "_cells() (src/vfs/rendering/xlsx.py:161-172) walks sheet.iter_rows() over openpyxl's dimension-padded read-only grid. It takes no Builder, deadline or cell or row budget. The cooperative clock in Builder covers only the Builder calls that come after _cells has collected the whole sheet. So the iteration work grows with the declared extent (columns x row gap), not with the input bytes, and no RenderLimits field bounds it.",
+  "intended_behavior": "RenderLimits.seconds (RENDER_SECONDS, 'Wall seconds one render may spend before the text so far is kept as partial') should bound each render. Once the clock runs out, an xlsx render should stop within a small constant amount of work and return partial. The work should be proportional to the cells actually stored, not to the dimension or row numbers the file declares.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 1181,
+    "scope": "write staging (row values)",
+    "description": "A caller with write rights stores arbitrary bytes. The row is staged with render_status='pending', with no body-size or content-shape check on xlsx structure."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1288,
+    "scope": "DatabaseStorage._render_step",
+    "description": "Operator reindex (under the single-runner lease claimed at backend.py:1140-1143) selects every dirty bytes row and runs render_rows on the offload pool through call_offloaded. It awaits until the worker finishes."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 87,
+    "scope": "XlsxRenderer.render",
+    "description": "After load_workbook(read_only=True), each sheet calls _cells(sheet) before any Builder clock check runs on its tables."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 164,
+    "scope": "_cells",
+    "description": "for row in sheet.iter_rows(): for cell in row: walks every padded EMPTY_CELL that openpyxl yields (max_column wide, one row per missing index), with no deadline or budget."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 161,
+    "description": "_cells takes only the sheet. No limits object or Builder is passed, so it cannot see the deadline."
+   },
+   {
+    "file": "src/vfs/rendering/markdown.py",
+    "line": 128,
+    "description": "Builder.out_of_time is the only clock. It is called from boundary/unit and between table rows (markdown.py:191 table), all after _cells returns."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/offload.py",
+    "line": 24,
+    "description": "Offload law: a worker that is already running finishes into the void. No protocol-level interrupt exists."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1143,
+    "scope_note_removed": null,
+    "description": "The reindex holds a heartbeating single-runner lease around the render stage, so one stalled render blocks every reindex for all subjects while it runs."
+   },
+   {
+    "file": "agents/v09-p3/artifacts/evidence/xlsx-dimension-probe.json",
+    "line": 1,
+    "description": "Sandbox run, openpyxl 3.1.5, input about 4.7 KB in every case. A lone A1 with dimension A1:Z100000 yields 26 cells, so tail padding does not happen. A1+A<R> with A1:Z<R> yields 26R cells (R = 1e3, 1e4, 1e5). A1+A4000 with A1:XFD4000 yields 65,536,000 cells, takes 0.564 s and returns partial against a 0.5 s limit."
+   },
+   {
+    "file": "agents/v09-p3/artifacts/evidence/xlsx-dimension-overshoot.json",
+    "line": 1,
+    "description": "Sandbox run: A1+A20000 with dimension A1:ZZZ20000 iterates 365,560,000 cells, render wall 3.243 s against limit 0.5 s (6.5x). A1+A50000000 with dimension A1:A50000000 takes 3.339 s (6.7x). Constant 4.7 KB input; time grows linearly with the declared extent."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker holds write rights on some path in a DatabaseStorage or InMemoryStorage mount, so it can store a bytes entry sniffed as xlsx. Any named subject or agent with write access qualifies."
+   },
+   {
+    "kind": "third_party_dependency",
+    "description": "The vfs[xlsx] extra (openpyxl 3.1.5) is installed, so the xlsx renderer is registered and not 'unavailable'."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The operator or host runs DatabaseStorage.reindex(), which is the only place rendering happens."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "A lower-trust writer (an agent or subject with write access to one path) uploads one small xlsx. A later operator reindex, shared by all subjects on the host, renders it.",
+   "payloads": [
+    "xl/worksheets/sheet1.xml = <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><dimension ref=\"A1:ZZZ20000\"/><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>x</t></is></c></row><row r=\"20000\"><c r=\"A20000\" t=\"inlineStr\"><is><t>x</t></is></c></row></sheetData></worksheet> (inside an otherwise standard openpyxl-generated workbook zip, about 4.7 KB)"
+   ],
+   "instructions": [
+    "Create a one-cell workbook with openpyxl and save it to bytes.",
+    "Rewrite xl/worksheets/sheet1.xml with the payload: a dimension of A1:ZZZ<R> and populated rows 1 and R.",
+    "Call XlsxRenderer().render(RenderSource(data, XLSX, 's.xlsx'), RenderLimits(seconds=0.5)) and time it. In deployment, write the bytes and run reindex().",
+    "Raise R, or use a dimension of A1:A<huge> with populated rows 1 and <huge>, to scale the time linearly with no input growth."
+   ],
+   "observed_result": "With limit 0.5 s, the render took 3.243 s for R=20000 at ZZZ width (365,560,000 cells), and 3.339 s for a 50,000,000-row gap at width 1. Both came back 'partial' ('0 of 1 units within 0.5 seconds') only after _cells had finished. Input size stayed about 4.7 KB. No further escalation was attempted."
+  },
+  "remediation": {
+   "strategy": "Bound the walk by stored cells and by the clock. Call sheet.reset_dimensions() before iterating, so openpyxl stops padding rows to the declared dimension width. Then pass the Builder into _cells, check builder.out_of_time() every N rows, and stop with a partial result when the clock runs out. That way both wide padding and huge row gaps end within the deadline. Add a regression test that counts the cells or rows _cells visits (not wall time) for a tiny file with a huge dimension and row gap.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/rendering/xlsx.py",
+     "fixed_code": "_CLOCK_EVERY: Final = 1024\n\ndef _cells(sheet: Any, builder: Builder) -> Cells | None:\n    \"\"\"``(row, column) → text`` for every stored cell of *sheet*; ``None`` once the clock runs out.\"\"\"\n    sheet.reset_dimensions()  # padding follows stored cells, never the declared dimension\n    cells: Cells = {}\n    for index, row in enumerate(sheet.iter_rows(), 1):\n        if index % _CLOCK_EVERY == 0 and builder.out_of_time():\n            return None\n        for cell in row:\n            value = cell.value\n            if value is None:\n                continue\n            text = _cell_text(value)\n            if text:\n                cells[cell.row, cell.column] = text\n    return cells\n\n# in XlsxRenderer.render:\n#     cells = _cells(sheet, builder)\n#     if cells is None:\n#         break"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "It needs only ordinary write access and one file of about 5 KB with no special configuration beyond the xlsx extra. Reindex is a routine operator job, and the pending row is picked up again on every run."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "Availability only. One render overruns the 60 s clock by a factor the attacker chooses (minutes to hours), on an offload worker that cannot be interrupted. Meanwhile the heartbeating single-runner reindex lease stays held, so every subject's render, chunk and posting maintenance stalls, and one offload worker shared with grep verify is busy. Memory stays bounded, because the padding is one shared tuple. There is no confidentiality or integrity effect, and an operator can recover by deleting the entry."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The source path is verified end to end, and the behaviour was reproduced in the sandbox against the installed openpyxl 3.1.5 and the repo's XlsxRenderer: time grows linearly with the declared extent at constant input size and overshoots the limit. The hunter's empty-sheetData variant was refuted, and the record is corrected to the gap-padding trigger."
+  }
+ }
+}

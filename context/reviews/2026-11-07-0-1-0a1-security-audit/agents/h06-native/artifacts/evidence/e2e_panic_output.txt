@@ -1,0 +1,71 @@
+== e2e_panic
+
+thread '<unnamed>' (22469414) panicked at <home>/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (22469414) panicked at <home>/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+
+thread '<unnamed>' (22469419) panicked at <home>/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+write ok: write success: 1 file
+
+  created /a.txt
+grep: raised pyo3_runtime.PanicException; Exception subclass=False: cannot convert float seconds to Duration: value is either too big or NaN
+read: Result errors=[]
+NOT caught by `except Exception`; escaped as PanicException
+read after panic still served: True
+threads alive: ['MainThread', 'Thread-1 (_connection_worker_thread)', 'vfs-offload_0']
+event loop completed normally
+sync facade grep raised PanicException Exception subclass: False
+sync facade read after panic: []
+process exits normally
+exit=0
+
+== harness: e2e_panic.py
+"""End-to-end: what a native panic does to a host serving several callers.
+Trigger is operator config grep_wall_seconds=inf (no lower-trust input reaches the Duration conversion)."""
+import asyncio, threading, sys
+from vfs import AsyncVirtualFileSystem, VirtualFileSystem
+from vfs.storage.backends.memory import InMemoryStorage
+
+async def main():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(grep_wall_seconds=float("inf")))
+    r = await fs.write(path="/a.txt", content="hello needle world\n")
+    print("write ok:", r.ok if hasattr(r, "ok") else r)
+    results = await asyncio.gather(
+        fs.grep("needle", allow_scan=True),
+        fs.read(path="/a.txt"),
+        return_exceptions=True,
+    )
+    for name, res in zip(("grep", "read"), results):
+        if isinstance(res, BaseException):
+            print(f"{name}: raised {type(res).__module__}.{type(res).__name__}; Exception subclass={isinstance(res, Exception)}: {res}")
+        else:
+            print(f"{name}: Result errors={getattr(res, 'errors', None)!r}"[:200])
+    try:
+        await fs.grep("needle", allow_scan=True)
+    except Exception as e:
+        print("caught by `except Exception`:", type(e).__name__)
+    except BaseException as e:
+        print("NOT caught by `except Exception`; escaped as", type(e).__name__)
+    after = await fs.read(path="/a.txt")
+    print("read after panic still served:", getattr(after, "errors", None) == [] or after)
+    print("threads alive:", sorted(t.name for t in threading.enumerate()))
+    try:
+        await fs.close()
+    except BaseException as e:
+        print("close:", type(e).__name__, e)
+
+asyncio.run(main())
+print("event loop completed normally")
+
+with VirtualFileSystem(storage=InMemoryStorage(grep_wall_seconds=float("inf"))) as sfs:
+    sfs.write(path="/b.txt", content="needle\n")
+    try:
+        sfs.grep("needle", allow_scan=True)
+    except BaseException as e:
+        print("sync facade grep raised", type(e).__name__, "Exception subclass:", isinstance(e, Exception))
+    print("sync facade read after panic:", getattr(sfs.read(path="/b.txt"), "errors", "?"))
+print("process exits normally")

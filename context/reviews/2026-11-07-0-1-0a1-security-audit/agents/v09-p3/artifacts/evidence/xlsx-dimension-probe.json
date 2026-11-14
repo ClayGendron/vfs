@@ -1,0 +1,96 @@
+{
+ "openpyxl": "3.1.5",
+ "python": "3.13.11 (main, Dec 17 2025, 20:55:16) [Clang 21.1.4 ]",
+ "results": [
+  {
+   "case": "only-A1, dim A1:Z1000",
+   "input_bytes": 4700,
+   "cells_yielded_by_iter_rows": 26,
+   "render_wall_s": 0.002,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 68
+  },
+  {
+   "case": "only-A1, dim A1:Z10000",
+   "input_bytes": 4699,
+   "cells_yielded_by_iter_rows": 26,
+   "render_wall_s": 0.001,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 68
+  },
+  {
+   "case": "only-A1, dim A1:Z100000",
+   "input_bytes": 4699,
+   "cells_yielded_by_iter_rows": 26,
+   "render_wall_s": 0.001,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 68
+  },
+  {
+   "case": "A1+A1000, dim A1:Z1000",
+   "input_bytes": 4711,
+   "cells_yielded_by_iter_rows": 26000,
+   "render_wall_s": 0.001,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 105
+  },
+  {
+   "case": "A1+A10000, dim A1:Z10000",
+   "input_bytes": 4711,
+   "cells_yielded_by_iter_rows": 260000,
+   "render_wall_s": 0.004,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 106
+  },
+  {
+   "case": "A1+A100000, dim A1:Z100000",
+   "input_bytes": 4711,
+   "cells_yielded_by_iter_rows": 2600000,
+   "render_wall_s": 0.029,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 107
+  },
+  {
+   "case": "A1+A1000, dim A1:XFD1000",
+   "input_bytes": 4712,
+   "cells_yielded_by_iter_rows": 16384000,
+   "render_wall_s": 0.181,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 105
+  },
+  {
+   "case": "A1+A4000, dim A1:XFD4000",
+   "input_bytes": 4712,
+   "cells_yielded_by_iter_rows": 65536000,
+   "render_wall_s": 0.564,
+   "limit_seconds": 0.5,
+   "status": "partial",
+   "detail": "0 of 1 units within 0.5 seconds",
+   "text_chars": 58
+  },
+  {
+   "case": "A1+A100000, no dimension",
+   "input_bytes": 4691,
+   "cells_yielded_by_iter_rows": 2,
+   "render_wall_s": 0.006,
+   "limit_seconds": 0.5,
+   "status": "ok",
+   "detail": null,
+   "text_chars": 107
+  }
+ ]
+}

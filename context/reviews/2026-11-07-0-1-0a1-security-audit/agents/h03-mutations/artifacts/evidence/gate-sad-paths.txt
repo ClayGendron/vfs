@@ -1,0 +1,72 @@
+alice write owner_id=bob: success=True errors=[]
+  owner of /drop/a.txt: ('alice', None)
+bob overwrite alice's a.txt: success=False errors=[('vfs.permission_denied', '/drop/a.txt')]
+alice batch new+bob's: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+  /drop/n.txt row: None
+alice edit bob's: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+alice write into hidden /secret: success=False errors=[('vfs.not_found', '/secret')]
+alice mkdir parents into hidden: success=False errors=[('vfs.permission_denied', '/secret')]
+alice mkedge src=bob's: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+alice mkedge tgt=hidden: success=False errors=[('vfs.not_found', '/secret')]
+alice delete bob's: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+bob delete own: success=True errors=[]
+alice revive-by-write bob tombstone: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+alice restore bob tombstone: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+alice sweep trash: success=False errors=[('vfs.permission_denied', '/.vfs/trash')]
+alice sweep bob tombstone path: success=False errors=[('vfs.permission_denied', '/drop/bob.txt')]
+alice move bob's: success=False errors=[('vfs.exists', '/drop/bob.txt')]
+alice copy hidden: success=False errors=[('vfs.not_found', '/secret')]
+bob restore own: success=True errors=[]
+  /drop/bob.txt row: ('bob', None)
+
+----- harness: gate_checks.py -----
+import asyncio
+from vfs.authority import Authority, Principal
+from vfs.models import Entry, Edge
+from vfs.paths import Path as P
+from vfs.storage import ResolvedPair
+from vfs.storage.backends.memory import InMemoryStorage
+from sqlalchemy import select
+
+SYSTEM = Authority.system(); ALICE = Authority.of(Principal("alice")); BOB = Authority.of(Principal("bob"))
+
+def show(label, r):
+    print(f"{label}: success={r.success} errors={[(str(e.kind), str(e.path)) for e in r.errors]}")
+
+async def owner_of(s, path):
+    h = s._host
+    async with h.session_factory() as session:
+        return (await session.execute(select(h.tables.entry.c.owner_id, h.tables.entry.c.deleted_at).where(h.tables.entry.c.path == path))).one_or_none()
+
+async def main():
+    s = InMemoryStorage()
+    await s.posture(path=P("/"), posture="none", authority=SYSTEM)
+    await s.mkdir(path=P("/drop"), authority=SYSTEM)
+    await s.mkdir(path=P("/secret"), authority=SYSTEM)
+    for who in ("alice", "bob"):
+        await s.grant(path=P("/drop"), principal=who, level="add", authority=SYSTEM)
+    await s.write(entries=[Entry(path=P("/secret/s.txt"), content="S")], authority=SYSTEM)
+    await s.write(entries=[Entry(path=P("/drop/bob.txt"), content="bob")], authority=BOB)
+    show("alice write owner_id=bob", await s.write(entries=[Entry(path=P("/drop/a.txt"), content="a", owner_id="bob")], authority=ALICE))
+    print("  owner of /drop/a.txt:", await owner_of(s, "/drop/a.txt"))
+    show("bob overwrite alice's a.txt", await s.write(entries=[Entry(path=P("/drop/a.txt"), content="b")], authority=BOB))
+    show("alice batch new+bob's", await s.write(entries=[Entry(path=P("/drop/n.txt"), content="n"), Entry(path=P("/drop/bob.txt"), content="x")], authority=ALICE))
+    print("  /drop/n.txt row:", await owner_of(s, "/drop/n.txt"))
+    show("alice edit bob's", await s.edit(edits=[__import__("vfs.storage.replace", fromlist=["EditOperation"]).EditOperation(old="bob", new="x")], path=P("/drop/bob.txt"), authority=ALICE))
+    show("alice write into hidden /secret", await s.write(entries=[Entry(path=P("/secret/s.txt"), content="x")], authority=ALICE))
+    show("alice mkdir parents into hidden", await s.mkdir(path=P("/secret/x/y"), parents=True, authority=ALICE))
+    show("alice mkedge src=bob's", await s.mkedge(edges=[Edge(source=P("/drop/bob.txt"), target=P("/drop/a.txt"), edge_type="refs")], authority=ALICE))
+    show("alice mkedge tgt=hidden", await s.mkedge(edges=[Edge(source=P("/drop/a.txt"), target=P("/secret/s.txt"), edge_type="refs")], authority=ALICE))
+    show("alice delete bob's", await s.delete(path=P("/drop/bob.txt"), authority=ALICE))
+    show("bob delete own", await s.delete(path=P("/drop/bob.txt"), authority=BOB))
+    show("alice revive-by-write bob tombstone", await s.write(entries=[Entry(path=P("/drop/bob.txt"), content="x")], authority=ALICE))
+    show("alice restore bob tombstone", await s.restore(path=P("/drop/bob.txt"), authority=ALICE))
+    show("alice sweep trash", await s.sweep(path=P("/.vfs/trash"), authority=ALICE))
+    show("alice sweep bob tombstone path", await s.sweep(path=P("/drop/bob.txt"), authority=ALICE))
+    show("alice move bob's", await s.move(operations=[ResolvedPair(src=P("/drop/a.txt"), dest=P("/drop/bob.txt"))], authority=ALICE))
+    show("alice copy hidden", await s.copy(operations=[ResolvedPair(src=P("/secret/s.txt"), dest=P("/drop/s.txt"))], authority=ALICE))
+    show("bob restore own", await s.restore(path=P("/drop/bob.txt"), authority=BOB))
+    print("  /drop/bob.txt row:", await owner_of(s, "/drop/bob.txt"))
+    await s.close()
+
+asyncio.run(main())

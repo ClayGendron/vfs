@@ -1,0 +1,199 @@
+== postings_legit_bounds
+candidate_ids count=3 holds 1: builtins.ValueError (is Exception subclass: True) -> count header says 3, blob holds 1
+candidate_ids empty: builtins.ValueError (is Exception subclass: True) -> empty posting blob (a valid empty list is one zero byte)
+exit=0
+== postings_capacity_overflow
+
+thread '<unnamed>' (22464839) panicked at /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/alloc/src/raw_vec/mod.rs:28:5:
+capacity overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+candidate_ids count=2^60: pyo3_runtime.PanicException (is Exception subclass: False) -> capacity overflow
+exit=0
+== postings_alloc_abort
+memory allocation of 576460752303423488 bytes failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+exit=250
+== lexical_nan
+lexical_score finite: OK -> [(5, 1.0)]
+lexical_score bound=NaN: OK -> []
+lexical_score avg_dl=0 dl=3: OK -> [(5, 0.0)]
+lexical_score avg_dl=0 dl=0: OK -> [(5, nan)]
+lexical_score idf=NaN: OK -> [(5, nan)]
+lexical_score term idx OOB: builtins.ValueError (is Exception subclass: True) -> block term index outside idfs
+lexical_score huge varint: OK -> []
+select_blocks NaN max: OK -> [[]]
+select_blocks torn/misaligned: OK -> [[]]
+select_blocks empty: OK -> []
+decode_summary NaN max: OK -> (b'\x01\x00\x00\x00\x00\x00\x00\x00', b'\x00\x00\x00\x00\x00\x00\xf8\x7f')
+decode_summary truncated: builtins.ValueError (is Exception subclass: True) -> truncated summary blob
+exit=0
+== centrality
+node_count=2^62, empty arrays: builtins.ValueError (is Exception subclass: True) -> tree arrays disagree with 4611686018427387904 nodes: 0 parents, 0 file flags
+node_count=2, parents short: builtins.ValueError (is Exception subclass: True) -> tree arrays disagree with 2 nodes: 1 parents, 2 file flags
+edge index OOB: builtins.ValueError (is Exception subclass: True) -> node index 7 is outside the 1 nodes
+parent negative non -1: builtins.ValueError (is Exception subclass: True) -> node index -5 is outside the 1 nodes
+parent cycle: builtins.ValueError (is Exception subclass: True) -> the parent chain from node 0 is a cycle
+misaligned buffers (memoryview slice): OK -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+torn int64: builtins.ValueError (is Exception subclass: True) -> parents bytes are not whole int64 values
+gamma NaN: builtins.ValueError (is Exception subclass: True) -> gamma must lie in [0, 1]
+katz alpha huge: OK -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+pagerank damping NaN: builtins.ValueError (is Exception subclass: True) -> PageRank damping must lie in (0, 1)
+exit=0
+== matcher_budget
+
+thread '<unnamed>' (22465109) panicked at <home>/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (22465109) panicked at <home>/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+
+thread '<unnamed>' (22465109) panicked at <home>/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+count_lines budget=None: OK -> ([1], True)
+count_lines budget=0.0: OK -> ([0], False)
+count_lines budget=-1.0: OK -> ([0], False)
+count_lines budget=nan: OK -> ([0], False)
+count_lines budget=10.0: OK -> ([1], True)
+count_lines budget=1000000000.0: OK -> ([1], True)
+count_lines budget=1e+18: OK -> ([1], True)
+count_lines budget=1e+20: pyo3_runtime.PanicException (is Exception subclass: False) -> cannot convert float seconds to Duration: value is either too big or NaN
+count_lines budget=inf: pyo3_runtime.PanicException (is Exception subclass: False) -> cannot convert float seconds to Duration: value is either too big or NaN
+hit_lines budget=inf: pyo3_runtime.PanicException (is Exception subclass: False) -> cannot convert float seconds to Duration: value is either too big or NaN
+hit_lines before/after=2^31-1: OK -> ([[(1, 3, 2, b'a\nabc\nb')]], True)
+hit_lines invert huge ctx: OK -> ([[(1, 4, 1, b'\n\n\nabc'), (1, 4, 2, b'\n\n\nabc'), (1, 4, 3, b'\n\n\nabc')]], True)
+exit=0
+== chunk
+chunk_spans chunk_size=0 python: OK -> 7
+chunk_spans unknown grammar: OK -> [None]
+chunk_spans invalid utf8: OK -> [[(0, 4, 1, 1, False)]]
+chunk_spans empty: OK -> [[(0, 0, 1, 1, False)]]
+chunk_spans fuzz: 348 bodies over 58 grammars, invariant violations: 32
+exit=0
+bodies with non-whitespace bytes absent from every span: 6
+('yaml', 340, 339, b"\xa9.\n)b1 #\xc3){+\xa9/c/\t}\xa9\xc3}[[> >x+\n'({\nb;\\ #\t;")
+('yaml', 123, 121, b' \xa9;b \xc3bz#[>.:\xa9,\\b"<.[;\xc3\nz9 c/\\a"\n>;\\\xc3*.0')
+('yaml', 51, 41, b'\\:) 0xb)#9;>\'"9\nb\'`:=(1\\b/{by{.[>00+"9{}')
+== lex_nan2 (two NaN partial scores; dl=0 and avg_dl=0 are never produced by the builder)
+thread '<unnamed>' (22470557) panicked at crates/vfs-core/src/lexical.rs:672:90:
+called `Option::unwrap()` on a `None` value
+thread '<unnamed>' (22470557) panicked at crates/vfs-core/src/lexical.rs:677:49:
+called `Option::unwrap()` on a `None` value
+lexical_score two NaN scores k=1: PanicException called `Option::unwrap()` on a `None` value
+lexical_score two NaN scores k=10: PanicException called `Option::unwrap()` on a `None` value
+
+== harness: native_probe.py
+"""Bounded probes of vfs._native panic and bound handling. Usage: native_probe.py <case>"""
+import math, struct, sys
+from array import array
+from vfs import _native as n
+
+def varint(v):
+    out = bytearray()
+    while v >= 0x80:
+        out.append((v & 0x7F) | 0x80); v >>= 7
+    out.append(v); return bytes(out)
+
+def run(name, fn):
+    try:
+        r = fn()
+        print(f"{name}: OK -> {r!r}"[:300])
+    except BaseException as e:
+        print(f"{name}: {type(e).__module__}.{type(e).__name__} (is Exception subclass: {isinstance(e, Exception)}) -> {e}"[:300])
+
+case = sys.argv[1]
+if case == "postings_capacity_overflow":
+    # count header 2^60 → with_capacity(2^60) i64 = 2^63 bytes > isize::MAX
+    run("candidate_ids count=2^60", lambda: n.candidate_ids([[varint(1 << 60) + varint(1)]], None, 10))
+elif case == "postings_alloc_abort":
+    # count header 2^56 → 2^59-byte allocation request
+    sys.stdout.flush()
+    run("candidate_ids count=2^56", lambda: n.candidate_ids([[varint(1 << 56) + varint(1)]], None, 10))
+elif case == "postings_legit_bounds":
+    run("candidate_ids count=3 holds 1", lambda: n.candidate_ids([[varint(3) + varint(1)]], None, 10))
+    run("candidate_ids empty", lambda: n.candidate_ids([[b""]], None, 10))
+elif case == "lexical_nan":
+    ids = varint(1) + varint(5); tfs = varint(1); dls = varint(3)
+    run("lexical_score finite", lambda: n.lexical_score([(0, 1.0, ids, tfs, dls)], [1.0], 3.0, 10))
+    run("lexical_score bound=NaN", lambda: n.lexical_score([(0, float('nan'), ids, tfs, dls)], [1.0], 3.0, 10))
+    run("lexical_score avg_dl=0 dl=3", lambda: n.lexical_score([(0, 1.0, ids, tfs, dls)], [1.0], 0.0, 10))
+    run("lexical_score avg_dl=0 dl=0", lambda: n.lexical_score([(0, 1.0, ids, tfs, varint(0))], [1.0], 0.0, 10))
+    run("lexical_score idf=NaN", lambda: n.lexical_score([(0, 1.0, ids, tfs, dls)], [float('nan')], 3.0, 10))
+    run("lexical_score term idx OOB", lambda: n.lexical_score([(5, 1.0, ids, tfs, dls)], [1.0], 3.0, 10))
+    run("lexical_score huge varint", lambda: n.lexical_score([(0, 1.0, b"\xff"*40 + b"\x01", b"\xff"*40+b"\x01", b"\xff"*40+b"\x01")], [1.0], 3.0, 10))
+    s = array('q', [1, 10]).tobytes(); m = array('d', [float('nan'), 1.0]).tobytes()
+    run("select_blocks NaN max", lambda: n.select_blocks([(s, m)], array('q',[3]).tobytes(), array('d',[float('nan')]).tobytes(), float('nan')))
+    run("select_blocks torn/misaligned", lambda: n.select_blocks([(s[:5], m[:3])], b"\x01\x02\x03", b"", 0.0))
+    run("select_blocks empty", lambda: n.select_blocks([], b"", b"", 0.0))
+    run("decode_summary NaN max", lambda: n.decode_summary(varint(1) + struct.pack('<d', float('nan'))))
+    run("decode_summary truncated", lambda: n.decode_summary(varint(1) + b"\x00"*3))
+elif case == "centrality":
+    e = b""
+    run("node_count=2^62, empty arrays", lambda: n.centrality_prior(1 << 62, e, e, e, e, "in_degree", 0.85, 0.1, 10, 0.5))
+    run("node_count=2, parents short", lambda: n.centrality_prior(2, e, e, array('q',[-1]).tobytes(), b"\x01\x01", "in_degree", 0.85, 0.1, 10, 0.5))
+    run("edge index OOB", lambda: n.centrality_prior(1, array('q',[0]).tobytes(), array('q',[7]).tobytes(), array('q',[-1]).tobytes(), b"\x01", "in_degree", 0.85, 0.1, 10, 0.5))
+    run("parent negative non -1", lambda: n.centrality_prior(1, e, e, array('q',[-5]).tobytes(), b"\x01", "in_degree", 0.85, 0.1, 10, 0.5))
+    run("parent cycle", lambda: n.centrality_prior(2, e, e, array('q',[1,0]).tobytes(), b"\x01\x01", "in_degree", 0.85, 0.1, 10, 0.5))
+    run("misaligned buffers (memoryview slice)", lambda: n.centrality_prior(1, e, e, (b"\x00" + array('q',[-1]).tobytes())[1:], b"\x01", "in_degree", 0.85, 0.1, 10, 0.5))
+    run("torn int64", lambda: n.centrality_prior(1, e, e, b"\xff"*7, b"\x01", "in_degree", 0.85, 0.1, 10, 0.5))
+    run("gamma NaN", lambda: n.centrality_prior(1, e, e, array('q',[-1]).tobytes(), b"\x01", "in_degree", 0.85, 0.1, 10, float('nan')))
+    run("katz alpha huge", lambda: n.centrality_prior(2, array('q',[0,1]).tobytes(), array('q',[1,0]).tobytes(), array('q',[-1,-1]).tobytes(), b"\x01\x01", "katz", 0.85, 1e300, 50, 0.5))
+    run("pagerank damping NaN", lambda: n.centrality_prior(1, e, e, array('q',[-1]).tobytes(), b"\x01", "pagerank", float('nan'), 0.1, 10, 0.5))
+elif case == "matcher_budget":
+    m = n.ContentMatcher("abc", False)
+    for b in [None, 0.0, -1.0, float('nan'), 10.0, 1e9, 1e18, 1e20, float('inf')]:
+        run(f"count_lines budget={b}", lambda b=b: m.count_lines([b"xabc\n"], cap=None, invert=False, budget=b))
+    run("hit_lines budget=inf", lambda: m.hit_lines([b"abc"], before=0, after=0, cap=None, invert=False, budget=float('inf')))
+    run("hit_lines before/after=2^31-1", lambda: m.hit_lines([b"a\nabc\nb\n"], before=2**31-1, after=2**31-1, cap=None, invert=False, budget=None))
+    run("hit_lines invert huge ctx", lambda: m.hit_lines([b"\n\n\nabc"], before=2**31-1, after=2**31-1, cap=None, invert=True, budget=None))
+elif case == "chunk":
+    run("chunk_spans chunk_size=0 python", lambda: len(n.chunk_spans([(b"def f():\n  return 1\n", "python")], chunk_size=0)[0]))
+    run("chunk_spans unknown grammar", lambda: n.chunk_spans([(b"x", "nope")], chunk_size=10))
+    run("chunk_spans invalid utf8", lambda: n.chunk_spans([(b"\xff\xfe(\x00", "python")], chunk_size=10))
+    run("chunk_spans empty", lambda: n.chunk_spans([(b"", "rust")], chunk_size=10))
+    # every span must lie in-body, be contiguous, and cover the body
+    import random
+    rng = random.Random(7); bad = 0; total = 0
+    gs = n.supported_grammars()
+    for g in gs:
+        for _ in range(6):
+            body = bytes(rng.choice(b"{}()[]<>;:,.'\"`\\/*#-=+ \n\tabcxyz019\xc3\xa9") for _ in range(rng.randint(0, 600)))
+            rows = n.chunk_spans([(body, g)], chunk_size=rng.choice([0, 1, 7, 64, 4096]))[0]
+            total += 1
+            if rows is None: continue
+            pos = 0
+            for (s, e, ls, le, o) in rows:
+                if s != pos or e < s or e > len(body) or ls < 1 or le < ls: bad += 1; break
+                pos = e
+            else:
+                if rows and pos != len(body): bad += 1
+    print(f"chunk_spans fuzz: {total} bodies over {len(gs)} grammars, invariant violations: {bad}")
+== harness: lex_nan2.py
+from vfs import _native as n
+def v(x):
+    o = bytearray()
+    while x >= 0x80: o.append((x & 0x7F) | 0x80); x >>= 7
+    o.append(x); return bytes(o)
+ids = v(2) + v(5) + v(1); tfs = v(1) + v(1); dls = v(0) + v(0)
+for k in (1, 10):
+    try: print(f"k={k}", n.lexical_score([(0, 1.0, ids, tfs, dls)], [1.0], 0.0, k))
+    except BaseException as e: print(f"lexical_score two NaN scores k={k}:", type(e).__name__, e)
+== harness: chunk_gap.py
+import random
+from vfs import _native as n
+rng = random.Random(7); nonws = 0; examples = []
+for g in n.supported_grammars():
+    for _ in range(6):
+        body = bytes(rng.choice(b"{}()[]<>;:,.'\"`\\/*#-=+ \n\tabcxyz019\xc3\xa9") for _ in range(rng.randint(0, 600)))
+        cs = rng.choice([0, 1, 7, 64, 4096])
+        rows = n.chunk_spans([(body, g)], chunk_size=cs)[0]
+        if not rows: continue
+        covered = bytearray(len(body))
+        for s, e, *_ in rows: covered[s:e] = b"\x01" * (e - s)
+        lost = bytes(b for b, c in zip(body, covered) if not c)
+        if lost.strip():
+            nonws += 1
+            if len(examples) < 3: examples.append((g, len(body), len(lost), lost[:40]))
+print("bodies with non-whitespace bytes absent from every span:", nonws)
+for e in examples: print(e)
+== command: ./tools/sandbox-run.py ./agents/h06-native/scratch .venv/bin/python -I <script> <case>  (limits: no network, empty env, scratch-only writes, CPU 60s, wall 120s, RSS 2GiB; darwin arm64, prebuilt src/vfs/_native.abi3.so, release profile, panic=unwind)

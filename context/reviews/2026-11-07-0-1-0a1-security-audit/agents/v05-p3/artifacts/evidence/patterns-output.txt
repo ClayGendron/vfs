@@ -1,0 +1,99 @@
+{
+ "body_bytes": 975000,
+ "chained \\w{40}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.017,
+  "max_loop_gap_s": 0.011
+ },
+ "chained \\w{40}Q x2": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.014,
+  "max_loop_gap_s": 0.009
+ },
+ "chained \\w{40}Q x4": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.015,
+  "max_loop_gap_s": 0.008
+ },
+ "storage \\w{40}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.016,
+  "max_loop_gap_s": 0.009
+ },
+ "chained (?:\\w+\\s){30}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.012,
+  "max_loop_gap_s": 0.007
+ },
+ "chained (?:\\w+\\s){30}Q x2": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.011,
+  "max_loop_gap_s": 0.006
+ },
+ "chained (?:\\w+\\s){30}Q x4": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.013,
+  "max_loop_gap_s": 0.007
+ },
+ "storage (?:\\w+\\s){30}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.012,
+  "max_loop_gap_s": 0.006
+ },
+ "chained [a-z]{1,50}[0-9]{1,50}[a-z]{1,50}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.003,
+  "max_loop_gap_s": 0.001
+ },
+ "chained [a-z]{1,50}[0-9]{1,50}[a-z]{1,50}Q x2": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.004,
+  "max_loop_gap_s": 0.002
+ },
+ "chained [a-z]{1,50}[0-9]{1,50}[a-z]{1,50}Q x4": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.004,
+  "max_loop_gap_s": 0.001
+ },
+ "storage [a-z]{1,50}[0-9]{1,50}[a-z]{1,50}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.004,
+  "max_loop_gap_s": 0.001
+ },
+ "chained (\\w|\\s){60}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.433,
+  "max_loop_gap_s": 0.418
+ },
+ "chained (\\w|\\s){60}Q x2": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.48,
+  "max_loop_gap_s": 0.465
+ },
+ "chained (\\w|\\s){60}Q x4": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.467,
+  "max_loop_gap_s": 0.453
+ },
+ "storage (\\w|\\s){60}Q x1": {
+  "success": true,
+  "errors": [],
+  "elapsed_s": 0.436,
+  "max_loop_gap_s": 0.012
+ }
+}

@@ -1,0 +1,105 @@
+== command: tools/sandbox-run.py agents/w2d-reindex-edit/scratch .venv/bin/python -I edit_scale.py  (limits: CPU 60 s, wall 120 s, RSS 2 GiB, no network, empty env)
+== block_anchor_replacer: L one-char lines, 3-line old whose last anchor never occurs (O(L^2))
+L=2000                                         content=   4000B edit=    71.3 ms success=False maxloopgap=    69.1 ms bob_read=    64.0 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+L=4000                                         content=   8000B edit=   274.0 ms success=False maxloopgap=   271.9 ms bob_read=   266.5 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+   ratio x2 -> 3.84x
+L=8000                                         content=  16000B edit=  1080.1 ms success=False maxloopgap=  1078.0 ms bob_read=  1072.3 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+   ratio x2 -> 3.94x
+== levenshtein: one candidate, middle line of M chars that differs (O(M^2) pure Python)
+M=500                                          content=    505B edit=    42.3 ms success=False maxloopgap=    40.3 ms bob_read=    34.3 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+M=1000                                         content=   1005B edit=   178.2 ms success=False maxloopgap=   176.3 ms bob_read=   170.4 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+   ratio x2 -> 4.22x
+M=2000                                         content=   2005B edit=   737.2 ms success=False maxloopgap=   735.3 ms bob_read=   729.4 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+   ratio x2 -> 4.14x
+== line_trimmed_replacer: L lines all trimmed-matching, O(L) start_pos sum + context split per match (O(L^2))
+L=2000                                         content=   4000B edit=   114.2 ms success=False maxloopgap=   112.2 ms bob_read=   106.8 ms ok=True | vfs.invalid: Invalid: Found 2000 matches. Provide more context in old_str
+L=4000                                         content=   8000B edit=   440.4 ms success=False maxloopgap=   438.4 ms bob_read=   432.9 ms ok=True | vfs.invalid: Invalid: Found 4000 matches. Provide more context in old_str
+   ratio x2 -> 3.86x
+L=8000                                         content=  16000B edit=  1679.3 ms success=False maxloopgap=  1677.3 ms bob_read=  1671.5 ms ok=True | vfs.invalid: Invalid: Found 8000 matches. Provide more context in old_str
+   ratio x2 -> 3.81x
+== target multiplier: the M=1000 levenshtein edit applied to K targets in one call (edit_rows continues past each failure)
+K=1                                            content=   1005B edit=   176.3 ms success=False maxloopgap=   174.0 ms bob_read=   168.3 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+K=2                                            content=   1005B edit=   347.1 ms success=False maxloopgap=   345.1 ms bob_read=   339.1 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+K=4                                            content=   1005B edit=   693.1 ms success=False maxloopgap=   690.9 ms bob_read=   685.2 ms ok=True | vfs.invalid: Invalid: old_string not found in file content.
+exit=0
+
+== harness: edit_scale.py
+"""Doubling probe of the public edit verb on InMemoryStorage (research timing, not a test).
+
+Measures edit wall time at n and 2n for three fuzzy-replacer shapes, plus the longest
+event-loop stall a concurrent ticker sees and the latency of a concurrent read by another
+principal on the same mount.
+"""
+import asyncio, sys, time
+from vfs.base import AsyncVirtualFileSystem
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.authority import Authority, Principal
+from vfs.storage.replace import EditOperation
+from vfs.models import Observation
+from vfs.paths import Path
+
+alice = Authority.of(Principal("alice"))
+bob = Authority.of(Principal("bob"))
+
+async def ticker(stop, gaps):
+    last = time.perf_counter()
+    while not stop.is_set():
+        await asyncio.sleep(0.005)
+        now = time.perf_counter(); gaps.append(now - last); last = now
+
+async def probe(fs, label, path, content, edits, targets=None):
+    if targets is None:
+        r = await fs.write(path=path, content=content, authority=alice)
+        assert r.success, r
+    stop = asyncio.Event(); gaps = []
+    tick = asyncio.create_task(ticker(stop, gaps))
+    await asyncio.sleep(0.02)
+    async def other_read():
+        s = time.perf_counter() + 0.01
+        await asyncio.sleep(0.01)
+        r = await fs.read("/bob.txt", authority=bob); return time.perf_counter() - s, r.success
+    reader = asyncio.create_task(other_read())
+    s = time.perf_counter()
+    if targets is None:
+        r = await fs.edit(path=path, edits=edits, authority=alice)
+    else:
+        r = await fs.edit(observations=targets, edits=edits, authority=alice)
+    dt = time.perf_counter() - s
+    rd, rok = await reader
+    stop.set(); await tick
+    err = str(r.errors[0].kind) + ": " + r.errors[0].message[:60].replace("\n", " ") if r.errors else ""
+    print(f"{label:46s} content={len(content):7d}B edit={dt*1e3:8.1f} ms success={r.success} "
+          f"maxloopgap={max(gaps)*1e3:8.1f} ms bob_read={rd*1e3:8.1f} ms ok={rok} | {err}")
+    return dt
+
+async def main():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    assert (await fs.write(path="/bob.txt", content="bob's file", authority=bob)).success
+    print("== block_anchor_replacer: L one-char lines, 3-line old whose last anchor never occurs (O(L^2))")
+    prev = None
+    for L in (2000, 4000, 8000):
+        dt = await probe(fs, f"L={L}", f"/a{L}.txt", "a\n" * L, [EditOperation(old="a\nx\nb", new="z")])
+        if prev: print(f"   ratio x2 -> {dt/prev:.2f}x")
+        prev = dt
+    print("== levenshtein: one candidate, middle line of M chars that differs (O(M^2) pure Python)")
+    prev = None
+    for M in (500, 1000, 2000):
+        dt = await probe(fs, f"M={M}", f"/l{M}.txt", "a\n" + "x" * M + "\nb\n", [EditOperation(old="a\n" + "y" * M + "\nb", new="z")])
+        if prev: print(f"   ratio x2 -> {dt/prev:.2f}x")
+        prev = dt
+    print("== line_trimmed_replacer: L lines all trimmed-matching, O(L) start_pos sum + context split per match (O(L^2))")
+    prev = None
+    for L in (2000, 4000, 8000):
+        dt = await probe(fs, f"L={L}", f"/t{L}.txt", "a\n" * L, [EditOperation(old="  a", new="z")])
+        if prev: print(f"   ratio x2 -> {dt/prev:.2f}x")
+        prev = dt
+    print("== target multiplier: the M=1000 levenshtein edit applied to K targets in one call (edit_rows continues past each failure)")
+    for K in (1, 2, 4):
+        paths = [f"/k{K}_{i}.txt" for i in range(K)]
+        for p in paths:
+            assert (await fs.write(path=p, content="a\n" + "x" * 1000 + "\nb\n", authority=alice)).success
+        await probe(fs, f"K={K}", None, "a\n" + "x" * 1000 + "\nb\n", [EditOperation(old="a\n" + "y" * 1000 + "\nb", new="z")],
+                    targets=[Observation(path=Path(p)) for p in paths])
+    await fs.close()
+
+asyncio.run(main())

@@ -1,0 +1,279 @@
+{
+ "units": [
+  {
+   "coverage_id": ".github%2Fworkflows%23push%20and%20pull_request::.github%2Fworkflows%23token%20permissions%20secrets%20and%20pinning::.github%2Fworkflows::SUPPLY-CHAIN-AND-RELEASE.md%23CI%20and%20automation%20attack%20classes",
+   "disposition": "covered",
+   "reviewed_paths": [
+    ".github/workflows/test.yml",
+    ".github/workflows/test-dialects.yml",
+    ".github/workflows/lint.yml",
+    ".github/workflows/deploy-docs.yml",
+    ".github/workflows/publish.yml",
+    "pyproject.toml",
+    "uv.lock",
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/vfs-core/Cargo.toml",
+    "docker/compose.test.yml",
+    "scripts/fetch_beir.py",
+    "scripts/ci.sh",
+    ".gitignore",
+    "context/specifications/archive/166-the-release-lane-to-0-1-0/spec.md"
+   ],
+   "checks": [
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/test.yml",
+      ".github/workflows/test-dialects.yml",
+      ".github/workflows/lint.yml",
+      ".github/workflows/deploy-docs.yml",
+      ".github/workflows/publish.yml"
+     ],
+     "invariant": "No fork or pull-request-controlled code runs with protected secrets, a write token, or deploy/publish authority",
+     "method": "source",
+     "result": "Only three workflows take PR events: test.yml:14-22, test-dialects.yml:19-27 and lint.yml:16-22. All three use plain `pull_request`. No workflow uses pull_request_target, workflow_run, issue_comment or any other privileged trigger that runs PR code. Under `pull_request`, a fork PR gets a read-only GITHUB_TOKEN and no repository secrets. The repo is public (pyproject.toml:44-47 and release.md link public GitHub releases), and for public repos that withholding cannot be switched off. So `secrets.CODECOV_TOKEN` (test.yml:62-65) is empty for fork PRs, and it is an upload-scoped coverage token in any case. Same-repo PR branches get secrets, but only writers can push them, and writers already have equal or greater access. deploy-docs.yml (pages: write, id-token: write) runs only on push to main and dispatch (deploy-docs.yml:3-9). publish.yml has no PR trigger (publish.yml:13-16). The missing top-level `permissions:` in test.yml and test-dialects.yml adds nothing on fork PRs, where the token is forced read-only. Missing least privilege alone is hardening.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/test.yml",
+      ".github/workflows/test-dialects.yml",
+      ".github/workflows/lint.yml",
+      ".github/workflows/deploy-docs.yml",
+      ".github/workflows/publish.yml"
+     ],
+     "invariant": "No untrusted event context is interpolated into a run: script (expression injection)",
+     "method": "source",
+     "result": "No `${{ github.event.* }}`, head_ref, commit message, issue field or artifact name appears in any run: line. The only event-controlled value, github.event.release.tag_name, is passed through env: TAG and used quoted as \"$TAG\" (publish.yml:43-46, 71-74, 103-106). The `${{ matrix.* }}` values interpolated in test-dialects.yml:59-62, 77, 84, 109-110 and test.yml:54 are literals in the workflow file. A PR author can only change them by editing the workflow, and that edited workflow runs unprivileged in their own PR run anyway. `steps.deployment.outputs.page_url` appears only in an environment url field (deploy-docs.yml:43). No injection.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/test.yml",
+      ".github/workflows/publish.yml",
+      ".github/workflows/deploy-docs.yml"
+     ],
+     "invariant": "A lower-trust job cannot seed a cache or artifact that the release or deploy job later restores and ships",
+     "method": "source",
+     "result": "Every setup-uv step in publish.yml sets enable-cache: false (publish.yml:36-39, 64-67, 96-99). No actions/cache is used anywhere, and maturin-action is called without sccache. GitHub scopes the caches a pull_request run writes to refs/pull/N/merge, so tag and main runs cannot restore them. test.yml's default setup-uv cache therefore cannot reach the release. publish downloads `dist-*` with actions/download-artifact and no run-id or github-token (publish.yml:108-112), so it reads only artifacts from the same workflow run, produced by the wheels and sdist jobs at publish.yml:54-57 and 81-84. No cross-trust channel exists.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/publish.yml",
+      ".github/workflows/deploy-docs.yml",
+      ".github/workflows/test.yml",
+      "Cargo.lock",
+      "Cargo.toml",
+      "crates/vfs-core/Cargo.toml",
+      "uv.lock",
+      "pyproject.toml"
+     ],
+     "invariant": "Mutable or unbound build inputs reachable by a lower-trust writer do not flow into the published wheel/sdist or the Pages site",
+     "method": "source",
+     "result": "Actions are pinned by mutable major tag: checkout@v6, setup-uv@v7, maturin-action@v1, upload-artifact@v7, download-artifact@v8, deploy-pages@v4. setup-uv installs the latest uv, and maturin-action installs the latest maturin and its default manylinux image. deploy-docs installs mkdocs-material unpinned (deploy-docs.yml:29). These inputs do flow into the published artifacts. But the only parties who can change them are the upstream maintainers (astral-sh, PyO3, pypa, the mkdocs-material publishers on PyPI). Neither contributors nor fork PR authors can influence how they resolve. Under the core discipline and validation rule 1 that is third-party trust, not a lower-trust writer, so it is hardening. Cargo.lock is committed, covers every crate dependency (vfs-core block at Cargo.lock:915+; pyo3 0.29.2, tree-sitter-zig 1.1.2, and others), and resolves only from crates.io. With a consistent lock, cargo builds the locked versions even without --locked. uv.lock resolves only from https://pypi.org/simple (155 packages) plus the editable root. There is no uv.toml, [tool.uv] index or .cargo config, so no alternate or private index exists to confuse. uv sync without --locked affects only the CI test environment, never the maturin release build.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      "pyproject.toml",
+      ".gitignore",
+      "context/specifications/archive/166-the-release-lane-to-0-1-0/spec.md"
+     ],
+     "invariant": "The sdist/wheel build context does not ship secrets, private data, or developer artifacts",
+     "method": "source",
+     "result": "pyproject.toml:7-11 has no include/exclude. It sets python-source = src and manifest-path = crates/vfs-core/Cargo.toml, and the root Cargo.toml is a virtual workspace. Tracked files under src/ are .py files plus src/vfs/_native.pyi and src/vfs/py.typed. No tracked file in src, crates, the Cargo manifests or pyproject is secret-like. spec 166:187 records that dispatch run 42326517501 built a 0.5 MB sdist. A `git archive HEAD src crates Cargo.toml Cargo.lock pyproject.toml README.md LICENSE | gzip` comes to 502,991 bytes, while context/ alone is about 7.1 MB gzipped and tests/ about 1.4 MB. So the shipped sdist contains neither context/, tests/ nor .claude/skills. The only credentials in the tree are dummy test-container passwords in docker/compose.test.yml, and they would not be a credential exposure even if shipped. Not a finding. The release build runs on a fresh checkout, so the gitignored local src/vfs/_native.abi3.so and __pycache__ cannot enter a CI artifact.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      "scripts/fetch_beir.py",
+      "docker/compose.test.yml",
+      "scripts/ci.sh"
+     ],
+     "invariant": "Dev-only fetch and test infrastructure has no path into a published artifact or privileged job",
+     "method": "source",
+     "result": "scripts/fetch_beir.py:38-43 downloads a BEIR zip over HTTPS with no digest check, then calls zipfile.extractall into a cache under the developer's home (fetch_beir.py:30). No workflow, ci.sh or build step references it; tests/ranking/corpora.py:67 only skips when it is absent. stdlib zipfile.extractall strips absolute paths and '..' components. The script is dev-only, outside the published-artifact boundary, and noted as hardening. docker/compose.test.yml images use tags (pgvector:pg17, mariadb:11.8, mssql 2025-latest, oracle-free:23-slim) and dummy credentials. They run only in unprivileged test jobs (test-dialects.yml has no secrets) and are not shipped.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  },
+  {
+   "coverage_id": ".github%2Fworkflows%2Fpublish.yml%23release%20published::scripts%2Fcheck_release_tag.py%23tag%20check%20and%20environment%20pypi::.github%2Fworkflows::SUPPLY-CHAIN-AND-RELEASE.md%23Release%20and%20update%20attack%20classes",
+   "disposition": "candidate",
+   "reviewed_paths": [
+    ".github/workflows/publish.yml",
+    "scripts/check_release_tag.py",
+    "scripts/bump_version.py",
+    "pyproject.toml",
+    "context/standards/release.md",
+    "context/specifications/archive/166-the-release-lane-to-0-1-0/spec.md",
+    "context/research/studies/2026-10-28-the-0-1-0-roadmap-audits/07-release-ci-and-repo-hygiene.md"
+   ],
+   "checks": [
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/publish.yml",
+      "scripts/check_release_tag.py",
+      "context/standards/release.md"
+     ],
+     "invariant": "Only a release cut from reviewed main by a release owner can reach the OIDC-authorized PyPI upload",
+     "method": "source",
+     "result": "publish.yml has two triggers, release: published and workflow_dispatch (publish.yml:13-16). The only in-source gate is scripts/check_release_tag.py:38, which checks that the tag string equals 'v' + pyproject version. Nothing checks that the tagged commit is on main or an ancestor of it, even though release.md:133 says the tag is created on main. The publish job's guard `if: github.event_name == 'release'` (publish.yml:87) and the tag check both live in the workflow file at the triggering ref, and a writer controls that file. So in-source controls cannot stop a repository writer from releasing a side-branch tag, or from dispatching an edited publish.yml. Whether the upload is reachable then depends entirely on hosted controls: protection rules on the `pypi` environment (publish.yml:90), tag rulesets, the collaborator list, and the PyPI trusted-publisher binding. None of these is visible in source. Recorded as a needs_validation candidate.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/publish.yml"
+     ],
+     "invariant": "Fork or PR contributors cannot trigger the publish workflow",
+     "method": "source",
+     "result": "publish.yml has no pull_request, pull_request_target or workflow_run trigger. Publishing a GitHub release or dispatching a workflow requires write access. A fork contributor has no path to the publish job. Disproved for non-writers.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      ".github/workflows/publish.yml"
+     ],
+     "invariant": "The bytes uploaded are the bytes built in the same run from the same ref (no build-to-promotion substitution)",
+     "method": "source",
+     "result": "The wheels and sdist jobs upload dist-<name> artifacts (publish.yml:54-57, 81-84). The publish job downloads `dist-*` from the same run only, with no run-id or token (publish.yml:108-112), runs the size gate, and calls `uv publish` on dist/ (publish.yml:116-131). The build jobs set no cache and restore none. A dispatch run leaves only workflow artifacts, which no release run consumes. No mutable-name re-resolution exists between build and upload. The tag check runs in all three jobs before build and before upload.",
+     "artifact": null
+    },
+    {
+     "agent_id": "h09-supply",
+     "reviewed_paths": [
+      "scripts/bump_version.py",
+      "pyproject.toml"
+     ],
+     "invariant": "Version metadata cannot be steered by untrusted input during release",
+     "method": "source",
+     "result": "bump_version.py is a local maintainer tool. It rewrites only the [project] version line and runs `uv lock`, and no workflow calls it. pyproject.toml:15 is the single version source that check_release_tag.py reads with tomllib. No untrusted input reaches either.",
+     "artifact": null
+    }
+   ],
+   "candidate_fingerprints": [
+    "publish.yml:release-ref-not-bound-to-main-environment-pypi"
+   ],
+   "unresolved": []
+  }
+ ],
+ "candidates": [
+  {
+   "proposed_verdict": "needs_validation",
+   "fingerprint": "publish.yml:release-ref-not-bound-to-main-environment-pypi",
+   "title": "PyPI trusted-publishing upload is gated only by writer-editable workflow logic; whether a non-release writer can publish depends on unobserved `pypi` environment and tag protections",
+   "description": "publish.yml uploads to PyPI with OIDC trusted publishing whenever a GitHub release is published (publish.yml:13-16, 86-92, 130-131). The only source-visible gate is check_release_tag.py, which compares the tag string with the pyproject version. Nothing binds the tagged commit to main, even though release.md says releases are cut from main. Suppose a principal has write access but no release authority, such as a collaborator, a bot, or a compromised writer token. They could push a branch carrying modified code with the matching version line, publish a release on a tag pointing at it, and the workflow would build and upload that code as vfs-py. They could also edit publish.yml on a branch to drop the `if: github.event_name == 'release'` guard and dispatch it. The workflow file comes from the triggering ref, so neither in-source gate stops a writer. The hosted controls decide the outcome: protection rules on the `pypi` environment (required reviewers, deployment branch and tag policy), tag rulesets for v*, the collaborator list, and the PyPI trusted-publisher binding. None is observable in source. Fork contributors cannot reach this path, because release and dispatch both require write access.",
+   "claimed_root_cause": "The release source identity (tagged commit and triggering ref) is never bound to reviewed main inside the workflow. The `pypi` environment is the only control that could bind it, and its configuration is not in source.",
+   "trace": [
+    {
+     "kind": "entrypoint",
+     "file": ".github/workflows/publish.yml",
+     "line": 13,
+     "scope": "on: release published / workflow_dispatch",
+     "description": "Any principal who can publish a release, or dispatch the workflow on any branch, starts the run. Both require write access. Neither event is restricted to main in source."
+    },
+    {
+     "kind": "propagation",
+     "file": ".github/workflows/publish.yml",
+     "line": 32,
+     "scope": "wheels job checkout",
+     "description": "actions/checkout checks out the release's tag ref, or the dispatched branch. That commit can sit anywhere in the repo graph."
+    },
+    {
+     "kind": "propagation",
+     "file": ".github/workflows/publish.yml",
+     "line": 46,
+     "scope": "tag check step",
+     "description": "Runs scripts/check_release_tag.py \"$TAG\". This is the only source gate before build."
+    },
+    {
+     "kind": "propagation",
+     "file": "scripts/check_release_tag.py",
+     "line": 38,
+     "scope": "main",
+     "description": "Accepts when tag == 'v' + pyproject version. It does not check ancestry from main, signer, or who created the tag."
+    },
+    {
+     "kind": "propagation",
+     "file": ".github/workflows/publish.yml",
+     "line": 48,
+     "scope": "maturin-action build",
+     "description": "Builds wheels, and at :76 the sdist, from the checked-out commit's code."
+    },
+    {
+     "kind": "propagation",
+     "file": ".github/workflows/publish.yml",
+     "line": 87,
+     "scope": "publish job",
+     "description": "`if: github.event_name == 'release'`, environment: pypi, permissions id-token: write. The guard sits in the workflow file at the triggering ref, which a writer can edit."
+    },
+    {
+     "kind": "sink",
+     "file": ".github/workflows/publish.yml",
+     "line": 131,
+     "scope": "Publish to PyPI",
+     "description": "`uv publish --trusted-publishing always` mints a PyPI token from the job's OIDC identity and uploads dist/ as vfs-py."
+    }
+   ],
+   "evidence": [
+    {
+     "file": "context/standards/release.md",
+     "line": 133,
+     "description": "States the intended policy: the release 'creates the vX.Y.Z tag on main'. Nothing in the workflow enforces it."
+    },
+    {
+     "file": "context/standards/release.md",
+     "line": 47,
+     "description": "'The workflow runs no tests. It trusts main is green'. The publish path assumes main as its source and never verifies it."
+    },
+    {
+     "file": ".github/workflows/publish.yml",
+     "line": 90,
+     "description": "`environment: pypi` is the only hook for a hosted approval or deployment-ref policy, and its protection rules are not in source."
+    },
+    {
+     "file": "context/research/studies/2026-10-28-the-0-1-0-roadmap-audits/07-release-ci-and-repo-hygiene.md",
+     "line": 106,
+     "description": "Records that the PyPI trusted publisher is bound to ClayGendron/vfs, publish.yml and environment pypi. A PyPI trusted-publisher claim does not constrain the git ref, so the environment's own rules are decisive."
+    },
+    {
+     "file": "scripts/check_release_tag.py",
+     "line": 38,
+     "description": "The check is string equality between tag and version only."
+    }
+   ],
+   "blockers": [
+    "The protection rules of the GitHub environment `pypi` are not observable from source: required reviewers, whether admins can bypass, and the deployment branches and tags policy (for example, only tags matching v* or only main).",
+    "Whether a ruleset restricts creating or updating tags matching v* to release owners is not observable.",
+    "The collaborator and team list is not observable, nor whether any write-access principal or app without release authority exists. If Clay is the only writer, no lower-trust principal exists.",
+    "Whether the PyPI trusted publisher for vfs-py names environment `pypi` is not observable. Without that binding, any job in publish.yml on any ref could mint a token, even one that skips the environment."
+   ],
+   "validation_plan": {
+    "local": "In a harmless fixture repo under scratch, with no network, set pyproject version 9.9.9a1 on a side branch that is not an ancestor of main. Run `python -I scripts/check_release_tag.py v9.9.9a1 --pyproject <fixture>/pyproject.toml`. Expect exit 0. This shows the in-source gate passes a non-main commit. It proves only the source half; the hosted half needs the owner checks.",
+    "deployment": "Owner-observed only, with no release or upload. (1) Settings > Environments > pypi: confirm Required reviewers lists only release owners, admin bypass is off, and 'Deployment branches and tags' is restricted (for example, tags matching v* backed by a tag ruleset). (2) Settings > Rules: confirm a tag ruleset restricts creating, updating and deleting v* tags to release owners. (3) Settings > Collaborators and teams, plus installed Apps: list every principal with write or maintain access. (4) PyPI vfs-py > Publishing: confirm the trusted publisher names repository ClayGendron/vfs, workflow publish.yml and environment pypi. If (1) has required reviewers limited to release owners and (4) names the environment, the candidate is closed as hardening. Otherwise it is reachable by any writer. As defence in depth in source, the publish job can check out with fetch-depth: 0 and fail unless `git merge-base --is-ancestor \"$GITHUB_SHA\" origin/main`, on top of an environment rule that limits deployments to v* tags."
+   }
+  }
+ ],
+ "hardening": [
+  "Pin third-party actions by full commit SHA (checkout, setup-uv, maturin-action, upload-artifact, download-artifact, upload-pages-artifact, deploy-pages, codecov-action). Pin setup-uv `version:` and maturin-action `maturin-version:`. The release build currently follows upstream latest. No lower-trust writer can steer these today, so this is hardening.",
+  "Add a top-level `permissions: contents: read` to test.yml, test-dialects.yml and publish.yml, so the wheels and sdist jobs (which run third-party build actions on release events) do not inherit the repository-default GITHUB_TOKEN scope.",
+  "Pass `--locked` to the Cargo build (maturin args `--locked`) and use `uv sync --locked` in CI, so a lock that drifts out of sync fails instead of silently re-resolving. Cargo.lock and uv.lock are consistent today and resolve only from crates.io and pypi.org.",
+  "deploy-docs.yml:29 installs mkdocs-material unpinned with `uv pip install` in a job holding pages: write and id-token: write. Use the locked `docs` dependency group (`uv sync --group docs --locked`) instead.",
+  "scripts/fetch_beir.py:38-43 downloads a dataset zip with no digest check. It is dev-only and outside any workflow or artifact, and stdlib zipfile.extractall strips '..' and absolute members. Adding a pinned SHA-256 per dataset would make the ranking numbers reproducible and authenticated.",
+  "pyproject.toml [tool.maturin] has no explicit include/exclude. The current sdist (0.5 MB) ships only src, crates and the manifests. An explicit `exclude`, or an sdist content test, would keep it that way if layout or maturin defaults change.",
+  "docker/compose.test.yml uses mutable image tags (including mssql 2025-latest) in unprivileged test jobs only. Pin them by digest for reproducibility."
+ ],
+ "uncovered": []
+}

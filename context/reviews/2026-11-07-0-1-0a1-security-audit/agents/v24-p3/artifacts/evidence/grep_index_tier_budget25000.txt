@@ -1,0 +1,3 @@
+[index B=25000] no hidden row: direct_read=['vfs.not_found'] grep_rows=25000 grep_errors=[('vfs.budget_exhausted.truncated', 'Truncated: at the candidate budget, with the unindexed overlay not consulted; na')]
+[index B=25000] hidden row WITHOUT needle: direct_read=['vfs.not_found'] grep_rows=25000 grep_errors=[('vfs.budget_exhausted.truncated', 'Truncated: at the candidate budget, with the unindexed overlay not consulted; na')]
+[index B=25000] hidden row WITH needle: direct_read=['vfs.not_found'] grep_rows=24999 grep_errors=[('vfs.budget_exhausted.truncated', 'Truncated: at the candidate budget; narrow the pattern, add globs or ext filters')]

@@ -1,0 +1,77 @@
+{
+ "harness": "scratch/markdown_variant.py <n>: system writes n hidden /alice files whose bodies contain [ann](/pub/a.md); no mkedge for hidden files",
+ "runs": {
+  "hidden_markdown_links=0": {
+   "anonymous_glean_scores": {
+    "/kb/pub/a.md": 0.6875,
+    "/kb/pub/b.md": 1.0,
+    "/kb/pub/c.md": 0.0
+   },
+   "bob_glean_scores": {
+    "/kb/pub/a.md": 0.6875,
+    "/kb/pub/b.md": 1.0,
+    "/kb/pub/c.md": 0.0
+   },
+   "bob_glob_alice": [],
+   "bob_graph_inbound_a": [
+    {
+     "edge_target": null,
+     "path": "/kb/pub/a.md"
+    }
+   ],
+   "system_glean_scores": {
+    "/kb/pub/a.md": 0.6875,
+    "/kb/pub/b.md": 1.0,
+    "/kb/pub/c.md": 0.0
+   }
+  },
+  "hidden_markdown_links=2": {
+   "anonymous_glean_scores": {
+    "/kb/pub/a.md": 1.0,
+    "/kb/pub/b.md": 0.889041006,
+    "/kb/pub/c.md": 0.0
+   },
+   "bob_glean_scores": {
+    "/kb/pub/a.md": 1.0,
+    "/kb/pub/b.md": 0.889041006,
+    "/kb/pub/c.md": 0.0
+   },
+   "bob_glob_alice": [],
+   "bob_graph_inbound_a": [
+    {
+     "edge_target": null,
+     "path": "/kb/pub/a.md"
+    }
+   ],
+   "system_glean_scores": {
+    "/kb/pub/a.md": 1.0,
+    "/kb/pub/b.md": 0.889041006,
+    "/kb/pub/c.md": 0.0
+   }
+  },
+  "hidden_markdown_links=5": {
+   "anonymous_glean_scores": {
+    "/kb/pub/a.md": 1.0,
+    "/kb/pub/b.md": 0.812914902,
+    "/kb/pub/c.md": 0.0
+   },
+   "bob_glean_scores": {
+    "/kb/pub/a.md": 1.0,
+    "/kb/pub/b.md": 0.812914902,
+    "/kb/pub/c.md": 0.0
+   },
+   "bob_glob_alice": [],
+   "bob_graph_inbound_a": [
+    {
+     "edge_target": null,
+     "path": "/kb/pub/a.md"
+    }
+   ],
+   "system_glean_scores": {
+    "/kb/pub/a.md": 1.0,
+    "/kb/pub/b.md": 0.812914902,
+    "/kb/pub/c.md": 0.0
+   }
+  }
+ }
+}

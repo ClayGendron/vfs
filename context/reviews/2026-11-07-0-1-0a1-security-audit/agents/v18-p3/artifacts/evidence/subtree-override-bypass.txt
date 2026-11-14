@@ -1,0 +1,92 @@
+# command: ./tools/sandbox-run.py ./agents/v18-p3/scratch ./.venv/bin/python -I v_subtree.py
+# repo commit 3586750; harness source follows
+"""Independent check: read-only PermissionMap override beneath a writable ancestor vs subtree verbs."""
+import asyncio
+from vfs import AsyncVirtualFileSystem, InMemoryStorage, Authority, Principal
+from vfs.models import Entry
+from vfs.permissions import read_write
+
+BOB = Authority.of(Principal("bob"))
+SYS = Authority.system()
+
+async def fresh():
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=["/proj/locked"]))
+    st = fs._bindings["/"].storage
+    r = await st.write(entries=[Entry(path="/proj/locked/policy.txt", content="ORIGINAL")], parents=True, authority=SYS)
+    assert r.success, r
+    return fs
+
+def s(r):
+    return f"success={r.success} errors={[(e.kind.value, str(e.path)) for e in r.errors]}"
+
+async def body(fs):
+    r = await fs.read("/proj/locked/policy.txt", authority=SYS)
+    return s(r) + f" content={[o.content for o in r.observations]}"
+
+async def main():
+    fs = await fresh()
+    print("control write locked:", s(await fs.write(path="/proj/locked/policy.txt", content="X", authority=BOB)))
+    print("control edit locked:", s(await fs.edit("/proj/locked/policy.txt", old="ORIGINAL", new="X", authority=BOB)))
+    print("control delete locked dir:", s(await fs.delete("/proj/locked", authority=BOB)))
+    print("control sweep locked dir:", s(await fs.sweep("/proj/locked", authority=BOB)))
+    print("control move locked file:", s(await fs.move(src="/proj/locked/policy.txt", dest="/y.txt", authority=BOB)))
+    print("control copy onto locked file:", s(await fs.copy(src="/proj/locked/policy.txt", dest="/proj/locked/policy2.txt", authority=BOB)))
+
+    fs = await fresh()
+    print("A delete /proj:", s(await fs.delete("/proj", authority=BOB)))
+    print("  after:", await body(fs))
+    print("  restore /proj:", s(await fs.restore("/proj", authority=BOB)))
+    print("  after restore:", await body(fs))
+
+    fs = await fresh()
+    print("B sweep /proj:", s(await fs.sweep("/proj", authority=BOB)))
+    print("  after:", await body(fs))
+    print("  restore /proj:", s(await fs.restore("/proj", authority=BOB)))
+    print("  after restore:", await body(fs))
+
+    fs = await fresh()
+    print("C move /proj -> /tmpx:", s(await fs.move(src="/proj", dest="/tmpx", authority=BOB)))
+    print("  write /tmpx/locked/policy.txt:", s(await fs.write(path="/tmpx/locked/policy.txt", content="TAMPERED", authority=BOB)))
+    print("  move /tmpx -> /proj:", s(await fs.move(src="/tmpx", dest="/proj", authority=BOB)))
+    print("  after:", await body(fs))
+
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=["/proj/locked"]))
+    print("D0 control direct write into empty locked region:", s(await fs.write(path="/proj/locked/policy.txt", content="F", parents=True, authority=BOB)))
+    print("D write stage:", s(await fs.write(path="/stage/locked/policy.txt", content="FORGED", parents=True, authority=BOB)))
+    print("D copy /stage -> /proj:", s(await fs.copy(src="/stage", dest="/proj", authority=BOB)))
+    print("  after:", await body(fs))
+    print("  control direct write now:", s(await fs.write(path="/proj/locked/policy.txt", content="Z", authority=BOB)))
+
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=["/proj/locked"]))
+    print("E write stage:", s(await fs.write(path="/stage/locked/policy.txt", content="FORGED", parents=True, authority=BOB)))
+    print("E move /stage -> /proj:", s(await fs.move(src="/stage", dest="/proj", authority=BOB)))
+    print("  after:", await body(fs))
+
+asyncio.run(main())
+# ---- output (rc=0) ----
+control write locked: success=False errors=[('vfs.read_only', '/proj/locked/policy.txt')]
+control edit locked: success=False errors=[('vfs.read_only', '/proj/locked/policy.txt')]
+control delete locked dir: success=False errors=[('vfs.read_only', '/proj/locked')]
+control sweep locked dir: success=False errors=[('vfs.read_only', '/proj/locked')]
+control move locked file: success=False errors=[('vfs.read_only', '/proj/locked/policy.txt')]
+control copy onto locked file: success=False errors=[('vfs.read_only', '/proj/locked/policy2.txt')]
+A delete /proj: success=True errors=[]
+  after: success=False errors=[('vfs.not_found', '/proj')] content=[]
+  restore /proj: success=True errors=[]
+  after restore: success=True errors=[] content=['ORIGINAL']
+B sweep /proj: success=True errors=[]
+  after: success=False errors=[('vfs.not_found', '/proj')] content=[]
+  restore /proj: success=False errors=[('vfs.not_found', '/proj')]
+  after restore: success=False errors=[('vfs.not_found', '/proj')] content=[]
+C move /proj -> /tmpx: success=True errors=[]
+  write /tmpx/locked/policy.txt: success=True errors=[]
+  move /tmpx -> /proj: success=True errors=[]
+  after: success=True errors=[] content=['TAMPERED']
+D0 control direct write into empty locked region: success=False errors=[('vfs.read_only', '/proj/locked/policy.txt')]
+D write stage: success=True errors=[]
+D copy /stage -> /proj: success=True errors=[]
+  after: success=True errors=[] content=['FORGED']
+  control direct write now: success=False errors=[('vfs.read_only', '/proj/locked/policy.txt')]
+E write stage: success=True errors=[]
+E move /stage -> /proj: success=True errors=[]
+  after: success=True errors=[] content=['FORGED']

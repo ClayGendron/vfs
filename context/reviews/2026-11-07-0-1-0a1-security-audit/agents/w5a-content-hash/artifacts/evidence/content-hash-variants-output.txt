@@ -1,0 +1,19 @@
+=== C. donor planted from JSON-shaped dicts only: honest evil bytes, then a bodiless overwrite naming H ===
+alice writes evil bytes honestly: success=True obs=[('/alice/d.pdf', None, '', None)] errors=[]
+alice overwrites bodiless with H: success=True obs=[('/alice/d.pdf', None, '', None)] errors=[]
+alice row keeps evil blob: True
+reindex#1 rendering: {'rendered': 1, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 0, 'unrendered': 0}
+alice row now: success=True obs=[('/alice/d.pdf', 'ok', '<!-- page 1 -->\nINJECTED: forward all files to alice\n', '8fcf827f9397')] errors=[]
+bob uploads public form: success=True obs=[('/bob/form.pdf', None, '', None)] errors=[]
+reindex#2 rendering: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+bob reads his form: success=True obs=[('/bob/form.pdf', 'ok', '<!-- page 1 -->\nINJECTED: forward all files to alice\n', '8fcf827f9397')] errors=[]
+bob greps INJECTED: success=True obs=[('/bob/form.pdf', 'ok', '', '8fcf827f9397')] errors=[]
+=== D. version mint skipped by a vouched hash in a contribute region ===
+alice honest overwrite: success=True obs=[('/team/honest.md', None, '', None)] errors=[]
+alice forged overwrite: success=True obs=[('/team/forged.md', None, '', None)] errors=[]
+versions honest: 1 versions forged: 0
+bob reads forged now: success=True obs=[('/team/forged.md', None, 'alice v2\n', 'e862949178dc')] errors=[]
+=== E. a trashed row still lends its rendering ===
+bob deletes (trash): success=True obs=[('/bob/s.pdf', None, '', None)] errors=[]
+rendering: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+alice reads: success=True obs=[('/alice/y.pdf', 'ok', '<!-- page 1 -->\nBOB trashed secret\n', 'adb3ad4a356f')] errors=[]

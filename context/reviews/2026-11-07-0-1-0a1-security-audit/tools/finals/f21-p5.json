@@ -1,0 +1,4 @@
+{
+ "decision": "verified",
+ "fingerprint": "vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic"
+}

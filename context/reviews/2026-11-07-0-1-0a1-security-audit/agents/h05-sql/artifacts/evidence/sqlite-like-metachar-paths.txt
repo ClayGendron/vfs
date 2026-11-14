@@ -1,0 +1,28 @@
+write '/a_' True []
+write '/a%' True []
+write '/a\\' True []
+write '/a[b]' True []
+write '/ab' True []
+write '/aXb' True []
+write '/a%%' True []
+write '/a\\x' True []
+write '/a_z' True []
+live before ['/a%%/secret.txt', '/a%/secret.txt', '/aXb/secret.txt', '/a[b]/secret.txt', '/a\\/secret.txt', '/a\\x/secret.txt', '/a_/secret.txt', '/a_z/secret.txt', '/ab/secret.txt']
+glob '/a_/*' ['/a_/secret.txt']
+glob '/a_/**' ['/a_/secret.txt']
+glob '/a%/*' ['/a%/secret.txt']
+glob '/a%/**' ['/a%/secret.txt']
+glob '/a\\/*' ['/a\\/secret.txt']
+glob '/a\\/**' ['/a\\/secret.txt']
+glob '/a[b]/*' ['/ab/secret.txt']
+glob '/a[b]/**' ['/ab/secret.txt']
+delete /a_ True live after ['/a%%/secret.txt', '/a%/secret.txt', '/aXb/secret.txt', '/a[b]/secret.txt', '/a\\/secret.txt', '/a\\x/secret.txt', '/a_z/secret.txt', '/ab/secret.txt']
+delete /a% True live after ['/a%%/secret.txt', '/aXb/secret.txt', '/a[b]/secret.txt', '/a\\/secret.txt', '/a\\x/secret.txt', '/a_z/secret.txt', '/ab/secret.txt']
+move /a\ -> /moved True live after ['/a%%/secret.txt', '/aXb/secret.txt', '/a[b]/secret.txt', '/a\\x/secret.txt', '/a_z/secret.txt', '/ab/secret.txt', '/moved/secret.txt']
+delete /a[b] True live after ['/a%%/secret.txt', '/aXb/secret.txt', '/a\\x/secret.txt', '/a_z/secret.txt', '/ab/secret.txt', '/moved/secret.txt']
+read '/ab/secret.txt' True
+read '/aXb/secret.txt' True
+read '/a%%/secret.txt' True
+read '/a\\x/secret.txt' True
+read '/a_z/secret.txt' True
+read '/moved/secret.txt' True

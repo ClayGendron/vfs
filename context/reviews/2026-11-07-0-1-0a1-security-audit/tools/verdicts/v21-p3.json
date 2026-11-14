@@ -1,0 +1,122 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs:storage/backends/database/rights.py:grant_rows:uncapped-foreign-grant-rows-inflate-grantee-clause-fan",
+  "title": "Uncapped grant rows naming another principal grow that principal's glean statement fan and event-loop stalls",
+  "description": "Any principal that holds read_write at some path can write any number of grant rows that name another sub or a group: id. It does this at distinct sub-paths it controls, and those paths need not hold a row. Every later glean by the grantee compiles all of those rows. The glean vector leg then runs one statement per visibility clause, and there is about one clause per 100 planted prefixes. Rows planted only through the public grant() verb reproduced this on InMemoryStorage (SQLite). At 0, 400 and 1600 rows the victim's warm glean issued 10, 14 and 26 statements over 1, 5 and 17 clauses. Its time rose from about 8 ms to 0.7-1.0 s, and the largest event-loop gap rose from 1 ms to 149-178 ms. glob stayed at 4 statements. Under a restrictive posture (none at the root, mallory holding read_write only on its own subtree) the victim cannot revoke the rows: the call returns permission_denied. Under the default read_write root posture, anonymous can plant the rows, but the victim (or anyone) can also revoke them. Each further grant also retires the grantee's RightsCache entry, which forces a fresh compile whose cost grows with n.",
+  "root_cause": "grant_rows and _grant_refusal check only that the principal is lawful, that the level is grantable, and that the granter holds read_write at the path. Nothing bounds how many rows may name a principal other than the granter. The glean vector leg (_vector_leg, glean.py:648-649) always takes view.clauses() and runs one statement per clause. It does not use the single-statement range-source join that Visibility.narrow uses through visible_entries. So the number of statements per victim call grows linearly with the pieces another principal plants in the victim's rights. Resolution.compile and the building of each statement run on the event loop.",
+  "intended_behavior": "A grantee's per-call cost should not grow without bound because of rows another principal plants. One fix keeps the vector leg's visibility pushdown at a constant statement count, as narrow() already does through visible_entries. Another bounds the rows that may name a principal, or requires the grantee's consent before such rows count.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 987,
+    "scope": "DatabaseStorage.grant",
+    "description": "Public grant verb. Any caller with read_write at the path may name any lawful principal (another sub or a group: id)."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 915,
+    "scope": "grant_rows",
+    "description": "_grant_refusal checks lawfulness, level and read_write at the path, with no count bound. Line 918 stamp_principals then retires the grantee's cached compile."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 371,
+    "scope": "resolve_authority",
+    "description": "On a cache miss it reads every grant row naming the grantee's subjects and groups, then compiles them in Python with Resolution.compile."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 418,
+    "scope": "visibility_clauses",
+    "description": "Splits the rights into OR-clauses of at most arm_budget (200) units, so the clause count grows linearly with the planted prefixes."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 648,
+    "scope": "_vector_leg",
+    "description": "Takes view.clauses() and, at line 649, builds one statement per clause. Each probe window executes all of them, so the number of statements per call grows with the grantee's piece count."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 1349,
+    "description": "_lawful_principal accepts any non-reserved, non-blank id within the column length. The grant path has no row-count check."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 205,
+    "description": "The default posture is read_write at the root, so under defaults anonymous passes the grant gate. Under that posture the victim can also revoke (observed)."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 551,
+    "description": "narrow() uses the single-statement visible_entries join where the dialect declares a range_source, and falls back to the per-clause fan otherwise (the GENERIC floor). glean's vector leg does not take this path."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/dialects.py",
+    "line": 666,
+    "description": "arm_budget caps clause width at 200 arms. Each statement stays bounded while the number of statements grows."
+   },
+   {
+    "file": "agents/v21-p3/artifacts/evidence/v21_grant_fan.txt",
+    "line": 1,
+    "description": "Verifier reproduction using only the grant() verb. Warm glean: 10/14/26 statements and 1/5/17 clauses at 0/400/1600 planted rows, max event-loop gap up to 149-178 ms. glob constant at 4 statements. The victim's revoke is refused under posture none and succeeds under the default posture."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker holds read_write at some path. Under the default root posture this includes anonymous. The rows cannot be removed by the victim only under a restrictive posture where the attacker alone holds read_write on its subtree."
+   },
+   {
+    "kind": "data_state",
+    "description": "The attacker plants rows naming the victim sub (or a group: id the victim belongs to) at distinct prefixes the victim does not otherwise cover."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The victim uses glean with a vector leg on a profiled dialect, or any read verb on an unknown dialect (GENERIC floor, which has no range_source; glean is withheld there)."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "A principal with read_write on its own subtree (mallory on /home/mallory) grants read to victim alice on many distinct sub-paths.",
+   "payloads": [
+    "for i in range(n): await storage.grant(path=Path(f'/home/mallory/p{i:06d}'), principal='alice', level='read', authority=Authority.of(Principal('mallory')))",
+    "await storage.glean(query='alpha doc', authority=Authority.of(Principal('alice')))"
+   ],
+   "instructions": [
+    "Create an InMemoryStorage and, as system, write 20 files under /home/alice owned by alice.",
+    "As system, set posture none at /, grant alice read_write on /home/alice, and grant mallory read_write on /home/mallory.",
+    "As mallory, call grant() n times naming alice at /home/mallory/pNNNNNN (n = 0, 400, 1600), with no bulk inserts.",
+    "Inside the sandbox, count SQLAlchemy cursor executions and the visibility_clauses length during alice's glean and glob, with a 1 ms asyncio ticker running.",
+    "Try alice's revoke of one planted row."
+   ],
+   "observed_result": "Warm glean issued 10, 14 and 26 statements over 1, 5 and 17 clauses at n = 0, 400 and 1600. Warm glean time was about 8, 80 and 699 ms, with max event-loop gaps of 1, 27 and 149 ms. In the default-posture run with anonymous as granter, n=1600 gave 26 statements, about 1039 ms and a max gap of 178 ms. glob stayed at 4 statements. Under posture none, alice's revoke returned permission_denied. Under the default posture it succeeded. Timings varied with machine load; the statement and clause counts are the stable measure."
+  },
+  "remediation": {
+   "strategy": "Route the glean vector leg's visibility through Visibility.entries()/visible_entries (a join or semi-join on the range source), as narrow() already does, so the statement count is constant in the grantee's rights. Keep the per-clause fan only where no range_source exists. Separately, consider bounding grant rows that name a principal other than the granter (per granter or per grantee), or requiring the grantee's acceptance before such rows enter its compile. Consider offloading large compiles from the event loop."
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "Planting needs only read_write on some subtree, costs a few to about 20 ms per grant through the public verb, and needs no cooperation from the victim. The rows persist and, under restrictive postures, the victim cannot remove them."
+   },
+   "impact": {
+    "score": "low",
+    "reason": "Growth is linear in the rows planted, not superlinear. The observed effect is a slower glean for one targeted principal (or group) and event-loop stalls of roughly 150-180 ms per victim glean at 1600 rows, which delay other callers sharing the process. No data is disclosed, and system or the granter can revoke the rows."
+   },
+   "overall_severity": "low"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The verifier reproduced the linear statement and clause growth on SQLite using only the public grant verb, and every trace line was checked at commit 3586750. Real-engine timings and growth beyond 1600 rows were not observed."
+  }
+ }
+}

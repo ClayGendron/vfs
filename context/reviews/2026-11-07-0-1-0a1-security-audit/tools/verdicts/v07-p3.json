@@ -1,0 +1,129 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.rendering.docx:note-reference-inline-expansion",
+  "title": "Repeated docx footnote or comment references copy the full note text inline before the character budget applies",
+  "description": "The docx renderer writes a note's text inline at each footnoteReference or commentReference. _Writer._inline makes a fresh formatted copy of the full note text for every reference, keeps every copy in a list, joins them into one string, and only then hands that string to Builder.paragraph. Builder.paragraph runs sanitize() and splitlines() over the whole string before _append checks any budget. So a paragraph that repeats one reference N times to a note of L characters builds about N x L characters in memory, plus further copies, before RenderLimits.chars or the ratio guard can act. This grows with the product of two values the writer chooses, not with the decompressed input. Repeated references and repeated note text compress almost to nothing. In the sandbox, a 2,783-byte docx (one 10,000-character footnote, 10,000 references) reached a traced peak of 191.5 MiB inside DocxRenderer.render. The growth was linear: 1.9 MiB at 100 references, 19.2 MiB at 1,000 and 191.5 MiB at 10,000. A 13,970-byte docx built the same way (a 100,000-character note, 100,000 references) implies 10^10 inline characters, about 10 GB. That case was built and measured only, not rendered. Rendering runs in DatabaseStorage.reindex on the offload pool of the host process that all agents share. Because the copies build up one note at a time rather than in one huge allocation, the likely end is that the OS kills the process or the host swaps heavily, not a MemoryError that the registry would catch. A killed render never lands its stamp, so the row stays render_status='pending' and every later reindex renders it again.",
+  "root_cause": "_Writer._inline (src/vfs/rendering/docx.py:131-149) appends _note(...) for every footnoteReference and commentReference with no limit on how many copies or how many characters it collects. Each _note call formats a new string holding the full note text (docx.py:152-154). The result is ''.join(parts), built in full before Builder sees it. Builder enforces RenderLimits.chars and the ratio guard only per line in _append (markdown.py:275-289), after paragraph() has already run sanitize(text).splitlines() over the whole string (markdown.py:180). The ratio guard compares output characters with the compressed input size, and only after the text exists.",
+  "intended_behavior": "RenderLimits.chars (2 MiB by default) and the ratio guard should bound what a renderer builds, not only what it emits. The docx module docstring says 'the character budget bounds a document'. Inline note assembly should stop once the paragraph can no longer fit in the Builder's remaining budget, or write each note's text once and mark later references by id, so that memory stays within a small multiple of the budget whatever the reference count.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 1181,
+    "scope": "write row staging",
+    "description": "A caller with write rights stores docx bytes through the write verb. There is no body-size cap, and the row is marked render_status='pending'."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1287,
+    "scope": "DatabaseStorage._render_step",
+    "description": "The operator's reindex selects every dirty bytes row, with no authority filter, and renders it through render_rows on the shared offload pool (call_offloaded at line 1288)."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/rendering/docx.py",
+    "line": 117,
+    "scope": "_Writer.paragraph",
+    "description": "text, pictures = self._inline(paragraph._p): the whole paragraph string is built before the Builder is called."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/rendering/docx.py",
+    "line": 144,
+    "scope": "_Writer._inline",
+    "description": "parts.append(_note('footnote', ...)) runs for every footnoteReference (and line 146 for commentReference). Each call is a fresh copy of the full note text, and line 149 joins them all with no budget."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/rendering/docx.py",
+    "line": 152,
+    "description": "_note formats f' [{kind} {note_id}: {text}]' with the whole note text on every call."
+   },
+   {
+    "file": "src/vfs/rendering/markdown.py",
+    "line": 180,
+    "description": "Builder.paragraph runs sanitize(text).splitlines() over the whole joined string before any per-line budget check."
+   },
+   {
+    "file": "src/vfs/rendering/markdown.py",
+    "line": 280,
+    "description": "The character budget and, at line 287, the ratio guard are checked only per appended line, after the text has been built."
+   },
+   {
+    "file": "src/vfs/rendering/registry.py",
+    "line": 107,
+    "description": "The registry catches only Exception. An OS kill of the process or heavy swapping is not caught, so the row stays pending."
+   },
+   {
+    "file": "agents/v07-p3/artifacts/evidence/run.txt",
+    "line": 1,
+    "description": "Sandbox run with a 10,000-character footnote. Traced peak inside DocxRenderer.render: 0.2 MiB at 0 references, 1.9 MiB at 100, 19.2 MiB at 1,000 and 191.5 MiB at 10,000. Input size stayed between 1,505 and 2,783 bytes."
+   },
+   {
+    "file": "agents/v07-p3/artifacts/evidence/size.txt",
+    "line": 1,
+    "description": "Size-only build, not rendered: a 13,970-byte docx (100,000-character note, 100,000 references) implies 10^10 inline characters, and a 15,713-byte docx (1,000,000-character note) implies 10^11."
+   },
+   {
+    "file": "agents/v07-p3/artifacts/evidence/repro.py",
+    "line": 1,
+    "description": "The reproduction script. It builds a minimal docx with dummy text and measures tracemalloc peak during DocxRenderer().render with the default RenderLimits."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker is a principal with write rights to some path on a DatabaseStorage or InMemoryStorage mount that stores bytes bodies."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The vfs[docx] extra (python-docx) is installed, so the docx renderer is active."
+   },
+   {
+    "kind": "timing_dependency",
+    "description": "The operator or host later runs reindex(), the only place rendering happens. The cost lands on that maintenance job and on the host process that all agents share, not on the writer's own call."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "An agent or user with ordinary write rights uploads a small docx, a few kilobytes compressed. Its footnotes part holds one long footnote, and its body has one paragraph that repeats a reference to that footnote many times.",
+   "payloads": [
+    "word/footnotes.xml: <w:footnotes><w:footnote w:id=\"1\"><w:p><w:r><w:t>{10,000 chars of 'lorem ipsum '}</w:t></w:r></w:p></w:footnote></w:footnotes>",
+    "word/document.xml: <w:document><w:body><w:p>{'<w:r><w:footnoteReference w:id=\"1\"/></w:r>' x 10,000}</w:p></w:body></w:document>"
+   ],
+   "instructions": [
+    "Build a minimal docx zip: [Content_Types].xml, _rels/.rels, word/_rels/document.xml.rels (with a footnotes relationship), word/document.xml and word/footnotes.xml as in the payloads, compressed with ZIP_DEFLATED.",
+    "Call DocxRenderer().render(RenderSource(data, DOCX, 'dummy.docx'), RenderLimits()) under tracemalloc. This is the same call that render_rows makes during reindex.",
+    "Repeat with 0, 100, 1,000 and 10,000 references and record the traced peak memory against the input size."
+   ],
+   "observed_result": "Traced peak memory grew linearly with the reference count: 1.9, 19.2 and 191.5 MiB for 100, 1,000 and 10,000 references. The input stayed at 1,560 to 2,783 bytes, so the 10,000-reference case built about 70,000 bytes in memory for each input byte. The render then returned 'empty' or 'failed' only after that memory had been allocated. Larger cases were not executed; only their input sizes were measured. This shows memory amplification in one render. It does not show a process crash, because no run was taken to OOM."
+  },
+  "remediation": {
+   "strategy": "Bound inline assembly in _Writer._inline. Write each note's full text only the first time it is referenced, and mark later references by id alone. Also stop collecting parts once the running length passes the Builder's remaining character budget, so no paragraph string can exceed a small multiple of RenderLimits.chars. Add a test that counts the characters (or tracemalloc bytes) built for a paragraph with many repeated references, rather than timing it.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/rendering/docx.py",
+     "fixed_code": "    def _inline(self, element: Any) -> tuple[str, list[str | None]]:\n        \"\"\"The paragraph's text with each note written once at its first reference, bounded by the budget.\"\"\"\n        parts: list[str] = []\n        pictures: list[str | None] = []\n        size = 0\n        cap = self._builder.remaining + 1\n        for node in element.iter():\n            tag = node.tag\n            piece: str | None = None\n            if tag == f\"{_W}t\":\n                piece = node.text or \"\"\n            elif tag == f\"{_W}tab\":\n                piece = \"\\t\"\n            elif tag in (f\"{_W}br\", f\"{_W}cr\"):\n                piece = \"\\n\"\n            elif tag == f\"{_W}footnoteReference\":\n                piece = self._note_once(\"footnote\", node.get(f\"{_W}id\"), self._notes.footnotes)\n            elif tag == f\"{_W}commentReference\":\n                piece = self._note_once(\"comment\", node.get(f\"{_W}id\"), self._notes.comments)\n            elif tag == f\"{_WP}docPr\":\n                pictures.append(node.get(\"descr\") or node.get(\"title\") or node.get(\"name\"))\n            if piece is not None and size <= cap:\n                parts.append(piece)\n                size += len(piece)\n        return \"\".join(parts), pictures\n\n    def _note_once(self, kind: str, note_id: str | None, texts: dict[str, str]) -> str:\n        key = (kind, note_id)\n        if key in self._written:\n            return f\" [{kind} {note_id}]\"\n        self._written.add(key)\n        return _note(kind, note_id, texts)\n\n# with self._written: set[tuple[str, str | None]] = set() in __init__, and a Builder.remaining\n# property returning max(0, self._budget - self._chars)"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "Ordinary write rights and a payload of a few kilobytes are enough, and there is no body-size cap. Rendering still waits for an operator-run reindex, and the writer cannot trigger it."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "Memory in the host process that all agents share grows with the product of reference count and note length. A 14 KB input implies about 10 GB. If the process is killed, the row stays pending and is retried on every reindex, so the file keeps failing the job. The impact is availability of a shared host and its maintenance job, with no disclosure and no integrity loss. The OOM end state was inferred from linear growth and was not observed."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The source path is direct and has no control before the join. I independently reproduced linear memory growth at bounded sizes using the real DocxRenderer and default RenderLimits, inside the sandbox, with dummy data."
+  }
+ }
+}

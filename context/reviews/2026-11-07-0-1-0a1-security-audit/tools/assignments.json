@@ -1,0 +1,42 @@
+{
+ "h09-supply": [
+  ".github%2Fworkflows%23push%20and%20pull_request::.github%2Fworkflows%23token%20permissions%20secrets%20and%20pinning::.github%2Fworkflows::SUPPLY-CHAIN-AND-RELEASE.md%23CI%20and%20automation%20attack%20classes",
+  ".github%2Fworkflows%2Fpublish.yml%23release%20published::scripts%2Fcheck_release_tag.py%23tag%20check%20and%20environment%20pypi::.github%2Fworkflows::SUPPLY-CHAIN-AND-RELEASE.md%23Release%20and%20update%20attack%20classes"
+ ],
+ "h06-native": [
+  "crates%2Fvfs-core%2Fsrc%2Fpython.rs%23pyo3%20entry%20points::crates%2Fvfs-core%2Fsrc%23bounds%20and%20panic%20containment::crates%2Fvfs-core::ATTACK-CLASSES.md%23Resource%20and%20file%20handling"
+ ],
+ "h10-obvious": [
+  "repository%23tracked%20files::repository%23secrets%20debug%20gates%20and%20dangerous%20calls::repository::ATTACK-CLASSES.md%23Obvious%20things",
+  "repository%23tracked%20files::repository%23secrets%20randomness%20and%20comparisons::repository::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+  "src%2Fvfs%23all%20modules::src%2Fvfs%23any::src%2Fvfs::ATTACK-CLASSES.md%23Wildcard"
+ ],
+ "h04-router": [
+  "src%2Fvfs%2Fbase.py%23_gate_entry::src%2Fvfs%2Fpermissions.py%23PermissionMap%20and%20deny_ops::src%2Fvfs::ATTACK-CLASSES.md%23Access%20control",
+  "src%2Fvfs%2Fpaths.py%23normalize_path::src%2Fvfs%2Fbase.py%23mount%20boundary%20and%20reserved%20namespaces::src%2Fvfs::ATTACK-CLASSES.md%23Resource%20and%20file%20handling"
+ ],
+ "h01-grants": [
+  "src%2Fvfs%2Fbase.py%23add_member%20remove_member%20and%20default%20posture::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23membership%20and%20posture%20defaults::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Business%20logic",
+  "src%2Fvfs%2Fbase.py%23grant%20revoke%20posture::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23grant%20and%20posture%20gate::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control"
+ ],
+ "h03-mutations": [
+  "src%2Fvfs%2Fbase.py%23delete%20restore%20sweep%20move%20copy::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Ftrash.py%23subtree%20checks::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Chained%20vulnerabilities%20and%20trust%20boundaries",
+  "src%2Fvfs%2Fbase.py%23write%20edit%20mkdir%20mkedge::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23WriteGate::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control"
+ ],
+ "h02-reads": [
+  "src%2Fvfs%2Fbase.py%23grep%20glean%20graph::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility%20over%20derived%20copies::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+  "src%2Fvfs%2Fbase.py%23read%20stat%20ls%20tree%20glob::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control"
+ ],
+ "h07-compute": [
+  "src%2Fvfs%2Fparams.py%23pattern%20query%20edit%20graph%20arguments::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgrep.py%23budgets%20and%20caps::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "h11-agents": [
+  "src%2Fvfs%2Fpaths.py%23%2F.agents%20namespace%20and%20src%2Fvfs%2Fskills.py::src%2Fvfs%2Fbase.py%23run%20dispatch%20and%20%2F.agents%20write%20rights::src%2Fvfs::AI-AND-LLM.md%23Tool%20and%20action%20attack%20classes"
+ ],
+ "h08-render": [
+  "src%2Fvfs%2Frendering%23renderers::src%2Fvfs%2Frendering%2Fseam.py%23RenderLimits::src%2Fvfs%2Frendering::ATTACK-CLASSES.md%23Resource%20and%20file%20handling"
+ ],
+ "h05-sql": [
+  "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2F%23statement%20builders::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fdialects.py%23bound%20parameters%20and%20escape_like::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::ATTACK-CLASSES.md%23Injection"
+ ]
+}

@@ -1,0 +1,2 @@
+[glean OVERLAY_BUDGET=500] no hidden row: direct_read=['vfs.not_found'] rows=500 errors=[]
+[glean OVERLAY_BUDGET=500] one hidden unindexed row: direct_read=['vfs.not_found'] rows=499 errors=[('vfs.budget_exhausted.truncated', 'Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope wit')]

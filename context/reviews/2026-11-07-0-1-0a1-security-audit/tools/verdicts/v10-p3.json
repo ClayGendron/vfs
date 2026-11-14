@@ -1,0 +1,172 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.rendering.xlsx:region-table-quadratic-materialization",
+  "title": "xlsx region layout does quadratic work on writer-shaped cell layouts before any render budget applies",
+  "description": "A subject that can write a bytes entry stores a small .xlsx file. The operator's reindex later renders it with the bundled XlsxRenderer, on the shared offload pool inside the host process. regions() joins cells that touch by side or by corner. So an L-shape (R cells down column A, then C cells across the last row) or a diagonal of n cells becomes one region whose bounding box is R x C, or n x n. _table() then builds the whole box as Python lists, header plus body, (bottom-top+1) x (right-left+1) entries, before Builder.table() emits its first row. The character budget, the output/input ratio guard and the clock are only checked inside Builder, so they act after that allocation has already happened. Observed locally: a 56,977-byte workbook made 32,012,001 table entries and a 270.9 MB traced peak during DatabaseStorage.reindex() on SQLite, and the rendering still landed as 'rendered'. Doubling both sides quadrupled the peak (68.7 MB, then 270.9 MB), while the file grew less than 2x. Separately, _merged() compares each region box with every box already kept, so k isolated cells cost k(k-1)/2 overlap checks: 400 cells made 79,800 calls and 6,400 cells made 20,476,800. That work also runs before any budget and never reads the clock. The module docstring says the region pass is linear. Neither of these two steps is linear.",
+  "root_cause": "In src/vfs/rendering/xlsx.py, _table() builds every grid position of a region's bounding box as a list of lists, and _merged() does pairwise overlap checks over all region boxes. Both run in full before control reaches Builder, and Builder is the only place RenderLimits (chars, ratio, seconds) are enforced. Box area and region count depend on how the writer lays out cells, not on the input size or on the output budget.",
+  "intended_behavior": "Per the xlsx module docstring and RenderLimits: one render holds memory linear in a sheet's non-empty cell count, the region pass is linear, and the character budget and wall clock bound the work spent on any one rendering, so a small input cannot make the renderer allocate or compute far beyond what it can emit.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 686,
+    "scope": "DatabaseStorage.write",
+    "description": "A lower-trust subject with write rights stores arbitrary .xlsx bytes. No body-size or cell-layout check applies to write data."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 1181,
+    "scope": "staged row values",
+    "description": "The bytes row is stored with render_status 'pending', so a later reindex picks it up."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1288,
+    "scope": "DatabaseStorage._render_step",
+    "description": "The operator's reindex runs render_rows on the shared offload pool with call_offloaded. A worker that is already running cannot be interrupted."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/render.py",
+    "line": 294,
+    "scope": "render_rows",
+    "description": "registry.render(RenderSource(data, row.mime, row.name), limits) dispatches to the bundled XlsxRenderer."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 88,
+    "scope": "XlsxRenderer.render",
+    "description": "for box in regions(cells): builder.table(_table(cells, box, ...)). Both regions() and _table() run before Builder sees any row."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 120,
+    "scope": "regions",
+    "description": "Joining cells that touch by corner turns a diagonal or an L-shape of O(R+C) cells into one region with an R x C bounding box."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 137,
+    "scope": "_merged",
+    "description": "Each box is checked against every box already kept: O(k^2) overlap checks over k regions, with no clock or budget check."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 157,
+    "scope": "_table",
+    "description": "The body list comprehension builds every grid position of the bounding box, area R x C, before Builder.table applies the character or time budget."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 157,
+    "description": "body = [[str(row), *(cells.get((row, column), '') for column in columns)] for row in range(box.top, box.bottom + 1)] is built in full and returned as a list."
+   },
+   {
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 143,
+    "description": "The inner loop 'for other in out: if merged.overlaps(other)' runs once per kept box for each new box, which is quadratic in the number of regions."
+   },
+   {
+    "file": "src/vfs/rendering/xlsx.py",
+    "line": 17,
+    "description": "The module docstring states 'the region pass is linear too' (and regions() at line 106 claims union-find makes it linear). _merged and _table contradict this."
+   },
+   {
+    "file": "src/vfs/rendering/markdown.py",
+    "line": 191,
+    "description": "Builder.table takes an already-built Sequence. It computes width = max(len(row) for row in rows), and only then checks the clock and the character budget per row (lines 198-204), after the full table exists."
+   },
+   {
+    "file": "src/vfs/rendering/seam.py",
+    "line": 40,
+    "description": "RENDER_CHARS is 2 MiB and RENDER_SECONDS is 60. Both are enforced only through Builder, so neither bounds _table or _merged."
+   },
+   {
+    "file": "src/vfs/rendering/registry.py",
+    "line": 46,
+    "description": "RendererRegistry.bundled() includes XlsxRenderer, and DatabaseStorage uses it by default (backend.py:234). The renderer is active wherever openpyxl is installed."
+   },
+   {
+    "file": "agents/v10-p3/artifacts/evidence/xlsx-growth.json",
+    "line": 1,
+    "description": "Direct XlsxRenderer.render under default RenderLimits, with each <dimension> element removed. L 2000x1000 (18,775 B): 2,003,001 entries, 20.6 MB peak. L 4000x2000 (30,928 B): 8,006,001 entries, 68.3 MB. L 8000x4000 (56,978 B): 32,012,001 entries, 270.7 MB, status truncated. Diagonal n=500/1000/2000: 251,001 / 1,002,001 / 4,004,001 entries; the ratio guard failed the larger two only after materialization. Isolated grids of 400 / 1,600 / 6,400 cells: 79,800 / 1,279,200 / 20,476,800 overlap calls."
+   },
+   {
+    "file": "agents/v10-p3/artifacts/evidence/xlsx-e2e-reindex.json",
+    "line": 1,
+    "description": "End to end through DatabaseStorage.write and reindex on SQLite. Control workbook (3 cells): 0.71 MB peak. L 4000x2000 (30,928 B): 68.7 MB peak. L 8000x4000 (56,977 B): 270.9 MB peak, 32,012,001 table entries. Each reindex succeeded and reported the row as rendered."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker is a named subject or service with write rights on some path of a DatabaseStorage mount. Any writer can store arbitrary bytes there."
+   },
+   {
+    "kind": "third_party_dependency",
+    "description": "openpyxl (the vfs[xlsx] extra) is installed, so the bundled XlsxRenderer is available. Version 3.1.5 was observed."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The host or operator runs DatabaseStorage.reindex() in the same process that serves agents. That is the shipped design: offload pool threads in the host process."
+   },
+   {
+    "kind": "data_state",
+    "description": "The stored workbook's sheet XML omits the <dimension> element (or declares a small one), so openpyxl's read-only iterator does not pad every row to the full width and the quadratic cost falls on vfs's _table rather than on the library."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "A lower-trust writer stores a few tens of kilobytes of .xlsx. They wait for the operator's routine reindex to render it on the host process that all agents share.",
+   "payloads": [
+    "An .xlsx with one sheet: numeric cells at A1..A8000 plus row 8000 columns B..ER (4,000 columns total), and <dimension> removed from xl/worksheets/sheet1.xml. That is 11,999 cells and 56,977 bytes.",
+    "An .xlsx with one sheet of k isolated cells at (2i+1, 2j+1), for example an 80x80 grid of 6,400 cells, to drive _merged's pairwise loop."
+   ],
+   "instructions": [
+    "Build the workbook with openpyxl write_only mode, then rewrite the zip without the <dimension .../> element.",
+    "Under tools/sandbox-run.py: DatabaseStorage(url='sqlite+aiosqlite:///<scratch>/b.sqlite').write(entries=[Entry(path=Path('/u/b.xlsx'), data=payload)], parents=True).",
+    "Start tracemalloc, await storage.reindex(), and record the traced peak. Wrap xlsx._table to count the entries it returns, and wrap Box.overlaps to count calls.",
+    "Repeat at half size (4000x2000) and with a 3-cell control to see the growth."
+   ],
+   "observed_result": "Reindex peak traced memory was 0.71 MB for the 3-cell control, 68.7 MB for 4000x2000 (30,928 B) and 270.9 MB for 8000x4000 (56,977 B). _table returned 32,012,001 entries for the last one, and its rendering landed as 'rendered' (text truncated at about 2.09M chars). Memory grew about 4x per doubling, against under 2x growth in file size. Isolated-cell grids made exactly k(k-1)/2 overlap calls (20,476,800 at k=6,400) before any budget or clock check. Larger sizes were not run, to stay inside the 2 GiB sandbox cap."
+  },
+  "remediation": {
+   "strategy": "Make the xlsx table path stream rows and stop against the output budget. Make the region merge sub-quadratic or check the clock. (1) Turn _table into a generator that yields the header and then one body row at a time. Change Builder.table to accept an iterable plus an explicit width, so its existing per-row clock and character checks run before the next row is built. Rows needed is then bounded by the remaining budget divided by about 4*width, and width is at most 18,278 because of get_column_letter. (2) Replace _merged's all-pairs loop with a sweep over boxes sorted by top, keeping an interval structure on columns, or at least pass the Builder and check out_of_time()/budget inside the loop and in regions(). (3) Fix the module and regions() docstrings so they describe the real complexity. Add operation-count tests (entries built, overlap calls) at two sizes, asserting linear growth.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/rendering/xlsx.py",
+     "fixed_code": "def _table(cells: Cells, box: Box, column_letter: Any) -> Iterator[list[str]]:\n    \"\"\"One region as table rows, lazily: letters across, row numbers down, blanks empty.\"\"\"\n    columns = range(box.left, box.right + 1)\n    yield [\"\", *(column_letter(column) for column in columns)]\n    for row in range(box.top, box.bottom + 1):\n        yield [str(row), *(cells.get((row, column), \"\") for column in columns)]\n\n# caller: builder.table(_table(cells, box, letter), width=box.right - box.left + 2)"
+    },
+    {
+     "file_name": "src/vfs/rendering/markdown.py",
+     "fixed_code": "def table(self, rows: Iterable[Sequence[object]], *, width: int | None = None) -> bool:\n    \"\"\"A GFM pipe table whose first row is the header; rows are pulled one at a time.\"\"\"\n    if self.stopped:\n        return False\n    if width is None:\n        rows = list(rows)\n        if not rows:\n            return True\n        width = max(len(row) for row in rows)\n    self._blank()\n    for index, row in enumerate(rows):\n        if index and self.out_of_time():\n            self._open = False\n            return False\n        cells = [table_cell(value) for value in row] + [\"\"] * (width - len(row))\n        if not self._text(\"| \" + \" | \".join(cells) + \" |\"):\n            return False\n        if index == 0 and not self._append(\"|\" + \" --- |\" * width):\n            return False\n    self._blank()\n    return True"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "likelihood_placeholder_removed": null,
+    "score": "medium",
+    "reason": "Any subject with write rights can plant the file, and it is small (under 60 KB) and easy to build. It needs the openpyxl extra, and it fires only when the operator runs reindex, which is routine maintenance. A row whose render never finishes stays pending and is retried on every reindex."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "Memory and CPU grow quadratically in the shared host process, before any RenderLimits check. 57 KB produced a 271 MB peak, and each further doubling quadruples it, so a few hundred KB can reach multiple GB. The isolated-cell layout drives unbounded uninterruptible CPU on a worker. This is availability only, for the reindex job and the host process shared by agents. No confidentiality or integrity effect. Process OOM at production scale was inferred from the measured growth, not observed."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The source path is direct and the defaults activate it. The quadratic growth was reproduced twice inside the sandbox with operation counts and traced memory: directly on the renderer, and end to end through write and reindex on SQLite. The control and the doubling series rule out a constant overhead."
+  }
+ }
+}

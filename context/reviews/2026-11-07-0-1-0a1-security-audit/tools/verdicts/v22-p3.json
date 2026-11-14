@@ -1,0 +1,149 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges",
+  "title": "glean's link-centrality prior is built from hidden rows, so a partial caller's visible scores reveal hidden in-links",
+  "description": "When an operator declares a link signal (InDegree, PageRank or Katz) on a DatabaseStorage Ranker, reindex computes one prior over the whole corpus. It counts every live entry and every non-fs edge, including edges authored on rows and markdown links extracted from bodies the eventual reader cannot see. At query time glean multiplies each visible candidate's fused score by the stored factor whatever the caller's view, then min-max scales. A partial caller (a named principal without whole-mount read, or anonymous) therefore gets glean scores that differ between two worlds that differ only in hidden rows. With a visible calibrator file of known in-degree, the caller can tell whether, and roughly how many, hidden entries reference a visible file, while graph inbound, glob and read on the same data correctly reveal nothing. The same path lets a writer use files only they can see as an invisible link farm that raises a readable target in every other principal's ranking.",
+  "root_cause": "signals.collect_graph (src/vfs/storage/backends/database/signals.py:72-118) takes no authority or Visibility and pages every live entry and every non-reserved edge. DatabaseStorage._signal_phase calls it once per reindex (backend.py:1332) and the Rust centrality kernel (models/signals.py:28-61) scores over that whole graph, smooths through directories and min-max scales over all files. signal_factors (signals.py:194-263) takes no view, and glean_rows applies its factors to every candidate after both visibility-filtered legs (glean.py:390-392). The visible-set treatment glean gives N, mean length and df is never applied to the signal leg.",
+  "intended_behavior": "glean_rows' own docstring states that under a partial view the statistics are the visible set's, 'so a hidden row never moves a visible score' (glean.py:249-251). The permission-ladder research says degree counts and stored link signals must count only edges whose both endpoints the caller can list (context/research/2026-10-14-the-permission-ladder-list-and-contribute.md:98). The statistics-under-permissions memo names this exact leak and asks for visible-set treatment or a documented exemption (context/research/2026-09-28-search-statistics-under-permissions-precedent.md:349). Spec 136, which landed the signals, has no exemption. The earlier-generation archived spec 009 invariant 6 also says centrality must be computed over the visible subgraph only.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 1469,
+    "scope": "AsyncVirtualFileSystem.glean",
+    "description": "A partial or anonymous caller issues glean(query, globs=..., authority=...). The router routes the call to the mount with that authority, and the storage resolves it to a partial Visibility."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1332,
+    "scope": "DatabaseStorage._signal_phase",
+    "description": "Earlier, reindex collected the graph once with no authority or view, then computed and published each declared signal."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/signals.py",
+    "line": 105,
+    "scope": "collect_graph",
+    "description": "Every non-fs edge between live entries is collected, including edges from rows hidden from the eventual reader and links extracted from hidden markdown bodies."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/models/signals.py",
+    "line": 46,
+    "scope": "centrality_prior",
+    "description": "The Rust kernel computes the measure over the full graph, applies hierarchy smoothing that includes hidden files, and min-max scales over all files."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/signals.py",
+    "line": 263,
+    "scope": "signal_factors",
+    "description": "Stored values for the candidates become 1 + beta*t(v) multipliers. The function has no view parameter."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 392,
+    "scope": "glean_rows",
+    "description": "Each visible entry's fused score is multiplied by the factor that hidden rows influenced, then ordered, min-max scaled and returned to the partial caller as Observation.score."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 251,
+    "description": "The docstring promises that under a partial view 'a hidden row never moves a visible score'."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/glean.py",
+    "line": 390,
+    "description": "signal_factors is called with no view, after both legs and the overlay have filtered rows through the view."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/signals.py",
+    "line": 72,
+    "description": "collect_graph has no authority or view parameter. It pages every live entry and every non-reserved edge."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/graph.py",
+    "line": 307,
+    "description": "The comparable control the signal leg lacks: graph hops keep a row only if view.holds(mapping, 'list'), so hidden in-links are left out of graph inbound."
+   },
+   {
+    "file": "context/research/2026-10-14-the-permission-ladder-list-and-contribute.md",
+    "line": 98,
+    "description": "Stated rule: degree counts and stored link signals must count only edges with both endpoints at list or above for the caller."
+   },
+   {
+    "file": "context/research/2026-09-28-search-statistics-under-permissions-precedent.md",
+    "line": 349,
+    "description": "Names the leak ('A visible file's centrality can reveal hidden in-links') and requires visible-set treatment or a documented exemption. Neither exists."
+   },
+   {
+    "file": "src/vfs/storage/ranking.py",
+    "line": 385,
+    "description": "The default Ranker declares no signals, so the leak needs an operator to opt in to a link signal."
+   },
+   {
+    "file": "agents/v22-p3/artifacts/evidence/visible_prior_two_worlds.json",
+    "line": 1,
+    "description": "Verifier's own sandboxed run. bob's and anonymous's glean scores change with k hidden alice edges or hidden markdown links. The no-signal control is unchanged by k. graph, glob and read reveal nothing about /alice."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "system_configuration",
+    "description": "The operator declares a link signal (InDegree, PageRank or Katz, for example Signal('centrality', weight=0.5)) on the DatabaseStorage Ranker. The default Ranker declares none."
+   },
+   {
+    "kind": "data_state",
+    "description": "reindex has run since the hidden edges or hidden link-bearing bodies were written. Hidden rows reference a visible file. The caller can read that file and, for counting, a calibrator file with a known visible in-degree that matches the same query."
+   },
+   {
+    "kind": "authorization_role",
+    "description": "The reader is any named or anonymous principal without whole-mount read (a partial Visibility). For the steering variant, the writer needs modify on their own hidden files and read on the target, which is what mkedge requires."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "bob, or anonymous, can read /pub but not /alice. Comparing glean scores, he learns whether, and roughly how many, of alice's private files reference /pub/a.md. Separately, alice can raise /pub/a.md in everyone's ranking through links from files only she can see.",
+   "payloads": [
+    "DatabaseStorage(url='sqlite+aiosqlite:///<scratch>.db', ranker=Ranker(signals=(Signal('centrality', weight=0.5),)))",
+    "system writes /pub/a.md 'zebra report alpha', /pub/b.md 'zebra report gamma', /pub/c.md 'zebra report delta with many more filler words here', /alice/n0..n4.md; posture / none; posture /pub read; grant alice read_write on /alice; mkedge /pub/c.md -> /pub/b.md (visible calibrator)",
+    "edge variant: alice mkedge /alice/n{i}.md -> /pub/a.md for i < k; markdown variant: /alice/n{i}.md bodies contain '[x](/pub/a.md)' for i < k, no mkedge",
+    "storage.reindex(); kernel.add_mount(storage, '/kb'); kernel.glean('zebra', globs=('/kb/pub/**',), authority=Authority.of(Principal('bob')))"
+   ],
+   "instructions": [
+    "Ran agents/v22-p3/scratch/verify_prior.py under tools/sandbox-run.py (no network, empty env, scratch-only writes, CPU 60 s, wall 120 s, RSS 2 GiB) with ./.venv/bin/python -I. SQLite files in scratch only.",
+    "For k in {0,1,3}, in both the edge and markdown variants, recorded bob's and anonymous's glean scores, legs.signals, graph inbound on /kb/pub/a.md, glob /kb/alice/**, and read /kb/alice/n0.md. As a control, ran the edge variant with k=0 and k=3 using a default Ranker with no signals."
+   ],
+   "observed_result": "bob and anonymous get identical scores. a.md/b.md: k=0 0.6875/1.0; k=1 1.0/1.0; k=3 1.0/0.848484848. The markdown-body variant gives exactly the same values. With no signal declared, scores are 1.0/1.0 for both k=0 and k=3, which isolates the change to the signal leg. In every world, bob's and anonymous's graph inbound on a.md lists no /alice row, glob /kb/alice/** is empty, and read /kb/alice/n0.md fails. legs.signals reports centrality applied."
+  },
+  "remediation": {
+   "strategy": "Never apply a whole-corpus prior to a partial caller. Smallest fix: in glean_rows, call signal_factors only when view is None. Under a partial view, skip the signal leg and emit a fixed explain that looks the same whether or not any edges exist, so 'applied' and 'no entry earned a value' stop leaking. The fuller design computes or stores priors per visibility class, for example over the rows everyone may read, or computes a visible-subgraph prior at query time, counting only edges whose both endpoints the caller can list. Regression test: two worlds that differ only in hidden edges or hidden link-bearing bodies must give a partial caller byte-identical glean observations and legs.signals.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/storage/backends/database/glean.py",
+     "fixed_code": "    fused = _fuse(ranker, hits, vector_hits)\n    if view is None:\n        signals = await signal_factors(session, tables, profile, membership_budget, ranker, list(fused.entries))\n    else:\n        # Stored priors count every row; a partial caller's scores must not carry them.\n        signals = SignalFactors({}, [], {signal.name: {\"applied\": False, \"reason\": \"partial view\"} for signal in ranker.signals})\n    for entry_id, factor in signals.factors.items():\n        fused.entries[entry_id] *= factor"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "low",
+    "reason": "An operator must opt in to a link signal on the Ranker (the default declares none), and reindex must run after the hidden links exist. Once both hold, any partial or anonymous reader can query repeatedly with no special rights."
+   },
+   "impact": {
+    "score": "low",
+    "reason": "It discloses link metadata of hidden rows: whether, and roughly how many, hidden entries reference a visible file, including references extracted from hidden bodies. It does not disclose bodies or paths. It also allows invisible ranking manipulation, but only of documents the victim can already read."
+   },
+   "overall_severity": "low"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "Every source step was verified, and no visibility parameter exists anywhere on the signal path. The code's own docstring and the project's permission research state the opposite policy. An independent sandboxed two-world run shows partial callers' scores moving with hidden edges and hidden markdown links, while a no-signal control is unchanged and graph, glob and read reveal nothing."
+  }
+ }
+}

@@ -1,0 +1,148 @@
+{
+ "units": [
+  {
+   "coverage_id": "crates%2Fvfs-core%2Fsrc%2Fpython.rs%23pyo3%20entry%20points::crates%2Fvfs-core%2Fsrc%23bounds%20and%20panic%20containment::crates%2Fvfs-core::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+   "disposition": "covered",
+   "reviewed_paths": [
+    "crates/vfs-core/src/python.rs",
+    "crates/vfs-core/src/postings.rs",
+    "crates/vfs-core/src/lexical.rs",
+    "crates/vfs-core/src/chunk.rs",
+    "crates/vfs-core/src/signals.rs",
+    "crates/vfs-core/src/verify.rs",
+    "crates/vfs-core/src/vectors.rs",
+    "crates/vfs-core/src/grams.rs",
+    "crates/vfs-core/src/links.rs",
+    "Cargo.toml",
+    "crates/vfs-core/Cargo.toml",
+    "src/vfs/native.py",
+    "src/vfs/models/lexical.py",
+    "src/vfs/models/signals.py",
+    "src/vfs/models/chunking.py",
+    "src/vfs/models/links.py",
+    "src/vfs/pattern_matching/grep.py",
+    "src/vfs/storage/backends/database/grep.py",
+    "src/vfs/storage/backends/database/glean.py",
+    "src/vfs/storage/backends/database/offload.py",
+    "src/vfs/storage/backends/database/signals.py",
+    "src/vfs/storage/backends/database/backend.py",
+    "src/vfs/storage/backends/database/links.py",
+    "src/vfs/storage/backends/memory.py",
+    "src/vfs/base.py",
+    "src/vfs/sync.py"
+   ],
+   "checks": [
+    {
+     "agent_id": "h06-native",
+     "reviewed_paths": [
+      "crates/vfs-core/src/postings.rs",
+      "crates/vfs-core/src/python.rs",
+      "src/vfs/storage/backends/database/grep.py",
+      "src/vfs/storage/backends/database/glean.py"
+     ],
+     "invariant": "Posting decode (Postings::collect, candidate_ids) must not trust the varint count header before validation in a way a lower-trust caller can reach.",
+     "method": "local",
+     "result": "Lead 1 settled: the defect exists, but only an operator can reach it. postings.rs:265 runs Vec::with_capacity(self.count as usize) on the stored count header before anything checks it. A count of 2^60 raises PanicException ('capacity overflow'). A count of 2^56 asks for a 576460752303423488-byte allocation that fails, and the process aborts (exit 250). Every other malformed class is refused with ValueError, as designed. Callers cannot shape the header: the only writer is PostingsAccumulator::next_batch (postings.rs:150-170). It writes the real u32 count of doc ids that vfs assigns itself. Caller content only picks which grams a doc posts to. So reaching this needs DB write access (a tampered DB), which is operator-level. Recorded as hardening.",
+     "artifact": "agents/h06-native/artifacts/evidence/native_probe_output.txt"
+    },
+    {
+     "agent_id": "h06-native",
+     "reviewed_paths": [
+      "crates/vfs-core/src/lexical.rs",
+      "crates/vfs-core/src/python.rs",
+      "src/vfs/models/lexical.py",
+      "src/vfs/storage/backends/database/glean.py"
+     ],
+     "invariant": "BM25 scoring and block selection must not panic on input a caller can shape (NaN from avg_dl, idf, dl or bounds), and the decode helpers and slices must stay in bounds.",
+     "method": "local",
+     "result": "Lead 2 settled: the panic exists, but no caller can reach it. The sinks are lexical.rs:672 and :677, partial_cmp().unwrap() over partial scores. They panic when two or more partial scores are NaN, which was observed with dl=0 and avg_dl=0. A NaN bound alone is filtered at :631, and select_blocks sorts with total_cmp, so neither panics. NaN needs dl=0 with avg_dl=0, or a NaN idf or bound. None of these comes from caller input. dl is the doc's token count, and it is >= tf >= 1 for every posting (lexical.rs:441, glean.py:910-913). avg_dl > 0 whenever any term exists (lexical.rs:469, glean.py:728/917). idf = ln(1 + positive) and is finite. A visible-view avg_dl of 0 with dl >= 1 gives inf and a weight of 0, not NaN (observed). The glean query only picks terms. Block term indexes are checked at python.rs:349. The decode helpers use shift.min(63) and wrapping adds, so a tampered blob gives wrong scores, never out-of-bounds access. order[position + 1..] at lexical.rs:347 is in range because position < len. NaN maxima in decode_summary pass through without a panic.",
+     "artifact": "agents/h06-native/artifacts/evidence/native_probe_output.txt"
+    },
+    {
+     "agent_id": "h06-native",
+     "reviewed_paths": [
+      "crates/vfs-core/src/signals.rs",
+      "crates/vfs-core/src/python.rs",
+      "src/vfs/models/signals.py",
+      "src/vfs/storage/backends/database/signals.py"
+     ],
+     "invariant": "centrality_prior must not size allocations from an unchecked node_count, and the unsafe align_to views must be sound.",
+     "method": "local",
+     "result": "Lead 3 settled: no defect. signals.rs:83 checks parents.len() == node_count == files.len() before any vec! allocation. node_count=2^62 with empty arrays returns ValueError and allocates nothing. Edge and parent indexes are range-checked (signals.rs:122-160), and cycles are refused. Parameters are validated: NaN gamma and NaN damping are refused. The only caller passes len(entry_ids) built from DB rows (signals.py:132), and the measure parameters come from operator Ranker config. view_i64 and view_f64 (python.rs:458-470) are sound. Every bit pattern is a valid i64 or f64. The borrowed path is taken only when the prefix and suffix are empty, so a misaligned or torn buffer is copied by chunks_exact, which drops a torn tail. PyBackedBytes either holds an immutable bytes object or copies a bytearray, so no buffer can change while the GIL is released.",
+     "artifact": "agents/h06-native/artifacts/evidence/native_probe_output.txt"
+    },
+    {
+     "agent_id": "h06-native",
+     "reviewed_paths": [
+      "crates/vfs-core/src/python.rs",
+      "crates/vfs-core/src/verify.rs",
+      "src/vfs/storage/backends/database/offload.py",
+      "src/vfs/storage/backends/database/grep.py",
+      "src/vfs/storage/backends/database/backend.py",
+      "src/vfs/storage/backends/memory.py",
+      "src/vfs/pattern_matching/grep.py"
+     ],
+     "invariant": "ContentMatcher's budget-to-Duration conversion and the hit-span slicing must not panic on caller-controlled values.",
+     "method": "local",
+     "result": "Lead 4 settled: the panic exists, but only operator config reaches it. Duration::from_secs_f64(secs.max(0.0)) at python.rs:123 and :143 panics when budget >= about 1.8e19 or is inf; NaN, negative and 0 are safe. The budget is max(0.0, deadline - monotonic()) (offload.py:113,131), where deadline = monotonic() + wall_seconds (grep.py:215). wall_seconds is the operator's grep_wall_seconds constructor argument. backend.py:210 refuses only values <= 0, so inf and NaN are accepted. No verb argument carries a timeout, and the router and in-memory paths pass budget=None. Hit spans come from in-body line boundaries. before and after at the params cap of 2^31-1 clamp correctly, as observed in both normal and inverted mode.",
+     "artifact": "agents/h06-native/artifacts/evidence/native_probe_output.txt"
+    },
+    {
+     "agent_id": "h06-native",
+     "reviewed_paths": [
+      "src/vfs/base.py",
+      "src/vfs/sync.py",
+      "src/vfs/storage/backends/database/offload.py",
+      "Cargo.toml",
+      "crates/vfs-core/Cargo.toml"
+     ],
+     "invariant": "Process-level effect of a pyo3 panic on a host serving many agents.",
+     "method": "local",
+     "result": "Lead 5 settled. The workspace release profile does not set panic=abort, so panics unwind and pyo3 turns them into pyo3_runtime.PanicException, which is not an Exception subclass. The router's dispatch catches only TransportError (base.py:3091), so the PanicException leaves the grep verb unclassified, and `except Exception` does not catch it. Observed with InMemoryStorage(grep_wall_seconds=inf): a concurrent read in the same gather still returned a Result, the asyncio loop finished normally, and the offload worker thread survived (concurrent.futures stores BaseException on the future). A later read was served. The sync VirtualFileSystem re-raised the PanicException to its caller, and its loop thread kept serving. Only the failing verb is lost. The exception is that an allocation-failure abort, the tampered-DB posting header in check 1, kills the whole process.",
+     "artifact": "agents/h06-native/artifacts/evidence/e2e_panic_output.txt"
+    },
+    {
+     "agent_id": "h06-native",
+     "reviewed_paths": [
+      "crates/vfs-core/src/chunk.rs",
+      "crates/vfs-core/src/links.rs",
+      "src/vfs/models/chunking.py",
+      "src/vfs/models/links.py",
+      "src/vfs/storage/backends/database/links.py"
+     ],
+     "invariant": "vfs-owned Rust around the tree-sitter grammars (span arithmetic, u32 casts, slicing) stays in bounds on untrusted bodies.",
+     "method": "local",
+     "result": "Lead 6 settled: no memory-safety defect in vfs-owned code. split_one refuses bodies over u32::MAX before any cast (chunk.rs:116). atomic_spans walks iteratively with end >= start. A fuzz of 348 bodies over 58 grammars at chunk sizes 0 to 4096 produced no span past the body, no reversed span and no overlap. The host slices with decode('utf-8', 'replace') (chunking.py:419). links.rs slices body[node.byte_range()] with String::from_utf8_lossy. One correctness gap was observed: a yaml root can end early, leaving non-whitespace bytes out of every chunk. A second finding is a computational-amplification class outside this unit: line_context folds the whole referring line for every reference, which is quadratic. It is reported under uncovered. Grammar-internal behaviour, including the lack of a parse timeout, was not otherwise assessed.",
+     "artifact": "agents/h06-native/artifacts/evidence/md_refs_scaling.txt"
+    }
+   ],
+   "candidate_fingerprints": [],
+   "unresolved": []
+  }
+ ],
+ "candidates": [],
+ "hardening": [
+  "postings.rs:265 Postings::collect calls Vec::with_capacity(self.count as usize) on the stored count header before checking it. A tampered posting row (count 2^56) aborts the whole host process on allocation failure, and a count of 2^60 raises PanicException. Fix: cap the reservation with min(count, blob.len().saturating_sub(header_len)), since every id needs at least one byte, or refuse a count greater than the remaining bytes. Regression case: candidate_ids([[varint(1<<56)+varint(1)]], None, 10) raises ValueError.",
+  "python.rs:123 and :143: Duration::from_secs_f64(secs.max(0.0)) panics on inf or values of about 1.8e19 and above, and DatabaseStorage accepts grep_wall_seconds=inf and NaN, because backend.py:210 checks only `<= 0`. With NaN, every grep silently truncates at the wall budget. Fix: use Duration::try_from_secs_f64, treating failure as no deadline, and use Instant::checked_add. Also validate math.isfinite(grep_wall_seconds) and glean_wall_seconds in the constructor.",
+  "lexical.rs:632, :672 and :677 use partial_cmp().unwrap() and panic once two scores are NaN. The builder never produces NaN today, but total_cmp, as vectors.rs already uses, would remove the panic class regardless of the stored statistics.",
+  "The router (base.py:3091) and the offload seam let PanicException (BaseException) escape verbs unclassified. A host that wraps calls in `except Exception` will not catch it. Consider converting pyo3_runtime.PanicException to a classified internal error at the native seam.",
+  "lexical.rs:441 (`tokens.len() as u32`) and TermList.seal (lexical.rs:402, ids/tfs/dls lengths as u32) truncate silently above 2^32 tokens or 4 GiB of postings per term. This is not reachable at realistic sizes, but a truncated offset would produce reversed slice ranges (a panic) or a wrong dl=0, which feeds the NaN path above. Prefer checked conversions that refuse instead of truncating.",
+  "select_blocks and lexical_score candidates (python.rs:349, 370-374) accept packed arrays whose length is not a multiple of 8 and silently drop the torn tail, unlike centrality_prior and vector_topk, which refuse it.",
+  "chunk_spans correctness: on error-recovered yaml (and on leading or trailing bytes in other grammars) the root node can end before the body does, so non-whitespace bytes appear in no chunk and are absent from the glean index (observed with random bodies). Consider emitting a final gap span up to body.len() in atomic_spans."
+ ],
+ "uncovered": [
+  {
+   "surface": "crates/vfs-core/src/links.rs#markdown_refs via the reindex chunk pass",
+   "boundary": "src/vfs/storage/backends/database/links.py#extract_link_work on caller-written .md bodies",
+   "subsystem": "crates/vfs-core",
+   "attack_class": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+   "starting_paths": [
+    "crates/vfs-core/src/links.rs",
+    "src/vfs/models/links.py",
+    "src/vfs/storage/backends/database/links.py",
+    "src/vfs/storage/backends/database/indexing.py"
+   ],
+   "reason": "line_context (links.rs:71-76, called at :54 for every reference) copies and whitespace-folds the whole referring line before truncating it to 256 characters, so N references on one line cost O(N x line length). Measured with the prebuilt engine in the sandbox (artifact md_refs_scaling.txt): with links on one line, each doubling of N cost 3.48x, 3.71x and 3.95x, and 16000 links (a 160 KB body) took 6.5 s of CPU. The same links on separate lines took 0.2 s and scaled linearly. Any writer of a .md entry can plant such a body. The cost lands on the operator's reindex (indexing.py:583, offloaded with rayon, no budget), which holds the single-runner lease, so index freshness stalls for every agent on the store. No assigned unit covers markdown_refs or the reindex chunk pass for this class; this unit excludes computational amplification, and the grep/params peer unit does not reach it. Fix direction: compute each line's folded context once per line, or scan only a bounded window around `at`."
+  }
+ ]
+}

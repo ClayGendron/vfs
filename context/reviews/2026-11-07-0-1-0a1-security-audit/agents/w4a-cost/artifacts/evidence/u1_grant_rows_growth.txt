@@ -1,0 +1,28 @@
+n=0 planted (first 250 via grant verb as mallory, 3.4 ms/grant)
+  glob /home/alice/* (cold)          ok=True stmts=   8 compiles=1 compile_ms=     1.0 call_ms=     5.8 max_loop_gap_ms=     2.3 max_binds_one_stmt=4 clauses=0
+  glob /home/alice/* (warm)          ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.1 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (warm)                     ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.3 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (after 1 mallory grant)    ok=True stmts=  10 compiles=1 compile_ms=     0.9 call_ms=     5.7 max_loop_gap_ms=     1.8 max_binds_one_stmt=4 clauses=0
+  glean 'alpha' (after 1 grant)      ok=True stmts=  18 compiles=1 compile_ms=     0.9 call_ms=   108.7 max_loop_gap_ms=    42.6 max_binds_one_stmt=1506 clauses=3
+  glean 'alpha' (warm)               ok=True stmts=  12 compiles=0 compile_ms=     0.0 call_ms=    43.7 max_loop_gap_ms=    17.3 max_binds_one_stmt=1506 clauses=3
+n=1250 planted (first 250 via grant verb as mallory, 3.4 ms/grant)
+  glob /home/alice/* (cold)          ok=True stmts=   8 compiles=1 compile_ms=     4.7 call_ms=    15.0 max_loop_gap_ms=     7.0 max_binds_one_stmt=4 clauses=0
+  glob /home/alice/* (warm)          ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.3 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (warm)                     ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.3 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (after 1 mallory grant)    ok=True stmts=  10 compiles=1 compile_ms=     5.0 call_ms=    15.0 max_loop_gap_ms=     6.7 max_binds_one_stmt=4 clauses=0
+  glean 'alpha' (after 1 grant)      ok=True stmts=  28 compiles=1 compile_ms=     4.8 call_ms=   637.6 max_loop_gap_ms=    89.9 max_binds_one_stmt=6566 clauses=13
+  glean 'alpha' (warm)               ok=True stmts=  22 compiles=0 compile_ms=     0.0 call_ms=   395.0 max_loop_gap_ms=   133.0 max_binds_one_stmt=6566 clauses=13
+n=2500 planted (first 250 via grant verb as mallory, 3.4 ms/grant)
+  glob /home/alice/* (cold)          ok=True stmts=   8 compiles=1 compile_ms=    10.3 call_ms=    26.9 max_loop_gap_ms=    13.7 max_binds_one_stmt=4 clauses=0
+  glob /home/alice/* (warm)          ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.6 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (warm)                     ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.4 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (after 1 mallory grant)    ok=True stmts=  10 compiles=1 compile_ms=    10.2 call_ms=    27.2 max_loop_gap_ms=    14.5 max_binds_one_stmt=4 clauses=0
+  glean 'alpha' (after 1 grant)      ok=True stmts=  41 compiles=1 compile_ms=    10.3 call_ms=  2164.2 max_loop_gap_ms=   265.4 max_binds_one_stmt=12691 clauses=26
+  glean 'alpha' (warm)               ok=True stmts=  35 compiles=0 compile_ms=     0.0 call_ms=  1267.4 max_loop_gap_ms=   187.3 max_binds_one_stmt=12691 clauses=26
+n=5000 planted (first 250 via grant verb as mallory, 5.7 ms/grant)
+  glob /home/alice/* (cold)          ok=True stmts=   8 compiles=1 compile_ms=    26.4 call_ms=    62.3 max_loop_gap_ms=    34.5 max_binds_one_stmt=4 clauses=0
+  glob /home/alice/* (warm)          ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     4.0 max_loop_gap_ms=     1.3 max_binds_one_stmt=4 clauses=0
+  read f0 (warm)                     ok=True stmts=   4 compiles=0 compile_ms=     0.0 call_ms=     2.9 max_loop_gap_ms=     1.4 max_binds_one_stmt=4 clauses=0
+  read f0 (after 1 mallory grant)    ok=True stmts=  10 compiles=1 compile_ms=    24.9 call_ms=    64.4 max_loop_gap_ms=    32.8 max_binds_one_stmt=4 clauses=0
+  glean 'alpha' (after 1 grant)      ok=True stmts=  67 compiles=1 compile_ms=    26.6 call_ms=  4515.3 max_loop_gap_ms=   471.4 max_binds_one_stmt=14511 clauses=52
+  glean 'alpha' (warm)               ok=True stmts=  61 compiles=0 compile_ms=     0.0 call_ms=  2347.7 max_loop_gap_ms=   455.5 max_binds_one_stmt=14511 clauses=52

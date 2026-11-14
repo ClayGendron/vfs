@@ -1,0 +1,150 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs-core.verify.extend_context:per-hit-context-duplication",
+  "title": "Grep lines mode copies a separate context window for every hit line, so output grows as hit lines × body size",
+  "description": "In grep's lines output mode, before_context and after_context are accepted up to 2^31-1. The Rust matcher builds one context span for each hit line and never merges spans that overlap. python.rs then copies each span into its own PyBytes, and grep.py wraps each one in a Match. Nothing limits the size of the output. If the pattern matches every line, or if invert_match is used with a pattern that matches nothing, each of L lines carries about the whole body as its context. The output is then about L × body bytes, which is quadratic in the body. Any caller who can read one multi-line entry can trigger this with a single grep call. allow_scan is not needed, because invert_match takes the scan tier on its own. The memory is allocated in the host process, which many agents share. Local run on InMemoryStorage: a 40,000-byte body of 4,000 lines returned 159,996,000 characters of match content, and peak RSS rose to about 634 MB. Each doubling of L multiplied the output by 4.",
+  "root_cause": "extend_context (crates/vfs-core/src/verify.rs:242) builds a full span for each hit line on its own. Matcher::hit_lines (verify.rs:118) pushes one span per hit and only stops at max_count, which defaults to None. Overlapping windows are never merged. python.rs:154 copies each span into a new PyBytes, and grep.py:358 wraps each in a Match. Nothing bounds the output: CONTENT_BYTE_BUDGET (grep.py:126) only limits input bodies held at once, the parameter gate allows context up to INT_CEILING, and the wall-time deadline is checked only before each body starts (verify.rs:197), never inside one.",
+  "intended_behavior": "Grep's lines-mode output should stay bounded by about the size of the matched body, whatever the context arguments are. That is how the ripgrep baseline behaves: it merges overlapping or adjacent context windows and emits each line at most once. The repo's own early spec expected the same ('merged context windows render correctly', context/specifications/archive/001-unify-vfs-result-and-optimize-queries/spec.md:169). Failing that, a declared output budget should truncate the result with a classified warning, as grep's other budgets do.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/params.py",
+    "line": 270,
+    "scope": "grep before_context / after_context ParamSpec",
+    "description": "The caller's before_context and after_context are accepted as ints from 0 to INT_CEILING (2^31-1). Lines 278-286 do the same for after_context. max_count (line 288) is optional and defaults to None."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 348,
+    "scope": "grep_rows lines-mode verify",
+    "description": "Passes before_context, after_context and cap=max_count (None by default) to VerifyOffload.hit_lines for each content batch. No output budget is applied."
+   },
+   {
+    "kind": "propagation",
+    "file": "crates/vfs-core/src/verify.rs",
+    "line": 118,
+    "scope": "Matcher::hit_lines",
+    "description": "Pushes one extend_context span for every hit line. It stops only at cap, so with no cap every line gets its own span."
+   },
+   {
+    "kind": "propagation",
+    "file": "crates/vfs-core/src/verify.rs",
+    "line": 242,
+    "scope": "extend_context",
+    "description": "Walks back up to `before` lines and forward up to `after` lines from each hit, clamped only to the body. With huge context each span is the whole body. Spans are not merged with the previous hit's span."
+   },
+   {
+    "kind": "sink",
+    "file": "crates/vfs-core/src/python.rs",
+    "line": 154,
+    "scope": "PyContentMatcher::hit_lines",
+    "description": "Copies the bytes of every span into a new PyBytes while holding the GIL. Total allocation is the sum of all span lengths, about hits × body bytes."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 358,
+    "scope": "grep_rows Match assembly",
+    "description": "Wraps each span's content in a pydantic Match on the event loop. The quadratic payload is kept in Observation.matches and returned to the caller."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "crates/vfs-core/src/verify.rs",
+    "line": 118,
+    "description": "hits.push(extend_context(...)) runs once per hit line, and the cap is the only stop condition."
+   },
+   {
+    "file": "crates/vfs-core/src/verify.rs",
+    "line": 242,
+    "description": "extend_context computes a span per hit on its own. There is no merge with earlier spans."
+   },
+   {
+    "file": "crates/vfs-core/src/verify.rs",
+    "line": 197,
+    "description": "hits_batch checks the deadline only before it starts each body. Inside one body, matching and span building are not bounded."
+   },
+   {
+    "file": "crates/vfs-core/src/python.rs",
+    "line": 154,
+    "description": "Each span is copied into a separate PyBytes."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 126,
+    "description": "CONTENT_BYTE_BUDGET (32 MiB) limits how many input body bytes are resident at once. It does not limit output size. The other budgets (lines 119-121) count candidates, posting bytes and wall time."
+   },
+   {
+    "file": "src/vfs/params.py",
+    "line": 274,
+    "description": "maximum=INT_CEILING is the only bound on before_context. after_context gets the same bound at line 283."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/grep.py",
+    "line": 199,
+    "description": "The unindexable-pattern refusal is skipped when invert_match is set. So a reader needs no allow_scan to make every line of a body a hit."
+   },
+   {
+    "file": "agents/v04-p3/artifacts/evidence/grep_context_growth.txt",
+    "line": 1,
+    "description": "Sandboxed local run through VirtualFileSystem(InMemoryStorage()) with context 2^31-1. L=250/500/1000/2000/4000 ten-byte lines gave 624,750 / 2,499,500 / 9,999,000 / 39,998,000 / 159,996,000 match-content characters, about 4x per doubling. Peak RSS went from about 126 MB to about 634 MB. With context 0 the output stays at about 0.9 × body. The invert_match variant without allow_scan gave the same 159,996,000 characters at L=4000."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The caller has read visibility on at least one multi-line entry, or write rights to create one. No elevated or system authority is needed."
+   },
+   {
+    "kind": "data_state",
+    "description": "The visible body has many lines that count as hits: they match the pattern, or with invert_match they do not match it. The output is about (hit lines) × (body bytes)."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The host does not set max_count and does not cap before_context or after_context below the library's INT_CEILING. These are the library defaults."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "An agent with ordinary read access to the shared vfs host makes one grep call on a readable multi-line file. It sets very large context values and either uses a pattern that matches every line or uses invert_match with a pattern that matches nothing.",
+   "payloads": [
+    "fs.grep(\"abc\", before_context=2**31-1, after_context=2**31-1)",
+    "fs.grep(\"zzqq_never\", invert_match=True, before_context=2**31-1, after_context=2**31-1)"
+   ],
+   "instructions": [
+    "Build VirtualFileSystem(storage=InMemoryStorage()) and write /f.txt containing L short lines, for example 'abc000000\\n' repeated with increasing numbers (10 bytes per line).",
+    "Call fs.grep with before_context=after_context=2**31-1 and the default output_mode='lines' and max_count.",
+    "Add up len(m.content) over every Match in r.observations and record peak RSS.",
+    "Repeat for L = 250, 500, 1000, 2000, 4000, and once with context=0 as a control.",
+    "Run the invert_match payload at L=2000 and L=4000 to show that allow_scan is not needed."
+   ],
+   "observed_result": "Run under the sandbox launcher (no network, empty environment, CPU/RSS/wall caps). With context 0 the output was about 0.9 × body at every size. With context 2^31-1 the output was 249.9, 499.9, 999.9, 1999.9 and 3999.9 times the body for L=250 to 4000. At L=4000 a 40 KB body returned 159,996,000 characters in 4,000 Match objects, and peak RSS reached about 634 MB, up from about 126 MB. The invert_match variant without allow_scan gave the same 159,996,000 characters and about 605 MB RSS at L=4000. No truncation warning or error was returned. Output grew about 4x per doubling of L, which is quadratic. Larger bodies were not run; extrapolated, a body of a few hundred KB would exceed host memory."
+  },
+  "remediation": {
+   "strategy": "Bound lines-mode output by the body, not by hits × body. The preferred fix follows ripgrep: when a hit's context window overlaps or touches the previous window, extend the previous window instead of starting a new one, so each body line is emitted at most once per entry. The Match shape may need to carry several match lines per window, or keep per-hit match line numbers that point into a shared window. As defense in depth, add a declared per-call output-byte budget in hits_batch and the Python assembly that truncates with a classified 'truncated' warning, and check the deadline inside the per-body hit loop, not only between bodies.",
+   "code_changes": [
+    {
+     "file_name": "crates/vfs-core/src/verify.rs",
+     "fixed_code": "pub fn hit_lines(&self, hay: &[u8], before: u32, after: u32, cap: Option<u64>, invert: bool) -> Vec<Hit> {\n    let mut hits: Vec<Hit> = Vec::new();\n    let mut emitted = 0u64;\n    self.each_hit_line(hay, invert, |ls, le, line_no| {\n        let next = extend_context(hay, ls, le, line_no, before, after);\n        match hits.last_mut() {\n            // Overlapping or adjacent windows merge, so each body byte is emitted at most once.\n            Some(prev) if next.span.0 <= prev.span.1 + 1 => {\n                prev.span.1 = prev.span.1.max(next.span.1);\n                prev.end_line = prev.end_line.max(next.end_line);\n            }\n            _ => hits.push(next),\n        }\n        emitted += 1;\n        cap.is_none_or(|cap| emitted < cap)\n    });\n    hits\n}"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "It needs only ordinary read access to any multi-line entry and one grep call with two integer arguments. invert_match bypasses the allow_scan refusal. The context values look like normal grep options, and no host-side cap exists in source. The caller must already be a principal the host lets call grep."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "A quadratic memory and CPU amplification is allocated in the host process shared by every agent. It was observed reaching 634 MB from a 40 KB body, and it extrapolates to exhausting host memory with modest bodies, which can OOM-kill the process for all tenants. The pydantic Match assembly also blocks the shared event loop. The effect is temporary availability loss with no persistence or data exposure, and a restart recovers it."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The source path is direct and was checked line by line. The quadratic growth was reproduced locally through the public VirtualFileSystem API, exactly 4x per doubling, with a context=0 control and an invert_match variant. It ran against the prebuilt _native extension, which the brief assumes matches source."
+  }
+ }
+}

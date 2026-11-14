@@ -1,0 +1,19 @@
+{
+ "src/vfs/storage/backends/database/rights.py:grant-refusal:addressed-path-gate-ignores-posture-holes-beneath": "eve is refused at /team/hr, then grant('/team', 'eve', 'read_write') succeeds and she reads, overwrites and re-postures the private file; an anonymous router caller can do the same for a principal it names.",
+ "vfs-core.links.line_context:per-reference-whole-line-fold": "A 160 KB one-line markdown file made reindex take 7.0 s against 0.6 s for the same bytes on many lines; another principal's write waited 6.7–6.9 s.",
+ "vfs-core.verify.extend_context:per-hit-context-duplication": "A 40 KB, 4,000-line body returned 159,996,000 characters of context and peak RSS rose to about 634 MB; output grows 4× per doubling.",
+ "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify": "40 duplicate observations of one 1 MB file blocked the event loop for 2.7 s; the storage tier on the same input never blocked it for more than 13 ms.",
+ "vfs.pattern_matching.glob._translate:backtracking-wildcards": "'*?*?*?*?[Q]' against one 250-character name blocked the loop for 0.85 s, and a concurrent glob waited the whole time.",
+ "vfs.rendering.docx:note-reference-inline-expansion": "A 2,783-byte docx (one 10,000-character footnote referenced 10,000 times) reached a 191.5 MiB traced peak in one render, growing linearly.",
+ "vfs.rendering.docx:table-gridspan-expansion": "A 36.7 KB docx with gridSpan=1,000,000 made 1,000,000 cell.text calls, 473 MiB peak RSS and 22 s against a 1 s render limit.",
+ "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked": "A 4.7 KB xlsx iterated 365,560,000 cells in 3.2 s against a 0.5 s limit; time grows linearly with the declared extent.",
+ "vfs.rendering.xlsx:region-table-quadratic-materialization": "A 57 KB xlsx made 32,012,001 table entries and a 271 MB peak during reindex; memory grows 4× per doubling.",
+ "vfs.rendering:ooxml-part-decompression-unbounded": "A 442 KB docx with one 400 MiB referenced part raised peak RSS by 805 MiB during reindex, and the render still reported ok.",
+ "vfs/storage/database/write-trusts-caller-authored-content-hash": "dave, refused on carol's file, read carol's rendered text in a row he owns after a bodiless write naming her hash; the reverse run served dave's text as carol's upload.",
+ "vfs/storage/replace.py:fuzzy-replacers-quadratic-inline-in-writer-transaction": "A 24 KB file with a 3-byte old string stalled the loop for 4.0 s and held the SQLite write lock; cost grows 4× per doubling.",
+ "vfs:permissions:check_writable:subtree-override-not-consulted": "Every direct write under '/proj/locked' is refused read_only, yet delete, sweep, move-out-and-back, and copy or move onto '/proj' all change the locked file.",
+ "vfs:storage/backends/database/backend.py:_embed_step:refused-batch-head-of-line-no-split-or-quarantine": "After 4,096 small CJK files, bob stayed at 1 of 41 chunks embedded across every reindex, and reindex still reported success.",
+ "vfs:storage/backends/database/rights.py:grant_rows:uncapped-foreign-grant-rows-inflate-grantee-clause-fan": "1,600 planted grant rows took alice's glean from 10 to 26 statements and about 8 ms to 0.7 s, with 149–178 ms loop stalls.",
+ "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges": "With a link signal on, bob's and anonymous's glean scores change with the number of hidden links to a visible file.",
+ "vfs:storage/database:search-budget-counts-hidden-rows": "One hidden row flips grep from 25,000 rows to 24,999 plus a truncation warning; on the index tier, whether the hidden row contains the term decides which."
+}

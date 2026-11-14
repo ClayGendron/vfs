@@ -1,0 +1,11 @@
+{
+ "w3c-glean-query": [
+  "src%2Fvfs%2Fbase.py%23glean%20query%20text::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23_embed_query%2C%20the%20query-vector%20cache%2C%20and%20glean.py%23tokenize%20term%20fan-out::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "w3b-render": [
+  "src%2Fvfs%2Fresults%2Fenvelope.py%23Result.__str__%20-%3E%20render.py%23render_result%2C%20the%20agent-facing%20text::src%2Fvfs%2Fresults%2Frender.py%23_render_read%20multi-observation%20%27%3D%3D%3E%20path%20%3C%3D%3D%27%20framing%20and%20the%20appended%20error%20block%2C%20over%20stored%20content%20written%20by%20other%20principals::src%2Fvfs%2Fresults::AI-AND-LLM.md%23Output%20and%20disclosure%20attack%20classes"
+ ],
+ "w3a-labels": [
+  "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fwrites.py%23_apply%20labels_for%20at%20mint%2C%20and%20topology.py%23posture_beneath%20at%20move%2Fcopy%2Frestore::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Flabels.py%23everyone_level%2C%20a%20stored%20copy%20of%20the%20posture%2C%20kept%20in%20step%20by%20Relabeller%20under%20the%20revision%20lock::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::DATA-ISOLATION-AND-LIFECYCLE.md%23Deletion%2C%20revocation%2C%20and%20lifecycle%20attack%20classes"
+ ]
+}

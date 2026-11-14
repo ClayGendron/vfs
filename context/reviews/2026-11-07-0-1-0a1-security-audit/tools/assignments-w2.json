@@ -1,0 +1,22 @@
+{
+ "w2d-reindex-edit": [
+  "crates%2Fvfs-core%2Fsrc%2Flinks.rs%23markdown_refs%20and%20line_context%20in%20the%20reindex%20chunk%20pass::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Findexing.py%23_assess_and_split%2C%20offloaded%20with%20no%20budget%20under%20the%20single-runner%20lease::crates%2Fvfs-core::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes",
+  "src%2Fvfs%2Fbase.py%23edit%20%28EditOperation%20old%2Fnew%2C%20replace_all%2C%20many%20targets%29::src%2Fvfs%2Fstorage%2Freplace.py%23fuzzy%20replacers%20run%20inline%20in%20the%20writer%20transaction::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "w2c-compute": [
+  "src%2Fvfs%2Fbase.py%23chained%20glob%20and%20grep%20over%20rows%20in%20hand%20%28_glob_rows_in_hand%2C%20_grep_rows_in_hand%2C%20observations%3D%29::src%2Fvfs%2Fpattern_matching%2Fgrep.py%23match_texts%20with%20budget%3DNone%2C%20and%20scope.py%23passes_gates%20per%20candidate%20times%20per%20gate::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Quota%20and%20scheduling%20attack%20classes",
+  "src%2Fvfs%2Fbase.py%23glean%20query%20text::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23_embed_query%2C%20the%20query-vector%20cache%2C%20and%20glean.py%23tokenize%20term%20fan-out::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes",
+  "src%2Fvfs%2Fparams.py%23pattern%20query%20edit%20graph%20arguments::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fgrep.py%23budgets%20and%20caps::src%2Fvfs::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "w2a-visibility": [
+  "src%2Fvfs%2Fbase.py%23grants%20%28list%20grant%20rows%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23list_grants%20returns%20ancestor%20rows%20for%20any%20holder%20of%20read_write::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+  "src%2Fvfs%2Fbase.py%23read%20stat%20ls%20tree%20glob::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Access%20control"
+ ],
+ "w2b-derived": [
+  "src%2Fvfs%2Fbase.py%23grep%20glean%20graph::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Frights.py%23Visibility%20over%20derived%20copies::src%2Fvfs%2Fstorage::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+  "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fsignals.py%23centrality%20prior%20applied%20to%20glean%20scores::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fglean.py%23signal_factors%20over%20a%20whole-corpus%20graph%2C%20with%20no%20Visibility%20filter::src%2Fvfs%2Fstorage::AI-AND-LLM.md%23Context%2C%20retrieval%2C%20and%20memory%20attack%20classes"
+ ],
+ "w2e-collation": [
+  "src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Franges.py%23hole_free%20and%20range%20predicates::src%2Fvfs%2Fmodels%2Frows.py%23BytewiseString%20collation%20pin%20%28absent%20on%20Oracle%20and%20GENERIC%29::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase::ATTACK-CLASSES.md%23Access%20control"
+ ]
+}

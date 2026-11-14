@@ -308,9 +308,14 @@ def test_the_standards_agree_with_the_tree() -> None:
     for page, needles in forbidden.items():
         text = (STANDARDS / page).read_text() if (STANDARDS / page).exists() else ""
         errors += [f"standards/{page} still says {needle!r}" for needle in needles if needle in text]
+    # a release audit's record waits on the fixes it reproduces; both standards say so, and the gate holds the words
     required = {
         "testing.md": ("fail_under = 100",),
-        "release.md": ("--pre", "--final", "--set", "workflow_dispatch", "--prerelease", "0.1.0a1", "0.1.0b1", "musl"),
+        "release.md": (
+            *("--pre", "--final", "--set", "workflow_dispatch", "--prerelease", "0.1.0a1", "0.1.0b1", "musl"),
+            *("never lands while", "Blocks the release"),
+        ),
+        "landing.md": ("that audit's record",),
         "python-style.md": ("vfs.sync", "AsyncVirtualFileSystem"),
     }
     for page, needles in required.items():

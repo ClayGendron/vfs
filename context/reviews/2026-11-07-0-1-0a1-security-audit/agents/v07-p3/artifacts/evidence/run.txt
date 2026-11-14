@@ -1,0 +1,4 @@
+refs=     0 input_bytes=   1505 peak_traced_MiB=     0.2 status=empty detail='no text in 1 units' out_chars=0
+refs=   100 input_bytes=   1560 peak_traced_MiB=     1.9 status=failed detail='1001501 output characters exceed 100x the 1560-byte input' out_chars=0
+refs=  1000 input_bytes=   1685 peak_traced_MiB=    19.2 status=empty detail='no text in 1 units' out_chars=0
+refs= 10000 input_bytes=   2783 peak_traced_MiB=   191.5 status=empty detail='no text in 1 units' out_chars=0

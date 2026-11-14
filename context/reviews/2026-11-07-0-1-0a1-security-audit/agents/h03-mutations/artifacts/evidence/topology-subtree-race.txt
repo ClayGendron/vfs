@@ -1,0 +1,172 @@
+== copy: subtree judged at gate, subtree collected after ==
+ alice read bob file directly: success=False errors=[('vfs.not_found', '/team/alice/bob-secret.txt')] obs=[]
+ sequential copy (bob file already there): success=False errors=[('vfs.permission_denied', '/team/alice')] obs=[]
+   [rival bob write inside window] /team/alice/bob-secret.txt success= True
+ raced copy: success=True errors=[] obs=[('/mine/c', None)]
+ alice read bob file directly: success=False errors=[('vfs.not_found', '/team/alice/bob-secret.txt')] obs=[]
+ alice read the copy: success=True errors=[] obs=[('/mine/c/bob-secret.txt', 'BOB SECRET')]
+== sweep (purge arm): subtree judged at gate, purge loop collects live ==
+ sequential sweep: success=False errors=[('vfs.permission_denied', '/team/alice')] obs=[]
+   [rival bob write inside window] /team/alice/bob.txt success= True
+ raced sweep: success=True errors=[] obs=[('/team/alice', None)]
+ system read bob file after: success=False errors=[('vfs.not_found', '/team/alice')] obs=[]
+== delete cascade: subtree judged at gate, descendants stamped live ==
+ sequential delete: success=False errors=[('vfs.permission_denied', '/team/alice')] obs=[]
+   [rival bob write inside window] /team/alice/bob.txt success= True
+ raced delete: success=True errors=[] obs=[('/team/alice', None)]
+ system read bob file after: success=False errors=[('vfs.not_found', '/team/alice')] obs=[]
+
+----- harness: race_harness.py (run as: tools/sandbox-run.py agents/h03-mutations/scratch .venv/bin/python -I race_harness.py <scenario>) -----
+"""Deterministic race schedule: a rival's legitimate write lands inside a mutation's
+gate-to-apply window, injected on the same session so the mutation's later
+statements see it as a READ COMMITTED engine would.  SQLite/InMemory only."""
+import asyncio
+import sys
+from dataclasses import replace
+
+from vfs.authority import Authority, Principal
+from vfs.models import Entry
+from vfs.paths import Path
+from vfs.storage import ResolvedPair
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.database import writes as W
+from vfs.storage.backends.database.rights import WriteGate
+
+SYSTEM = Authority.system()
+ALICE = Authority.of(Principal("alice"))
+BOB = Authority.of(Principal("bob"))
+P = Path
+
+INJECT: list = []
+
+_orig_subtrees = WriteGate.subtrees
+async def _subtrees(self, session, roots, rung):
+    errs = await _orig_subtrees(self, session, roots, rung)
+    if INJECT and not errs and self.authority is ALICE:
+        await INJECT.pop()(session)
+    return errs
+WriteGate.subtrees = _subtrees
+
+_orig_apply = W._apply
+async def _apply(session, tables, profile, pb, mb, plan, *, overwrite):
+    if INJECT and plan.authority is ALICE:
+        await INJECT.pop()(session)
+    return await _orig_apply(session, tables, profile, pb, mb, plan, overwrite=overwrite)
+W._apply = _apply
+
+
+def bob_writes(storage, path, body):
+    async def rival(session):
+        h = storage._host
+        r = await W.write_rows(session, h.tables, h.profile, h.parameter_budget, h.membership_budget,
+                               entries=[Entry(path=P(path), content=body)], overwrite=False,
+                               parents=False, authority=BOB)
+        print("   [rival bob write inside window]", path, "success=", r.success)
+    return rival
+
+
+def show(label, r):
+    errs = [(e.kind.value if hasattr(e.kind, "value") else e.kind, str(e.path)) for e in r.errors]
+    obs = [(str(o.path), getattr(o, "content", None)) for o in r.observations]
+    print(f"{label}: success={r.success} errors={errs} obs={obs}")
+
+
+async def ok(coro):
+    r = await coro
+    assert r.success, r.errors
+    return r
+
+
+async def home_world():
+    s = InMemoryStorage()
+    await ok(s.posture(path=P("/"), posture="none", authority=SYSTEM))
+    await ok(s.mkdir(path=P("/team"), authority=SYSTEM))
+    await ok(s.mkdir(path=P("/mine"), authority=SYSTEM))
+    await ok(s.grant(path=P("/team"), principal="alice", level="add", authority=SYSTEM))
+    await ok(s.grant(path=P("/mine"), principal="alice", level="add", authority=SYSTEM))
+    await ok(s.write(entries=[Entry(path=P("/team/alice/a.txt"), content="alice own")], parents=True, authority=ALICE))
+    # alice's /team grant is revoked; she keeps only the owner floor over her own rows
+    await ok(s.revoke(path=P("/team"), principal="alice", authority=SYSTEM))
+    await ok(s.grant(path=P("/team/alice"), principal="bob", level="add", authority=SYSTEM))
+    return s
+
+
+async def scenario_copy():
+    print("== copy: subtree judged at gate, subtree collected after ==")
+    s = await home_world()
+    # sequential control
+    await ok(s.write(entries=[Entry(path=P("/team/alice/bob-secret.txt"), content="BOB SECRET")], authority=BOB))
+    show(" alice read bob file directly", await s.read(path=P("/team/alice/bob-secret.txt"), authority=ALICE))
+    show(" sequential copy (bob file already there)",
+         await s.copy(operations=[ResolvedPair(src=P("/team/alice"), dest=P("/mine/c"))], authority=ALICE))
+    await s.close()
+    s = await home_world()
+    INJECT.append(bob_writes(s, "/team/alice/bob-secret.txt", "BOB SECRET"))
+    show(" raced copy", await s.copy(operations=[ResolvedPair(src=P("/team/alice"), dest=P("/mine/c"))], authority=ALICE))
+    show(" alice read bob file directly", await s.read(path=P("/team/alice/bob-secret.txt"), authority=ALICE))
+    show(" alice read the copy", await s.read(path=P("/mine/c/bob-secret.txt"), authority=ALICE))
+    await s.close()
+
+
+async def scenario_sweep():
+    print("== sweep (purge arm): subtree judged at gate, purge loop collects live ==")
+    s = await home_world()
+    await ok(s.write(entries=[Entry(path=P("/team/alice/bob.txt"), content="BOB WORK")], authority=BOB))
+    show(" sequential sweep", await s.sweep(path=P("/team/alice"), authority=ALICE))
+    await s.close()
+    s = await home_world()
+    INJECT.append(bob_writes(s, "/team/alice/bob.txt", "BOB WORK"))
+    show(" raced sweep", await s.sweep(path=P("/team/alice"), authority=ALICE))
+    show(" system read bob file after", await s.read(path=P("/team/alice/bob.txt"), authority=SYSTEM))
+    await s.close()
+
+
+async def scenario_delete():
+    print("== delete cascade: subtree judged at gate, descendants stamped live ==")
+    s = await home_world()
+    await ok(s.write(entries=[Entry(path=P("/team/alice/bob.txt"), content="BOB WORK")], authority=BOB))
+    show(" sequential delete", await s.delete(path=P("/team/alice"), authority=ALICE))
+    await s.close()
+    s = await home_world()
+    INJECT.append(bob_writes(s, "/team/alice/bob.txt", "BOB WORK"))
+    show(" raced delete", await s.delete(path=P("/team/alice"), authority=ALICE))
+    show(" system read bob file after", await s.read(path=P("/team/alice/bob.txt"), authority=SYSTEM))
+    await s.close()
+
+
+async def drop_world(arbitration):
+    s = InMemoryStorage()
+    await ok(s.posture(path=P("/"), posture="none", authority=SYSTEM))
+    await ok(s.mkdir(path=P("/drop"), authority=SYSTEM))
+    for who in ("alice", "bob"):
+        await ok(s.grant(path=P("/drop"), principal=who, level="add", authority=SYSTEM))
+    if arbitration is not None:
+        h = s._host
+        h._profile = replace(h._profile, arbitration=arbitration)
+    return s
+
+
+async def scenario_write(arbitration):
+    print(f"== write create-vs-rival (arbitration={arbitration or 'sqlite upsert'}) ==")
+    s = await drop_world(arbitration)
+    await ok(s.write(entries=[Entry(path=P("/drop/report.txt"), content="bob original")], authority=BOB))
+    show(" sequential alice overwrite", await s.write(entries=[Entry(path=P("/drop/report.txt"), content="ALICE")], authority=ALICE))
+    await s.close()
+    s = await drop_world(arbitration)
+    INJECT.append(bob_writes(s, "/drop/report.txt", "bob original"))
+    show(" raced alice create", await s.write(entries=[Entry(path=P("/drop/report.txt"), content="ALICE")], authority=ALICE))
+    r = await s.read(path=P("/drop/report.txt"), authority=SYSTEM)
+    print("   system read:", [(str(o.path), o.content, getattr(o, "owner_id", None)) for o in r.observations])
+    await s.close()
+
+
+async def main():
+    which = sys.argv[1:] or ["copy", "sweep", "delete", "write"]
+    if "copy" in which: await scenario_copy()
+    if "sweep" in which: await scenario_sweep()
+    if "delete" in which: await scenario_delete()
+    if "write" in which:
+        await scenario_write(None)
+        await scenario_write("catch_retry")
+
+asyncio.run(main())

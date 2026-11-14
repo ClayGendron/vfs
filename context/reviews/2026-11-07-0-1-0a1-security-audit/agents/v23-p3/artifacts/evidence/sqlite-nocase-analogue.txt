@@ -1,0 +1,21 @@
+=== mode=stock
+system posture / read_write: success=True errors=[]
+bob writes /projects/secret.md: success=True errors=[]
+bob posture /projects none: success=True errors=[]
+carol read /projects/secret.md (before): success=False errors=[(<ErrorKind.not_found: 'vfs.not_found'>, None)]
+ann posture /projects read (control: direct path): success=False errors=[(<ErrorKind.not_found: 'vfs.not_found'>, None)]
+ann posture /Projects read (case variant): success=True errors=[]
+grant rows: []
+carol read /projects/secret.md (after): success=False errors=[(<ErrorKind.not_found: 'vfs.not_found'>, None)]
+exit=0
+=== mode=nocase
+system posture / read_write: success=True errors=[]
+bob writes /projects/secret.md: success=True errors=[]
+bob posture /projects none: success=True errors=[]
+carol read /projects/secret.md (before): success=False errors=[(<ErrorKind.not_found: 'vfs.not_found'>, None)]
+ann posture /projects read (control: direct path): success=False errors=[(<ErrorKind.not_found: 'vfs.not_found'>, None)]
+ann posture /Projects read (case variant): success=True errors=[]
+grant rows: []
+carol read /projects/secret.md (after): success=True errors=[]
+carol saw content: ['bob private']
+exit=0

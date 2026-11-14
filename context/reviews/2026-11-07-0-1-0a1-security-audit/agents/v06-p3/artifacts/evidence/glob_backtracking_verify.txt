@@ -1,0 +1,12 @@
+3.13.11
+regex (?s:[^/]*[^/][^/]*[^/][^/]*[^/][^/]*[^/][Q])\Z like None
+regex (?s:[^/]*[^/][^/]*[^/][^/]*[^/][^/]*[^/][^/]*[^/][^/]*[^/][Q])\Z like None
+write result True
+pattern='*?*?*?*?[Q]' k=4 name_len=64 files=1 glob_s=0.0140 rows=0 errors=[] max_loop_gap_s=0.0047 victim_glob_s=0.0185
+pattern='*?*?*?*?[Q]' k=4 name_len=128 files=1 glob_s=0.0700 rows=0 errors=[] max_loop_gap_s=0.0613 victim_glob_s=0.0858
+pattern='*?*?*?*?[Q]' k=4 name_len=250 files=1 glob_s=0.8535 rows=0 errors=[] max_loop_gap_s=0.8477 victim_glob_s=0.8546
+write 256-char name success False ['kind=<ErrorKind.invalid: \'vfs.invalid\'> message="Invalid: Path segment too long (max 255 bytes): \'aaaaaaaaaaaaaaaaaaaaaa']
+pattern='*?*?*?*?*?*?[Q]' k=6 name_len=48 files=1 glob_s=0.1214 rows=0 errors=[] max_loop_gap_s=0.1095 victim_glob_s=0.1503
+pattern='*?*?*?*?*?*?[Q]' k=6 name_len=64 files=1 glob_s=0.5399 rows=0 errors=[] max_loop_gap_s=0.5352 victim_glob_s=0.5438
+pattern='*?*?*?*?[Q]' k=4 name_len=128 files=10 glob_s=0.6101 rows=0 errors=[] max_loop_gap_s=0.6047 victim_glob_s=0.6115
+pattern='*.txt' k=1 name_len=128 files=10 glob_s=0.0156 rows=1 errors=[] max_loop_gap_s=0.0040 victim_glob_s=0.0183

@@ -1,0 +1,100 @@
+==================== sqlite like_bracket_class= False range_source= json_each
+'/a_' -> bound pattern '/a\\_/%' | params {'path_1': '/a\\_/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+'/a%' -> bound pattern '/a\\%/%' | params {'path_1': '/a\\%/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+'/a\\' -> bound pattern '/a\\\\/%' | params {'path_1': '/a\\\\/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+'/a[b]' -> bound pattern '/a[b]/%' | params {'path_1': '/a[b]/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+"/x'; DROP TABLE vfs_entries;--" -> bound pattern "/x'; DROP TABLE vfs\\_entries;--/%" | params {'path_1': "/x'; DROP TABLE vfs\\_entries;--/%"}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+glob '/a_/*.txt' -> anchored '/a_/*.txt' LIKE params ['/', '/a\\_/%.txt', '/.vfs', '/.vfs/%']
+glob '/a%/**/x' -> anchored '/a%/**/x' LIKE params ['/', '/a\\%/%x', '/.vfs', '/.vfs/%']
+glob '/a\\b/*' -> anchored '/a\\b/*' LIKE params ['/', '/a\\\\b/%', '/.vfs', '/.vfs/%']
+glob '/a[b]/*' -> anchored '/a[b]/*' LIKE params ['/', '/a%', '/.vfs', '/.vfs/%']
+glob '/p?q/*' -> anchored '/p?q/*' LIKE params ['/', '/p_q/%', '/.vfs', '/.vfs/%']
+==================== postgresql like_bracket_class= False range_source= unnest
+'/a_' -> bound pattern '/a\\_/%' | params {'path_1': '/a\\_/%'}
+   SQL: chema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %(path_1)s ESCAPE '\\'
+'/a%' -> bound pattern '/a\\%/%' | params {'path_1': '/a\\%/%'}
+   SQL: chema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %(path_1)s ESCAPE '\\'
+'/a\\' -> bound pattern '/a\\\\/%' | params {'path_1': '/a\\\\/%'}
+   SQL: chema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %(path_1)s ESCAPE '\\'
+'/a[b]' -> bound pattern '/a[b]/%' | params {'path_1': '/a[b]/%'}
+   SQL: chema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %(path_1)s ESCAPE '\\'
+"/x'; DROP TABLE vfs_entries;--" -> bound pattern "/x'; DROP TABLE vfs\\_entries;--/%" | params {'path_1': "/x'; DROP TABLE vfs\\_entries;--/%"}
+   SQL: chema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %(path_1)s ESCAPE '\\'
+glob '/a_/*.txt' -> anchored '/a_/*.txt' LIKE params ['/', '/a\\_/%.txt', '/.vfs', '/.vfs/%']
+glob '/a%/**/x' -> anchored '/a%/**/x' LIKE params ['/', '/a\\%/%x', '/.vfs', '/.vfs/%']
+glob '/a\\b/*' -> anchored '/a\\b/*' LIKE params ['/', '/a\\\\b/%', '/.vfs', '/.vfs/%']
+glob '/a[b]/*' -> anchored '/a[b]/*' LIKE params ['/', '/a%', '/.vfs', '/.vfs/%']
+glob '/p?q/*' -> anchored '/p?q/*' LIKE params ['/', '/p_q/%', '/.vfs', '/.vfs/%']
+==================== mssql like_bracket_class= True range_source= openjson
+'/a_' -> bound pattern '/a\\_/%' | params {'path_1': '/a\\_/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+'/a%' -> bound pattern '/a\\%/%' | params {'path_1': '/a\\%/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+'/a\\' -> bound pattern '/a\\\\/%' | params {'path_1': '/a\\\\/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+'/a[b]' -> bound pattern '/a\\[b]/%' | params {'path_1': '/a\\[b]/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+"/x'; DROP TABLE vfs_entries;--" -> bound pattern "/x'; DROP TABLE vfs\\_entries;--/%" | params {'path_1': "/x'; DROP TABLE vfs\\_entries;--/%"}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+glob '/a_/*.txt' -> anchored '/a_/*.txt' LIKE params ['/', '/a\\_/%.txt', '/.vfs', '/.vfs/%']
+glob '/a%/**/x' -> anchored '/a%/**/x' LIKE params ['/', '/a\\%/%x', '/.vfs', '/.vfs/%']
+glob '/a\\b/*' -> anchored '/a\\b/*' LIKE params ['/', '/a\\\\b/%', '/.vfs', '/.vfs/%']
+glob '/a[b]/*' -> anchored '/a[b]/*' LIKE params ['/', '/a%', '/.vfs', '/.vfs/%']
+glob '/p?q/*' -> anchored '/p?q/*' LIKE params ['/', '/p_q/%', '/.vfs', '/.vfs/%']
+relabel text(): UPDATE e SET everyone_level = :rank FROM OPENJSON(:pairs) WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS r INNER LOOP JOIN tenant_schema.vfs_entries AS e ON e.path > CAST(r.lo COLLATE Latin1_General_100_BIN2_UTF8 AS varchar(1024)) AND e.path < CAST(r.hi COLLATE Latin1_General_100_BIN2_UTF8 AS varchar(1024))
+relabel params: {'rank': 3, 'pairs': '[["/a", "/b\'; --"]]'}
+==================== mariadb like_bracket_class= False range_source= json_table
+'/a_' -> bound pattern '/a\\_/%' | params {'path_1': '/a\\_/%'}
+   SQL: tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %s ESCAPE '\\'
+'/a%' -> bound pattern '/a\\%/%' | params {'path_1': '/a\\%/%'}
+   SQL: tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %s ESCAPE '\\'
+'/a\\' -> bound pattern '/a\\\\/%' | params {'path_1': '/a\\\\/%'}
+   SQL: tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %s ESCAPE '\\'
+'/a[b]' -> bound pattern '/a[b]/%' | params {'path_1': '/a[b]/%'}
+   SQL: tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %s ESCAPE '\\'
+"/x'; DROP TABLE vfs_entries;--" -> bound pattern "/x'; DROP TABLE vfs\\_entries;--/%" | params {'path_1': "/x'; DROP TABLE vfs\\_entries;--/%"}
+   SQL: tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE %s ESCAPE '\\'
+glob '/a_/*.txt' -> anchored '/a_/*.txt' LIKE params ['/', '/a\\_/%.txt', '/.vfs', '/.vfs/%']
+glob '/a%/**/x' -> anchored '/a%/**/x' LIKE params ['/', '/a\\%/%x', '/.vfs', '/.vfs/%']
+glob '/a\\b/*' -> anchored '/a\\b/*' LIKE params ['/', '/a\\\\b/%', '/.vfs', '/.vfs/%']
+glob '/a[b]/*' -> anchored '/a[b]/*' LIKE params ['/', '/a%', '/.vfs', '/.vfs/%']
+glob '/p?q/*' -> anchored '/p?q/*' LIKE params ['/', '/p_q/%', '/.vfs', '/.vfs/%']
+relabel text(): UPDATE tenant_schema.vfs_entries AS e JOIN JSON_TABLE(:pairs, '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS r ON e.path > CAST(r.lo AS BINARY) AND e.path < CAST(r.hi AS BINARY) SET e.everyone_level = :rank
+relabel params: {'rank': 3, 'pairs': '[["/a", "/b\'; --"]]'}
+==================== oracle like_bracket_class= False range_source= json_table_clob
+'/a_' -> bound pattern '/a\\_/%' | params {'path_1': '/a\\_/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+'/a%' -> bound pattern '/a\\%/%' | params {'path_1': '/a\\%/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+'/a\\' -> bound pattern '/a\\\\/%' | params {'path_1': '/a\\\\/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+'/a[b]' -> bound pattern '/a[b]/%' | params {'path_1': '/a[b]/%'}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+"/x'; DROP TABLE vfs_entries;--" -> bound pattern "/x'; DROP TABLE vfs\\_entries;--/%" | params {'path_1': "/x'; DROP TABLE vfs\\_entries;--/%"}
+   SQL: nt_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE :path_1 ESCAPE '\'
+glob '/a_/*.txt' -> anchored '/a_/*.txt' LIKE params ['/', '/a\\_/%.txt', '/.vfs', '/.vfs/%']
+glob '/a%/**/x' -> anchored '/a%/**/x' LIKE params ['/', '/a\\%/%x', '/.vfs', '/.vfs/%']
+glob '/a\\b/*' -> anchored '/a\\b/*' LIKE params ['/', '/a\\\\b/%', '/.vfs', '/.vfs/%']
+glob '/a[b]/*' -> anchored '/a[b]/*' LIKE params ['/', '/a%', '/.vfs', '/.vfs/%']
+glob '/p?q/*' -> anchored '/p?q/*' LIKE params ['/', '/p_q/%', '/.vfs', '/.vfs/%']
+==================== generic(sybase-like name) like_bracket_class= False range_source= None
+'/a_' -> bound pattern '/a\\_/%' | params {'path_1': '/a\\_/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+'/a%' -> bound pattern '/a\\%/%' | params {'path_1': '/a\\%/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+'/a\\' -> bound pattern '/a\\\\/%' | params {'path_1': '/a\\\\/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+'/a[b]' -> bound pattern '/a[b]/%' | params {'path_1': '/a[b]/%'}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+"/x'; DROP TABLE vfs_entries;--" -> bound pattern "/x'; DROP TABLE vfs\\_entries;--/%" | params {'path_1': "/x'; DROP TABLE vfs\\_entries;--/%"}
+   SQL: T tenant_schema.vfs_entries.path  FROM tenant_schema.vfs_entries  WHERE tenant_schema.vfs_entries.path LIKE ? ESCAPE '\'
+glob '/a_/*.txt' -> anchored '/a_/*.txt' LIKE params ['/', '/a\\_/%.txt', '/.vfs', '/.vfs/%']
+glob '/a%/**/x' -> anchored '/a%/**/x' LIKE params ['/', '/a\\%/%x', '/.vfs', '/.vfs/%']
+glob '/a\\b/*' -> anchored '/a\\b/*' LIKE params ['/', '/a\\\\b/%', '/.vfs', '/.vfs/%']
+glob '/a[b]/*' -> anchored '/a[b]/*' LIKE params ['/', '/a%', '/.vfs', '/.vfs/%']
+glob '/p?q/*' -> anchored '/p?q/*' LIKE params ['/', '/p_q/%', '/.vfs', '/.vfs/%']

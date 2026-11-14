@@ -1,0 +1,19 @@
+{
+ "src/vfs/storage/backends/database/rights.py:grant-refusal:addressed-path-gate-ignores-posture-holes-beneath": "Named or anonymous caller → another owner's private posture hole (row rights, grant attenuation)",
+ "vfs-core.links.line_context:per-reference-whole-line-fold": "One writer's markdown → mount writer lock held during reindex (other principals' writes)",
+ "vfs-core.verify.extend_context:per-hit-context-duplication": "Reader's grep arguments → shared host memory",
+ "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify": "Reader's chained grep → shared event loop",
+ "vfs.pattern_matching.glob._translate:backtracking-wildcards": "Caller's glob pattern → shared event loop",
+ "vfs.rendering.docx:note-reference-inline-expansion": "Writer's docx bytes → host memory during reindex",
+ "vfs.rendering.docx:table-gridspan-expansion": "Writer's docx bytes → host memory and offload pool during reindex",
+ "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked": "Writer's xlsx bytes → render clock and reindex lease",
+ "vfs.rendering.xlsx:region-table-quadratic-materialization": "Writer's xlsx bytes → host memory during reindex",
+ "vfs.rendering:ooxml-part-decompression-unbounded": "Writer's docx/pptx bytes → host memory during reindex",
+ "vfs/storage/database/write-trusts-caller-authored-content-hash": "Writer → another principal's rendered content (disclosure and substitution)",
+ "vfs/storage/replace.py:fuzzy-replacers-quadratic-inline-in-writer-transaction": "Editor's own file → shared event loop and mount writer lock",
+ "vfs:permissions:check_writable:subtree-override-not-consulted": "Caller → operator's read-only PermissionMap override",
+ "vfs:storage/backends/database/backend.py:_embed_step:refused-batch-head-of-line-no-split-or-quarantine": "One writer's text → every later writer's vector indexing",
+ "vfs:storage/backends/database/rights.py:grant_rows:uncapped-foreign-grant-rows-inflate-grantee-clause-fan": "Granter → another principal's glean cost",
+ "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges": "Hidden rows' links → partial caller's glean scores",
+ "vfs:storage/database:search-budget-counts-hidden-rows": "Hidden rows → partial caller's grep/glean counts and warnings"
+}

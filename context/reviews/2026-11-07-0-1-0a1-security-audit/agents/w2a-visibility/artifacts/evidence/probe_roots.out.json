@@ -1,0 +1,122 @@
+{
+ "before_delete_ls_root": {
+  "errs": [],
+  "obs": [
+   [
+    "/hrd",
+    "directory"
+   ],
+   [
+    "/zz",
+    "directory"
+   ]
+  ]
+ },
+ "after_delete_ls_root": {
+  "errs": [],
+  "obs": [
+   [
+    "/hrd",
+    "directory"
+   ],
+   [
+    "/zz",
+    "directory"
+   ]
+  ]
+ },
+ "after_delete_stat_zz": {
+  "errs": [],
+  "obs": [
+   [
+    "/zz",
+    "directory"
+   ]
+  ]
+ },
+ "after_delete_ls_zz": {
+  "errs": [],
+  "obs": []
+ },
+ "control_stat_qq": {
+  "errs": [
+   [
+    "vfs.not_found",
+    "/qq",
+    null
+   ]
+  ],
+  "obs": []
+ },
+ "stat_tombstoned_root": {
+  "errs": [
+   [
+    "vfs.not_found",
+    "/zz/x.md",
+    {
+     "vfs.trashed": true,
+     "vfs.deleted_at": "2026-11-07T13:27:16.094517"
+    }
+   ]
+  ],
+  "obs": []
+ },
+ "hrd_live_side": {
+  "errs": [
+   [
+    "vfs.not_found",
+    "/hrd",
+    null
+   ]
+  ],
+  "obs": []
+ },
+ "absent_live_side": {
+  "errs": [
+   [
+    "vfs.not_found",
+    "/nod",
+    null
+   ]
+  ],
+  "obs": []
+ },
+ "hrd_trash_side": {
+  "errs": [],
+  "obs": [
+   [
+    "/.vfs/trash/hrd",
+    "directory"
+   ]
+  ]
+ },
+ "hrd_trash_hidden_child": {
+  "errs": [
+   [
+    "vfs.not_found",
+    "/.vfs/trash/hrd/b.txt",
+    null
+   ]
+  ],
+  "obs": []
+ },
+ "hrd_trash_absent_child": {
+  "errs": [
+   [
+    "vfs.not_found",
+    "/.vfs/trash/hrd/none.txt",
+    null
+   ]
+  ],
+  "obs": []
+ },
+ "ls_trash_head": {
+  "errs": [],
+  "obs": [
+   [
+    "/zz/x.md",
+    "file"
+   ]
+  ]
+ }
+}

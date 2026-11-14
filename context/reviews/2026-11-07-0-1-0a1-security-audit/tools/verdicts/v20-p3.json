@@ -1,0 +1,87 @@
+{
+ "decision": "rejected",
+ "record": {
+  "verdict": "rejected",
+  "fingerprint": "vfs:storage/backends/database/links.py:publish_links:target-resolution-ignores-author-rights",
+  "title": "Markdown link extraction mints edges to rows the author cannot list, bypassing mkedge's target gate",
+  "description": "Claim: a principal with write access to a markdown file (ann, contribute on /pub) can put a path she cannot list (/private/bob/plan.md) in a link. The operator's reindex resolves link targets against every live entry and inserts an extracted 'links' edge with no rights check, and mkedge would have refused the same edge as not_found. The edge then shows up in bob's inbound and neighborhood walks on his own private file, and bob cannot rmedge it. The mechanics reproduce. The security impact does not hold: no disclosure crosses a rights boundary, and nothing the access model protects is mutated.",
+  "claimed_root_cause": "_resolve_candidates (src/vfs/storage/backends/database/links.py:149-165) maps candidate paths to entry ids with a plain SELECT filtered only by deleted_at IS NULL, with no Visibility for the source row's owner. publish_links (links.py:85-141) then inserts the edges through insert_arbitrated, inside the operator's reindex (backend.py:1377, indexing.py:338). mkedge, by contrast, needs list on the target (ops.py:157).",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 958,
+    "scope": "AsyncVirtualFileSystem.write",
+    "description": "ann, holding contribute on /pub, writes /pub/ann.md whose body links to /private/bob/plan.md, a path she cannot list. This is an authorized write of her own content."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1377,
+    "scope": "DatabaseStorage._gram_phases",
+    "description": "The operator's reindex runs chunk_dirty."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/indexing.py",
+    "line": 338,
+    "scope": "chunk_dirty",
+    "description": "The references of dirty markdown rows go to publish_links."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/links.py",
+    "line": 161,
+    "scope": "_resolve_candidates",
+    "description": "Candidate paths resolve against every live entry, with no rights filter."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/links.py",
+    "line": 140,
+    "scope": "publish_links",
+    "description": "An extracted links edge from ann's doc to bob's plan is inserted. The target row itself is not modified."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/graph.py",
+    "line": 305,
+    "scope": "hop",
+    "description": "Every walk drops any edge whose far endpoint the viewer does not hold list on, so the edge is visible only to a principal who can list both ends."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/ops.py",
+    "line": 132,
+    "description": "The Needs docstring defines traverse as judging 'a row the verb reads without changing — a copy's source, an edge's target'. The ladder treats creating an edge as not changing its target. The target's list rung is a naming gate, not a write right over the target."
+   },
+   {
+    "file": "src/vfs/ops.py",
+    "line": 157,
+    "description": "mkedge is Needs('contribute', traverse='list'): contribute on the source, list on the target. Any principal who can list bob's plan can author an inbound edge to it, and bob cannot rmedge it (rmedge needs contribute on the source, ops.py:158). So an unremovable inbound edge is the designed property of every edge, not something new here."
+   },
+   {
+    "file": "context/specifications/STATUS.md",
+    "line": 11,
+    "description": "The record of the ladder's design (spec 165 / ADR 080) shows the edge rules exist to stop disclosure: 'rmedge leaks a hidden target today', a hidden target folded into the absent-target record, edges at list carry type only, traversal at list on both endpoints. No rule makes inbound-edge integrity a protected property of the target."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/graph.py",
+    "line": 305,
+    "description": "hop keeps a row only if view.holds(mapping, 'list') on the far endpoint, and walk.see records only the edges that pass. bob sees ann.md only because his posture (/ = read) already lets him read it. ann's outbound walk hides the target."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/indexing.py",
+    "line": 350,
+    "description": "The unresolved and edge counts appear only in the operator's reindex Result. ann's write result and her walks carry nothing that tells a hidden target from an absent one, so the target gate's purpose (no existence oracle) holds."
+   },
+   {
+    "file": "agents/v20-p3/artifacts/evidence/repro_out.txt",
+    "line": 7,
+    "description": "Independent sandbox repro. ann's stat and mkedge to the plan return not_found at /private. After reindex (edges=1, unresolved=1, seen only by the operator), ann's outbound walk shows only her own doc. bob's inbound walk shows his plan plus /pub/ann.md, a file he can already read. bob's rmedge is refused permission_denied, exactly as it would be for an authored edge from any lister."
+   }
+  ],
+  "reason": "Rejected on impact and declared intent; the mechanics are real. (1) The trace is accurate and reproduces: an extracted edge is minted to a target the author cannot list. (2) That gate exists to stop disclosure. In the ladder (ops.py:132) an edge's target is a row 'read without changing', and the spec 165 / ADR 080 record frames the edge rules as leak fixes. The extracted path preserves non-disclosure. ann gets no signal: her write succeeds whether or not the target exists, her walks hide the target, the edge context is never read back, and the unresolved count reaches only the operator. (3) No rights boundary is crossed for bob or anyone else. A walk passes an edge only when the viewer holds list on both ends. bob sees ann's doc only because he can already read it, and bob's plan row is not modified. (4) The 'unremovable' property is not new. Any inbound edge authored by a principal who can list the target is equally unremovable by bob, by design (rmedge needs contribute on the source). (5) What remains is a true derived index of ann's own authorized content: her document does link to that path, like a backlink. It puts content bob can already read next to his node. AI rule 1 asks for an unauthorized or unrequested action or a disclosure. Here no vfs action runs under bob's authority, and nothing is disclosed. Gate rule 5 excludes a gap with no affected principal or resource. At most this is a consistency hardening note: extracted edges could follow mkedge's target rule for uniformity. A separate concern, not judged here: with an opt-in Ranker centrality signal (signals.py, min-max scaled whole-corpus), extracted edges to hidden targets might move glean priors that ann can observe. That needs non-default configuration and is a different root cause; it would need its own candidate."
+ }
+}

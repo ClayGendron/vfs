@@ -1,0 +1,157 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs/storage/database/write-trusts-caller-authored-content-hash",
+  "title": "Caller-authored content_hash is stored unverified and keys cross-principal render lending",
+  "description": "AsyncVirtualFileSystem.write(entries=[...]) stores the content_hash carried on a caller-built Entry without measuring the body storage holds. A bodiless bytes Entry (data=None, source='bytes') keeps any hash the caller names. This works with plain JSON-shaped model_validate dicts and needs no MEASURED_BODY context. The reindex render stage then lends a settled rendering per (content_hash, generation) from any row. The donor query has no owner, rights or deleted_at term. The landing guard compares the key only with the receiving row's own stored hash, which the attacker forged. Two cross-principal effects follow, and both reproduce locally. First, disclosure: a principal with no rights on another principal's file, who knows that file's sha-256, gets its rendered text in a row they own, readable through read and grep. A wrong guess stays pending, so the same write is an existence oracle. Second, integrity: a principal writes their own bytes, then overwrites the row bodiless under the hash of a known public document. The old blob stays, reindex renders the attacker's bytes, and the result is stamped under the forged hash. When another principal later uploads the real document, reindex serves them the attacker's text as their file's content, through read and grep. From source, the same trust also lets a contributor stop the version minting on overwrite (versions.py skips a pre-image whose hash equals the staged hash). The hunter reports that variant as executed; this verifier did not re-run it.",
+  "root_cause": "write_rows (writes.py:163) passes entry.content_hash, entry.size_bytes and entry.lines from the caller's Entry into WritePlan.put_file, and _material_values (writes.py:1172) persists them. Entry._derive_and_measure (entry.py:232, 242) measures only when data is not None or source=='text', so a bodiless bytes Entry keeps the caller's hash. _replace_bodies (writes.py:987) skips a row with no content and no data, so a bodiless overwrite keeps the old blob under the new hash. No layer re-measures. render.py treats content_hash as proof of byte identity in two places: when cached_renderings picks a donor, and when land_renderings guards the stamp.",
+  "intended_behavior": "A row's content_hash must always be the hash of the body storage holds for it. A content-kind write with neither content nor data must be refused, or must keep the stored row's measured metrics. Render dedup and version dedup must key only on hashes that storage measured itself. A tombstoned row must not lend its rendering.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 958,
+    "scope": "AsyncVirtualFileSystem.write",
+    "description": "Public verb. It accepts entries=, an iterable of caller-built Entry objects, from any named or anonymous Authority."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/base.py",
+    "line": 2601,
+    "scope": "AsyncVirtualFileSystem._route_entry_batch",
+    "description": "Checks only that each item is an Entry, then path-gates and write-gates it. without_mount uses model_copy, which does not re-validate or re-measure."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/models/entry.py",
+    "line": 232,
+    "scope": "Entry._derive_and_measure",
+    "description": "Measures bytes only when data is not None, and text only when source=='text' (line 242). A source='bytes' Entry with data=None keeps the caller's content_hash and mime_type."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 163,
+    "scope": "write_rows",
+    "description": "Passes entry.content_hash, size_bytes and lines unchanged into plan.put_file."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 1172,
+    "scope": "_material_values",
+    "description": "Writes the staged caller hash into the entry row. _replace_bodies (line 987) skips bodiless rows, so any earlier blob stays under the forged hash."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/render.py",
+    "line": 206,
+    "scope": "cached_renderings",
+    "description": "Selects the lowest-id settled donor per (content_hash, generation). Its predicates are hash, source, stamp and status only: no owner, rights or deleted_at term."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/render.py",
+    "line": 287,
+    "scope": "render_rows",
+    "description": "Reuses the cached or in-page rendering for any row whose (content_hash, generation) key matches, without reading that row's blob."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/render.py",
+    "line": 342,
+    "scope": "land_renderings",
+    "description": "The stamp guard requires only that the receiving row's own content_hash equals the key. A forged hash passes, so the lent text is inserted as that row's content and is served by read, grep and glean."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/models/entry.py",
+    "line": 242,
+    "description": "The text branch measures with measure_text unless MEASURED_BODY is supplied. The bytes branch at line 232 runs only when data is not None. Nothing measures a bodiless bytes entry."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 987,
+    "description": "Only rows that have content or data count as bearing. A bodiless overwrite leaves the prior blob in place under the newly written hash."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/render.py",
+    "line": 206,
+    "description": "The donor WHERE clause filters on hash membership, source, render_source_hash == content_hash, generation and settled status. It has no principal or deleted_at filter."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/versions.py",
+    "line": 145,
+    "description": "A pre-image version is skipped when its measured hash equals staged.content_hash, which is the caller's value."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/reads.py",
+    "line": 107,
+    "description": "A caller with list-level rights sees only path and kind, so the hash does not leak there. The attacker must learn H some other way, for example from a public or shared document."
+   },
+   {
+    "file": "agents/v15-p3/artifacts/evidence/verify-output.txt",
+    "line": 1,
+    "description": "Verifier's own sandboxed run on InMemoryStorage. dave gets not_found on /carol/n.pdf, then gets carol's text CAROL-PRIVATE note 98765 at /dave/y.pdf after a bodiless JSON-shaped Entry and a reindex (cached=1). In the reverse run, carol's upload of a public PDF is served dave's PLANTED text (cached=1)."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The attacker is a named subject with write rights on some path in the same mount as the victim's file. No rights on the victim's path are needed."
+   },
+   {
+    "kind": "data_state",
+    "description": "Disclosure requires the attacker to know the exact sha-256 of the victim's bytes, for example a shared or leaked document. Poisoning requires the hash of a document the victim will later upload, such as a public form. It also requires the attacker's row to be the lowest-id settled donor for that hash, for example by planting first."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The operator runs reindex on the storage. This is routine: reindex is what produces any bytes rendering at all."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "Named subject dave with read_write only on /dave. The posture on / is none. Victim carol has read_write on /carol.",
+   "payloads": [
+    "Entry.model_validate({'path':'/dave/y.pdf','source':'bytes','content_hash':H_carol,'mime_type':'application/pdf'})",
+    "fs.write(path='/dave/p.pdf', data=<dave's PDF>) followed by Entry.model_validate({'path':'/dave/p.pdf','source':'bytes','content_hash':H_public,'mime_type':'application/pdf'})"
+   ],
+   "instructions": [
+    "On InMemoryStorage, mkdir /carol and /dave as system, set posture / to none, and grant carol and dave read_write on their own prefixes.",
+    "carol writes a dummy PDF at /carol/n.pdf. Run storage.reindex(). Confirm dave's read of /carol/n.pdf returns not_found.",
+    "dave writes the bodiless Entry naming carol's hash at /dave/y.pdf. Run reindex. dave reads /dave/y.pdf and greps for carol's text.",
+    "On a fresh storage, dave writes his own PDF at /dave/p.pdf, then overwrites it bodiless with the hash of a public PDF. Run reindex. carol uploads the public PDF at /carol/b.pdf. Run reindex. carol reads and greps her file."
+   ],
+   "observed_result": "In dave's control read, /carol/n.pdf returned vfs.not_found. After the bodiless write and a reindex (rendering report cached=1), dave's read of /dave/y.pdf returned render_status ok with content 'CAROL-PRIVATE note 98765', and dave's grep for it hit /dave/y.pdf. In the reverse case, after reindex (cached=1), carol's read of /carol/b.pdf returned render_status ok with content 'PLANTED text by dave', and carol's grep for PLANTED hit her own file. The hunter separately reports that a forged-hash overwrite in a contribute region minted 0 versions, against 1 for an honest overwrite. This verifier did not re-run that variant."
+  },
+  "remediation": {
+   "strategy": "Measure at the storage seam. In write_rows, refuse a content-kind Entry that has neither content nor data, or ignore its metrics and keep the stored row's. Always compute content_hash, size_bytes and lines from the staged body in the storage layer, on the offload pool when the body is large, and never take them from the Entry. Make MEASURED_BODY router-internal, for example a private sentinel object rather than a public context key. Add entry.deleted_at IS NULL to the cached_renderings donor query. Once every hash is measured by storage, cross-row render lending is safe without a rights term.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/storage/backends/database/writes.py",
+     "fixed_code": "# in write_rows, before plan.put_file:\nif entry.kind in CONTENT_KINDS and entry.content is None and entry.data is None:\n    plan.errors.append(classified(ErrorKind.invalid, entry.path, detail='a file write needs a body'))\n    continue\nmetrics = measure_bytes(entry.data) if entry.data is not None else measure_text(entry.content)\n# pass metrics.content_hash / metrics.size_bytes / metrics.lines instead of entry.*"
+    },
+    {
+     "file_name": "src/vfs/storage/backends/database/render.py",
+     "fixed_code": "# in cached_renderings, the donor WHERE clause:\nentry.c.deleted_at.is_(None),"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "low",
+    "reason": "The attacker needs a writable path on the victim's mount and the exact hash of the target bytes. For disclosure, that mostly means a shared or leaked document. For poisoning, the hash of a public document is easy to get, but the attacker must plant first to be the lowest-id donor."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "The effect crosses a principal boundary in both directions. In one direction it discloses rendered text and gives an existence oracle. In the other it substitutes attacker-chosen text for another principal's file content, which reaches that principal's agents through read and grep. The version-skip variant also lets a contributor stop history from being minted."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The full source lineage was re-read at commit 3586750. The verifier independently reproduced both the disclosure and the poisoning variants in the sandbox, through the public router API with only JSON-shaped Entry dicts and dummy principals. No spec or docstring declares a caller-supplied hash trusted; spec 175 lists integrity-on-read as not yet built."
+  }
+ }
+}

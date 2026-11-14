@@ -1,0 +1,119 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs.pattern_matching.glob._translate:backtracking-wildcards",
+  "title": "Glob patterns compile to backtracking Python regex with no cap on wildcards, so one glob call can stall the shared event loop",
+  "description": "A caller who can run glob, or grep/glean with glob channels, sends a short pattern with k wildcard pairs such as '*?' repeated k times, plus a '[...]' class. vfs turns each '*' into a backtracking [^/]* and compiles it with CPython re. Matching against one stored name of length n then costs roughly O(n^k). The match runs synchronously on the asyncio event loop for every candidate row, and it runs before the visibility check (view.shows). So rows the caller cannot see still cost time. The '[' class makes the SQL LIKE prefilter fall back to an empty literal prefix plus '%', so every live row in the mount is a candidate. The path-segment cap of 255 bytes bounds n for each name. Nothing bounds k or the pattern length. Local reproduction on a fresh InMemoryStorage with the default caller: '*?*?*?*?[Q]' against one 250-character name blocked the loop for 0.85 s, and '*?*?*?*?*?*?[Q]' against one 64-character name blocked it for 0.54 s. A concurrent unrelated glob had to wait the whole time. Cost also grows linearly with the number of candidate rows: 10 rows with 128-character names took 0.61 s, against 0.07 s for one.",
+  "root_cause": "_translate and _translate_component (src/vfs/pattern_matching/glob.py) emit [^/]* for each '*' and (?:.+/)? for each non-final '**', with no limit on how many wildcards or how long the pattern is. compile_glob compiles the result with Python re, which backtracks, instead of the linear-time Rust regex engine that vfs-core already uses for grep. glob_rows runs passes_row_filters, and so the regex, inline on the event loop for every SQL candidate, before view.shows, with no deadline. _glob_like returns None for any '[' class, so the prefilter matches every row.",
+  "intended_behavior": "Glob matching should take time linear in the subject length, as the Rust regex engine used by grep does. Otherwise it should be bounded by a wildcard or pattern-length cap and a deadline, so one caller's glob cannot block other agents on the same loop.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/base.py",
+    "line": 1263,
+    "scope": "AsyncVirtualFileSystem.glob",
+    "description": "Public verb that accepts a caller pattern string. Neither it nor the params gate caps pattern length or wildcard count."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/reads.py",
+    "line": 523,
+    "scope": "pattern_arm",
+    "description": "_glob_like returns None for a '[' class, so the prefilter becomes escape_like(literal_prefix) + '%'. With an empty literal prefix, every live row in the mount is a SQL candidate."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/reads.py",
+    "line": 368,
+    "scope": "glob_rows",
+    "description": "passes_row_filters runs the compiled glob regex on each candidate row, synchronously on the loop, before view.shows (line 370) applies visibility."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/pattern_matching/glob.py",
+    "line": 555,
+    "scope": "_translate_component",
+    "description": "Each '*' becomes the backtracking [^/]*. compile_glob (line 208) compiles it with Python re.compile, which gives O(n^k) failing matches."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/pattern_matching/glob.py",
+    "line": 208,
+    "description": "compile_glob returns re.compile(_translate(_canonical(pattern), recursive=True)), which uses the backtracking CPython engine."
+   },
+   {
+    "file": "src/vfs/pattern_matching/glob.py",
+    "line": 536,
+    "scope_note": "",
+    "description": "A non-final '**' component becomes (?:.+/)?, which also backtracks across segments of path-subject patterns."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/reads.py",
+    "line": 985,
+    "description": "_glob_like returns None whenever '[' appears in the pattern, which disables the selective LIKE prefilter."
+   },
+   {
+    "file": "src/vfs/pattern_matching/glob.py",
+    "line": 39,
+    "description": "The strongest pattern-side control: MAX_PATTERN_ARMS = 64 caps brace expansion only. It does not cap wildcard count or pattern length."
+   },
+   {
+    "file": "src/vfs/paths.py",
+    "line": 41,
+    "description": "MAX_SEGMENT_LENGTH = 255 bytes caps n for each name-subject match, but it does not cap the polynomial degree k. At n=250, k=4 already costs about 0.85 s for each row."
+   },
+   {
+    "file": "agents/v06-p3/artifacts/evidence/glob_backtracking_verify.txt",
+    "line": 7,
+    "description": "Verifier's sandboxed reproduction. k=4 at n=64/128/250 took 0.014/0.070/0.854 s, k=6 at n=48/64 took 0.12/0.54 s, and 10 rows at k=4, n=128 took 0.61 s. The largest event-loop gap and a concurrent victim glob's latency each matched the attacking glob's duration. The benign control '*.txt' took 0.016 s."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "authorization_role",
+    "description": "The caller can invoke glob, or grep/glean with glob channels, on a mount. The reproduction used the default router caller on a fresh InMemoryStorage. Visibility does not gate the cost, because the regex runs before view.shows."
+   },
+   {
+    "kind": "data_state",
+    "description": "The mount holds rows whose names or path segments are tens of characters or longer (up to 255 bytes for each segment). Cost scales with the number of live rows in the mount, because the '[' class disables the prefilter."
+   },
+   {
+    "kind": "system_configuration",
+    "description": "The host serves several agents or callers from one process and asyncio event loop, so a stall on that loop delays every other caller."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "An agent with glob access to an AsyncVirtualFileSystem whose event loop is shared with other agents.",
+   "payloads": [
+    "'*?*?*?*?[Q]' against a stored name of 'a' * 250",
+    "'*?*?*?*?*?*?[Q]' against a stored name of 'a' * 64"
+   ],
+   "instructions": [
+    "Inside the sandbox, build AsyncVirtualFileSystem(storage=InMemoryStorage()) and write one file whose leaf name is n characters long (n <= 255), plus an unrelated small file.",
+    "Start a 1 ms asyncio ticker and a concurrent victim task that globs '/small.txt'.",
+    "Await fs.glob(payload) and record the glob duration, the largest gap between ticker wakeups, and the victim's glob latency. Compare with a benign '*.txt' glob."
+   ],
+   "observed_result": "Python 3.13.11. For k=4: 0.014 s at n=64, 0.070 s at n=128 and 0.854 s at n=250. For k=6: 0.12 s at n=48 and 0.54 s at n=64. With k=4, n=128, 10 rows took 0.61 s. Each call returned zero rows and no errors. The largest event-loop gap was within a few ms of each glob's duration (for example 0.848 s at k=4, n=250). The concurrent victim glob took the same 0.85 s. The benign '*.txt' glob over the same 10 rows took 0.016 s. A 256-byte segment was refused (the segment cap), which bounds n but not k."
+  },
+  "remediation": {
+   "strategy": "Compile glob regexes with the linear-time Rust regex engine already in vfs-core, or with a non-backtracking glob matcher, for compile_glob, compile_filter and _component_matches. Until then, refuse patterns above a declared wildcard count and pattern length in glob_defect/expand_pattern. Also consider applying view.shows before the regex, or running the per-row matching under the same deadline grep uses. Add a regression test that runs a fixed adversarial pattern and asserts on an operation count (matcher calls or steps), not on time."
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "The payload is a short string and needs only glob access, which the default caller on a fresh storage has. A shared-loop, multi-agent host is the intended deployment, but vfs is a library, and whether the loop is shared depends on the host."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "Each call blocks the shared event loop for every co-hosted agent, for up to about a second for each long-named row at k=4 and more for larger k or more rows. The stall is temporary and recovers when the call ends. Repeated calls can sustain it. There is no persistence, and no effect on confidentiality or integrity."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "high",
+   "reason": "The verifier reproduced the result independently through the public glob API in the sandbox, with bounded growth points and a concurrent victim. Every trace line was checked against source at commit 3586750."
+  }
+ }
+}

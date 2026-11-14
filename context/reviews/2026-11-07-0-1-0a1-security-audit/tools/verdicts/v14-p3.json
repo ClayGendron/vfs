@@ -1,0 +1,93 @@
+{
+ "decision": "needs_validation",
+ "record": {
+  "verdict": "needs_validation",
+  "fingerprint": "vfs/storage/database/write-arbitration-absorb-without-reauthorization",
+  "title": "A write the gate judged as a fresh create (add rung) can overwrite a rival's concurrently created file through catch_retry insert arbitration",
+  "description": "DatabaseStorage.write gates every target in upsert mode before it stages anything. A path that is absent at the gate is judged only at the create rung (add). The ops.py ladder says add 'alters only one's own rows' and that overwriting anyone else's row needs contribute. If another principal (bob) commits a create of the same path inside the gate-to-apply window (the declared write:before-apply seam), alice's insert hits the unique (parent_id, name) index. On catch_retry engines (MSSQL, Oracle and the GENERIC floor used for unknown dialects), _resolve_rows probes the occupant, finds bob's non-directory row at the same path and, because overwrite defaults to True, calls staged.absorb. That turns alice's create into an unguarded clobbering update of bob's row. The update checks only entry_id, path and liveness, and no rights check runs again. Alice's body replaces bob's. owner_id stays bob's, and bob's earlier body goes to vfs_versions. When the same overwrite runs sequentially, it is refused with permission_denied. No isolation pin covers MSSQL, Oracle or GENERIC (op_isolation is None), so their statements run at the server default READ COMMITTED. Under READ COMMITTED each statement sees rows already committed. That holds for both MSSQL modes (locking and RCSI) and for Oracle's statement-level consistency, so the probe sees bob's committed row. The engines that are probably not affected are these. SQLite: BEGIN IMMEDIATE takes the write lock at alice's first read, so no rival can commit inside the window. PostgreSQL: the REPEATABLE READ pin makes ON CONFLICT DO UPDATE against a row the snapshot cannot see raise 40001, which is retryable; the whole method then runs again, and the gate judges the occupied path at contribute. MariaDB: the REPEATABLE READ snapshot hides bob's row from the probe, so it raises StaleSnapshot and the method runs again. I reproduced this myself on SQLite. I used the real write:before-apply seam and injected bob's create on alice's own session, the way a READ COMMITTED statement would observe it. Sequentially, alice was permission_denied. In the race, alice succeeded and both a system read and bob's own read returned 'ALICE'. That happened both on the native upsert path and with the profile forced to catch_retry. With overwrite=False, the race instead ended in vfs.exists. Impact: a peer who holds only add on a shared prefix can overwrite another principal's file, but only one that is being created at the same moment, at a path the attacker also targets. It is an integrity violation of one row and discloses nothing.",
+  "claimed_root_cause": "WriteGate._decide authorizes a target that is absent at gate time only at the create rung (rights.py:884). Insert arbitration in writes.py then adopts a rival's row as the write target and never re-applies the primary-rung (contribute) check and owner floor that an occupied target needs. _resolve_rows absorbs a non-directory occupant under overwrite (writes.py:628-631), and _upsert_layer's on_conflict_do_update clobbers it (writes.py:489). The absorb arm of _update_materials (writes.py:690 onward) updates the row guarded only by path and liveness. The comment there calls this 'last-writer-wins between writes by design', but that design does not account for the different rungs the two writers hold.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 700,
+    "scope": "DatabaseStorage.write.run",
+    "description": "A lower-trust named subject (alice, holding add on /drop) calls write. gate.targets(..., 'upsert') judges the committed state, where the target path is absent."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/rights.py",
+    "line": 884,
+    "scope": "WriteGate._decide",
+    "description": "An absent target passes when minting.reaches holds at the create rung (add). The primary rung (contribute) and the owner floor run only for paths that are occupied at gate time (rights.py:873-875)."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 331,
+    "scope": "_finish",
+    "description": "The write:before-apply window. The snapshot read and staging are done and no mutation has run. A rival commit here goes unseen by the gate."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 444,
+    "scope": "_insert_creates",
+    "description": "catch_retry profiles (MSSQL, Oracle, GENERIC) insert under a savepoint. The rival's committed row raises IntegrityError, and the chunk is redriven row by row in _resolve_rows."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 631,
+    "scope": "_resolve_rows",
+    "description": "The occupant probe, at READ COMMITTED, sees the rival's row at the same path. Because overwrite is True and the occupant is not a directory, staged.absorb(occupant.entry_id) retargets the create onto the rival's row. No rights check runs."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 690,
+    "scope": "_update_materials",
+    "description": "The absorb arm runs an unguarded update (entry_id, path, deleted_at IS NULL) of the rival's material columns. _replace_bodies then writes alice's body into bob's row, and mint_versions (writes.py:404) archives bob's replaced body."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/ops.py",
+    "line": 150,
+    "description": "write needs contribute on an occupied target and add on a fresh name. The ladder docstring (ops.py:117-121) says add alters only one's own rows and contribute overwrites anyone's."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/dialects.py",
+    "line": 468,
+    "description": "MSSQL is catch_retry with no op_isolation pin, so the server default READ COMMITTED applies (RCSI also shows statements the committed rival row). ORACLE (dialects.py:529) and GENERIC (dialects.py:553) are the same."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/dialects.py",
+    "line": 436,
+    "description": "PostgreSQL pins REPEATABLE READ, and 40001 is a retryable SQLSTATE (dialects.py:349). A clobbering ON CONFLICT against a row the snapshot cannot see should therefore run the method again rather than overwrite. MariaDB pins REPEATABLE READ (dialects.py:500), so its probe is snapshot-blinded and raises StaleSnapshot."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/writes.py",
+    "line": 98,
+    "description": "_CLOBBER_COLUMNS replace the material state and clear the tombstone, but leave out owner_id, so the overwritten row still records bob as its owner."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1666,
+    "description": "_execute_write runs gate and apply in one writer transaction with no row lock or serialization point on paths that are absent at gate time. Only SQLite gets BEGIN IMMEDIATE."
+   },
+   {
+    "file": "agents/v14-p3/artifacts/evidence/arb-repro-output.txt",
+    "line": 1,
+    "description": "My own run on SQLite InMemoryStorage, injecting bob through the write:before-apply seam on alice's session. Sequential overwrite: permission_denied. Raced create: success=True, and both the system read and bob's read return 'ALICE'. The result is the same on the native upsert path and with arbitration forced to catch_retry. With overwrite=False the race ends in vfs.exists."
+   }
+  ],
+  "blockers": [
+   "The decisive fact is engine concurrency: a genuine second transaction committing on MSSQL or Oracle (or a GENERIC-profile engine) inside alice's gate-to-apply window. Local execution is limited to SQLite. Production SQLite serializes writers with BEGIN IMMEDIATE, so this race cannot happen there. Both the hunter's evidence and mine inject the rival on the victim's own session to stand in for READ COMMITTED visibility. That shows the code path and the missing re-authorization, but not observed engine behavior.",
+   "Whether PostgreSQL (REPEATABLE READ plus ON CONFLICT DO UPDATE, expected to raise 40001) and MariaDB (snapshot-blinded probe, expected to raise StaleSnapshot) really run the method again and end with permission_denied, rather than overwriting, has not been observed on a real engine."
+  ],
+  "validation_plan": {
+   "local": "Add a seam-staged race to tests/storage/database/test_races.py, parameterized over ENGINE_LEGS, and run it with the db_test skill on the mssql, oracle, postgres and mariadb legs. Setup with system authority: posture '/' = none, mkdir /drop, grant add on /drop to alice and to bob. Install a self-clearing handler on 'write:before-apply' (the _self_clearing helper) that commits bob's storage.write of /drop/report.txt with content 'bob' on its own fresh session, a genuine second transaction. Then call storage.write(entries=[Entry('/drop/report.txt', 'ALICE')], authority=alice). Expected safe result: alice gets permission_denied (or a retryable conflict), and a system read returns 'bob' with owner_id 'bob'. Vulnerable result: alice succeeds and the system read returns 'ALICE'. The test touches only dummy principals and a throwaway schema."
+  }
+ }
+}

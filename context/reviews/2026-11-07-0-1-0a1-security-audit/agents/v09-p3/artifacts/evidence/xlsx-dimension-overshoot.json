@@ -1,0 +1,26 @@
+{
+ "openpyxl": "3.1.5",
+ "python": "3.13.11 (main, Dec 17 2025, 20:55:16) [Clang 21.1.4 ]",
+ "results": [
+  {
+   "case": "A1+A20000, dim A1:ZZZ20000 (18278 cols)",
+   "input_bytes": 4713,
+   "cells_iterated": 365560000,
+   "render_wall_s": 3.243,
+   "limit_seconds": 0.5,
+   "overshoot_x": 6.5,
+   "status": "partial",
+   "detail": "0 of 1 units within 0.5 seconds"
+  },
+  {
+   "case": "A1+A50000000, dim A1:A50000000 (no row cap)",
+   "input_bytes": 4710,
+   "cells_iterated": 50000000,
+   "render_wall_s": 3.339,
+   "limit_seconds": 0.5,
+   "overshoot_x": 6.7,
+   "status": "partial",
+   "detail": "0 of 1 units within 0.5 seconds"
+  }
+ ]
+}

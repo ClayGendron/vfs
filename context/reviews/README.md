@@ -10,7 +10,7 @@ The reviewer is a fresh agent or a person who did not write the change. The revi
 
 ## File names
 
-`YYYY-MM-DD-<spec-slug>-spec-review.md` and `YYYY-MM-DD-<spec-slug>-code-review.md`. The date is the review's own, so a second review on a later day is a new file and the older one stays. The slug is the spec's file name without its date and its extension: `2026-11-03-the-guarded-append.md` is reviewed in `2026-11-03-the-guarded-append-spec-review.md`. No number anywhere in the name. A spec that still carries a numbered folder name is reviewed under a slug cut from its title.
+`YYYY-MM-DD-<spec-slug>-spec-review.md` and `YYYY-MM-DD-<spec-slug>-code-review.md`. The date is the review's own, so a second review on a later day is a new file and the older one stays. The slug is the spec's file name without its date and its extension: `2026-11-03-the-guarded-append.md` is reviewed in `2026-11-03-the-guarded-append-spec-review.md`. No number anywhere in the name. A spec that still carries a numbered folder name is reviewed under a slug cut from its title. A release's full security audit is the third kind, `YYYY-MM-DD-<version>-security-audit.md` with the version's dots written as dashes and the skill's run folder beside it under the same name without `.md`; its eight sections, its verdict words "Clears the release" and "Blocks the release", and the order it lands in are in [the release standard](../standards/release.md), step 3, and the lint leaves the run folder's machine-written files to the skill's own validators.
 
 ## The spec-review checklist
 

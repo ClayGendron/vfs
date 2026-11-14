@@ -1,0 +1,412 @@
+{
+ "harness": "agents/w6a-embed/artifacts/evidence/harness.py",
+ "command": "tools/sandbox-run.py ./agents/w6a-embed/scratch .venv/bin/python -I scratch/harness.py <control|partial|full> scratch<tmp>/<scenario>.db",
+ "limits": "sandbox-run: no network, empty env, scratch-only writes, CPU 60s, wall 120s, RSS 2GiB",
+ "scaling": "full and control use the shipped OpenAI caps (8192/2048/300000) and the shipped EMBED_PAGE_ROWS=4096 unscaled; partial scales only max_batch_tokens 300000->3000 (/100). Real token count in the fake provider: 1 token per CJK char (U+2E80 and above), ceil(len/4) otherwise; vfs's estimate is ceil(len/4).",
+ "scenarios": {
+  "control": {
+   "caps": {
+    "max_input_tokens": 8192,
+    "max_batch_inputs": 2048,
+    "max_batch_tokens": 300000,
+    "headroom_budget_estimated": 250000,
+    "EMBED_PAGE_ROWS": 4096
+   },
+   "alice_files": 0,
+   "alice_chars_each": 160,
+   "alice_estimate_each": 40,
+   "alice_real_each": 156,
+   "bob_files": 50,
+   "reindex_runs": [
+    {
+     "run": 1,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 50,
+      "cached": 0,
+      "tokens": 2250,
+      "requests": 1,
+      "truncated": 0,
+      "unembedded": 0
+     },
+     "errors": [],
+     "success": true,
+     "provider_requests": 1,
+     "chunk_state": {
+      "alice": {
+       "chunks": 1,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 51,
+       "embedded": 51
+      }
+     }
+    },
+    {
+     "run": 2,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 0
+     },
+     "errors": [],
+     "success": true,
+     "provider_requests": 0,
+     "chunk_state": {
+      "alice": {
+       "chunks": 1,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 51,
+       "embedded": 51
+      }
+     }
+    },
+    {
+     "run": 3,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 0
+     },
+     "errors": [],
+     "success": true,
+     "provider_requests": 0,
+     "chunk_state": {
+      "alice": {
+       "chunks": 1,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 51,
+       "embedded": 51
+      }
+     }
+    }
+   ],
+   "refused_batches_inputs_estimate_real_first3": [],
+   "bob_glean": {
+    "success": true,
+    "vector_leg": {
+     "tier": "native_exact",
+     "model": "capped/fake@16",
+     "depth": 100,
+     "hits": 52
+    },
+    "lexical_leg_hits": 50,
+    "top_paths": [
+     "/bob/docs/000.txt",
+     "/bob/docs/001.txt",
+     "/bob/docs/002.txt",
+     "/bob/docs/003.txt",
+     "/bob/docs/004.txt"
+    ],
+    "records": []
+   }
+  },
+  "partial": {
+   "caps": {
+    "max_input_tokens": 8192,
+    "max_batch_inputs": 2048,
+    "max_batch_tokens": 3000,
+    "headroom_budget_estimated": 2500,
+    "EMBED_PAGE_ROWS": 4096
+   },
+   "alice_files": 10,
+   "alice_chars_each": 300,
+   "alice_estimate_each": 75,
+   "alice_real_each": 296,
+   "bob_files": 100,
+   "reindex_runs": [
+    {
+     "run": 1,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 62,
+      "cached": 0,
+      "tokens": 2790,
+      "requests": 2,
+      "truncated": 0,
+      "unembedded": 48
+     },
+     "errors": [
+      {
+       "kind": "vfs.unavailable",
+       "severity": "warning",
+       "retryable": true,
+       "message": "Unavailable: embedding stopped after 2 requests: BadRequest: Requested 4670 tokens, max 3000 tokens per request"
+      }
+     ],
+     "success": true,
+     "provider_requests": 3,
+     "chunk_state": {
+      "alice": {
+       "chunks": 11,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 101,
+       "embedded": 63
+      }
+     }
+    },
+    {
+     "run": 2,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 48
+     },
+     "errors": [
+      {
+       "kind": "vfs.unavailable",
+       "severity": "warning",
+       "retryable": true,
+       "message": "Unavailable: embedding stopped after 0 requests: BadRequest: Requested 4670 tokens, max 3000 tokens per request"
+      }
+     ],
+     "success": true,
+     "provider_requests": 1,
+     "chunk_state": {
+      "alice": {
+       "chunks": 11,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 101,
+       "embedded": 63
+      }
+     }
+    },
+    {
+     "run": 3,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 48
+     },
+     "errors": [
+      {
+       "kind": "vfs.unavailable",
+       "severity": "warning",
+       "retryable": true,
+       "message": "Unavailable: embedding stopped after 0 requests: BadRequest: Requested 4670 tokens, max 3000 tokens per request"
+      }
+     ],
+     "success": true,
+     "provider_requests": 1,
+     "chunk_state": {
+      "alice": {
+       "chunks": 11,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 101,
+       "embedded": 63
+      }
+     }
+    }
+   ],
+   "refused_batches_inputs_estimate_real_first3": [
+    [
+     48,
+     2460,
+     4670
+    ],
+    [
+     48,
+     2460,
+     4670
+    ],
+    [
+     48,
+     2460,
+     4670
+    ]
+   ],
+   "bob_glean": {
+    "success": true,
+    "vector_leg": {
+     "tier": "native_exact",
+     "model": "capped/fake@16",
+     "depth": 100,
+     "hits": 64
+    },
+    "lexical_leg_hits": 100,
+    "top_paths": [
+     "/bob/docs/000.txt",
+     "/bob/docs/001.txt",
+     "/bob/docs/002.txt",
+     "/bob/docs/003.txt",
+     "/bob/docs/004.txt"
+    ],
+    "records": []
+   }
+  },
+  "full": {
+   "caps": {
+    "max_input_tokens": 8192,
+    "max_batch_inputs": 2048,
+    "max_batch_tokens": 300000,
+    "headroom_budget_estimated": 250000,
+    "EMBED_PAGE_ROWS": 4096
+   },
+   "alice_files": 4096,
+   "alice_chars_each": 160,
+   "alice_estimate_each": 40,
+   "alice_real_each": 156,
+   "bob_files": 50,
+   "reindex_runs": [
+    {
+     "run": 1,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 4146
+     },
+     "errors": [
+      {
+       "kind": "vfs.unavailable",
+       "severity": "warning",
+       "retryable": true,
+       "message": "Unavailable: embedding stopped after 0 requests: BadRequest: Requested 319488 tokens, max 300000 tokens per request"
+      }
+     ],
+     "success": true,
+     "provider_requests": 2,
+     "chunk_state": {
+      "alice": {
+       "chunks": 4097,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 51,
+       "embedded": 1
+      }
+     }
+    },
+    {
+     "run": 2,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 4146
+     },
+     "errors": [
+      {
+       "kind": "vfs.unavailable",
+       "severity": "warning",
+       "retryable": true,
+       "message": "Unavailable: embedding stopped after 0 requests: BadRequest: Requested 319488 tokens, max 300000 tokens per request"
+      }
+     ],
+     "success": true,
+     "provider_requests": 2,
+     "chunk_state": {
+      "alice": {
+       "chunks": 4097,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 51,
+       "embedded": 1
+      }
+     }
+    },
+    {
+     "run": 3,
+     "embedding": {
+      "model": "capped/fake@16",
+      "embedded": 0,
+      "cached": 0,
+      "tokens": 0,
+      "requests": 0,
+      "truncated": 0,
+      "unembedded": 4146
+     },
+     "errors": [
+      {
+       "kind": "vfs.unavailable",
+       "severity": "warning",
+       "retryable": true,
+       "message": "Unavailable: embedding stopped after 0 requests: BadRequest: Requested 319488 tokens, max 300000 tokens per request"
+      }
+     ],
+     "success": true,
+     "provider_requests": 2,
+     "chunk_state": {
+      "alice": {
+       "chunks": 4097,
+       "embedded": 1
+      },
+      "bob": {
+       "chunks": 51,
+       "embedded": 1
+      }
+     }
+    }
+   ],
+   "refused_batches_inputs_estimate_real_first3": [
+    [
+     2048,
+     81920,
+     319488
+    ],
+    [
+     2048,
+     81920,
+     319488
+    ],
+    [
+     2048,
+     81920,
+     319488
+    ]
+   ],
+   "bob_glean": {
+    "success": true,
+    "vector_leg": {
+     "tier": "native_exact",
+     "model": "capped/fake@16",
+     "depth": 100,
+     "hits": 2
+    },
+    "lexical_leg_hits": 50,
+    "top_paths": [
+     "/bob/docs/000.txt",
+     "/bob/docs/001.txt",
+     "/bob/docs/002.txt",
+     "/bob/docs/003.txt",
+     "/bob/docs/004.txt"
+    ],
+    "records": []
+   }
+  }
+ }
+}

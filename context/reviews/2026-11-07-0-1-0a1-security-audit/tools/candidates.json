@@ -1,0 +1,2472 @@
+{
+ "publish.yml:release-ref-not-bound-to-main-environment-pypi": [
+  {
+   "from": "h09-supply",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "publish.yml:release-ref-not-bound-to-main-environment-pypi",
+    "title": "PyPI trusted-publishing upload is gated only by writer-editable workflow logic; whether a non-release writer can publish depends on unobserved `pypi` environment and tag protections",
+    "description": "publish.yml uploads to PyPI with OIDC trusted publishing whenever a GitHub release is published (publish.yml:13-16, 86-92, 130-131). The only source-visible gate is check_release_tag.py, which compares the tag string with the pyproject version. Nothing binds the tagged commit to main, even though release.md says releases are cut from main. Suppose a principal has write access but no release authority, such as a collaborator, a bot, or a compromised writer token. They could push a branch carrying modified code with the matching version line, publish a release on a tag pointing at it, and the workflow would build and upload that code as vfs-py. They could also edit publish.yml on a branch to drop the `if: github.event_name == 'release'` guard and dispatch it. The workflow file comes from the triggering ref, so neither in-source gate stops a writer. The hosted controls decide the outcome: protection rules on the `pypi` environment (required reviewers, deployment branch and tag policy), tag rulesets for v*, the collaborator list, and the PyPI trusted-publisher binding. None is observable in source. Fork contributors cannot reach this path, because release and dispatch both require write access.",
+    "claimed_root_cause": "The release source identity (tagged commit and triggering ref) is never bound to reviewed main inside the workflow. The `pypi` environment is the only control that could bind it, and its configuration is not in source.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": ".github/workflows/publish.yml",
+      "line": 13,
+      "scope": "on: release published / workflow_dispatch",
+      "description": "Any principal who can publish a release, or dispatch the workflow on any branch, starts the run. Both require write access. Neither event is restricted to main in source."
+     },
+     {
+      "kind": "propagation",
+      "file": ".github/workflows/publish.yml",
+      "line": 32,
+      "scope": "wheels job checkout",
+      "description": "actions/checkout checks out the release's tag ref, or the dispatched branch. That commit can sit anywhere in the repo graph."
+     },
+     {
+      "kind": "propagation",
+      "file": ".github/workflows/publish.yml",
+      "line": 46,
+      "scope": "tag check step",
+      "description": "Runs scripts/check_release_tag.py \"$TAG\". This is the only source gate before build."
+     },
+     {
+      "kind": "propagation",
+      "file": "scripts/check_release_tag.py",
+      "line": 38,
+      "scope": "main",
+      "description": "Accepts when tag == 'v' + pyproject version. It does not check ancestry from main, signer, or who created the tag."
+     },
+     {
+      "kind": "propagation",
+      "file": ".github/workflows/publish.yml",
+      "line": 48,
+      "scope": "maturin-action build",
+      "description": "Builds wheels, and at :76 the sdist, from the checked-out commit's code."
+     },
+     {
+      "kind": "propagation",
+      "file": ".github/workflows/publish.yml",
+      "line": 87,
+      "scope": "publish job",
+      "description": "`if: github.event_name == 'release'`, environment: pypi, permissions id-token: write. The guard sits in the workflow file at the triggering ref, which a writer can edit."
+     },
+     {
+      "kind": "sink",
+      "file": ".github/workflows/publish.yml",
+      "line": 131,
+      "scope": "Publish to PyPI",
+      "description": "`uv publish --trusted-publishing always` mints a PyPI token from the job's OIDC identity and uploads dist/ as vfs-py."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "context/standards/release.md",
+      "line": 133,
+      "description": "States the intended policy: the release 'creates the vX.Y.Z tag on main'. Nothing in the workflow enforces it."
+     },
+     {
+      "file": "context/standards/release.md",
+      "line": 47,
+      "description": "'The workflow runs no tests. It trusts main is green'. The publish path assumes main as its source and never verifies it."
+     },
+     {
+      "file": ".github/workflows/publish.yml",
+      "line": 90,
+      "description": "`environment: pypi` is the only hook for a hosted approval or deployment-ref policy, and its protection rules are not in source."
+     },
+     {
+      "file": "context/research/studies/2026-10-28-the-0-1-0-roadmap-audits/07-release-ci-and-repo-hygiene.md",
+      "line": 106,
+      "description": "Records that the PyPI trusted publisher is bound to ClayGendron/vfs, publish.yml and environment pypi. A PyPI trusted-publisher claim does not constrain the git ref, so the environment's own rules are decisive."
+     },
+     {
+      "file": "scripts/check_release_tag.py",
+      "line": 38,
+      "description": "The check is string equality between tag and version only."
+     }
+    ],
+    "blockers": [
+     "The protection rules of the GitHub environment `pypi` are not observable from source: required reviewers, whether admins can bypass, and the deployment branches and tags policy (for example, only tags matching v* or only main).",
+     "Whether a ruleset restricts creating or updating tags matching v* to release owners is not observable.",
+     "The collaborator and team list is not observable, nor whether any write-access principal or app without release authority exists. If Clay is the only writer, no lower-trust principal exists.",
+     "Whether the PyPI trusted publisher for vfs-py names environment `pypi` is not observable. Without that binding, any job in publish.yml on any ref could mint a token, even one that skips the environment."
+    ],
+    "validation_plan": {
+     "local": "In a harmless fixture repo under scratch, with no network, set pyproject version 9.9.9a1 on a side branch that is not an ancestor of main. Run `python -I scripts/check_release_tag.py v9.9.9a1 --pyproject <fixture>/pyproject.toml`. Expect exit 0. This shows the in-source gate passes a non-main commit. It proves only the source half; the hosted half needs the owner checks.",
+     "deployment": "Owner-observed only, with no release or upload. (1) Settings > Environments > pypi: confirm Required reviewers lists only release owners, admin bypass is off, and 'Deployment branches and tags' is restricted (for example, tags matching v* backed by a tag ruleset). (2) Settings > Rules: confirm a tag ruleset restricts creating, updating and deleting v* tags to release owners. (3) Settings > Collaborators and teams, plus installed Apps: list every principal with write or maintain access. (4) PyPI vfs-py > Publishing: confirm the trusted publisher names repository ClayGendron/vfs, workflow publish.yml and environment pypi. If (1) has required reviewers limited to release owners and (4) names the environment, the candidate is closed as hardening. Otherwise it is reachable by any writer. As defence in depth in source, the publish job can check out with fetch-depth: 0 and fail unless `git merge-base --is-ancestor \"$GITHUB_SHA\" origin/main`, on top of an environment rule that limits deployments to v* tags."
+    }
+   }
+  }
+ ],
+ "vfs.rendering.docx:table-gridspan-expansion": [
+  {
+   "from": "h08-render",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs.rendering.docx:table-gridspan-expansion",
+    "title": "A docx table cell's gridSpan value expands into an unbounded cell list before any render limit applies",
+    "description": "_Writer.table builds [cell.text for cell in row.cells] for each table row. In the installed python-docx 1.2.0, _Row.cells yields the same _Cell once per spanned grid column (range(tc.grid_span)), and grid_span is read straight from the w:gridSpan/@val integer. Large values are not rejected. A docx of a few kilobytes can therefore request a tuple and a list whose length is set by one attribute value, with one cell.text string computed per entry. All of this happens before Builder.table sees the first row, so the character budget, the ratio guard and the cooperative clock do not bound it. The work runs inside the operator's reindex on the shared offload pool, and the row never lands a stamp, so every later reindex retries it.",
+    "claimed_root_cause": "The docx renderer passes python-docx's span-expanded row.cells into a list comprehension with no cap on the span-derived cell count. RenderLimits are enforced only on the text that Builder emits.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1287,
+      "scope": "DatabaseStorage._render_step",
+      "description": "Operator reindex renders a pending bytes row that any writer stored, on the offload pool"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/rendering/registry.py",
+      "line": 106,
+      "scope": "RendererRegistry.render",
+      "description": "Dispatches to DocxRenderer.render; only an Exception raised by the renderer is turned into a state"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/rendering/docx.py",
+      "line": 61,
+      "scope": "DocxRenderer.render",
+      "description": "Each body table block goes to _Writer.table"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/rendering/docx.py",
+      "line": 124,
+      "scope": "_Writer.table",
+      "description": "[[cell.text for cell in row.cells] ...] materializes one entry per spanned grid column before Builder.table checks any budget"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/rendering/docx.py",
+      "line": 124,
+      "description": "rows = [[cell.text for cell in row.cells] for row in table.rows] is built in full before self._builder.table(rows)"
+     },
+     {
+      "file": "src/vfs/rendering/markdown.py",
+      "line": 186,
+      "description": "Builder.table checks the clock and budgets only while emitting rows that have already been materialized"
+     },
+     {
+      "file": "src/vfs/rendering/seam.py",
+      "line": 43,
+      "description": "RenderLimits holds no cap on parsed structure size; the ratio guard measures output characters only"
+     }
+    ],
+    "blockers": [
+     "The local bounded growth check was not executed. My attempt to write the fixture harness was stopped by the session's safety classifier, so no measured growth curve exists.",
+     "Library behaviour comes from reading installed python-docx 1.2.0 (docx/table.py _Row.cells, iter_tc_cells: 'for _ in range(tc.grid_span): yield cell'); an executed observation is still needed."
+    ],
+    "validation_plan": {
+     "local": "In the approved sandbox, build a one-table docx with python-docx and set the single cell's w:tcPr/w:gridSpan@val to 1e4, then 1e5. Call RendererRegistry.bundled().render(RenderSource(bytes, DOCX, 'a.docx'), RenderLimits(seconds=1.0)) and record peak RSS growth and wall time against input size. Stop at the first point that shows growth linear in the attribute value with constant input size. Regression: a renderer-side cap on len(row.cells), or reading tc elements directly with span clamped to the layout grid width, returning 'truncated' or 'failed'."
+    }
+   }
+  }
+ ],
+ "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked": [
+  {
+   "from": "h08-render",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs.rendering.xlsx:dimension-driven-row-iteration-unclocked",
+    "title": "An xlsx sheet's declared dimension drives empty-row iteration that the 60 s render clock never checks",
+    "description": "XlsxRenderer opens workbooks read_only. In openpyxl 3.1.5, ReadOnlyWorksheet takes max_row and max_column from the sheet's <dimension ref>, and _cells_by_row yields a filler row of max_column cells for every row up to max_row, even when sheetData is empty. vfs's _cells() iterates every yielded cell with no clock or budget check. The deadline is consulted only after _cells returns, in Builder.table. A tiny sheet declaring a huge row range therefore makes the render loop run for time proportional to rows times columns. No vfs limit stops it, and the offload worker that runs it cannot be interrupted. The stamp is never landed, so each later reindex starts the same work again.",
+    "claimed_root_cause": "_cells() walks sheet.iter_rows() with no deadline, cell-count or row-count budget. The cooperative clock covers only Builder calls, not openpyxl's dimension-driven iteration.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1287,
+      "scope": "DatabaseStorage._render_step",
+      "description": "Operator reindex renders a writer-supplied pending xlsx row on the offload pool"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 75,
+      "scope": "XlsxRenderer.render",
+      "description": "load_workbook(read_only=True, data_only=True); each sheet calls _cells(sheet) before any Builder clock check"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 160,
+      "scope": "_cells",
+      "description": "for row in sheet.iter_rows(): for cell in row: ... runs with no deadline check"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 160,
+      "description": "_cells iterates all rows and cells openpyxl yields; no limits object is passed in"
+     },
+     {
+      "file": "src/vfs/rendering/markdown.py",
+      "line": 112,
+      "description": "Builder.out_of_time is consulted only from Builder methods, which run after _cells returns"
+     },
+     {
+      "file": "src/vfs/storage/backends/database/offload.py",
+      "line": 1,
+      "description": "The offload docstring states that a running worker finishes into the void; no interrupt exists"
+     }
+    ],
+    "blockers": [
+     "The local check was not executed. The fixture-harness attempt was stopped by the session's safety classifier.",
+     "The openpyxl 3.1.5 read-only padding behaviour (worksheet/_read_only.py _cells_by_row yields empty_row up to max_row from parse_dimensions) comes from reading source; it needs an executed observation."
+    ],
+    "validation_plan": {
+     "local": "In the sandbox, build a one-cell xlsx and rewrite its sheet <dimension ref> to A1:Z{R} for R = 1,000 and then 10,000. Render with RenderLimits(seconds=0.5) and record wall time and status. The claim holds if wall time grows with R at constant input size and exceeds limits.seconds by a wide margin before the status returns. Regression: pass the Builder or deadline into _cells and stop on out_of_time, cap the iterated cell count, or iterate only parsed cells instead of the dimension-padded grid."
+    }
+   }
+  }
+ ],
+ "vfs.rendering.xlsx:region-table-quadratic-materialization": [
+  {
+   "from": "h08-render",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs.rendering.xlsx:region-table-quadratic-materialization",
+    "title": "xlsx region layout materializes a bounding-box table quadratic in the cell count before any budget check",
+    "description": "regions() joins cells that touch by corner, so n cells on a diagonal form one region whose bounding box is n by n. _table() then builds header plus body as full Python lists of (bottom-top+1) x (right-left+1) entries before Builder.table emits a single row and checks the budget. Memory and CPU are therefore quadratic in a cell count that compresses to a small file. Separately, _merged() compares each box with every box kept so far, which is quadratic in the number of isolated regions per sheet. Neither path consults the clock or the character budget. The xlsx module docstring says the region pass is linear, but these two steps are not.",
+    "claimed_root_cause": "_table() and _merged() run unbounded, superlinear work on attacker-shaped cell layouts before Builder applies RenderLimits.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1287,
+      "scope": "DatabaseStorage._render_step",
+      "description": "Operator reindex renders a writer-supplied xlsx on the offload pool"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 91,
+      "scope": "XlsxRenderer.render",
+      "description": "for box in regions(cells): builder.table(_table(cells, box, ...))"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 106,
+      "scope": "regions",
+      "description": "Corner adjacency merges a diagonal into one region with an n x n box; _merged runs pairwise over boxes"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 150,
+      "scope": "_table",
+      "description": "The body list comprehension materializes every grid position of the bounding box"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 150,
+      "description": "body = [[str(row), *(cells.get(...) for column in columns)] for row in range(box.top, box.bottom + 1)] is built in full"
+     },
+     {
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 133,
+      "description": "_merged loops over all kept boxes for each box, which is quadratic"
+     },
+     {
+      "file": "src/vfs/rendering/xlsx.py",
+      "line": 12,
+      "description": "The module docstring claims the region pass is linear"
+     }
+    ],
+    "blockers": [
+     "The local growth check was not executed. The fixture-harness attempt was stopped by the session's safety classifier."
+    ],
+    "validation_plan": {
+     "local": "In the sandbox, build xlsx sheets of n = 500 and then 1,000 diagonal cells. Render each and record peak RSS growth and time; quadratic growth against linear input size settles the claim. Regression: stream _table rows lazily into Builder.table, bound box area by the remaining character budget, and replace _merged with a sweep or sort-based merge."
+    }
+   }
+  }
+ ],
+ "vfs.rendering.docx:note-reference-inline-expansion": [
+  {
+   "from": "h08-render",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs.rendering.docx:note-reference-inline-expansion",
+    "title": "Repeated docx footnote or comment references copy the note text inline before the character budget applies",
+    "description": "_Writer._inline builds the whole paragraph string by appending _note(...) for every footnoteReference or commentReference. Each call formats a new copy of the referenced note's full text. One paragraph that repeats a reference N times to one long note produces a string of N times the note length. The string is joined and then passed through sanitize and splitlines in Builder.paragraph before _append checks any budget. Peak memory scales with references times note size, while the compressed input stays small.",
+    "claimed_root_cause": "Inline note expansion is unbounded and is assembled in full before Builder enforces RenderLimits.chars.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1287,
+      "scope": "DatabaseStorage._render_step",
+      "description": "Operator reindex renders a writer-supplied docx"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/rendering/docx.py",
+      "line": 113,
+      "scope": "_Writer.paragraph",
+      "description": "text, pictures = self._inline(paragraph._p)"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/rendering/docx.py",
+      "line": 140,
+      "scope": "_Writer._inline",
+      "description": "parts.append(_note(...)) for every reference, then ''.join(parts), with no budget"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/rendering/docx.py",
+      "line": 140,
+      "description": "Each reference appends a fresh formatted copy of the full note text"
+     },
+     {
+      "file": "src/vfs/rendering/markdown.py",
+      "line": 175,
+      "description": "Builder.paragraph runs sanitize(text).splitlines() over the whole string before any per-line budget check"
+     }
+    ],
+    "blockers": [
+     "The local check was not executed. The fixture-harness attempt was stopped by the session's safety classifier."
+    ],
+    "validation_plan": {
+     "local": "In the sandbox, build a docx with one footnote of about 10 KB and a paragraph with 100 and then 1,000 references to it. Record peak RSS growth against input size. Regression: stop appending once the accumulated parts exceed the remaining Builder budget, or emit each note once and reference it by id."
+    }
+   }
+  }
+ ],
+ "vfs.rendering:ooxml-part-decompression-unbounded": [
+  {
+   "from": "h08-render",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs.rendering:ooxml-part-decompression-unbounded",
+    "title": "OOXML parts are fully decompressed by the parser libraries with no entry-size or ratio check before render",
+    "description": "The docx, pptx and xlsx renderers hand the stored bytes straight to docx.Document, pptx.Presentation and openpyxl.load_workbook. The python-docx and python-pptx OPC readers load part blobs into memory, and lxml parses XML parts in full. vfs checks no zip entry sizes, compression ratios or part counts first. The only stated 'decompression-bomb guard', RENDER_RATIO, compares emitted characters with input bytes. It cannot see a large decompressed part that yields no text. Peak memory per render can be up to deflate's ratio, about 1000:1, times the stored size. That memory is held in the host process every agent shares, on the operator's reindex.",
+    "claimed_root_cause": "No pre-parse inspection of zip central-directory sizes or ratios is done in the OOXML renderers; the ratio guard measures output, not decompressed input.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1287,
+      "scope": "DatabaseStorage._render_step",
+      "description": "Operator reindex renders a writer-supplied zip-container body sniffed as docx, pptx or xlsx"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/models/media.py",
+      "line": 89,
+      "scope": "sniff_mime",
+      "description": "PK magic plus the extension or declared type selects an Office renderer"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/rendering/docx.py",
+      "line": 50,
+      "scope": "DocxRenderer.render",
+      "description": "docx.Document(BytesIO(source.data)) with no prior zip inspection; the same shape appears at pptx.py:38 and xlsx.py:75"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/rendering/seam.py",
+      "line": 41,
+      "description": "The comment calls RENDER_RATIO 'the decompression-bomb guard', but it is applied to output characters in Builder._append"
+     },
+     {
+      "file": "src/vfs/rendering/markdown.py",
+      "line": 276,
+      "description": "The ratio check compares self._chars with ratio * input_bytes, so a part that decompresses large but yields no text is invisible to it"
+     }
+    ],
+    "blockers": [
+     "The peak-RSS measurement was not executed. The fixture-harness attempt was stopped by the session's safety classifier.",
+     "Whether python-docx, python-pptx and openpyxl read unreferenced parts eagerly is inferred from their OPC readers, not observed."
+    ],
+    "validation_plan": {
+     "local": "In the sandbox, take a normal small docx and add one highly compressible part of 20 MB uncompressed. Render it and compare peak RSS growth with the stored input size, stopping at the first clear ratio. Regression: before opening, inspect zipfile.ZipFile(...).infolist() and refuse with 'failed' when the total file_size, a single entry's file_size, or file_size/compress_size exceeds a declared RenderLimits cap."
+    }
+   }
+  }
+ ],
+ "vfs.pattern_matching.glob._translate:backtracking-wildcards": [
+  {
+   "from": "h07-compute",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs.pattern_matching.glob._translate:backtracking-wildcards",
+    "title": "Glob patterns compile to backtracking regex with unbounded wildcards, so one call can stall the shared event loop",
+    "description": "A caller who can run glob (or grep/glean with globs) supplies a short pattern with k wildcards. Matching it against each stored name or path of length n costs O(n^k) in CPython re. The match runs synchronously on the event loop for every candidate row, before visibility filtering. A '[...]' class disables the SQL prefilter, so every row in the mount is a candidate.",
+    "root_cause": "_translate emits backtracking [^/]* and (?:.+/)? for wildcards with no cap on wildcard count or pattern length. compile_glob uses Python re, not the linear-time Rust engine. The match runs inline on the loop with no deadline.",
+    "intended_behavior": "Glob matching is linear in subject length, like the Rust regex engine that grep already uses, or it is bounded by a wildcard cap and a deadline, and it never blocks other callers on the shared loop.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 1263,
+      "scope": "AsyncVirtualFileSystem.glob",
+      "description": "Accepts a caller pattern with no length or wildcard cap."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/reads.py",
+      "line": 523,
+      "scope": "pattern_arm",
+      "description": "A '[' class makes _glob_like return None. The prefilter becomes an empty literal prefix plus '%', so every row is a candidate."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/reads.py",
+      "line": 368,
+      "scope": "glob_rows",
+      "description": "passes_row_filters runs the compiled regex per candidate, inline, before view.shows."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/pattern_matching/glob.py",
+      "line": 555,
+      "scope": "_translate_component",
+      "description": "Each '*' becomes a backtracking [^/]*, compiled with Python re at line 208."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/pattern_matching/glob.py",
+      "line": 208,
+      "description": "compile_glob uses Python re.compile."
+     },
+     {
+      "file": "src/vfs/pattern_matching/glob.py",
+      "line": 536,
+      "description": "A '**' component becomes (?:.+/)?, which also backtracks across segments."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/reads.py",
+      "line": 985,
+      "description": "_glob_like returns None for any '[' class."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "authorization_role",
+      "description": "The caller can invoke glob on a mount. A fresh storage's posture lets anonymous callers do this."
+     },
+     {
+      "kind": "data_state",
+      "description": "The mount holds at least one row whose name or path is moderately long (tens of characters or more). Paths can be up to 1024 bytes."
+     },
+     {
+      "kind": "system_configuration",
+      "description": "The host serves several agents from one process or event loop."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "An agent with glob access on a shared AsyncVirtualFileSystem.",
+     "payloads": [
+      "glob pattern '*?' * k + '[Q]' against a stored name 'a' * n (k=4: n=64,128; k=5: n=32,64)"
+     ],
+     "instructions": [
+      "In the sandbox, build an AsyncVirtualFileSystem(storage=InMemoryStorage()) and write one file whose name is n characters long.",
+      "Run a 1 ms asyncio ticker, call fs.glob(pattern), and record the glob duration and the largest gap between ticks."
+     ],
+     "observed_result": "k=4: 0.0071 s at n=64 and 0.0595 s at n=128. k=5: 0.0047 s at n=32 and 0.0532 s at n=64. The largest event-loop gap matched the glob time (0.056 s and 0.050 s). A direct regex check gave ratios of about 7x (k=3) and about 14x (k=4) per doubling, which fits O(n^k)."
+    },
+    "remediation": {
+     "strategy": "Match globs with the linear-time Rust regex engine already in vfs-core, or with a non-backtracking glob matcher. Until then, cap the wildcard count per pattern and pattern length in expand_pattern. Add a regression test that counts matcher steps or runs a fixed-size adversarial pattern under an operation-count assertion."
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "The input is short and every name in the mount is a target; the only requirement is glob access."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "Each call stalls the shared event loop for every co-hosted agent. Growth is polynomial in pattern length, with no deadline."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "Shown end to end through the public API with bounded growth points inside the sandbox."
+    }
+   }
+  }
+ ],
+ "vfs-core.verify.extend_context:per-hit-context-duplication": [
+  {
+   "from": "h07-compute",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs-core.verify.extend_context:per-hit-context-duplication",
+    "title": "Grep context lines are duplicated per hit, so output can grow to (hit lines) × (body size)",
+    "description": "In lines mode with large before_context/after_context (allowed up to 2^31-1), every hit line receives its own context span, which can be the whole body, and each span is copied into a separate PyBytes and then a str. A body where many lines match yields output quadratic in its size.",
+    "claimed_root_cause": "extend_context computes one span per hit without merging overlapping contexts, python.rs copies each span, and no output-byte budget exists. CONTENT_BYTE_BUDGET bounds input batches, not output.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/params.py",
+      "line": 270,
+      "scope": "grep before_context/after_context",
+      "description": "Accepts up to INT_CEILING."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 348,
+      "scope": "grep_rows",
+      "description": "Passes context sizes to verify.hit_lines with cap=max_count (None by default)."
+     },
+     {
+      "kind": "propagation",
+      "file": "crates/vfs-core/src/verify.rs",
+      "line": 243,
+      "scope": "extend_context",
+      "description": "Builds a full context span per hit line."
+     },
+     {
+      "kind": "sink",
+      "file": "crates/vfs-core/src/python.rs",
+      "line": 154,
+      "scope": "hit_lines",
+      "description": "Copies each span into a new PyBytes."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "crates/vfs-core/src/verify.rs",
+      "line": 243,
+      "description": "One span per hit; overlapping spans are not merged."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 124,
+      "description": "CONTENT_BYTE_BUDGET bounds input only."
+     }
+    ],
+    "blockers": [
+     "Not executed locally: the quadratic output growth has not been observed."
+    ],
+    "validation_plan": {
+     "local": "In the sandbox, grep a small file of L short lines that all match, with before/after context set high, at L and 2L. Sum the bytes of the returned match content and check that it grows about 4x per doubling."
+    }
+   }
+  }
+ ],
+ "vfs:storage/database:search-budget-counts-hidden-rows": [
+  {
+   "from": "h02-reads",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs:storage/database:search-budget-counts-hidden-rows",
+    "title": "grep's candidate-budget and scan-overflow truncation records count rows the caller cannot see",
+    "description": "For a caller with partial rights, grep (and, by the same shape, glean's overlay) computes whether a call hit its budget from candidate rows before the per-row Visibility check. Whether a truncation warning appears, and how many rows come back, can therefore change with the presence or content of rows the caller cannot read, even though a direct read of those rows reports not_found. This breaks the stated rule that hidden rows read exactly as absent, for derived search outputs.",
+    "claimed_root_cause": "nominated_count (grep.py:254) comes from the posting kernel over all entries in the glob allow-list, and entries_for_scan (scope.py:279-295) sets overflow from an unfiltered LIMIT limit+1. Both happen before view.holds (grep.py:260-262, 301-305), so the truncation records and the remaining budget take hidden rows into account.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 495,
+      "scope": "DatabaseStorage.grep",
+      "description": "grep runs under _viewed with a partial Visibility"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 243,
+      "scope": "grep_rows",
+      "description": "index-side candidate ids and nominated_count come from the unfiltered posting kernel"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/scope.py",
+      "line": 279,
+      "scope": "entries_for_scan",
+      "description": "scan-tier fetch with LIMIT limit+1 and no view predicate sets overflow"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 367,
+      "scope": "grep_rows",
+      "description": "truncation records built from those hidden-inclusive counts are returned to the caller"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 185,
+      "description": "Docstring says the candidate budget still counts hidden candidates"
+     },
+     {
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 260,
+      "description": "The view check runs only after the budget has been computed"
+     },
+     {
+      "file": "src/vfs/storage/backends/database/scope.py",
+      "line": 281,
+      "description": "Overflow is set from the unfiltered row count"
+     }
+    ],
+    "blockers": [
+     "My run was halted before I could write a promoted evidence artifact, so no local check is attached and the local observation needs independent reproduction.",
+     "The glean overlay variant (OVERLAY_BUDGET) was identified from source only and not run."
+    ],
+    "validation_plan": {
+     "local": "With InMemoryStorage under the sandbox, as a named caller with no rights under one prefix, compare grep's truncation records and row counts for calls whose scope includes that hidden prefix, with and without a hidden row present. If they differ, the finding is confirmed. Fix: compute budgets and overflow only after view.holds, or push the visibility predicate into the nomination and scan statements, and replace the 'counts hidden candidates' docstring note with a regression test showing grep output is identical whether or not hidden rows are present."
+    }
+   }
+  }
+ ],
+ "src/vfs/storage/backends/database/rights.py:grant-refusal:addressed-path-gate-ignores-posture-holes-beneath": [
+  {
+   "from": "h01-grants",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "src/vfs/storage/backends/database/rights.py:grant-refusal:addressed-path-gate-ignores-posture-holes-beneath",
+    "title": "grant() is checked only at the addressed path, so a caller with read_write from the everyone posture can grant itself (or anyone) read_write over a private posture hole beneath",
+    "description": "Before a grant or revoke, the grant verbs check one thing: does the caller hold read_write at the exact path it addressed? That check counts read_write the caller gets from the everyone level (the posture). The row a grant writes, though, covers the path and its whole subtree. Grant rows only ever add access, and a principal's grant outranks any deeper, narrower posture. Take a mount whose ancestor posture gives everyone read_write (the default for a fresh mount) and whose child folder has a narrower posture, such as none: the documented 'open root with a private child' shape. On that mount, any named principal can grant itself read_write at the ancestor and then read, overwrite, and re-posture the private child. So can anonymous through the router, by granting to a principal it names. The caller held nothing in that child. delete/move/sweep run a subtree check that catches this very posture hole. grant and revoke do not.",
+    "root_cause": "_grant_refusal (rights.py:1305-1336) reads only the posture rows on the addressed path's ancestor chain (ancestors_and_self, line 1327). It passes as soon as Rights.reaches(path, label) is true (line 1332). reaches (grants.py:477-479) is a point test: everyone_level >= need at the path itself, or the caller's spans cover that one path. It never asks whether the caller holds the level across the subtree the new row will cover. grant_rows then upserts a principal row at path (rights.py:919, 1356-1376). resolve and Rights.covers/admits (grants.py:150-152, 485-494, 624-629) apply that row to every path beneath, even under posture holes, because principal rows only widen.",
+    "intended_behavior": "Spec 058 (line 74): the granting subject set must hold read_write on the path, 'and may grant at most its own level (attenuation)'. The router docstring (base.py:1614-1615) says 'so nobody grants more than it holds'. The grant_rows docstring (rights.py:909-910) says 'what it grants never exceeds its own level there'. Spec 058 (line 64) requires subtree mutations to check beneath the target 'since an owner-floor row or a posture hole can sit inside a writable directory'. A grant or revoke at /P should be refused unless the granter holds read_write throughout /P's subtree, either by its own covering spans or with no posture row beneath /P giving everyone less than read_write.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 1599,
+      "scope": "AsyncVirtualFileSystem.grant",
+      "description": "The public grant verb accepts path, principal, and level from the caller and routes through _route_grant. With no authority it acts as default_authority or anonymous (base.py:3094-3107)."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/base.py",
+      "line": 2025,
+      "scope": "AsyncVirtualFileSystem._route_grant",
+      "description": "Applies only the mount PermissionMap/_gate_entry for the addressed rel path, then dispatches to storage.grant (line 2044)."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1577,
+      "scope": "DatabaseStorage._grant_write",
+      "description": "Bumps the revision, resolves the gate at VERB_RUNGS['grant'] = read_write (line 1595), and runs grant_rows."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1327,
+      "scope": "_grant_refusal",
+      "description": "Reads posture rows only for ancestors_and_self(path) and computes the everyone label at the addressed path. Posture rows beneath the path are never read."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1332,
+      "scope": "_grant_refusal",
+      "description": "Returns None (allowed) if gate.resolution.at('read_write').reaches(path, label). A read_write everyone level at the path is enough."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/grants.py",
+      "line": 477,
+      "scope": "Rights.reaches",
+      "description": "A point test: everyone_level >= need or self.covers(path). It does not test the subtree (contrast covers_subtree at line 481, which WriteGate.subtrees uses at rights.py:754)."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 919,
+      "scope": "grant_rows -> _upsert_grant",
+      "description": "Writes (principal, path, read_write). Rights.admits (grants.py:493) then admits every row beneath path through covers(), whatever the deeper posture says."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1305,
+      "description": "_grant_refusal is the shared gate for grant, revoke, and posture. It judges read_write only at the addressed path."
+     },
+     {
+      "file": "src/vfs/storage/grants.py",
+      "line": 477,
+      "description": "reaches() is a point check. covers_subtree() exists (line 481), but the grant gate does not use it."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 730,
+      "description": "WriteGate.subtrees is the sibling control. delete/move/sweep use it to refuse when a row beneath the target fails the rung (a posture hole). grant/revoke have no equivalent check."
+     },
+     {
+      "file": "src/vfs/storage/grants.py",
+      "line": 493,
+      "description": "Rights.admits returns True on covers(path), so a principal row at /P admits /P/Q rows even when everyone_level there is 0."
+     },
+     {
+      "file": "src/vfs/base.py",
+      "line": 1615,
+      "description": "The declared contract: 'so nobody grants more than it holds'."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 910,
+      "description": "The grant_rows docstring: 'what it grants never exceeds its own level there'."
+     },
+     {
+      "file": "context/specifications/archive/058-row-level-permission-grants/spec.md",
+      "line": 74,
+      "description": "The spec requires attenuation: the granter 'may grant at most its own level'."
+     },
+     {
+      "file": "context/specifications/archive/058-row-level-permission-grants/spec.md",
+      "line": 64,
+      "description": "Subtree mutations must check beneath the target because 'a posture hole can sit inside a writable directory'. The grant path is not held to this."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 205,
+      "description": "The default first-touch posture is read_write, so a mount that adds a private child posture without changing the root is exposed."
+     },
+     {
+      "file": "tests/support/grants_contract.py",
+      "line": 817,
+      "description": "test_nobody_grants_more_than_it_holds tests attenuation only at the addressed path. No test covers a grant on an ancestor of a posture hole."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "system_configuration",
+      "description": "Some ancestor path P has an everyone level of read_write (the default first-touch root posture, or an explicit posture), and a deeper posture row at P/Q narrows everyone to less (for example none, list, or read). Spec 058 names this 'open root with a private child' shape."
+     },
+     {
+      "kind": "authentication_level",
+      "description": "Any named Authority with no grants of its own suffices. Through the router, an anonymous call (no authority and no default_authority) also suffices, because unauthenticated_at is judged only at P, where everyone holds read_write. Anonymous cannot name itself as grantee ('anon' is reserved), so it grants to a principal it names."
+     },
+     {
+      "kind": "data_state",
+      "description": "Protected rows exist beneath P/Q (or are written later: the grant also covers future rows)."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "A named principal 'mallory' with no grant rows, or an anonymous router caller, on a mount whose root posture is read_write and whose /P/Q posture is none.",
+     "payloads": [
+      "await storage.grant(path=Path('/P'), principal='mallory', level='read_write', authority=Authority.of(Principal('mallory')))",
+      "await fs.grant('/P', 'mallory', 'read_write')  # AsyncVirtualFileSystem, no authority -> anonymous",
+      "await storage.revoke(path=Path('/P'), principal='bob', authority=Authority.of(Principal('mallory')))"
+     ],
+     "instructions": [
+      "Create InMemoryStorage(). As Authority.system(), write /P/Q/secret.md ('SECRET-Q') with parents=True, set posture('/', 'read_write'), then set posture('/P/Q', 'none').",
+      "As mallory, confirm the baseline: read('/P/Q/secret.md') -> not_found; grant('/P/Q', 'mallory', 'read_write') -> not_found; posture('/P/Q', 'read_write') -> not_found; delete('/P') -> permission_denied.",
+      "As mallory, call grant('/P', 'mallory', 'read_write'). It answers ok.",
+      "As mallory, read /P/Q/secret.md, overwrite it, and set posture('/P/Q', 'read_write').",
+      "Repeat through AsyncVirtualFileSystem(storage=...) with no authority (anonymous): grant('/P/Q', ...) -> unauthenticated, grant('/P', 'mallory', 'read_write') -> ok, then mallory reads the secret.",
+      "Revoke variant: system grants bob read_write at /P. mallory (everyone read_write at /P) revokes bob at /P, and bob loses /P/Q.",
+      "Run inside tools/sandbox-run.py with .venv/bin/python -I (no network, empty env, scratch-only writes)."
+     ],
+     "observed_result": "Before the attack: mallory read /P/Q/secret.md -> vfs.not_found, grant at /P/Q -> vfs.not_found, posture at /P/Q -> vfs.not_found, delete /P -> vfs.permission_denied. Attack: grant /P mallory read_write -> ok (row {'principal_id':'mallory','path_prefix':'/P','level':'read_write','granted_by':'mallory'}). After: read /P/Q/secret.md -> ok 'SECRET-Q', overwrite -> ok, posture /P/Q read_write -> ok. Router, anonymous: read /P/Q/secret.md -> vfs.unauthenticated, grant /P/Q -> vfs.unauthenticated, grant /P mallory read_write -> ok, then mallory read -> ok 'SECRET-Q'. Revoke variant: bob read ok -> mallory revoke bob at /P ok -> bob read vfs.not_found. Control: ann granted read_write at /P by system already reads /P/Q (no gain for a grant-derived holder)."
+    },
+    "remediation": {
+     "strategy": "Make the grant and revoke gate check the subtree the row will cover, not just the addressed point. When the caller's own spans do not cover the whole subtree at read_write (rights.whole or rights.covers_subtree(path)), read the posture ('*') rows strictly beneath path. Read them in pages over the bytewise range (path + '/', path + '0') on grants (principal_id = '*'), chunked by the membership budget. Refuse with permission_denied if any of them gives everyone less than read_write at a prefix the caller's spans do not cover whole. posture() itself needs no change, because deeper posture rows already win, but it may share the helper. Add a contract test: open root, private /P/Q; a principal with no rows (and anonymous through the router) is refused grant and revoke at /P and /, and is still allowed at an unrelated open sibling. Run it on every StorageContract leg.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/storage/backends/database/rights.py",
+       "fixed_code": "    if gate.resolution.at(gate.needs.primary).reaches(str(path), label):\n        rights = gate.resolution.at(gate.needs.primary)\n        if principal is not None and not (rights.whole or rights.covers_subtree(str(path))):\n            need = LEVEL_RANK[gate.needs.primary]\n            async for prefix, level in _postures_beneath(session, tables, profile, str(path)):\n                if LEVEL_RANK[level] < need and not rights.covers_subtree(prefix):\n                    return denied(path)\n        return None\n\n# _postures_beneath: page grants where principal_id == EVERYONE_NAME and\n# path_prefix > path + '/' - 1 byte range (path + '/', path + '0'), ordered by path_prefix, bounded page size."
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "The attacker needs only an ordinary named Authority, or none at all through the router. The precondition is a deliberate operator setup (a permissive ancestor posture with a narrower child posture). That setup is documented and tested, and the default first-touch posture already supplies the read_write ancestor."
+     },
+     "impact": {
+      "score": "high",
+      "reason": "An unauthorized principal gets full read_write over a subtree the operator made private. It can read every row, overwrite or trash them, mint grants, and re-posture the subtree open to everyone, anonymous included. The revoke variant also lets it strip other principals' access beneath. This crosses the row-rights boundary between anonymous or named callers and protected entries."
+     },
+     "overall_severity": "high"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "The source trace is complete. A bounded local run on InMemoryStorage (the same DatabaseStorage code path as production engines) shows the refused baseline, the grant succeeding, and the protected read and overwrite afterwards, directly and through the router as anonymous. A control rules out the grant-derived case."
+    }
+   }
+  }
+ ],
+ "vfs:storage/backends/database/links.py:publish_links:target-resolution-ignores-author-rights": [
+  {
+   "from": "h11-agents",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs:storage/backends/database/links.py:publish_links:target-resolution-ignores-author-rights",
+    "title": "Markdown link extraction mints edges to rows the author cannot list, bypassing mkedge's target gate",
+    "description": "A principal who can write a markdown file can attach a 'links' edge to any live row in the mount, including rows they cannot list. They do it by putting the target path in a link. The operator's routine reindex resolves link targets against every live entry with no rights check, then inserts the edge. The direct verb is gated: mkedge needs 'list' on the target and refuses the same edge as not_found. The planted edge then shows up in the victim's own graph walks (inbound and neighborhood) on their private file. It pulls the attacker's text into the neighborhood an agent gathers for that private file, and the victim cannot remove it, because rmedge needs 'contribute' on the source. The attacker learns nothing about the target. The harm is to the integrity of the victim's private node's relationships, and it gives attacker-chosen content a placement in the victim's agent context.",
+    "root_cause": "_resolve_candidates (src/vfs/storage/backends/database/links.py:149-165) looks up candidate target paths with a plain SELECT over entry rows (only deleted_at IS NULL), with no Visibility for the source document's owner. publish_links (links.py:85-141) then inserts the edges through insert_arbitrated. The pass runs inside the operator's reindex (backend.py:1118, 1377; indexing.py:338) with no authority, so it mints edges on the author's behalf with system reach. The author could not get that reach through mkedge, which is gated at traverse=list (ops.py:157).",
+    "intended_behavior": "An extracted edge should satisfy the same target rule as an authored one. A reference should resolve only to a target that the source row's owner (entry.owner_id, rows.py:471) holds at least 'list' on. Any other reference should count exactly like an absent target (unresolved), so the count does not become an oracle.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 958,
+      "scope": "AsyncVirtualFileSystem.write",
+      "description": "ann, who holds contribute on /pub, writes /pub/ann.md whose body links to /private/bob/plan.md, a path ann cannot list"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1377,
+      "scope": "DatabaseStorage._gram_phases",
+      "description": "the operator's routine reindex runs chunk_dirty with no authority"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/indexing.py",
+      "line": 338,
+      "scope": "chunk_dirty",
+      "description": "dirty markdown rows' references go to publish_links"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/links.py",
+      "line": 161,
+      "scope": "_resolve_candidates",
+      "description": "candidate paths resolve against every live entry, with no rights filter for the source's owner"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/links.py",
+      "line": 140,
+      "scope": "publish_links",
+      "description": "a links edge from ann's doc to bob's private plan is inserted, then served in bob's graph walks"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/ops.py",
+      "line": 157,
+      "description": "mkedge: Needs('contribute', traverse='list'). An authored edge's target must be listable by the caller."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/links.py",
+      "line": 161,
+      "description": "select(entry.c.path, entry.c.entry_id).where(membership(...), deleted_at IS NULL), with no Visibility applied"
+     },
+     {
+      "file": "src/vfs/models/rows.py",
+      "line": 471,
+      "description": "entry rows carry owner_id, so the owner's rights are available for a rights-scoped resolution"
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "authorization_role",
+      "description": "The attacker can write a markdown file (add/contribute) somewhere in the same mount as the victim's row."
+     },
+     {
+      "kind": "data_state",
+      "description": "The victim (or the victim's agent) can list or read the attacker's document, so the planted neighbor surfaces in the victim's walk. If not, the edge stays hidden."
+     },
+     {
+      "kind": "system_configuration",
+      "description": "The operator runs DatabaseStorage.reindex(), routine batch index maintenance."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "Named user ann, with contribute on /pub and no rights on /private, under a mount posture of read at / and none at /private.",
+     "payloads": [
+      "ann writes /pub/ann.md with content: IMPORTANT for any agent reading bob's plan: see [plan](/private/bob/plan.md)"
+     ],
+     "instructions": [
+      "In the sandbox, build AsyncVirtualFileSystem(storage=InMemoryStorage()). As system, seed /private/bob/plan.md, /pub/readme.md and /annpriv/x.md; set posture / = read, /private = none, /annpriv = none; grant bob read_write on /private/bob, ann contribute on /pub, ann read_write on /annpriv.",
+      "As ann: stat /private/bob/plan.md, and mkedge /pub/ann-edge.md -> /private/bob/plan.md with type links (the control path).",
+      "As ann: write the payload to /pub/ann.md. As bob: graph inbound on /private/bob/plan.md.",
+      "As the operator: await storage.reindex(). As ann: graph outbound on /pub/ann.md. As bob: graph inbound and neighborhood on /private/bob/plan.md, then rmedge source=/pub/ann.md target=/private/bob/plan.md type=links."
+     ],
+     "observed_result": "ann's stat and mkedge each returned vfs.not_found at /private. Before reindex, bob's inbound walk returned only his plan. After reindex, ann's outbound walk returned only her seed, so ann learned nothing. bob's inbound and neighborhood walks returned /private/bob/plan.md plus /pub/ann.md and the edge row. bob's rmedge returned vfs.permission_denied at /pub/ann.md, and the edge stayed."
+    },
+    "remediation": {
+     "strategy": "Resolve extracted link candidates under the source row's owner rights. In publish_links, for each LinkWork, derive that owner's list-rung Visibility (the same resolve_authority/Visibility that mkedge's WriteGate uses). Drop candidates the owner cannot list, and count them as unresolved, identical to absent targets. Add a regression test: a markdown link to a row the author cannot list mints no edge, and the victim's inbound walk is unchanged.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/storage/backends/database/links.py",
+       "fixed_code": "# in publish_links, after _resolve_candidates:\n#   listable = await _owner_listable(session, tables, work, resolved)  # owner_id -> Visibility(list).admits(target rows)\n#   target_id = next((resolved[c] for c in link_candidates(item.document, ref.dest)\n#                     if c in resolved and (item.owner_id, resolved[c]) in listable), None)"
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "It needs only write access to a shared markdown prefix and a routine operator reindex. Shared-read postures with per-user write grants are the documented model."
+     },
+     "impact": {
+      "score": "low",
+      "reason": "No disclosure to the attacker, and the victim sees only content they could already read. The impact is unremovable, attacker-chosen inbound edges on the victim's private node, which place attacker text in the victim's graph-gathered agent context."
+     },
+     "overall_severity": "low"
+    },
+    "confidence": {
+     "score": "medium",
+     "reason": "Observed locally end to end. That extracted edges should obey mkedge's target rule is inferred from the sibling control and the ladder table. Spec 138 is silent on rights for extracted edges."
+    }
+   }
+  }
+ ],
+ "vfs:permissions:check_writable:subtree-override-not-consulted": [
+  {
+   "from": "h04-router",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs:permissions:check_writable:subtree-override-not-consulted",
+    "title": "Read-only PermissionMap overrides are bypassed by subtree verbs (delete cascade, move, copy, sweep, restore) addressed at a writable ancestor or destination",
+    "description": "The router's PermissionMap is documented as the per-prefix write policy enforced at the routing chokepoint before anything dispatches (README.md:127; read_write(read=[...]) reads as 'writable with these read-only holes'). The gate resolves only the exact path a verb addresses. A verb whose effect spans a subtree is therefore checked against the ancestor's rule and never against a read-only override nested beneath it. Any caller with row rights on the ancestor can: trash the read-only rows with delete(ancestor), destroy them permanently with sweep(ancestor), move the ancestor out, edit the formerly read-only file at its new address and move it back, or plant attacker content inside the read-only region in one call with copy/move of a staged tree onto the ancestor. The same router already applies a subtree rule for bind sites (_busy_guard with subtree=True) but not for permission overrides.",
+    "root_cause": "check_writable (src/vfs/permissions.py:269-321) resolves the gated rel through PermissionMap._resolve, which matches only overrides whose prefix equals or covers the path (permissions.py:195-196). It never considers overrides lying strictly beneath the path. _gate_entry (base.py:2902) calls check_writable_composed with only the addressed rels for every op, including the subtree-shaped ones (delete, restore, sweep, move src/dest, copy dest), so a read-only rule deeper than the target is invisible to the gate.",
+    "intended_behavior": "A read-only override must refuse every write-gated op whose effect lands at or beneath it. For subtree-shaped ops, the gate should refuse with read_only when any layer holds a read rule strictly beneath the target rel (and its /.vfs alias), mirroring how _busy_guard refuses a region that holds a bind site.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 1059,
+      "scope": "AsyncVirtualFileSystem.delete / move / copy / sweep",
+      "description": "Caller (anonymous or a named agent) calls delete('/dir'), sweep('/dir'), move('/dir','/moved') or copy/move('/stage','/dir') with its own authority"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/base.py",
+      "line": 1748,
+      "scope": "_route_single",
+      "description": "Single-path verbs gate with write_rels=(terminal.rel,): only the addressed path; the busy guard above (1743) checks bind sites beneath but nothing checks permission rules beneath"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/base.py",
+      "line": 2535,
+      "scope": "_route_two_path",
+      "description": "move gates (src, dest) and copy gates dest only: the roots of the transferred subtree, not the paths that will be written beneath dest or vacated beneath src"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/base.py",
+      "line": 2902,
+      "scope": "_gate_entry",
+      "description": "check_writable_composed(self._permission_layers(full), op) is called per addressed rel only"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/permissions.py",
+      "line": 297,
+      "scope": "check_writable",
+      "description": "Resolution walks _permission_candidates(rel) (the path and its /.vfs alias) through PermissionMap._resolve"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/permissions.py",
+      "line": 196,
+      "scope": "PermissionMap._resolve",
+      "description": "Matches only prefixes that equal or cover the path; '/dir' resolves to the read_write default even though '/dir/frozen' is read-only, so the gate returns None"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/base.py",
+      "line": 1754,
+      "scope": "_route_single -> _dispatch_entry",
+      "description": "Storage executes the subtree delete/sweep (and, via base.py:2545, the subtree move/copy), mutating rows under the read-only override"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/permissions.py",
+      "line": 195,
+      "description": "Override loop matches 'normalized == prefix or normalized.startswith(prefix + \"/\")' only; no check for prefixes beneath the path"
+     },
+     {
+      "file": "src/vfs/base.py",
+      "line": 2939,
+      "description": "_busy_guard does consider the subtree (_bindings_beneath when subtree=True) for bind sites, showing subtree-shaped effects are recognised for mounts but not for permission overrides"
+     },
+     {
+      "file": "src/vfs/base.py",
+      "line": 122,
+      "description": "_BUSY_GUARDED_OPS = {delete, restore, sweep}: the router's own list of ops that act beneath the addressed site"
+     },
+     {
+      "file": "README.md",
+      "line": 127,
+      "description": "Per-prefix map documented as enforced at the routing chokepoint before anything dispatches"
+     },
+     {
+      "file": "src/vfs/base.py",
+      "line": 2902,
+      "description": "The only permission-map call site in the gate, invoked with addressed rels only"
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "system_configuration",
+      "description": "The operator configured a read-only PermissionMap override nested beneath a writable non-root prefix of the same mount (e.g. read_write(read=['/dir/frozen']), or an explicit nested PermissionMap). A read-only override directly under a mount root is not reachable this way, because the root cannot be deleted or moved and a bind site is busy."
+     },
+     {
+      "kind": "authorization_role",
+      "description": "The caller holds row rung read_write on the writable ancestor (for delete/move/sweep/restore) or add/contribute plus read_write on the destination (copy/move). A fresh mount's default posture gives everyone, including anonymous, read_write, so no grant is needed by default."
+     },
+     {
+      "kind": "data_state",
+      "description": "Rows exist under the read-only override (for delete/move/sweep tampering), or the caller can stage a tree elsewhere and the destination ancestor is absent (copy/move planting)."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "A named non-system agent principal (alice) calling routed verbs on an AsyncVirtualFileSystem whose root InMemoryStorage carries permissions=read_write(read=['/dir/frozen']), with /dir/frozen/ledger.md seeded by the host as 'LOCKED v1'.",
+     "payloads": [
+      "await fs.delete('/dir', authority=alice)",
+      "await fs.sweep('/dir', authority=alice)",
+      "await fs.move(src='/dir', dest='/moved', authority=alice); await fs.write(path='/moved/frozen/ledger.md', content='TAMPERED', authority=alice); await fs.move(src='/moved', dest='/dir', authority=alice)",
+      "await fs.write(path='/stage/frozen/ledger.md', content='FORGED', parents=True, authority=alice); await fs.copy(src='/stage', dest='/dir', authority=alice)",
+      "await fs.write(path='/stage/frozen/ledger.md', content='FORGED', parents=True, authority=alice); await fs.move(src='/stage', dest='/dir', authority=alice)"
+     ],
+     "instructions": [
+      "Construct AsyncVirtualFileSystem(storage=InMemoryStorage(), permissions=read_write(read=['/dir/frozen'])) and seed /dir, /dir/frozen and /dir/frozen/ledger.md through the storage as Authority.system().",
+      "As control, confirm write/delete/move at /dir/frozen and /dir/frozen/ledger.md by alice classify vfs.read_only.",
+      "Run each payload on a fresh filesystem and read /dir/frozen/ledger.md as Authority.system().",
+      "Commands: ./tools/sandbox-run.py ./agents/h04-router/scratch .venv/bin/python -I t1_subtree.py and t3_copy.py (SQLite in-memory only, no network)."
+     ],
+     "observed_result": "Controls refused with vfs.read_only. delete('/dir') success=True, then read of /dir/frozen/ledger.md -> not_found. sweep('/dir') success=True, row purged (not_found). move-out/write/move-back all success=True and the file content became ['TAMPERED']. copy('/stage','/dir') and move('/stage','/dir') success=True and /dir/frozen/ledger.md content became ['FORGED']."
+    },
+    "remediation": {
+     "strategy": "Treat delete, restore, sweep, move and copy as subtree-shaped in the permission gate: in addition to resolving the addressed rel, refuse when any layer's map holds a 'read' override strictly beneath that rel (or beneath its /.vfs alias). Apply it to move's src and dest and to copy's dest. This mirrors the bind-site busy guard. Add a regression test with read_write(read=['/dir/frozen']) asserting delete('/dir'), sweep('/dir'), restore('/dir'), move('/dir','/x'), move('/stage','/dir') and copy('/stage','/dir') each classify read_only with no storage call recorded.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/permissions.py",
+       "fixed_code": "def check_writable_composed(layers: Iterable[PermissionLayer], op: str, *, subtree: bool = False) -> Result | None:\n    for layer in layers:\n        denied = check_writable(layer.permission_map, op, layer.rel, mount_prefix=layer.mount_prefix, subtree=subtree)\n        if denied is not None:\n            return denied\n    return None\n\n\ndef check_writable(permission_map, op, rel, *, mount_prefix=ROOT, subtree=False):\n    if op not in WRITE_GATED_OPS:\n        return None\n    first, *rest = _permission_candidates(rel)\n    resolved = permission_map._resolve(first)\n    for candidate in rest:\n        alternate = permission_map._resolve(candidate)\n        if alternate.rule_prefix is None:\n            continue\n        if resolved.rule_prefix is None or len(alternate.rule_prefix) > len(resolved.rule_prefix):\n            resolved = alternate\n    if resolved.permission == \"read_write\" and subtree:\n        resolved = _read_rule_beneath(permission_map, rel) or resolved\n    if resolved.permission == \"read_write\":\n        return None\n    ...  # unchanged error construction\n\n\ndef _read_rule_beneath(permission_map: PermissionMap, rel: str) -> _Resolution | None:\n    \"\"\"A read-only override strictly beneath *rel* (or its metadata alias), which a subtree verb would reach.\"\"\"\n    for candidate in _permission_candidates(rel):\n        base = \"\" if candidate == \"/\" else candidate\n        for prefix, perm in permission_map.overrides:\n            if perm == \"read\" and prefix.startswith(base + \"/\"):\n                return _Resolution(\"read\", prefix)\n    return None"
+      },
+      {
+       "file_name": "src/vfs/base.py",
+       "fixed_code": "# Mutations whose effect reaches beneath the addressed path.\n_SUBTREE_OPS: frozenset[Op] = frozenset({\"delete\", \"restore\", \"sweep\", \"move\", \"copy\"})\n\n# in _gate_entry:\n            err = check_writable_composed(self._permission_layers(full), op, subtree=op in _SUBTREE_OPS)"
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "Needs an operator map with a read-only override nested under a writable non-root prefix (an advertised PermissionMap pattern) and a caller with row rights on the ancestor; a fresh mount's default posture already gives everyone read_write. delete, move and copy are ordinary agent verbs."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "Integrity and availability of data the operator marked read-only, within one mount: content can be replaced or planted (move/copy), trashed (delete) or irrecoverably purged (sweep). Row-level grants still apply, so no cross-principal read and no escape across mounts."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "Reproduced end to end through the public router verbs on InMemoryStorage with matched refused controls; the source shows the gate never consults overrides beneath the addressed path."
+    }
+   }
+  }
+ ],
+ "vfs:models/rows.py:_string:principal-columns-unpinned-collation-mysql-family": [
+  {
+   "from": "h10-obvious",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs:models/rows.py:_string:principal-columns-unpinned-collation-mysql-family",
+    "title": "owner_id and principal columns use the engine's default collation on MariaDB/MySQL, so a case- or accent-variant principal gets another owner's road directories",
+    "description": "vfs compares principal identities exactly in Python (Principal.sub, grants.resolve, Rights.admits). The SQL owner-arm predicate entry.owner_id == :owner runs on a column that pins a bytewise collation only on MSSQL. On MariaDB and MySQL, owner_id (and grants and memberships principal_id) compile as plain VARCHAR(255) and inherit the database default collation. MariaDB 11.x defaults to utf8mb4_uca1400_ai_ci and MySQL 8 to utf8mb4_0900_ai_ci; both are case- and accent-insensitive, and some are PAD SPACE. Picture a named principal whose sub differs from a victim's only by case, accents or trailing spaces, such as 'ALICE', 'Alicé' or 'alice ' against 'alice'. Principal.__post_init__ accepts these. That principal's owner arm then matches the victim's rows inside the SQL road query, Visibility.road (rights.py:553-580 via _owned_beneath, rights.py:1236-1252). Directories that hold victim-owned rows (the 'road') then show up in glob, ls and stat, including in the trash view, even though those directories are not visible to the principal. A simulation with a case-insensitive owner_id showed it: 'ALICE' sees '/private' in glob('/**') and ls('/'), and stat('/private') succeeds, while an unrelated 'bob' gets nothing and not_found. File names and content are not disclosed, because the Python Rights.admits filter compares owner_id exactly. Grants and memberships are re-keyed exactly in Python, so this does not escalate to grant or group inheritance.",
+    "claimed_root_cause": "_string() (src/vfs/models/rows.py:179-188) adds a binary collation variant only for 'mssql'. The mysql/mariadb family (and Oracle when NLS_COMP=LINGUISTIC) gets a VARCHAR whose equality follows the server's collation. Meanwhile the authority model (authority.py:75-99, grants.py:595-643, grants.py:485-498) treats subs as exact byte strings. SQL-only predicates on owner_id (rights.py:1220, 1250; ranges.py:128-130) therefore admit rows the Python authority would refuse. BytewiseString pins path and name (VARBINARY on mysql), but principal and owner columns are not pinned.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/authority.py",
+      "line": 87,
+      "scope": "Principal.__post_init__",
+      "description": "The host builds Principal(sub) from its IdP. Only empty, '*', 'group:'-prefixed and reserved exact names are refused, so 'ALICE', 'alice ' and 'Alicé' are accepted as principals distinct from 'alice'."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/grants.py",
+      "line": 638,
+      "scope": "resolve (owner floor)",
+      "description": "A single named subject gets OwnerArm(sub, trimmed) covering the mount outside its shared grants, keyed by its exact sub ('ALICE')."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/reads.py",
+      "line": 378,
+      "scope": "glob (also ls via reads.py:720/890, trash view reads.py:753)",
+      "description": "Directories the view does not show are passed to view.road() to decide whether they are on the road to a visible row."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 576,
+      "scope": "Visibility.road",
+      "description": "For each owner arm, _owned_beneath asks SQL which candidate directories hold a row owned by that owner. Python does not re-check the result."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1250,
+      "scope": "_owned_beneath",
+      "description": "The predicate is row.c.owner_id == owner. Under a case- or accent-insensitive collation, 'ALICE' matches rows owned by 'alice'."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/models/rows.py",
+      "line": 471,
+      "scope": "build_vfs_tables entries.owner_id",
+      "description": "Column('owner_id', _string(255)) compiles as 'owner_id VARCHAR(255)' with no COLLATE or binary type on mariadb/mysql (verified by DDL compile), so equality follows the server default collation."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/models/rows.py",
+      "line": 188,
+      "description": "_string returns String(length).with_variant(String(length, collation=MSSQL_UTF8_COLLATION), 'mssql'): binary collation is pinned for MSSQL only."
+     },
+     {
+      "file": "src/vfs/models/rows.py",
+      "line": 225,
+      "description": "BytewiseString gives the mysql family VARBINARY for path and name, showing the authors pin bytewise comparison for keys but not for principal and owner columns."
+     },
+     {
+      "file": "src/vfs/storage/grants.py",
+      "line": 497,
+      "description": "Rights.admits does self._owned.get(owner_id), an exact Python dict lookup. That is why file rows stay hidden while road directories leak, an inconsistency between the SQL and Python sides of the same rule."
+     },
+     {
+      "file": "src/vfs/storage/grants.py",
+      "line": 629,
+      "description": "Grant rows are re-keyed by their DB-returned principal_id and looked up by exact sub, so case-variant grant and membership rows fetched by a ci collation are dropped in Python. Impact is limited to the owner-arm SQL paths."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1220,
+      "description": "_units builds the per-owner visibility clause and_(entry.c.owner_id == owner, ...) used by SQL push-down in listing and search, the same collation-dependent comparison."
+     },
+     {
+      "file": "docker/compose.test.yml",
+      "line": 53,
+      "description": "The MariaDB test leg runs mariadb:11.8 with no collation override. The engine tests use one fixed principal per name and never a case-variant principal, so no test pins this."
+     }
+    ],
+    "blockers": [
+     "No real MariaDB or MySQL engine may run in this audit's sandbox. The behavior was shown only on SQLite with owner_id rewritten to COLLATE NOCASE as an analogue of utf8mb4_uca1400_ai_ci.",
+     "The deployment's actual database or table default collation, and whether the host's IdP can issue a sub that differs from another principal's only by case, accents or trailing spaces, are deployment facts outside source."
+    ],
+    "validation_plan": {
+     "local": "Against a disposable mariadb:11.8 container from docker/compose.test.yml (default collation), run the bundled probe scripts with url mariadb+aiomysql://vfs:vfs@localhost:33062/<db>. As system, write /private/alice-notes.txt with owner_id='alice' and set posture('/', 'none'). Then call glob(patterns=('/**',)), ls('/'), stat('/private') and ls('/private') as Authority.of(Principal('ALICE')), Principal('alice ') and Principal('Alicé'), with Principal('bob') as the control. Expected if real: the variants see '/private' and stat succeeds, while bob gets [] and not_found. Fix check: pin owner_id/principal_id/group_id/granted_by/actor columns to a binary type or collation on the mysql family (VARBINARY like BytewiseString, or COLLATE utf8mb4_bin), and add a regression test that a case-variant principal sees no road directory.",
+     "deployment": "The owner runs SHOW VARIABLES LIKE 'collation_database' (MariaDB/MySQL) or checks NLS_COMP/NLS_SORT (Oracle) on the production vfs schema, and confirms whether the IdP or host mapping can mint subs that differ from existing ones only by case, accents or trailing spaces."
+    }
+   }
+  }
+ ],
+ "vfs/storage/database/topology-subtree-authorized-before-collection": [
+  {
+   "from": "h03-mutations",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs/storage/database/topology-subtree-authorized-before-collection",
+    "title": "copy, move, delete and sweep authorize a subtree once, then act on rows collected later, including a concurrent rival's rows",
+    "description": "The topology and trash verbs judge the caller's rung over the source subtree once, inside the gate (WriteGate.subtrees). Later statements re-collect the rows they act on, live: copy and move fetch the subtree, delete stamps every live descendant by LIKE, and the sweep purge loops until its scope reads empty. The serialization point blocks only other serialized verbs; ordinary writes never wait on it. A row that another principal writes into the subtree between the gate and the collection is therefore copied, moved, tombstoned or permanently purged, although the caller holds no rung on it. Example: alice holds rights over her directory only through the owner floor, and bob holds add there. If bob's write lands in the window, alice's copy duplicates bob's file (which she cannot read) into her own space, owned by her, and she can then read it. Alice's sweep in the same window destroys bob's file for good. Run sequentially, all of these operations are permission_denied. A likely fix: inside the mutation, re-check each collected row with resolution.at(rung).admits(path, owner_id, everyone_level) and redrive or refuse on a miss. Alternatively, make child creations take a shared lock on the serialization row.",
+    "claimed_root_cause": "The authorization decision (WriteGate.subtrees, rights.py:730-781) runs over a point-in-time read. The mutation scope is re-collected afterwards by path pattern (topology.py:186 _fetch_subtree, topology.py:397 _descendant_rewrites, trash.py:483 _tombstone_descendants, trash.py:567 the _purge loop). Writes do not serialize with these verbs (serialized.py:115-118), and the server engines' topology isolation is READ COMMITTED (dialects.py:437,503). Nothing re-judges rows that arrived after the gate.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1692,
+      "scope": "DatabaseStorage._execute_transfer.gate",
+      "description": "A copy or move source is authorized by subtrees(sources, passing) at read or read_write. Delete (backend.py:763) and sweep (backend.py:862) make the same call."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 763,
+      "scope": "WriteGate._refused_beneath",
+      "description": "Pages through the rows that exist beneath the root at that moment and checks each with rights.admits. A row created afterwards is never seen."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/serialized.py",
+      "line": 117,
+      "scope": "serialize",
+      "description": "The lock row is read only by serialized verbs, so ordinary writes and creations commit concurrently with copy, move, delete and sweep on every server engine."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/topology.py",
+      "line": 186,
+      "scope": "transfer_rows",
+      "description": "After the gate, the subtree is re-read live by subtree_filter. Under READ COMMITTED it includes a rival's newly committed rows."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/trash.py",
+      "line": 567,
+      "scope": "_purge",
+      "description": "The sweep purge arm repeats its collection until the scope is empty, specifically to catch late children, and hard-deletes them without any authorization check."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/topology.py",
+      "line": 452,
+      "scope": "_execute_copy",
+      "description": "Every collected row, including the rival's, is minted at the destination with owner_id set to the copier and the destination label, and its body is copied (topology.py:479-515). The copier can then read it."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/trash.py",
+      "line": 483,
+      "description": "_tombstone_descendants stamps every live row under the claimed directory, and its docstring states that a child a rival landed after the snapshot rides with its parent."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/trash.py",
+      "line": 381,
+      "description": "The sweep purge arm calls _purge with subtree_filter and no proof predicate."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/topology.py",
+      "line": 397,
+      "scope_note": null,
+      "description": "A move rewrites descendants collected live after the root claim, so a late arrival is relocated to the destination with the destination's label."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 437,
+      "description": "PostgreSQL topology_isolation is READ COMMITTED (MariaDB matches at line 503), so each statement sees rows committed after the gate."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 754,
+      "description": "subtrees skips the read only when the caller's spans cover the subtree whole. The gap is reachable exactly where rights are partial: an owner floor, or a deeper posture narrowing a region that is still empty."
+     }
+    ],
+    "blockers": [
+     "The decisive interleaving needs a real concurrent commit on a server engine (PostgreSQL, MSSQL, MariaDB or Oracle). Real engines and Docker are prohibited in this sandbox. SQLite's BEGIN IMMEDIATE serializes all writers, so the race cannot happen locally.",
+     "The local evidence injects the rival's write on the victim's own session after WriteGate.subtrees. It simulates READ COMMITTED visibility; it is not an observed commit from a second connection.",
+     "The exact window per verb on each engine is unobserved: copy (gate to _fetch_subtree), move (gate to point_row, after which the root version guard applies), delete (gate to fetch_snapshot, after which the root version guard applies), and sweep (gate to the last purge collect)."
+    ],
+    "validation_plan": {
+     "local": "Add an engine-leg test to tests/storage/database/test_races.py, run through the db_test skill against the postgres, mssql, mariadb and oracle legs. Posture '/' is none. Alice writes /team/alice/a.txt while holding add on /team; that grant is then revoked. Bob is granted add on /team/alice, and alice add on /mine. Install a self-clearing handler on 'transfer:post-snapshot' that commits bob's write of /team/alice/s.txt on its own session, then run alice's copy of /team/alice to /mine/c. Assert the copy is refused, or that /mine/c/s.txt does not exist. Repeat for sweep on 'purge:post-collect' and assert bob's row survives. For delete, add a seam between the gate and fetch_snapshot."
+    }
+   }
+  }
+ ],
+ "vfs/storage/database/write-arbitration-absorb-without-reauthorization": [
+  {
+   "from": "h03-mutations",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs/storage/database/write-arbitration-absorb-without-reauthorization",
+    "title": "A write that the gate judged as a fresh create (add rung) can overwrite a rival's concurrently created file through insert arbitration",
+    "description": "write gates each target in upsert mode. A path absent at the gate is judged only at the create rung (add), which per ops.py lets a caller alter only its own rows. Occupied rows need contribute. If another principal creates the same path between the gate and alice's insert, the insert conflicts. On catch_retry engines (MSSQL, Oracle and the generic floor, all at the default READ COMMITTED), the occupant probe sees the rival's row and staged.absorb switches the create into a clobbering update of the rival's row. The update is guarded only by path and liveness, so an add-only caller replaces another owner's body. Sequentially, the same overwrite is permission_denied. The owner_id stays the rival's, and the replaced body goes to vfs_versions, which no verb reads. Under PostgreSQL's REPEATABLE READ pin the ON CONFLICT update should raise a serialization failure and redrive, and MariaDB's snapshot-blinded probe raises StaleSnapshot. Those engines are likely not affected, but this is unverified. A likely fix: when arbitration resolves to absorb or clobber for a non-whole authority, raise StaleSnapshot so that the redriven gate judges the occupant at contribute; or re-check the occupant's owner_id and everyone_level against the contribute rights before absorbing.",
+    "claimed_root_cause": "WriteGate._decide authorizes an absent target at the create rung (rights.py:881-886). Insert arbitration in writes.py (_resolve_rows absorb at writes.py:628-631, and the upsert on_conflict_do_update at writes.py:489) then adopts a rival's row as the write target without re-applying the primary-rung check that an occupied target requires.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 700,
+      "scope": "DatabaseStorage.write.run",
+      "description": "gate.targets(..., 'upsert') runs on the committed state at that moment, and the target path is absent."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 884,
+      "scope": "WriteGate._decide",
+      "description": "An absent target passes when minting.reaches holds at the create rung (add). Contribute is never asked."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 444,
+      "scope": "_insert_creates",
+      "description": "catch_retry engines insert under a savepoint; the rival's committed row raises an IntegrityError, and the chunk is redriven row by row."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 631,
+      "scope": "_resolve_rows",
+      "description": "With overwrite (the default), a non-directory occupant at the same path is absorbed: the staged create becomes an update of the rival's entry_id."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 690,
+      "scope": "_update_materials",
+      "description": "The absorb arm updates the rival's row without a version guard, and _replace_bodies writes the caller's body into it. mint_versions (writes.py:404) records the rival's replaced body."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/ops.py",
+      "line": 150,
+      "description": "write needs contribute on an occupied target and add for a fresh name; the add rung alters only one's own rows (ops.py:117-121)."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 468,
+      "description": "MSSQL is catch_retry with no op_isolation pin, so the server default READ COMMITTED applies. Oracle (line 533) and the GENERIC floor (line 557) are the same."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 436,
+      "description": "PostgreSQL pins op_isolation to REPEATABLE READ, which should turn a concurrent ON CONFLICT update into a retryable serialization failure (unverified)."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 100,
+      "description": "The clobber columns replace the material state and clear the tombstone, but keep the rival's owner_id."
+     }
+    ],
+    "blockers": [
+     "The decisive race needs a second connection committing on MSSQL or Oracle at their default isolation (and a check of whether RCSI changes the probe's view). Real engines are prohibited in this sandbox, and SQLite serializes writers with BEGIN IMMEDIATE.",
+     "The local evidence forces arbitration=catch_retry on SQLite and injects the rival write on the same session before _apply. It shows the code path; it does not show engine behavior.",
+     "Whether PostgreSQL REPEATABLE READ and MariaDB actually redrive, rather than clobber, is unobserved."
+    ],
+    "validation_plan": {
+     "local": "Add a race test to tests/storage/database/test_races.py and run it with the db_test skill on the mssql, oracle, postgres and mariadb legs. Posture '/' is none, and alice and bob each hold add on /drop. Install a self-clearing handler on 'write:before-apply' that commits bob's write of /drop/report.txt ('bob') on its own session, then run alice's write of /drop/report.txt ('ALICE'). Assert alice is refused (permission_denied after the redrive) and that a system read still returns 'bob'."
+    }
+   }
+  }
+ ],
+ "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify": [
+  {
+   "from": "w2c-compute",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs.base._grep_rows_in_hand:inline-unbudgeted-verify",
+    "title": "Chained grep over observations verifies content on the event loop with no wall, candidate or byte budget",
+    "description": "grep(observations=...) fetches the content of every listed row the caller can read and runs the regex verifier over the whole batch synchronously on the event-loop thread, with budget=None. The storage-tier grep bounds the same work with a 25,000-candidate budget, 32 MiB content chunks, a 10 s deadline, and an executor offload. The chained path has none of these, so one call can occupy the host's shared event loop in proportion to the total bytes the caller lists, times a pattern-dependent per-byte cost.",
+    "claimed_root_cause": "_grep_rows_in_hand calls match_texts (budget=None) inline instead of going through the storage tier's VerifyOffload, byte_chunked(CONTENT_BYTE_BUDGET), CANDIDATE_BUDGET and WALL_TIME_BUDGET controls. The observations list and the pattern length are uncapped.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 1433,
+      "scope": "AsyncVirtualFileSystem.grep",
+      "description": "With observations not None, grep dispatches to _grep_rows_in_hand after the parameter gate; no row-count cap applies."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/base.py",
+      "line": 1909,
+      "scope": "_grep_rows_in_hand",
+      "description": "Every candidate row without content is read in one self.read(observations=absent) call, with no candidate or byte budget."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/base.py",
+      "line": 1919,
+      "scope": "_grep_rows_in_hand",
+      "description": "match_texts runs over every texted row, synchronously on the coroutine's thread."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/pattern_matching/grep.py",
+      "line": 250,
+      "scope": "match_texts",
+      "description": "verifier.hit_lines / count_lines is called with budget=None."
+     },
+     {
+      "kind": "sink",
+      "file": "crates/vfs-core/src/verify.rs",
+      "line": 195,
+      "scope": "hits_batch",
+      "description": "Every body is matched to completion; the GIL is released, but the event loop waits on the call."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 120,
+      "description": "The storage tier declares CANDIDATE_BUDGET 25,000, POSTING_BYTE_BUDGET, WALL_TIME_BUDGET 10.0 s and CONTENT_BYTE_BUDGET 32 MiB."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/grep.py",
+      "line": 328,
+      "description": "The storage tier verifies through VerifyOffload(verifier, executor) in byte-budgeted chunks against the deadline."
+     },
+     {
+      "file": "src/vfs/pattern_matching/grep.py",
+      "line": 250,
+      "description": "match_texts passes budget=None to the engine."
+     },
+     {
+      "file": "crates/vfs-core/src/python.rs",
+      "line": 143,
+      "description": "A deadline exists only when a budget is given, and it is checked only before each body starts."
+     }
+    ],
+    "blockers": [
+     "No bounded local growth measurement of loop stall versus total listed bytes was captured this run",
+     "Whether a deployed host runs many agents on one event loop and passes agent-supplied observations through unchanged is outside the repository"
+    ],
+    "validation_plan": {
+     "local": "In the sandbox, write N rows of B bytes to an InMemoryStorage, run fs.grep(pattern, observations=[Observation(path=...) for each row]) next to a 1 ms asyncio ticker, and record the largest loop gap at total size S and 2S. Compare with fs.grep(pattern, allow_scan=True) over the same rows, which should stay offloaded and budgeted.",
+     "deployment": "Owner confirms whether the host runs several agents' verbs on one shared event loop and whether agent-controlled observations lists or patterns are size-limited before they reach vfs."
+    }
+   }
+  }
+ ],
+ "vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic": [
+  {
+   "from": "w2e-collation",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs:storage/backends/database:posture-region-sql-relies-on-unpinned-path-collation-oracle-generic",
+    "title": "Posture writes and relabels rely on bytewise path comparison that Oracle and GENERIC dialects do not pin",
+    "description": "Row rights trust the everyone_level label stored on each row. A posture change writes its posture row (_upsert_grant) and relabels its subtree (relabel_spans / _relabel_opens) through SQL predicates on path alone, and no Python re-check follows. Oracle and unknown dialects keep a path column with no collation pin. If the engine compares path case- or accent-insensitively (for example Oracle with NLS_COMP=LINGUISTIC and a _CI or _AI NLS_SORT, a schema DEFAULT_COLLATION, or a GENERIC engine whose default collation is case-insensitive), then a caller who passes the Python gate at path P can overwrite a case-variant posture row and relabel a case-variant subtree that belongs to another owner. That can expose the other owner's private rows to everyone. The posture gate itself is evaluated bytewise in Python, so the gate and the SQL write disagree about which region they mean.",
+    "claimed_root_cause": "BytewiseString pins bytewise collation only for postgresql, mssql and the mysql family (rows.py:221-228). Oracle and GENERIC fall back to the engine's default comparison. Meanwhile the posture upsert key (rights.py:1376) and the relabel range UPDATE (labels.py:500-507, plus the membership points in relabel_spans) decide which rows they mutate in SQL alone. They assume bytewise semantics that rights.py:45-49 declares but nothing enforces.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1026,
+      "scope": "DatabaseStorage.posture",
+      "description": "A named caller asks for a posture at path P."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1305,
+      "scope": "_grant_refusal",
+      "description": "Reach at P is judged in Python, bytewise. Posture rows found through a CI IN-list at a case variant do not affect the Python label_of lookup."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1376,
+      "scope": "_upsert_grant",
+      "description": "UPDATE grants WHERE principal_id='*' AND path_prefix=P. A CI comparison can match and rewrite another owner's case-variant posture row."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/labels.py",
+      "line": 307,
+      "scope": "Relabeller._advance",
+      "description": "The planned spans for P are rewritten by relabel_spans."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/labels.py",
+      "line": 504,
+      "scope": "_relabel_opens (Oracle/GENERIC literal OR)",
+      "description": "UPDATE entries SET everyone_level WHERE path > lo AND path < hi. A non-binary comparison widens this to rows outside P's binary region. Rights.admits then trusts the label (grants.py:491)."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/models/rows.py",
+      "line": 228,
+      "description": "Oracle and unknown dialects get a plain String with no collation pin. The docstring at 214-219 accepts this only as an ordering and byte-budget degradation."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 45,
+      "description": "The module contract says each bound goes through the path column's type 'so every engine compares bytewise'. That is not true for Oracle or GENERIC."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/labels.py",
+      "line": 504,
+      "description": "The literal-OR relabel used by Oracle and the generic floor, with no Python re-check of the rows it updates."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1376,
+      "description": "The posture upsert key compares path_prefix in SQL alone."
+     },
+     {
+      "file": "src/vfs/storage/grants.py",
+      "line": 491,
+      "description": "Rights.admits accepts any row whose stored label meets the rung, unless the row lies in a hole."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 553,
+      "description": "GENERIC has no range source and no collation knowledge. profile_for serves any unknown dialect from it."
+     }
+    ],
+    "blockers": [
+     "Whether a supported Oracle deployment actually runs with NLS_COMP=LINGUISTIC and a case- or accent-insensitive NLS_SORT, or with a non-binary schema DEFAULT_COLLATION, cannot be observed locally. Real engines are prohibited in this run.",
+     "Which collation python-oracledb (thin or thick) sessions inherit from the database, from logon triggers, or from NLS_LANG is not source-visible.",
+     "Which non-tuned SQLAlchemy dialects a host would plausibly serve as GENERIC, and what their default path collation is, is outside source.",
+     "The only local demonstration is a SQLite COLLATE NOCASE analogue. It was not promoted as evidence, and column-level NOCASE on SQLite also makes the unique path index case-insensitive, which differs from Oracle session-level linguistic comparison."
+    ],
+    "validation_plan": {
+     "local": "In the conformance suite's Oracle leg (db_test skill, owner-run Docker), set the session to NLS_COMP=LINGUISTIC with NLS_SORT=BINARY_CI. Create a private posture-none subtree at /projects owned by user B under an open read_write root. Have user A set a posture at /Projects. Then check whether B's posture row at /projects was rewritten and whether a third user can read /projects/secret.md. Repeat with stock NLS settings as the control.",
+     "deployment": "The owner should confirm which NLS_COMP, NLS_SORT and DEFAULT_COLLATION settings are supported for Oracle mounts, and whether unknown dialects are expected to compare bytewise. If not, pin a binary collation on Oracle (for example COLLATE BINARY on the path columns, or an ALTER SESSION in session_settings), and refuse or probe GENERIC engines whose comparison is not bytewise."
+    }
+   }
+  }
+ ],
+ "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges": [
+  {
+   "from": "w2b-derived",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs:storage/backends/database/signals.py:collect_graph:centrality-prior-counts-hidden-edges",
+    "title": "glean's centrality prior is built from hidden rows, so a visible score reveals how many hidden entries link to it",
+    "description": "The link-centrality signal is computed at reindex over the whole corpus: every live entry, every reference edge, the hierarchy smoothing, and min-max over all files. It ignores the caller's view. At query time glean multiplies each visible candidate's fused score by the stored factor. Any partial caller, anonymous included, can therefore compare a visible file's score against a calibrator with a known visible in-degree, and read back whether, and how many, hidden entries reference that file. The same holds for references extracted from hidden markdown bodies. graph inbound on the same file correctly shows no such edges, so the two verbs disagree. The same path also lets a writer use rows only they can see as a link farm, invisibly steering every other principal's ranking of a target they can read.",
+    "root_cause": "signals.collect_graph (signals.py:72-118) and the kernel (models/signals.py:28, signals.rs:71) build one corpus-wide prior with no Visibility. glean_rows applies signal_factors to every candidate whatever the caller's view (glean.py:390-392). The visible-set treatment that glean gives N, avg_dl and df (_visible_lexicon) is never applied to the signal leg.",
+    "intended_behavior": "Under a partial view, a hidden row never moves a visible score (glean.py:249-251, the ADR 065 rule 5 visible-set rule). Degree counts and stored link signals are read-class and should count only edges whose endpoints the caller may see (context/research/2026-10-14-the-permission-ladder-list-and-contribute.md:98). Archived spec 009 invariant 6 states this outright: centrality and pagerank must be computed over the visible subgraph only. The prior research names this exact leak and asks for the visible-set treatment or a documented exemption (2026-09-28-search-statistics-under-permissions-precedent.md:349). No exemption exists in any spec.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 1469,
+      "scope": "AsyncVirtualFileSystem.glean",
+      "description": "A partial or anonymous caller issues glean(query, authority=...); the router fans out with that authority."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1332,
+      "scope": "DatabaseStorage.reindex signal phase",
+      "description": "Reindex collects the graph once, with no authority or view, and computes and publishes each declared signal."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/signals.py",
+      "line": 105,
+      "scope": "collect_graph",
+      "description": "Every non-fs edge between live entries is collected, including edges from rows hidden from the eventual reader."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/models/signals.py",
+      "line": 46,
+      "scope": "centrality_prior",
+      "description": "The Rust kernel computes the measure, smooths through directory means that include hidden files, and min-max scales over all files."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/signals.py",
+      "line": 263,
+      "scope": "signal_factors",
+      "description": "Stored values for visible candidates become 1+beta*t(v) multipliers. There is no view parameter."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/glean.py",
+      "line": 392,
+      "scope": "glean_rows",
+      "description": "Each visible entry's fused score is multiplied by the hidden-influenced factor, min-max scaled (glean.py:393, 984-987) and returned as Observation.score."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/glean.py",
+      "line": 251,
+      "description": "The docstring promises 'a hidden row never moves a visible score' under a partial view."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/glean.py",
+      "line": 390,
+      "description": "signal_factors is called with no view, after both visibility-filtered legs."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/signals.py",
+      "line": 72,
+      "scope_note": null,
+      "description": "collect_graph has no authority or view parameter and pages every live entry and edge."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/graph.py",
+      "line": 307,
+      "description": "The control that graph applies, and that the signal leg lacks: an edge's far endpoint must pass holds(list), so hidden in-links are omitted from graph inbound."
+     },
+     {
+      "file": "context/specifications/archive/009-cloud-style-sharing-and-access-control/spec.md",
+      "line": 254,
+      "description": "Stated policy: centrality and pagerank are computed over the visible subgraph only, and no aggregate over hidden nodes leaks into visible-node scores."
+     },
+     {
+      "file": "context/research/2026-09-28-search-statistics-under-permissions-precedent.md",
+      "line": 349,
+      "description": "Names this leak ('A visible file's centrality can reveal hidden in-links') and requires visible-set treatment or a documented exemption. None exists."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "system_configuration",
+      "description": "The operator declares a link signal (InDegree, PageRank or Katz) on the mount's Ranker. The default Ranker declares none (ranking.py:385-391)."
+     },
+     {
+      "kind": "data_state",
+      "description": "reindex has run since the hidden edges or hidden markdown links were written. Some hidden rows reference a visible file, and the caller can read at least one calibrator file with a known visible in-degree that matches the same query."
+     },
+     {
+      "kind": "authorization_role",
+      "description": "The reader is any named or anonymous principal without whole-mount read. For the steering variant, the writer needs only modify on their own files and read on the target."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "bob (or anonymous), who can read /pub but not /alice, learns how many of alice's private files reference /pub/a.md by comparing glean scores. alice, as writer, can raise /pub/a.md for everyone through links from files only she can see.",
+     "payloads": [
+      "DatabaseStorage(url='sqlite+aiosqlite:///w.db', ranker=Ranker(signals=(Signal('centrality', weight=0.5),)))",
+      "system writes /pub/a.md 'zebra report alpha', /pub/b.md 'zebra report gamma', /pub/c.md 'zebra report delta with many more filler words so the body is longer', /alice/n0..n4.md; posture / none, /pub read; grant alice read_write on /alice; mkedge /pub/c.md -> /pub/b.md (visible calibrator)",
+      "alice: mkedge [/alice/n{i}.md -> /pub/a.md for i < k]  (or: hidden bodies containing '[ann](/pub/a.md)')",
+      "storage.reindex(); kernel.add_mount(storage, '/kb'); kernel.glean('zebra', globs=('/kb/pub/**',), authority=Authority.of(Principal('bob')))"
+     ],
+     "instructions": [
+      "Ran scratch/centrality_oracle.py (and scratch/markdown_variant.py <k>) under tools/sandbox-run.py: no network, empty env, scratch-only writes, CPU 60 s, wall 120 s, RSS 2 GiB. Interpreter: .venv/bin/python -I. SQLite files only.",
+      "For k in {0,1,2,5} hidden links, recorded bob's and anonymous's glean scores, bob's graph inbound on a.md and b.md, bob's glob of /kb/alice/**, and the system glean scores."
+     ],
+     "observed_result": "bob, anonymous and system get the same scores. a.md/b.md: k=0 0.6875/1.0; k=1 1.0/1.0; k=2 1.0/0.889041006; k=5 1.0/0.812914902. b.md's score falls strictly as k rises, so bob can read off whether a.md's hidden in-degree is below, equal to or above b.md's one visible in-link, and its size. The hidden-markdown-body variant gives the same values for k=0,2,5. bob's graph inbound on a.md shows no edges, and bob's glob of /kb/alice/** is empty."
+    },
+    "remediation": {
+     "strategy": "Never apply a whole-corpus prior to a partial caller. Smallest fix: in glean_rows, apply signal_factors only when view is None. Under a partial view, skip the signal leg and add a fixed info record with a constant explain that is the same whether any edges exist, so applied/'no entry earned a value' stops leaking. The fuller design stores per-visibility-class priors, for example one computed over the rows everyone may read for anonymous and posture-only callers, or computes a visible-subgraph prior at query time. Regression test: two worlds that differ only in hidden edges or hidden link-bearing bodies must give a partial caller byte-identical glean observations and legs.signals.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/storage/backends/database/glean.py",
+       "fixed_code": "    fused = _fuse(ranker, hits, vector_hits)\n    if view is None:\n        signals = await signal_factors(session, tables, profile, membership_budget, ranker, list(fused.entries))\n    else:\n        # The stored priors count every row; a partial caller's scores must not carry them.\n        signals = SignalFactors({}, [], {signal.name: {\"applied\": False, \"reason\": \"partial view\"} for signal in ranker.signals})\n    for entry_id, factor in signals.factors.items():\n        fused.entries[entry_id] *= factor"
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "low",
+      "reason": "Requires an operator to opt in to a link signal on the Ranker, and a reindex after the hidden links exist. Once that holds, any reader, including anonymous, can query it repeatedly with no special rights."
+     },
+     "impact": {
+      "score": "low",
+      "reason": "Discloses link metadata of hidden rows (existence and count of hidden entries referencing a visible file, including references extracted from hidden bodies), not their bodies. It also allows invisible ranking manipulation, but only of documents the victim may already read."
+     },
+     "overall_severity": "low"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "Complete source lineage with no visibility parameter anywhere on the path, a stated contrary policy in code and specs, and a bounded local run that shows a visible score changing monotonically with the hidden link count while graph hides those edges."
+    }
+   }
+  }
+ ],
+ "vfs/storage/replace.py:fuzzy-replacers-quadratic-inline-in-writer-transaction": [
+  {
+   "from": "w2d-reindex-edit",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs/storage/replace.py:fuzzy-replacers-quadratic-inline-in-writer-transaction",
+    "title": "edit's fuzzy replacers run quadratic pure-Python matching on the event loop inside the writer transaction, with no size, count or time bound",
+    "description": "Any principal that may edit one file, including its own, can send an edit whose old string misses exactly. The router then falls back to the fuzzy replacers in src/vfs/storage/replace.py, and three of them are quadratic. block_anchor_replacer scans from every first-anchor line to the end of the file, so it is O(L^2) in lines. It also runs a full-matrix pure-Python Levenshtein, O(M^2) in line length. line_trimmed_replacer pays O(L^2) through its per-match prefix sums and the per-match context split. edit_rows calls this code synchronously in the coroutine. It runs once per target, inside the SQLite BEGIN IMMEDIATE writer transaction. No cap applies to old/new length, the number of edits, the number of targets, or wall time. One small call therefore freezes the host's event loop for every agent sharing the process, and it holds the mount's write lock the whole time. Measured: a 16 KB file with a 5-byte old string blocked the loop for 1.08 s; a 2 KB file with a 2 KB old string blocked it for 0.74 s. Each doubling of input costs about 4x, and the cost multiplies by the number of targets.",
+    "root_cause": "replace() falls back to the fuzzy replacers whenever the exact search misses. block_anchor_replacer's forward scan has no exit when the last anchor is absent, levenshtein is a full O(n*m) Python matrix with no length cap, and line_trimmed/replace recompute offsets and context per match. edit_rows runs edited_entry inline in the async writer transaction for every target, with no offload, deadline or input caps.",
+    "intended_behavior": "An edit's matching cost should be bounded: near-linear in content and old_string size, with fuzzy fallback refused or capped above a declared work budget. CPU-bound matching should leave the event loop the way grep verify and reindex do (call_offloaded with a deadline), and should finish before the writer lock is taken, or at least without holding it unbounded, so one caller cannot stall other principals.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 1016,
+      "scope": "AsyncVirtualFileSystem.edit",
+      "description": "Caller-supplied old/new or edits list and path/observations; _gate_params (1035) checks types only and the call routes at 1057."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/params.py",
+      "line": 173,
+      "scope": "PARAM_SPECS['edit']",
+      "description": "old/new are 'str' and edits/observations are lists, with no length or count limit."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 734,
+      "scope": "DatabaseStorage.edit",
+      "description": "After the rights gate, edit_rows runs inside _execute_write (745), a BEGIN IMMEDIATE writer transaction on SQLite (1666-1673)."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 261,
+      "scope": "edit_rows",
+      "description": "edited_entry runs synchronously for every target; a failed target appends an error and the loop continues to the next one."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/editing.py",
+      "line": 38,
+      "scope": "edited_entry",
+      "description": "apply_edits threads every EditOperation through replace()."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/replace.py",
+      "line": 287,
+      "scope": "replace",
+      "description": "An exact miss falls through to line_trimmed_replacer and block_anchor_replacer; on many matches, 321-325 compute line number and context per match."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/replace.py",
+      "line": 182,
+      "scope": "block_anchor_replacer",
+      "description": "The forward scan runs from each first-anchor line to the end when the last anchor is absent, O(L^2); calculate_similarity calls levenshtein (202, defined 61-82), O(M^2) per middle line."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/replace.py",
+      "line": 179,
+      "description": "The nested loop over content_lines has no break unless the last anchor matches."
+     },
+     {
+      "file": "src/vfs/storage/replace.py",
+      "line": 66,
+      "description": "levenshtein allocates and fills a full (len(a)+1)x(len(b)+1) Python matrix, with no length cap."
+     },
+     {
+      "file": "src/vfs/storage/replace.py",
+      "line": 145,
+      "description": "line_trimmed_replacer recomputes start_pos with an O(i) sum for every match."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 261,
+      "description": "edited_entry is called inline in the coroutine; no call_offloaded, unlike grep verify and the reindex chunk pass."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1666,
+      "description": "_execute_write opens the writer transaction (BEGIN IMMEDIATE on SQLite) that is held across edit_rows."
+     },
+     {
+      "file": "src/vfs/params.py",
+      "line": 173,
+      "description": "The edit parameter specs declare no maximum for old, new, edits or observations."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/engine.py",
+      "line": 722,
+      "description": "On InMemoryStorage, _SerializedSessions serializes every session behind one asyncio.Lock, so other principals' ops also queue behind the edit."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "authorization_role",
+      "description": "The caller needs edit (modify) rights on at least one text entry, for example a file it wrote itself. No rights over other principals' data are needed."
+     },
+     {
+      "kind": "system_configuration",
+      "description": "The host process serves several agents or principals from one event loop and mount (the embedded-library model). The writer-lock effect applies to SQLite-backed mounts; on other engines the loop stall remains."
+     },
+     {
+      "kind": "data_state",
+      "description": "The target's content and the old string are shaped to miss exactly and reach a quadratic fuzzy path: many lines equal to the first anchor with the last anchor absent, a long differing middle line, or many whitespace-trimmed matches."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "A named agent principal (alice) with ordinary write and edit rights on its own file in a shared AsyncVirtualFileSystem over InMemoryStorage; another principal (bob) reads his own file concurrently.",
+     "payloads": [
+      "write /a8000.txt content='a\\n'*8000 (16 KB); edit(path='/a8000.txt', old='a\\nx\\nb', new='z')",
+      "write /l2000.txt content='a\\n'+'x'*2000+'\\nb\\n'; edit(path='/l2000.txt', old='a\\n'+'y'*2000+'\\nb', new='z')",
+      "write /t8000.txt content='a\\n'*8000; edit(path='/t8000.txt', old='  a', new='z')",
+      "the M=1000 levenshtein edit applied to K=4 targets through edit(observations=[...])"
+     ],
+     "instructions": [
+      "Run agents/w2d-reindex-edit/scratch/edit_scale.py under tools/sandbox-run.py (no network, empty env, CPU 60 s, wall 120 s, RSS 2 GiB) with .venv/bin/python -I.",
+      "For each shape and size n, 2n, 4n, time the public edit verb. Record the longest gap of a 5 ms asyncio ticker and the latency of bob's concurrent read of /bob.txt."
+     ],
+     "observed_result": "block_anchor L=2000/4000/8000: 71/274/1080 ms (x3.84, x3.94); levenshtein M=500/1000/2000: 42/178/737 ms (x4.22, x4.14); line_trimmed L=2000/4000/8000: 114/440/1679 ms (x3.86, x3.81); K=1/2/4 targets: 176/347/693 ms. Each time, the max event-loop gap and bob's read latency equalled the edit duration (for example 1078 ms gap and 1072 ms read at L=8000). All edits returned vfs.invalid and committed nothing."
+    },
+    "remediation": {
+     "strategy": "Bound the work and move it off the loop. (1) In block_anchor_replacer, precompute the indices of last-anchor lines once and find the next one by bisect, which removes the O(L^2) scan. Compute line start offsets once with a prefix sum and use them in both fuzzy replacers. Cap the context listed in the multi-match error at a few matches. (2) Replace the Python levenshtein with a banded or early-exit version, or a vfs-core kernel, and skip fuzzy similarity when a middle line exceeds a declared length or len(content_lines)*len(find_lines) exceeds a work budget. Refuse with a classified invalid error that names the exact-match requirement. (3) Run edited_entry for the batch through call_offloaded with a deadline, before or outside the writer transaction where the version guard already makes that safe. Regression test: count calls to str.strip or levenshtein cells, never wall time, for the 'a\\n'*L / 'a\\nx\\nb' shape at L and 2L, and assert linear growth.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/storage/replace.py",
+       "fixed_code": "from bisect import bisect_left\n\ndef block_anchor_replacer(content: str, find: str) -> Generator[Match]:\n    content_lines = content.split(\"\\n\")\n    find_lines = _split_dropping_trailing_blank(find)\n    if len(find_lines) < 3:\n        return\n    first_line, last_line = find_lines[0].strip(), find_lines[-1].strip()\n    stripped = [line.strip() for line in content_lines]\n    last_at = [j for j, line in enumerate(stripped) if line == last_line]\n    candidates: list[tuple[int, int]] = []\n    for i, line in enumerate(stripped):\n        if line != first_line:\n            continue\n        k = bisect_left(last_at, i + 2)\n        if k < len(last_at):\n            candidates.append((i, last_at[k]))\n    if len(candidates) > MAX_ANCHOR_CANDIDATES:\n        return\n    ...  # similarity unchanged, but levenshtein refuses lines longer than MAX_FUZZY_LINE_CHARS"
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "Any principal with edit rights on any one file, including its own, can trigger it with a few-KB request. Agents routinely issue edits whose old string misses, and nothing upstream in params.py, base.py or the storage caps old/new length, edit count or target count."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "The stall freezes the shared event loop for every other principal on the host, and on SQLite it holds the mount's writer lock for a time quadratic in input. 16 KB gave about 1 s; extrapolated at the measured 4x per doubling, 64 KB gives about 17 s. The effect is transient (ends when the call ends), leaves no persistent state, and repeats per call."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "The quadratic loops are plain in source. The growth (about 4x per doubling), the loop stall and the blocked read by a different principal were all observed through the public verb at three sizes per shape."
+    }
+   }
+  }
+ ],
+ "vfs-core.links.line_context:per-reference-whole-line-fold": [
+  {
+   "from": "w2d-reindex-edit",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs-core.links.line_context:per-reference-whole-line-fold",
+    "title": "markdown_refs folds the whole enclosing line for every reference, so one agent-written markdown line makes reindex hold the mount's writer transaction for quadratic time",
+    "description": "During reindex, the chunk pass parses every dirty markdown body with the Rust markdown_refs. For each link destination or path-shaped code span it calls line_context. That function scans back to the previous newline and forward to the next one, then folds the whole line, before it keeps 256 characters. So N references on one line of length ~N cost O(N^2). The pass is offloaded to a thread, so the event loop keeps running. But it runs inside chunk_dirty's writer transaction (BEGIN IMMEDIATE on SQLite), with no time or size budget. Every other principal's write on that mount waits for the whole parse. An agent that writes one 160 KB single-line markdown file makes the next operator reindex take 6.8 s instead of about 0.5 s, and other writers on the mount block for 6.5 s. Each doubling of the line costs about 3.5-4x. The stall repeats on every reindex after the agent rewrites the file.",
+    "root_cause": "line_context (crates/vfs-core/src/links.rs:71-75) recomputes the line bounds and folds the entire line per reference, rather than once per line or within a window bounded by MAX_CONTEXT_CHARS. extract_link_work runs inside _assess_and_split, awaited while chunk_dirty's writer transaction is open (indexing.py:330, backend.py:1375), with no deadline or per-body work cap.",
+    "intended_behavior": "The reference extraction should be linear in body size, with a per-reference context cost bounded by MAX_CONTEXT_CHARS. Reindex CPU over caller-written content should be bounded or should run without the mount's writer lock held, so one document cannot block other principals' writes for superlinear time.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 958,
+      "scope": "AsyncVirtualFileSystem.write",
+      "description": "A lower-trust principal writes a .md body of N links on one line; there is no body-size cap on SQLite or InMemory."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1375,
+      "scope": "DatabaseStorage._gram_phases",
+      "description": "The operator's reindex runs chunk_dirty inside _execute_write, a BEGIN IMMEDIATE writer transaction on SQLite and the single serialized session on InMemoryStorage."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/indexing.py",
+      "line": 330,
+      "scope": "chunk_dirty",
+      "description": "call_offloaded(_assess_and_split) is awaited with the writer transaction open and no deadline."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/indexing.py",
+      "line": 583,
+      "scope": "_assess_and_split",
+      "description": "extract_link_work(rows, ...) runs over every dirty markdown body."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/links.py",
+      "line": 76,
+      "scope": "extract_link_work",
+      "description": "extract_links -> native.markdown_refs over the bodies (models/links.py:78, python.rs:207)."
+     },
+     {
+      "kind": "propagation",
+      "file": "crates/vfs-core/src/links.rs",
+      "line": 54,
+      "scope": "markdown_refs",
+      "description": "line_context is called once per reference."
+     },
+     {
+      "kind": "sink",
+      "file": "crates/vfs-core/src/links.rs",
+      "line": 72,
+      "scope": "line_context",
+      "description": "rposition/position over the whole line plus fold_line over the whole line, per reference: O(N x line length)."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "crates/vfs-core/src/links.rs",
+      "line": 71,
+      "description": "line_context scans to both line ends and folds the full line before truncating to MAX_CONTEXT_CHARS."
+     },
+     {
+      "file": "crates/vfs-core/src/links.rs",
+      "line": 78,
+      "description": "fold_line builds the folded copy of the entire line and only then takes 256 chars."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/indexing.py",
+      "line": 330,
+      "description": "The offloaded split is awaited inside the writer transaction, with no budget."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1666,
+      "description": "_execute_write opens the writer transaction with BEGIN IMMEDIATE on SQLite, holding the write lock from the first read."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 398,
+      "description": "Other SQLite writers wait busy_timeout 5000 ms per attempt; with_retry (engine.py:298) gives 4 attempts before a conflict."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/engine.py",
+      "line": 722,
+      "description": "InMemoryStorage serializes all sessions behind one asyncio.Lock held for the whole transaction."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "authorization_role",
+      "description": "The attacker needs write rights to any one .md path on the mount, for example its own file."
+     },
+     {
+      "kind": "user_interaction",
+      "description": "The trusted operator or host runs reindex on the mount (the routine maintenance verb that fills indexes and vectors); agents cannot call it themselves."
+     },
+     {
+      "kind": "system_configuration",
+      "description": "Other principals write to the same mount while reindex runs. The writer-lock effect is direct on SQLite and InMemoryStorage; on server engines the transaction holds row locks from the stale-flag UPDATE only, so the shared effect there was not measured."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "A named agent principal (alice) writes one markdown file to a shared mount; the operator later runs storage.reindex(); another principal (bob) writes his own file during the reindex.",
+     "payloads": [
+      "write /doc.md content='[a](b.md) ' * 16000 (160 KB, one line)",
+      "control: write /doc.md content='[a](b.md)\\n' * 16000 (same bytes and refs on 16000 lines)",
+      "native split: markdown_refs([b'`a.md` ' * N]) versus markdown_refs([b'`a b` ' * N])"
+     ],
+     "instructions": [
+      "Run agents/w2d-reindex-edit/scratch/reindex_scale.py and md_rootcause.py under tools/sandbox-run.py (no network, empty env, CPU 60 s, wall 120 s, RSS 2 GiB) with .venv/bin/python -I.",
+      "For N=4000, 8000 and 16000 on a fresh InMemoryStorage, time reindex(). Record bob's concurrent write latency, a rival reindex() outcome and the longest event-loop gap. Repeat N=16000 on a file-backed SQLite DatabaseStorage."
+     ],
+     "observed_result": "InMemoryStorage one-line: reindex 559 / 1864 / 6819 ms at N=4000/8000/16000 (x3.34, x3.66). bob's write waited 218 / 1509 / 6478 ms; the event-loop gap stayed at most 85 ms; the rival reindex got vfs.conflict. Control on N lines: 165 ms (N=4000), 533 ms (N=16000), bob's write 7-188 ms. File SQLite N=16000: reindex 6722 ms, and bob's write on a separate pooled connection waited 6463 ms. Native split: path-shaped spans 1146 -> 4458 ms (x3.89) versus non-path spans 41.6 -> 84.4 ms (x2.03)."
+    },
+    "remediation": {
+     "strategy": "Make the context cost per reference O(MAX_CONTEXT_CHARS). One way: compute the newline offsets once per body with memchr, and find each reference's line by binary search. Because references come in document order, cache the folded context per line start, so each line is folded once and early-exits after MAX_CONTEXT_CHARS output chars. Separately, consider a per-body reference cap or time budget for the extraction, and doing the offloaded CPU before the writer transaction opens, since the chunked flip is already version-guarded. Regression test: count fold_line invocations or bytes scanned, never wall time, for one line with N and 2N references, and assert linear growth.",
+     "code_changes": [
+      {
+       "file_name": "crates/vfs-core/src/links.rs",
+       "fixed_code": "pub fn markdown_refs(parser: &mut MarkdownParser, body: &[u8]) -> Vec<MarkdownRef> {\n    let newlines: Vec<usize> = memchr::memchr_iter(b'\\n', body).collect();\n    let mut cached: Option<(usize, String)> = None;\n    // ... in the walk, replacing line_context(body, node.start_byte()):\n    let at = node.start_byte();\n    let k = newlines.partition_point(|&i| i < at);\n    let start = if k == 0 { 0 } else { newlines[k - 1] + 1 };\n    let end = newlines.get(k).copied().unwrap_or(body.len());\n    let context = match &cached {\n        Some((s, c)) if *s == start => c.clone(),\n        _ => { let c = fold_line(&String::from_utf8_lossy(&body[start..end])); cached = Some((start, c.clone())); c }\n    };\n    refs.push(MarkdownRef { dest, context });\n}\n// and fold_line stops pushing once MAX_CONTEXT_CHARS chars are emitted."
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "Writing one markdown file is ordinary agent capability, and reindex is routine operator maintenance. The attacker cannot start reindex, but every reindex after each rewrite of the file pays the cost again."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "All principals' writes on the mount block for a time quadratic in one file's line length: 6.5 s at 160 KB, and about 100 s extrapolated at 640 KB at the measured 3.5-4x per doubling. On file SQLite a writer blocked past about 4 x 5 s busy_timeout would fail with a conflict (inferred from source, not run). The event loop is not stalled, and the stall ends when the pass commits."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "The root cause is isolated by the native split (non-path spans with the same parse are linear). The end-to-end quadratic growth and the blocked concurrent writer were observed on InMemoryStorage and on file SQLite."
+    }
+   }
+  }
+ ],
+ "vfs/storage/database/labels:mint-reads-posture-outside-revision-lock-stale-everyone-level": [
+  {
+   "from": "w3a-labels",
+   "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "vfs/storage/database/labels:mint-reads-posture-outside-revision-lock-stale-everyone-level",
+    "title": "A write, move or copy that read the posture before a tightening commits keeps the old, more open everyone_level after the relabel clears its mark",
+    "description": "entries.everyone_level is a derived copy of the everyone posture. Once no relabel mark covers a row, readers trust it outright. Posture writes and Relabeller chunks serialize on the revision lock. The mint paths do not: write/mkdir labels_for at writes.py:379, and move/copy posture_beneath at topology.py:197 feeding lines 315, 373 and 453. They read the grants rows with plain SELECTs, outside that lock, and never re-check the relabels table. Take a write W whose snapshot predates a posture commit P that tightens a path to none. Postgres and MariaDB pin W's snapshot at its first statement, under op_isolation REPEATABLE READ. P's Relabeller runs and clears the mark while W is still open. The relabel cannot see W's uncommitted rows, so it skips them. W then commits its rows stamped with the old level, and no mark remains. Any named principal with no grant (bob) can then read the row, and anonymous grep and glob list it, although the posture says none. Where the old level was read_write, the stale label also admits modification. The label stays wrong until some later posture change covers that path, because nothing in src calls rebuild_labels. Locally, the consequence is shown on SQLite by passing the mint its pre-commit posture read. SQLite's BEGIN IMMEDIATE prevents the real interleaving, as the real seam showed.",
+    "claimed_root_cause": "labels_for and posture_beneath read the everyone posture rows without the revision lock (or any shared lock on it) and without consulting inflight relabel marks. The Relabeller rewrites only rows visible to its own statement, then clears the mark. A mint whose posture read predates a posture commit, and whose commit follows the relabel's pass over its path, therefore stamps a stale label that no mark covers.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 686,
+      "scope": "DatabaseStorage.write",
+      "description": "The write verb runs its plan via _execute_write (backend.py:1666-1673) with op_execution_options. On Postgres and MariaDB that stamps REPEATABLE READ (dialects.py:436,500), so the snapshot is fixed at the first statement."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 379,
+      "scope": "_apply",
+      "description": "After staging, labels_for is called for the creates. No hold_revision, no locking read, no relabels check precedes it in the write transaction."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/labels.py",
+      "line": 117,
+      "scope": "posture_rows",
+      "description": "A plain SELECT of the '*' grants rows. Under the write's snapshot it returns the posture as it stood before a concurrent posture commit."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/topology.py",
+      "line": 197,
+      "scope": "transfer_rows",
+      "description": "Move and copy compute posture_beneath with the same unlocked read (labels.py:456). They stamp it at topology.py:315 (moved root), 373 (descendants) and 453 (copied rows). The serialize() point is the lock table, not the revision lock."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1034,
+      "scope": "set_posture",
+      "description": "The posture write commits the row and the relabel mark together under the revision bump (backend.py:1594). The mark protects readers only while it stands."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/labels.py",
+      "line": 248,
+      "scope": "Relabeller.step",
+      "description": "Each chunk takes hold_revision and rewrites rows its statement sees (labels.py:350 and the range form). It cannot see the concurrent write's uncommitted rows. The last chunk deletes the mark and bumps the revision (labels.py:265-266)."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/grants.py",
+      "line": 491,
+      "scope": "Rights.admits",
+      "description": "With no hole standing, a row whose stored everyone_level is at least the needed rung is admitted. Visibility and WriteGate (rights.py:747, backend.py:821) and grep's per-row filter (grep.py:261) admit bob and anonymous to the stale-labeled row."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/labels.py",
+      "line": 1,
+      "description": "The module doc says the label is derived and in step by construction: 'stamped at every mint' from the posture rows, with the mark in force until the relabel settles. Nothing ties the mint's read to the lock that orders posture commits."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/revision.py",
+      "line": 60,
+      "scope_note": "",
+      "description": "hold_revision is the lock that relabel chunks take so that 'a chunk never writes a level a rival posture change has already replaced'. The mint paths do not take it."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 436,
+      "description": "Postgres pins op_isolation REPEATABLE READ for every op connection, writers included. MariaDB does the same at line 500. The write's posture read therefore comes from its first statement's snapshot."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 394,
+      "description": "The strongest visible control: anonymous calls addressing a path are judged from the posture rows, not the label. So an anonymous direct read stays refused, but list and search verbs and every named principal's reads trust the label."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/engine.py",
+      "line": 654,
+      "description": "On SQLite, writers open BEGIN IMMEDIATE, so a posture commit cannot land inside a write's window. That is why the real interleaving is unobservable locally (the seam rival got vfs.conflict)."
+     }
+    ],
+    "blockers": [
+     "The decisive interleaving is impossible on SQLite. Writers hold BEGIN IMMEDIATE from the first read (engine.py:649-654), and the real write:before-apply seam rival posture failed with vfs.conflict. Real engines (Postgres, MariaDB, MSSQL, Oracle) are prohibited in this sandbox. Locally only the consequence was demonstrated, by passing the mint its pre-commit posture read.",
+     "Postgres REPEATABLE READ: when the created row's existing parent lies inside the tightened region, the relabel rewrites the parent. The write's guarded parent bump (writes.py:1026) should then fail with 40001 and redrive with a fresh snapshot. That would leave only the cases where the posture is set at the created path itself (or at a directory the batch itself creates), plus move/copy under READ COMMITTED. This engine behaviour is unobserved.",
+     "MariaDB: whether innodb_snapshot_isolation (default ON from 11.6, error 1020) turns the parent bump into a restart, and whether a Relabeller range UPDATE (a current read with next-key locks) blocks on and then relabels a concurrently moved row's new path index entry, are both unobserved.",
+     "MSSQL: under default locking READ COMMITTED (no op_isolation), the relabel UPDATE would block on the writer's uncommitted inserted key and then relabel it. That would narrow the window to the gap between labels_for and the insert statement. Under READ_COMMITTED_SNAPSHOT the row-versioned scan would skip it. Which mode a deployment runs is a database setting outside source.",
+     "Oracle: the statement-level consistent read in the relabel UPDATE is expected to skip uncommitted inserted or moved rows, leaving the window from labels_for or posture_beneath to commit. Unobserved."
+    ],
+    "validation_plan": {
+     "local": "Rerun agents/w3a-labels/artifacts/evidence/stale_label.py under the sandbox. Experiments exp2 and exp3 show the consequence on SQLite: bob reads 'TOPSECRET payroll', and anonymous grep and glob list /eng/secret.md, at everyone_level=2 under posture none with no pending marks. rebuild_labels repairs it. exp1 shows SQLite refusing the interleaving through the real seam.",
+     "deployment": "Owner-run on the db_test containers (VFS_TEST_POSTGRES_URL etc.), following tests/storage/database/test_races.py. Grant alice read_write at /, set root posture read and mkdir /eng. Install a self-clearing handler on 'write:before-apply' that awaits storage.posture(path=/eng/secret.md, posture='none', authority=system) to completion on its own session, then have alice write /eng/secret.md. After commit, assert relabels is empty and read everyone_level for /eng/secret.md. Expected if vulnerable: 2. Then assert storage.read(path=/eng/secret.md, authority=Authority.of(Principal('bob'))) succeeds. Repeat on 'transfer:post-collect' with move and copy <tmp>/draft.md to /eng/secret.md. Repeat with the posture on an existing directory /eng to observe whether the parent-bump 40001 or 1020 redrive closes that case on each engine."
+    }
+   }
+  }
+ ],
+ "vfs:storage/backends/database/rights.py:grant_rows:uncapped-foreign-grant-rows-inflate-grantee-clause-fan": [
+  {
+   "from": "w4a-cost",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs:storage/backends/database/rights.py:grant_rows:uncapped-foreign-grant-rows-inflate-grantee-clause-fan",
+    "title": "Uncapped grant rows naming another principal make that principal's glean issue a growing number of statements and stall the shared event loop",
+    "description": "Any principal holding read_write at some path (anonymous everywhere under the default read_write root posture) can write any number of grant rows naming another sub or a group: id at distinct sub-paths. Every later call by the grantee (or by every member of the group) compiles all of those rows. The glean vector leg then runs one statement per visibility clause, about one per 100 planted rows. The rows persist, and the grantee cannot revoke them. Measured on InMemoryStorage: with 5000 planted rows a warm glean grew from 44 ms to 2.3 s and from 12 to 61 statements, and the event loop stalled for up to 455 ms per call. Each further grant also retires the grantee's RightsCache entry, which forces a fresh compile that grows with n.",
+    "root_cause": "grant_rows/_grant_refusal impose no count bound on rows naming a principal other than the granter. The glean vector leg uses the per-clause fan from visibility_clauses (glean.py:648-670) instead of the single-statement range source, so the statement count grows with the grantee's piece count. The compile (Resolution.compile) and statement construction run on the event loop.",
+    "intended_behavior": "A grantee's per-call cost should not grow without bound with rows another principal plants. Either cap the grant rows naming a principal (or per granter), or keep the vector leg's visibility pushdown at a statement count that is constant in the grantee's rights, as narrow() already does through visible_entries.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 987,
+      "scope": "DatabaseStorage.grant",
+      "description": "Any caller with read_write at the path may grant any lawful principal, including another sub or a group: id"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 915,
+      "scope": "grant_rows",
+      "description": "The gate checks only principal lawfulness, level and read_write at the path; there is no count cap. stamp_principals retires the grantee's cache"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 371,
+      "scope": "resolve_authority",
+      "description": "On a cache miss, the call reads every row naming the grantee's subjects and groups, then compiles them in Python"
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 418,
+      "scope": "visibility_clauses",
+      "description": "Splits the rights into OR-clauses of at most 200 units each, so the clause count grows linearly with planted prefixes"
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/glean.py",
+      "line": 648,
+      "scope": "vector leg",
+      "description": "Runs one statement per clause (and per probe window) on every dialect"
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 1349,
+      "description": "_lawful_principal accepts any non-reserved, non-blank id within the column length; no count check exists anywhere in the grant path"
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 205,
+      "description": "The default posture is read_write at the root, so under defaults anonymous passes the grant gate"
+     },
+     {
+      "file": "src/vfs/storage/backends/database/rights.py",
+      "line": 541,
+      "description": "narrow() uses the single-statement range source where the dialect has one; glean's vector leg does not, and the GENERIC floor fans out for all read verbs"
+     },
+     {
+      "file": "src/vfs/storage/backends/database/dialects.py",
+      "line": 666,
+      "description": "arm_budget caps clause width at 200 units, which keeps each statement bounded while the statement count grows"
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "authorization_role",
+      "description": "The attacker holds read_write at some path. Under the default root posture this includes anonymous."
+     },
+     {
+      "kind": "data_state",
+      "description": "The attacker plants rows naming the victim sub or a group: id at distinct prefixes the victim does not otherwise cover. The victim must use glean (any dialect), or any read verb on the GENERIC floor, to see the statement fan."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "A principal with read_write on its own subtree grants read on many distinct sub-paths to a victim sub",
+     "payloads": [
+      "for i in range(n): storage.grant(path=Path(f'/home/mallory/p{i:06d}'), principal='alice', level='read', authority=Authority.of(Principal('mallory')))",
+      "storage.glean(query='alpha doc', authority=Authority.of(Principal('alice')))"
+     ],
+     "instructions": [
+      "Create an InMemoryStorage, write 20 files owned by alice, set posture none at /, grant alice read_write on /home/alice and mallory read_write on /home/mallory as system",
+      "Plant 250 grants as mallory through grant(), then bulk-insert identical rows up to n",
+      "Count the statements alice's glob, read and glean calls issue, with a 1 ms asyncio ticker running, at n = 250, 1250, 2500 and 5000, inside the sandbox"
+     ],
+     "observed_result": "glean took 12/22/35/61 statements and made 3/13/26/52 clauses. Warm glean took 44/395/1267/2348 ms, and the largest event-loop gap was 17/133/187/455 ms. glob and read stayed at a constant statement count, but their cold compile grew from 1.0 to 26.4 ms and a single mallory grant forced it again."
+    },
+    "remediation": {
+     "strategy": "Route the glean vector leg's visibility through visible_entries (a join or a semi-join on the range source), as narrow() already does, so the statement count is constant in the grantee's rights. Separately, bound the number of grant rows naming one principal or written by one granter, or require the grantee's consent for rows that name it. Offload compiles above a size threshold."
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "It needs only read_write somewhere; the default posture grants that to anonymous. Planting is cheap (a few ms per grant), and the rows persist."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "It degrades a chosen victim's (or a whole group's) glean persistently and linearly with planted rows, and the event-loop stalls affect every caller in the process. No data is disclosed."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "medium",
+     "reason": "The growth was measured locally on SQLite only. The GENERIC fan-out for every read verb is source-derived, and real-engine timings were not observed."
+    }
+   }
+  }
+ ],
+ "vfs/storage/database/write-trusts-caller-authored-content-hash": [
+  {
+   "from": "w5a-content-hash",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs/storage/database/write-trusts-caller-authored-content-hash",
+    "title": "Caller-authored content_hash is stored unverified and keys cross-principal render lending and version skipping",
+    "description": "write(entries=[...]) stores the content_hash carried on the caller's Entry without measuring the body it stores. A bodiless bytes Entry keeps any hash, and so does an Entry built with the MEASURED_BODY validation context. The reindex render cache then lends a settled rendering per (content_hash, generation) with no owner or rights term, and the landing guard checks only the receiving row's own (forged) hash. Two effects follow. First, a principal who cannot read another's file but knows its hash obtains its rendered text, and can test whether the mount holds a given document. Second, a principal can plant a donor so that another principal's later upload of a known document is served attacker-chosen text through read, grep and glean. This is an integrity break in another principal's model-facing content. The same trust lets a contributor skip version minting and erase the prior body's history.",
+    "root_cause": "The storage write path (writes.py write_rows → staging.put_file → _material_values) takes entry.content_hash, which Entry's validator leaves caller-supplied for bodiless bytes entries and for MEASURED_BODY-vouched entries, as the row's hash. It never re-measures the stored body. render.py treats that hash as proof of byte identity when choosing a donor and when guarding the landing.",
+    "intended_behavior": "A row's content_hash must always be the hash of the body storage holds for it. A bodiless authored Entry must be refused, or must keep the stored row's measured metrics. Render and version dedup must depend only on storage-measured hashes, and must not draw donors from tombstoned rows.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/base.py",
+      "line": 2601,
+      "scope": "AsyncVirtualFileSystem._route_entry_batch",
+      "description": "Accepts any Entry instance from write(entries=...), path-gates it and dispatches it unchanged."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/models/entry.py",
+      "line": 228,
+      "scope": "Entry._derive_and_measure",
+      "description": "Measures only when data is not None or source=='text'. Otherwise the caller's content_hash stands, and MEASURED_BODY context overrides measurement."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 163,
+      "scope": "write_rows",
+      "description": "Passes entry.content_hash into WritePlan.put_file and the staged row."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/writes.py",
+      "line": 1172,
+      "scope": "_material_values",
+      "description": "Persists the staged content_hash. _replace_bodies keeps the old blob for a bodiless row."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/render.py",
+      "line": 184,
+      "scope": "cached_renderings",
+      "description": "Lowest-id settled donor per (content_hash, generation), with no principal, rights or deleted_at term."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/render.py",
+      "line": 336,
+      "scope": "land_renderings",
+      "description": "The stamp guard compares the key only to the receiving row's own content_hash, so the lent text lands as that row's content."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/models/entry.py",
+      "line": 238,
+      "description": "The text branch measures unless MEASURED_BODY is present. The bytes branch at 228 runs only when data is not None."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/render.py",
+      "line": 204,
+      "description": "The donor WHERE clause has only hash, source, stamp and status predicates."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/render.py",
+      "line": 283,
+      "description": "render_rows reuses seen[(hash, generation)] for any row in the page."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/versions.py",
+      "line": 145,
+      "description": "The pre-image version is skipped when its measured hash equals the staged (caller-supplied) hash."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/reads.py",
+      "line": 107,
+      "description": "List-level rows expose only path and kind, so H is not leaked to list-only callers. The attacker needs it from elsewhere."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "authorization_role",
+      "description": "The attacker is a named subject with write (add or higher) somewhere on the same mount as the victim's file. No rights on the victim's path are needed."
+     },
+     {
+      "kind": "data_state",
+      "description": "The attacker knows the exact sha-256 of the target document's bytes, for example a publicly distributed or shared document. For the reverse case, the attacker's donor must be the lowest-id settled row for that hash."
+     },
+     {
+      "kind": "system_configuration",
+      "description": "The operator runs reindex on the storage. This is routine and needed for any bytes rendering."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "Named subject alice with read_write only on /alice. Posture / is none, and bob owns /bob.",
+     "payloads": [
+      "Entry.model_validate({'path':'/alice/x.pdf','source':'bytes','content_hash':H_bob,'mime_type':'application/pdf'})",
+      "Entry.model_validate({'path':'/alice/d.pdf','source':'bytes','content_hash':H_public,'mime_type':'application/pdf'}) written over a row holding alice's own PDF bytes"
+     ],
+     "instructions": [
+      "In the sandbox on InMemoryStorage, set posture / to none and grant bob and alice read_write on their own prefixes.",
+      "Bob writes a dummy PDF. Run reindex. Confirm that alice's read and stat of bob's file return not_found.",
+      "Alice writes the bodiless Entry naming bob's hash. Run reindex. Alice reads her own path.",
+      "Separately, alice overwrites her own PDF row bodiless with the hash of a public document. Run reindex. Bob uploads that public document. Run reindex. Bob reads his file."
+     ],
+     "observed_result": "Alice's /alice/x.pdf returned render_status ok with bob's text ('BOB-SECRET salary 123456'), with the rendering report showing cached=1. A wrong-guess hash stayed pending. Bob's /bob/form.pdf returned alice's chosen text, and bob's grep for it hit his own file. A forged-hash overwrite in a contribute region minted 0 versions, against 1 for an honest overwrite."
+    },
+    "remediation": {
+     "strategy": "Measure at the storage seam. In write_rows, refuse a content-kind Entry that carries neither content nor data (or ignore its metrics and keep the stored row's). Recompute content_hash, size and lines from the staged body in the storage layer or the offload pool, never from the Entry. Reserve MEASURED_BODY for router-internal use, for example a private sentinel object rather than a public context key. In cached_renderings, add entry.deleted_at IS NULL. A rights-independent fix is that lending is safe once hashes are storage-measured.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/storage/backends/database/writes.py",
+       "fixed_code": "# in write_rows, before put_file:\nif entry.kind in CONTENT_KINDS and entry.content is None and entry.data is None:\n    plan.errors.append(classified(ErrorKind.invalid, entry.path, detail='a file write needs a body'))\n    continue\nmetrics = measure_bytes(entry.data) if entry.data is not None else measure_text(entry.content)\n# pass metrics.content_hash / size_bytes / lines instead of entry.*"
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "low",
+      "reason": "The attacker needs a writable path on the victim's mount and the exact hash of the target bytes. Without read access that mostly means a known or shared document. The poisoning case also needs to win the lowest-id donor race."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "It crosses a principal boundary in both directions. One direction discloses another principal's rendered text and gives an existence oracle. The other plants attacker-chosen text as another principal's file content, which reaches their agents' context through read, grep and glean. Version history can also be erased."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "high",
+     "reason": "Complete source lineage, and bounded local reproduction of every variant on InMemoryStorage through the public router API with dummy data."
+    }
+   }
+  }
+ ],
+ "vfs:storage/backends/database/backend.py:_embed_step:refused-batch-head-of-line-no-split-or-quarantine": [
+  {
+   "from": "w6a-embed",
+   "candidate": {
+    "proposed_verdict": "confirmed",
+    "fingerprint": "vfs:storage/backends/database/backend.py:_embed_step:refused-batch-head-of-line-no-split-or-quarantine",
+    "title": "One refused embed batch at the head of the NULL-embedding keyset stops vector indexing for every later writer on the store",
+    "description": "The reindex embed step always restarts at chunk id 0. It takes the lowest-id unembedded rows, cuts them into batches using a ceil(len/4) token estimate, and stops the whole step at the first page where any batch fails. A batch the provider refuses deterministically has no split, skip or per-row quarantine. Its rows stay NULL and form the same first batch on every later run. With the shipped OpenAI provider, ordinary text denser than about 3.3 chars per token (CJK, Cyrillic, emoji) exceeds the real 300000-token request cap while staying under the 250000 estimated budget. A principal with write access to any path on the mount can write about 4096 small CJK files (about 2 MB). After that, every chunk any principal writes later never gets a vector, across any number of reindex runs, and glean's vector leg misses all of it. A smaller amount of such text permanently leaves the neighbouring rows that share its batch (other principals' content) unembedded, and slows the rest to one page per run.",
+    "root_cause": "_embed_step (backend.py:1416-1483) treats every provider failure as transient: it records stopped_by and breaks the loop (backend.py:1466-1468), and the next run restarts at last=0 (backend.py:1442). embed_page/_embed_with_retry (embed.py:266-355) do not tell a deterministic refusal apart from a transient one, never bisect a refused batch, and keep no per-row failed state, so select_unembedded (embed.py:172-182) returns the same poison rows first on every run. token_batched (embed.py:112-133) meters with the OpenAI adapter's ceil(len/4) estimate (openai.py:63-64, provider.py:94-96), which undercounts token-dense scripts. Rows the writer controls can therefore push a batch past the hard cap the adapter itself declares (openai.py:34).",
+    "intended_behavior": "Batches should be metered by a bound that cannot undercount, such as UTF-8 bytes for byte-level BPE. A refused batch without Retry-After should be bisected down to single rows, and a single row still refused should be quarantined with a per-row failed state that select_unembedded skips and the report counts. This mirrors the render stage's _land (backend.py:1298-1321). The loop should then keep advancing to later pages, so one writer's content cannot stop vector indexing for other principals.",
+    "trace": [
+     {
+      "kind": "entrypoint",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 686,
+      "scope": "DatabaseStorage.write",
+      "description": "Principal alice, with read_write on /alice only, writes ordinary CJK text files. No content, script or length rule applies beyond the write gate."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/models/chunking.py",
+      "line": 217,
+      "scope": "recursive_text_split",
+      "description": "reindex chunks the bodies into rows of at most 2048 chars. Alice's rows get lower chunk ids than anything written later."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1442,
+      "scope": "DatabaseStorage._embed_step",
+      "description": "Every run starts the keyset at last=0."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/embed.py",
+      "line": 178,
+      "scope": "select_unembedded",
+      "description": "The page is the lowest-id 'embedding IS NULL' rows, so alice's rows come first on every run."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/embed.py",
+      "line": 125,
+      "scope": "token_batched",
+      "description": "Cost is provider.estimate_tokens = ceil(len/4), metered against 250000 (5/6 of 300000). A 2048-input batch of 160-char CJK rows estimates at 81920 tokens but is really about 319488."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/embed.py",
+      "line": 349,
+      "scope": "_embed_with_retry",
+      "description": "The provider refuses with a 400 that carries no Retry-After, and the error is re-raised with no split and no row marking."
+     },
+     {
+      "kind": "propagation",
+      "file": "src/vfs/storage/backends/database/embed.py",
+      "line": 319,
+      "scope": "embed_page",
+      "description": "gather(return_exceptions) keeps the first failure. The refused batch's rows land nothing."
+     },
+     {
+      "kind": "sink",
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1466,
+      "scope": "DatabaseStorage._embed_step",
+      "description": "outcome.failure records stopped_by and breaks, so later pages are never selected. The same rows head the next run, and every later principal's chunks stay embedding NULL indefinitely."
+     }
+    ],
+    "evidence": [
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1466,
+      "description": "Any provider failure on a page breaks the whole embed loop."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1442,
+      "description": "last = 0 on every run, so the poison rows are always re-selected first."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1317,
+      "description": "The sibling render stage retries row by row and quarantines a refused row as 'failed'. The embed step has no equivalent."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/embed.py",
+      "line": 121,
+      "description": "The batch budget is 5/6 of max_batch_tokens, metered by the provider's estimate."
+     },
+     {
+      "file": "src/vfs/embedding/provider.py",
+      "line": 96,
+      "description": "estimate_tokens = ceil(len/4), whatever the script."
+     },
+     {
+      "file": "src/vfs/embedding/openai.py",
+      "line": 34,
+      "description": "The shipped adapter declares MAX_BATCH_TOKENS=300000 and uses estimate_tokens (line 63-64)."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/embed.py",
+      "line": 358,
+      "description": "Only an exception carrying Retry-After is retried; a 400 refusal is not split or marked."
+     },
+     {
+      "file": "src/vfs/storage/backends/database/backend.py",
+      "line": 1477,
+      "description": "The operator sees only a retryable 'unavailable' warning naming no rows, while reindex reports success=True."
+     }
+    ],
+    "conditions": [
+     {
+      "kind": "system_configuration",
+      "description": "The mount is configured with an embedder whose hard caps are enforced on real tokens while vfs meters them with ceil(len/4). The shipped OpenAIEmbeddingProvider is the one shipped adapter that declares such caps. LangChain declares none, and local providers (model2vec, hashing) do not refuse."
+     },
+     {
+      "kind": "authorization_role",
+      "description": "The writer needs write access to some path on the same DatabaseStorage mount. No other right is needed, and reindex is run by the operator as usual."
+     },
+     {
+      "kind": "data_state",
+      "description": "The writer's token-dense rows must have lower chunk ids than the victims' unembedded rows, that is, be written before them or still be unembedded. A full stop needs about 4096 such rows (one EMBED_PAGE_ROWS page) with real tokens above about 147 per row. Fewer rows permanently strand only the rows that share their batch, and throttle the rest to one page per run."
+     },
+     {
+      "kind": "third_party_dependency",
+      "description": "OpenAI's tokenizer must count the text at more than about 1.2 times len/4, and must refuse a request over 300000 tokens deterministically, with a 400 and no Retry-After. The repository declares the cap. CJK at about 1 token per character in cl100k is widely documented, but it was not measured here: the provider was a local fake."
+     }
+    ],
+    "execution": {
+     "attacker_perspective": "An agent or user (alice) with read_write on its own subtree of a shared DatabaseStorage mount that is backed by the OpenAI embedder, whose victims (bob) write content later.",
+     "payloads": [
+      "4096 files /alice/notes/NNNNN.txt, each a distinct 160-character run of CJK ideographs from U+4E00 (estimate 40 tokens, real 156)",
+      "PARTIAL variant: 10 files of 300 CJK chars with max_batch_tokens scaled to 3000"
+     ],
+     "instructions": [
+      "Mount DatabaseStorage(url=sqlite+aiosqlite:///scratch<tmp>/full.db, embedder=CappedProvider) with a fake provider. It declares max_input_tokens=8192, max_batch_inputs=2048 and max_batch_tokens=300000, estimates with vfs.embedding.estimate_tokens, counts 1 token per CJK char when enforcing the caps, and raises a 400-shaped error with empty headers on an overrun.",
+      "As system, create /alice and /bob, grant alice and bob read_write on their own directories, and reindex once.",
+      "As alice, write the 4096 CJK files. As bob, write 50 ordinary English files.",
+      "Run reindex three times. After each run, count embedded and NULL chunk rows per principal. Then run glean as bob and read legs['vector'].",
+      "Control: the same run with zero alice files."
+     ],
+     "observed_result": "FULL, with caps and page size unscaled: in each of 3 runs, 2 requests were refused ([2048 inputs, 81920 estimated, 319488 real]). Bob stayed at 1 of 51 chunks embedded and unembedded=4146 every run. reindex returned success=True with the warning 'Unavailable: embedding stopped after 0 requests: BadRequest: Requested 319488 tokens, max 300000 tokens per request' (retryable=True). Bob's glean vector leg had hits=2. CONTROL: bob had 51 of 51 embedded after run 1, and the vector leg had hits=52. PARTIAL: the same 48-row first batch (alice's 10 plus 38 of bob's) was refused in all 3 runs, leaving bob at 63 of 101 embedded and the vector leg at hits=64."
+    },
+    "remediation": {
+     "strategy": "Meter with a bound that cannot undercount, and stop treating a deterministic refusal as a reason to end the run. (1) The OpenAI adapter's estimate_tokens should return the UTF-8 byte length: byte-level BPE never yields more tokens than bytes, so batches and truncation stay under the hard caps. (2) In embed_page, a refused batch without Retry-After should be bisected recursively, and a single row that is still refused should be returned as a per-row failure. (3) Those rows should get a quarantine stamp: an embed_failed column or a sentinel state that select_unembedded and count_unembedded exclude, reset when the chunk's content_hash changes, with the count reported in the embedding extra. (4) _embed_step should break only on transient failures (timeout, 429/Retry-After, network) and otherwise keep advancing 'last'. Regression test: a fake provider counting 1 token per CJK char and enforcing 300000 per request; alice writes 4096 CJK files and bob writes 50; after one reindex, all of bob's chunks are embedded and alice's are either embedded or counted as quarantined.",
+     "code_changes": [
+      {
+       "file_name": "src/vfs/embedding/openai.py",
+       "fixed_code": "    def estimate_tokens(self, text: str) -> int:\n        # byte-level BPE never emits more tokens than UTF-8 bytes: an upper bound the hard caps can trust\n        return max(1, len(text.encode(\"utf-8\")))"
+      },
+      {
+       "file_name": "src/vfs/storage/backends/database/embed.py",
+       "fixed_code": "async def _embed_or_split(provider, batch, timeout):\n    \"\"\"Vectors for *batch*; a deterministic refusal is bisected down to single rows, which come back as failures.\"\"\"\n    try:\n        return await _embed_with_retry(provider, [truncated_for(r.content, provider) for r in batch], timeout), []\n    except Exception as exc:\n        if _transient(exc) or len(batch) == 1:\n            if len(batch) == 1 and not _transient(exc):\n                return None, [(batch[0].id, exc)]\n            raise\n        mid = len(batch) // 2\n        left, lf = await _embed_or_split(provider, batch[:mid], timeout)\n        right, rf = await _embed_or_split(provider, batch[mid:], timeout)\n        return _merge(left, right), lf + rf"
+      }
+     ]
+    },
+    "severity": {
+     "likelihood": {
+      "score": "medium",
+      "reason": "The attacker cost is low: one ordinary write of about 2 MB of CJK text by any principal with write access to some path, and no special rights. It needs the OpenAI embedder (the only shipped adapter with hard caps) and token-dense content. Benign CJK or Cyrillic corpora with default 2048-char chunks trigger the same refusal (about 488 chunks per batch, about 1M chars, well over 300000 real tokens), so it will also happen without malice."
+     },
+     "impact": {
+      "score": "medium",
+      "reason": "The effect is persistent and store-wide: no chunk written later by any principal gets a vector, across every reindex, until an operator finds and deletes the poison rows or changes the provider. glean's vector leg silently misses that content, though the lexical leg still finds it, and nothing is disclosed. Each run also spends refused provider requests. The report names no rows, and its retryable=True flag invites endless retries."
+     },
+     "overall_severity": "medium"
+    },
+    "confidence": {
+     "score": "medium",
+     "reason": "The vfs logic (no split, skip or quarantine; break; restart at 0) is source-visible and was demonstrated with unscaled caps and page size. The external fact, OpenAI's real tokenizer counts and its 400 on going over 300000, comes from the repo's declared caps and public tokenizer behaviour, not from a live measurement."
+    }
+   }
+  }
+ ]
+}

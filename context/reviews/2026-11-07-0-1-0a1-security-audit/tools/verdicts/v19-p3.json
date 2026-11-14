@@ -1,0 +1,182 @@
+{
+ "decision": "confirmed",
+ "record": {
+  "verdict": "confirmed",
+  "fingerprint": "vfs:storage/backends/database/backend.py:_embed_step:refused-batch-head-of-line-no-split-or-quarantine",
+  "title": "One refused embed batch at the head of the NULL-embedding keyset stops vector indexing for every later writer on the store",
+  "description": "Each run of the reindex embed step starts again at chunk id 0. It selects the lowest-id rows that have no embedding, cuts them into batches using the provider's ceil(len/4) token estimate, and ends the whole step at the first page where any batch fails. When the provider refuses a batch deterministically, nothing splits the batch, skips it, or quarantines its rows. Those rows stay NULL and form the same head batch on every later run. The shipped OpenAI adapter meters batches with ceil(len/4) against 5/6 of its declared 300000-token request cap. Text denser than about 3.3 characters per real token, such as CJK, can therefore pass the estimate and still exceed the real cap. A principal with read_write on only its own subtree can write about 4096 small CJK files, about 2 MB in total. After that, no chunk written later by any principal on the same DatabaseStorage gets a vector, however many times reindex runs, and glean's vector leg misses that content. A smaller amount of such text leaves only the neighbouring rows in its batch unembedded, and limits the rest to one page of progress per run. Benign CJK corpora can trigger the same refusal.",
+  "root_cause": "_embed_step (backend.py:1416) sets last = 0 on every run (1442). On any outcome.failure it records stopped_by and breaks out of the loop (1466-1468). It does not tell a deterministic refusal apart from a transient one, and it never advances past the failing page. embed_page (embed.py:319-325) keeps the first failure and lands only the batches that answered. _embed_with_retry (embed.py:346-355) retries only when the error carries Retry-After. No code bisects a refused batch, and there is no per-row failed state. So select_unembedded (embed.py:172-182) returns the same rows first on every run. token_batched (embed.py:112-133) meters each row with provider.estimate_tokens. For OpenAIEmbeddingProvider that is ceil(len/4) (openai.py:63-64, provider.py:96), checked against 5/6 of MAX_BATCH_TOKENS=300000 (openai.py:34, embed.py:121). Rows the writer controls can therefore make up a batch whose real token count exceeds the hard cap that the adapter itself declares.",
+  "intended_behavior": "Batches should be metered with a bound that cannot undercount real tokens, for example the UTF-8 byte length for byte-level BPE. A batch refused without Retry-After should be bisected down to single rows. A single row that is still refused should be quarantined with a per-row failed state that select_unembedded and count_unembedded skip and that the report counts, as the render stage's _land already does (backend.py:1298-1321). The loop should keep advancing to later pages, so one writer's content cannot stop vector indexing for other principals.",
+  "trace": [
+   {
+    "kind": "entrypoint",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 686,
+    "scope": "DatabaseStorage.write",
+    "description": "Principal alice, with read_write on /alice only, writes ordinary CJK text files. Beyond the write gate, no rule limits their content, script or length."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/models/chunking.py",
+    "line": 217,
+    "scope": "recursive_text_split",
+    "description": "Reindex chunks each body into rows of at most 2048 characters. Alice's rows get lower chunk ids than any chunk written after them."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1442,
+    "scope": "DatabaseStorage._embed_step",
+    "description": "Every run starts the keyset at last = 0."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/embed.py",
+    "line": 178,
+    "scope": "select_unembedded",
+    "description": "The page is the lowest-id live rows whose embedding is NULL, so alice's rows come first on every run."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/embed.py",
+    "line": 125,
+    "scope": "token_batched",
+    "description": "Each row's cost is provider.estimate_tokens, which is ceil(len/4) for the OpenAI adapter, checked against 250000 (5/6 of 300000). A batch of 2048 rows of 160 CJK characters estimates at 81920 tokens. With about 1 real token per ideograph it is 319488."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/embed.py",
+    "line": 349,
+    "scope": "_embed_with_retry",
+    "description": "The provider refuses with a 400 that carries no Retry-After. The openai client does not retry a 400, and the error is re-raised without splitting the batch or marking its rows."
+   },
+   {
+    "kind": "propagation",
+    "file": "src/vfs/storage/backends/database/embed.py",
+    "line": 319,
+    "scope": "embed_page",
+    "description": "gather(return_exceptions=True) keeps the first failure. The refused batch's rows land nothing."
+   },
+   {
+    "kind": "sink",
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1466,
+    "scope": "DatabaseStorage._embed_step",
+    "description": "outcome.failure records stopped_by and breaks the loop, so later pages are never selected. The same rows head the next run, and every chunk written later by any principal stays with a NULL embedding."
+   }
+  ],
+  "evidence": [
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1466,
+    "description": "A failed batch on any page breaks the whole embed loop (stopped_by at 1467, break at 1468)."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1442,
+    "description": "last = 0 on every run, so the refused rows are always selected first again."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1317,
+    "description": "The sibling render stage retries row by row and quarantines a refused row as 'failed'. The embed step has nothing equivalent."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/embed.py",
+    "line": 121,
+    "description": "The batch budget is 5/6 of max_batch_tokens, metered by the provider's own estimate."
+   },
+   {
+    "file": "src/vfs/embedding/provider.py",
+    "line": 96,
+    "description": "estimate_tokens is ceil(len/4), at least 1, whatever the script."
+   },
+   {
+    "file": "src/vfs/embedding/openai.py",
+    "line": 34,
+    "description": "The shipped adapter declares MAX_BATCH_TOKENS=300000 and meters with the generic estimate_tokens (line 64)."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/embed.py",
+    "line": 358,
+    "description": "_retry_after_seconds returns None for a 400 without Retry-After, so the refusal is re-raised without a split or a row mark."
+   },
+   {
+    "file": "src/vfs/storage/backends/database/backend.py",
+    "line": 1479,
+    "description": "The operator sees only a retryable 'unavailable' warning that names no rows, while reindex reports success=True."
+   },
+   {
+    "file": "agents/v19-p3/artifacts/evidence/run-4096.json",
+    "line": 1,
+    "description": "Independent repro with the real OpenAIEmbeddingProvider and a real openai.BadRequestError. In both runs both requests were refused ([2048 inputs, 319488 tokens] each). Bob stayed at 1 of 41 chunks embedded, unembedded stayed 4136, success=True, and bob's glean vector leg returned hits=2."
+   },
+   {
+    "file": "agents/v19-p3/artifacts/evidence/run-0.json",
+    "line": 1,
+    "description": "Control without alice's files: bob was 41 of 41 embedded after run 1, and the vector leg returned hits=42."
+   },
+   {
+    "file": "agents/v19-p3/artifacts/evidence/repro.py",
+    "line": 1,
+    "description": "Repro harness: no network, the real OpenAI adapter, and a fake client that enforces 300000 tokens per request, counting 1 token per CJK ideograph."
+   }
+  ],
+  "conditions": [
+   {
+    "kind": "system_configuration",
+    "description": "The mount uses an embedder whose hard caps are enforced on real tokens while vfs meters them with ceil(len/4). The shipped OpenAIEmbeddingProvider is the only shipped adapter that declares such caps. LangChain declares none, and the local providers do not refuse."
+   },
+   {
+    "kind": "authorization_role",
+    "description": "The writer needs write access to some path on the same DatabaseStorage mount and no other right. The operator runs reindex as usual."
+   },
+   {
+    "kind": "data_state",
+    "description": "The token-dense rows must have lower chunk ids than the victims' unembedded rows: written before them, or still unembedded. A full stop needs about 4096 rows, one EMBED_PAGE_ROWS page, with more than about 147 real tokens per row. Fewer rows strand only the rows that share their batch, and limit progress to one page per run."
+   },
+   {
+    "kind": "third_party_dependency",
+    "description": "OpenAI's tokenizer must count the text at more than about 1.2 times len/4, and must refuse a request over 300000 tokens deterministically with a 400 and no Retry-After. The repository's adapter docstring declares this cap as documented. The installed openai client (_base_client.py _should_retry) retries only 408, 409, 429 and 5xx, not 400. The real cl100k token density of CJK was not measured locally; the repro used a stand-in counter of 1 token per ideograph."
+   }
+  ],
+  "execution": {
+   "attacker_perspective": "An agent or user (alice) with read_write on its own subtree of a shared DatabaseStorage mount that uses the OpenAI embedder. The victims (bob) write content later.",
+   "payloads": [
+    "4096 files /alice/n/NNNNN.txt, each a distinct 160-character string: a 6-character id prefix followed by CJK ideographs from U+4E00 (estimate 40 tokens; stand-in real count about 154)"
+   ],
+   "instructions": [
+    "Mount DatabaseStorage(url=sqlite+aiosqlite:///<scratch>/r.db, embedder=OpenAIEmbeddingProvider(fake_client, 'text-embedding-3-small', dimensions=256)). The fake client's embeddings.create counts 1 token per CJK ideograph and ceil(rest/4) for other text, and raises openai.BadRequestError with an httpx 400 response and no Retry-After when a request exceeds 300000 tokens.",
+    "As system, write /alice/README.txt and /bob/README.txt, grant each principal read_write on its own directory, and run reindex once.",
+    "As alice, write the 4096 CJK files. As bob, then write 40 ordinary English files.",
+    "Run reindex twice. After each run, count embedded and NULL chunk rows per top-level directory. Then run glean as bob and read legs['vector'].",
+    "Control: the same steps with zero alice files."
+   ],
+   "observed_result": "Attack: in each of the 2 runs the provider got 2 requests, both refused ([2048 inputs, 319488 tokens]). Bob stayed at 1 of 41 chunks embedded and unembedded=4136. reindex returned success=True with one warning, vfs.unavailable retryable=True: 'embedding stopped after 0 requests: BadRequestError: Requested 319488 tokens, max 300000 tokens per request'. Bob's glean vector leg returned hits=2. Control: bob was 41 of 41 embedded after run 1, and the vector leg returned hits=42."
+  },
+  "remediation": {
+   "strategy": "Meter with a bound that cannot undercount, and stop treating a deterministic refusal as a reason to end the run. (1) The OpenAI adapter's estimate_tokens should return the UTF-8 byte length, because byte-level BPE never yields more tokens than bytes. (2) embed_page should bisect a batch refused without Retry-After, and return a single row that is still refused as a per-row failure. (3) Quarantine such rows with a failed marker that select_unembedded and count_unembedded exclude, reset it when the chunk's content_hash changes, and report the count in the embedding extra. (4) _embed_step should break only on transient failures (timeout, 429 or Retry-After, network errors) and otherwise keep advancing last. Regression test: a fake provider that counts 1 token per CJK character and enforces 300000 per request; alice writes 4096 CJK files and bob writes 40; after one reindex, all of bob's chunks are embedded.",
+   "code_changes": [
+    {
+     "file_name": "src/vfs/embedding/openai.py",
+     "fixed_code": "    def estimate_tokens(self, text: str) -> int:\n        # byte-level BPE never emits more tokens than UTF-8 bytes: an upper bound the hard caps can trust\n        return max(1, len(text.encode(\"utf-8\")))"
+    }
+   ]
+  },
+  "severity": {
+   "likelihood": {
+    "score": "medium",
+    "reason": "The attacker needs only ordinary write access to some path and about 2 MB of CJK text. The deployment must use the OpenAI embedder, the only shipped adapter with hard caps. Benign CJK or Cyrillic corpora with default 2048-character chunks also exceed the real cap, so this can happen without any malice."
+   },
+   "impact": {
+    "score": "medium",
+    "reason": "The effect is persistent and store-wide, and it crosses principals: no chunk written later gets a vector on any reindex until an operator deletes or rewrites the offending rows or changes the code. glean's vector leg silently misses that content. The lexical leg and all other verbs are unaffected, and nothing is disclosed or lost. The warning names no rows and is marked retryable."
+   },
+   "overall_severity": "medium"
+  },
+  "confidence": {
+   "score": "medium",
+   "reason": "The vfs logic (no split, skip or quarantine; break; restart at 0) is visible in source, and I reproduced it independently through the real shipped OpenAI adapter and a real openai.BadRequestError, with caps and page size unscaled. The one external fact, OpenAI's real CJK token density and its 400 on a request over 300000 tokens, rests on the repository's declared caps and public tokenizer behaviour, not on a local measurement."
+  }
+ }
+}

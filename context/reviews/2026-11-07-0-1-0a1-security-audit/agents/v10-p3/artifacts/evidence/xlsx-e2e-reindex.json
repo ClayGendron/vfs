@@ -1,0 +1,50 @@
+[
+ {
+  "shape": "control 3 cells",
+  "file_bytes": 4816,
+  "write_ok": true,
+  "reindex_ok": true,
+  "rendering": {
+   "rendered": 1,
+   "empty": 0,
+   "unsupported": 0,
+   "failed": 0,
+   "cached": 0,
+   "unrendered": 0
+  },
+  "table_entries": 12,
+  "reindex_peak_traced_bytes": 710130
+ },
+ {
+  "shape": "L R=4000 C=2000",
+  "file_bytes": 30928,
+  "write_ok": true,
+  "reindex_ok": true,
+  "rendering": {
+   "rendered": 1,
+   "empty": 0,
+   "unsupported": 0,
+   "failed": 0,
+   "cached": 0,
+   "unrendered": 0
+  },
+  "table_entries": 8006001,
+  "reindex_peak_traced_bytes": 68717035
+ },
+ {
+  "shape": "L R=8000 C=4000",
+  "file_bytes": 56977,
+  "write_ok": true,
+  "reindex_ok": true,
+  "rendering": {
+   "rendered": 1,
+   "empty": 0,
+   "unsupported": 0,
+   "failed": 0,
+   "cached": 0,
+   "unrendered": 0
+  },
+  "table_entries": 32012001,
+  "reindex_peak_traced_bytes": 270867865
+ }
+]

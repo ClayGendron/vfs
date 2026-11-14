@@ -1,0 +1,74 @@
+{
+ "missing_units": [
+  {
+   "surface": "src/vfs/storage/backends/database/writes.py#_apply labels_for at mint, and topology.py#posture_beneath at move/copy/restore",
+   "boundary": "src/vfs/storage/backends/database/labels.py#everyone_level, a stored copy of the posture, kept in step by Relabeller under the revision lock",
+   "subsystem": "src/vfs/storage/backends/database",
+   "attack_class": "DATA-ISOLATION-AND-LIFECYCLE.md#Deletion, revocation, and lifecycle attack classes",
+   "starting_paths": [
+    "src/vfs/storage/backends/database/labels.py",
+    "src/vfs/storage/backends/database/writes.py",
+    "src/vfs/storage/backends/database/topology.py",
+    "src/vfs/storage/backends/database/revision.py",
+    "src/vfs/storage/backends/database/rights.py",
+    "src/vfs/storage/backends/database/serialized.py",
+    "src/vfs/storage/backends/database/dialects.py",
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "selected_companion_blocks": [
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Deletion, revocation, and lifecycle attack classes",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+    "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md#Computational amplification attack classes",
+     "reason": "this unit is about correct labels under concurrency, not cost; relabel cost is owned by the posture and collation peers"
+    },
+    {
+     "block": "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+     "reason": "the boundary is a SQL-stored derived label, not model context"
+    }
+   ],
+   "reason": "entries.everyone_level is a stored copy of the posture rows. After the in-flight relabel mark clears, readers trust it through the index seek (labels.py:1-33). A posture write takes the revision lock (revision.py:1-12, rights.py:1032-1034), and so does each Relabeller chunk (labels.py:248). The two mint paths take no such lock. writes.py:379 calls labels_for, which reads posture rows with no hold_revision. topology.py:315,373,453 stamps labels from posture_beneath, under only the serialize() lock that posture writes never take (serialized.py:1-20). So a write or move whose snapshot was taken before a posture commit (op_isolation is REPEATABLE READ on Postgres and MariaDB, dialects.py:436,500; MSSQL, Oracle and GENERIC use the engine default) can commit rows carrying the old everyone level. That can happen after the Relabeller's cursor has passed their path, or at moved paths it never revisits. The result: a row stays readable by everyone, anonymous included, after the posture was tightened to none, with no mark left to correct it. The only prior check of the claim 'a stored label equals the current posture label' was sequential and source-only (in the write-gate unit). The candidate topology and arbitration races have a different root cause: authorization collected after the gate, not a stale label. Seam hooks (seam(...)) allow a deterministic schedule on SQLite, as earlier hunters used."
+  },
+  {
+   "surface": "src/vfs/results/envelope.py#Result.__str__ -> render.py#render_result, the agent-facing text",
+   "boundary": "src/vfs/results/render.py#_render_read multi-observation '==> path <==' framing and the appended error block, over stored content written by other principals",
+   "subsystem": "src/vfs/results",
+   "attack_class": "AI-AND-LLM.md#Output and disclosure attack classes",
+   "starting_paths": [
+    "src/vfs/results/render.py",
+    "src/vfs/results/envelope.py",
+    "src/vfs/results/preview.py",
+    "src/vfs/results/projection.py",
+    "src/vfs/results/kinds.py"
+   ],
+   "selected_companion_blocks": [
+    "AI-AND-LLM.md#Core discipline",
+    "AI-AND-LLM.md#Output and disclosure attack classes",
+    "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+    "AI-AND-LLM.md#Universal moves",
+    "AI-AND-LLM.md#Validation rules"
+   ],
+   "excluded_blocks": [
+    {
+     "block": "AI-AND-LLM.md#MCP and sub-agent trust classes",
+     "reason": "no MCP surface in source"
+    },
+    {
+     "block": "CLIENT-SIDE.md#Core discipline",
+     "reason": "rendering is plain text with no browser sink in the repo"
+    }
+   ],
+   "reason": "AI-AND-LLM Output and disclosure is a selected companion class, but no unit has ever selected it. Every exclusion of it uses the boilerplate 'a peer unit owns it', and no peer does. The library's model-facing output is render_result, called from Result.__str__ (envelope.py:800-807). It defends error lines on purpose: newlines are collapsed 'so an entry can never forge a sibling error line' (render.py:90-123). Table cells are escaped too (render.py:276-279). Yet _render_read emits each body verbatim under '==> {path} <==' headers (render.py:310-321), and the error block is appended after the body (render.py:42-80). So one stored body can forge a block attributed to another, possibly unreadable, path, or a vfs ERROR line with a retry hint, inside a victim agent's multi-path read. Grep and glean prefix each line (render.py:327-466), so they look safe. A hunter should confirm whether any forged provenance reaches a deterministic decision or a capability, per the class's validation rule, and should check that rendered error detail and data fields carry nothing above the caller's rung."
+  }
+ ],
+ "reassign_ids": [
+  "src%2Fvfs%2Fbase.py%23glean%20query%20text::src%2Fvfs%2Fstorage%2Fbackends%2Fdatabase%2Fbackend.py%23_embed_query%2C%20the%20query-vector%20cache%2C%20and%20glean.py%23tokenize%20term%20fan-out::src%2Fvfs%2Fstorage::RESOURCE-EXHAUSTION-AND-AVAILABILITY.md%23Computational%20amplification%20attack%20classes"
+ ],
+ "resolved_prior_leads": [],
+ "stop": false
+}

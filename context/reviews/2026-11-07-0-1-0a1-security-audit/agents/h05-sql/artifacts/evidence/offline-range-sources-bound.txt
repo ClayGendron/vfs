@@ -1,0 +1,30 @@
+json_each point_rows | payload in SQL text: False | payload in params: True
+    SELECT pts.value  FROM json_each(?) AS pts
+json_each open_rows | payload in SQL text: False | payload in params: True
+    SELECT json_extract(rng.value, ?) AS json_extract_1, json_extract(rng.value, ?) AS json_extract_3  FROM json_each(?) AS rng
+json_each membership | payload in SQL text: False | payload in params: True
+    SELECT s1.vfs_entries.path  FROM s1.vfs_entries  WHERE s1.vfs_entries.path IN (__[POSTCOMPILE_path_1])
+unnest point_rows | payload in SQL text: False | payload in params: True
+    SELECT anon_2.value COLLATE "C" AS anon_1  FROM unnest(%(param_1)s::TEXT[]) AS anon_2(value)
+unnest open_rows | payload in SQL text: False | payload in params: True
+    SELECT anon_2.lo COLLATE "C" AS anon_1, anon_2.hi COLLATE "C" AS anon_3  FROM unnest(%(param_1)s::TEXT[], %(param_2)s::TEXT[]) AS anon_2(lo, hi)
+unnest membership | payload in SQL text: False | payload in params: True
+    SELECT s1.vfs_entries.path  FROM s1.vfs_entries  WHERE s1.vfs_entries.path IN (__[POSTCOMPILE_path_1])
+openjson point_rows | payload in SQL text: False | payload in params: True
+    SELECT CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AS anon_1  FROM openjson(:openjson_1) AS pts
+openjson open_rows | payload in SQL text: False | payload in params: True
+    SELECT CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AS anon_1, CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AS anon_2  FROM OPENJSON(:openjson_pairs_1) WITH (lo nvarchar(max) '
+openjson membership | payload in SQL text: False | payload in params: True
+    SELECT s1.vfs_entries.path  FROM s1.vfs_entries  WHERE s1.vfs_entries.path IN (SELECT CAST(keys.v COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AS anon_1  FROM (VALUES (:param_1), (:param_2)) AS keys (v))
+json_table point_rows | payload in SQL text: False | payload in params: True
+    SELECT CAST(pts.value AS BINARY) AS value  FROM JSON_TABLE(%s, '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts
+json_table open_rows | payload in SQL text: False | payload in params: True
+    SELECT CAST(rng.lo AS BINARY) AS lo, CAST(rng.hi AS BINARY) AS hi  FROM JSON_TABLE(%s, '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng
+json_table membership | payload in SQL text: False | payload in params: True
+    SELECT s1.vfs_entries.path  FROM s1.vfs_entries  WHERE s1.vfs_entries.path IN (__[POSTCOMPILE_path_1])
+json_table_clob point_rows | payload in SQL text: False | payload in params: True
+    SELECT pts.value  FROM JSON_TABLE(:param_1, '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts
+json_table_clob open_rows | payload in SQL text: False | payload in params: True
+    SELECT rng.lo, rng.hi  FROM JSON_TABLE(:param_1, '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng
+json_table_clob membership | payload in SQL text: False | payload in params: True
+    SELECT s1.vfs_entries.path  FROM s1.vfs_entries  WHERE s1.vfs_entries.path IN (__[POSTCOMPILE_path_1])

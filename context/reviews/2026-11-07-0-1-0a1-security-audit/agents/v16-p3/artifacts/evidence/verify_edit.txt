@@ -1,0 +1,23 @@
+control exact L=8000         bytes=  16001 edit_ms=    20.1 lev_cells=         0 max_loop_gap_ms=     3.5 carol_read_ms=    25.3 carol_ok=True success=True err=None
+== block_anchor (first anchor on every line, last anchor absent)
+anchor L=3000                bytes=   6005 edit_ms=   175.6 lev_cells=         0 max_loop_gap_ms=   162.8 carol_read_ms=   177.9 carol_ok=True success=False err=vfs.invalid
+anchor L=6000                bytes=  12005 edit_ms=   642.3 lev_cells=         0 max_loop_gap_ms=   639.6 carol_read_ms=     7.6 carol_ok=True success=False err=vfs.invalid
+   ratio 3.66
+anchor L=12000               bytes=  24005 edit_ms=  2628.3 lev_cells=         0 max_loop_gap_ms=  2621.6 carol_read_ms=  2627.7 carol_ok=True success=False err=vfs.invalid
+   ratio 4.09
+== levenshtein (one candidate, M-char middle line)
+lev M=600                    bytes=   1209 edit_ms=    76.1 lev_cells=    361201 max_loop_gap_ms=    69.9 carol_read_ms=    77.6 carol_ok=True success=False err=vfs.invalid
+lev M=1200                   bytes=   2409 edit_ms=   311.1 lev_cells=   1442401 max_loop_gap_ms=   308.4 carol_read_ms=     5.1 carol_ok=True success=False err=vfs.invalid
+   ratio 4.09
+lev M=2400                   bytes=   4809 edit_ms=  1214.4 lev_cells=   5764801 max_loop_gap_ms=  1201.4 carol_read_ms=  1213.1 carol_ok=True success=False err=vfs.invalid
+   ratio 3.90
+== line_trimmed (every line trim-matches; multi-match error path)
+trim L=3000                  bytes=   6003 edit_ms=   265.5 lev_cells=         0 max_loop_gap_ms=   260.9 carol_read_ms=     4.0 carol_ok=True success=False err=vfs.invalid
+trim L=6000                  bytes=  12003 edit_ms=  1011.1 lev_cells=         0 max_loop_gap_ms=  1008.8 carol_read_ms=     4.3 carol_ok=True success=False err=vfs.invalid
+   ratio 3.81
+trim L=12000                 bytes=  24003 edit_ms=  3995.1 lev_cells=         0 max_loop_gap_ms=  3992.6 carol_read_ms=     3.5 carol_ok=True success=False err=vfs.invalid
+   ratio 3.95
+== pure replace() for comparison
+pure anchor L=3000           replace_ms=   158.6 success=False
+pure anchor L=6000           replace_ms=   631.9 success=False
+pure anchor L=12000          replace_ms=  2552.0 success=False

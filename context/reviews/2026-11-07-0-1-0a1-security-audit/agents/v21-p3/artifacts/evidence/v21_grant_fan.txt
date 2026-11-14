@@ -1,0 +1,31 @@
+Verifier v21-p3 reproduction (commit 3586750), InMemoryStorage (SQLite), all rows planted only through the public grant() verb.
+Script: agents/v21-p3/scratch/v_grants.py, run under tools/sandbox-run.py. 20 files under /home/alice owned by alice; victim ALICE = Authority.of(Principal("alice")).
+Statement count = SQLAlchemy before_cursor_execute events per call; clauses = max len(visibility_clauses(...)) per call. Timings are indicative only (machine load varied).
+
+mode=mallory: posture none at /, alice read_write /home/alice, mallory read_write /home/mallory (as system); mallory grants alice read at /home/mallory/p{i:06d}
+mode=mallory n=0
+  glean (cold)  stmts=14 clauses=1 call_ms=13 max_loop_gap_ms=2
+  glean (warm)  stmts=10 clauses=1 call_ms=8 max_loop_gap_ms=1
+  glob (warm)   stmts=4 clauses=0 call_ms=4
+mode=mallory n=400 (18.9 ms/grant)
+  glean (cold)  stmts=18 clauses=5 call_ms=192 max_loop_gap_ms=40
+  glean (warm)  stmts=14 clauses=5 call_ms=80 max_loop_gap_ms=27
+  glob (warm)   stmts=4 clauses=0 call_ms=4
+  alice revoke(/home/mallory/p000000, principal=alice): ok=False permission_denied
+mode=mallory n=1600 (17.8 ms/grant)
+  glean (cold)  stmts=30 clauses=17 call_ms=1172 max_loop_gap_ms=124
+  glean (warm)  stmts=26 clauses=17 call_ms=699 max_loop_gap_ms=149
+  glob (warm)   stmts=4 clauses=0 call_ms=6
+  alice revoke(/home/mallory/p000000, principal=alice): ok=False permission_denied
+
+mode=anon-default: default posture (read_write at /), Authority.anonymous() grants alice read at /pub/p{i:06d}
+mode=anon-default n=400 (15.6 ms/grant)
+  glean (warm)  stmts=14 clauses=5 call_ms=97 max_loop_gap_ms=30
+  alice revoke: ok=True errors=[]   (under the default posture the victim CAN revoke)
+mode=anon-default n=1600 (27.3 ms/grant)
+  glean (cold)  stmts=30 clauses=17 call_ms=1972 max_loop_gap_ms=381
+  glean (warm)  stmts=26 clauses=17 call_ms=1039 max_loop_gap_ms=178
+  glob (warm)   stmts=4 clauses=0 call_ms=6
+  alice revoke: ok=True errors=[]
+
+Result: glean clause count = 1 + n/100 and statement count = 10 + clauses-1 (warm) grow linearly with rows another principal plants naming the victim; glob stays at 4 statements (range_source join). Under posture none the victim cannot revoke the rows; under the default posture it can.
