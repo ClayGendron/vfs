@@ -72,7 +72,7 @@ A revision is:
 
 - **Monotone per path.** A later write MUST produce a stamp that sorts after every prior stamp for that path. Encoding is the backend's choice — an integer counter, a ULID, `updated_at || content_hash`, or anything else that sorts monotonically — but the ordering MUST be total and stable.
 - **Bumped on every material public-state change.** A write or mutation that would make a public operation on that path return materially different state MUST produce a new stamp. This includes more than content bytes: exposed metadata, directory membership, and other observable Entry state count. No-op writes and internal maintenance MAY keep the stamp.
-- **Usable for optimistic concurrency.** A caller MAY pass `if_revision=X` on a read or write; a mismatch MUST surface as `Conflict` in the error taxonomy (Article 2).
+- **Usable for optimistic concurrency.** A caller MAY pass `if_version=X` on a read or write; a mismatch MUST surface as `Conflict` in the error taxonomy (Article 2).
 - **Carried on every Entry and every Candidate.** Every Entry MUST expose its current stamp. Every Candidate in every `VFSResult` MUST carry the stamp that was current on the observed Entry at the moment the Candidate was produced.
 
 A revision is *not* stored history. The stamp tells you *that* the Entry changed, not *what it was before*. Retrieving prior content is an optional backend capability — the **version-history capability** — governed by Article 4 and reached through the reserved `/.vfs/path/to/file/__meta__/versions/N` namespace.

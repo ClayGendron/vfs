@@ -32,7 +32,7 @@ One line: this page turns "we are relatively close" into a checklist with a gate
 Each sentence is written to be true on the day `0.1.0` ships. Under each is what must land first.
 
 1. **vfs 0.1.0 is governed data access for AI agents, with the interface of a file system, over the SQL database you already run — SQLite, Postgres, SQL Server and Oracle, with MariaDB served as a second tier — where every read, search and write passes one gate that judges the caller's rights on every row it touches, and every tool call is gated at its entry. On the wire and inside a guest the gate is a wall. In process it is a convention your host code agrees to; the threat model says so.** *True today for files on all five engines: the gate, the ladder and row grants are built and green. True for tools when the program table and the `/.vfs` views land (domains F and G). The threat model is R8.*
-2. **Agents reach it as the interface they already know — `ls`, `cat`, `grep`, pipes, `for`, `if`, functions — from Python (sync or async), from a bash shell that speaks the whole language, from a Python or JavaScript program running inside vfs, or over MCP, with `glob`, `grep`, ranked `search` and `traverse` built in and scoped to what the caller may see.** *The search half is built. The sync facade (X1), the shell (F1–F7), the two guests (T5a, T5b) and `serve()` (M1–M2) are not.*
+2. **Agents reach it as the interface they already know — `ls`, `cat`, `grep`, pipes, `for`, `if`, functions — from Python (sync or async), from a bash shell that speaks the whole language, from a Python or JavaScript program running inside vfs, or over MCP, with `glob`, `grep`, ranked `search` and `traverse` built in and scoped to what the caller may see.** *The search half is built. The sync facade (X1) is built since 2026-11-06. The shell (F1–F7), the two guests (T5a, T5b) and `serve()` (M1–M2) are not.*
 3. **Every body change is versioned and every delete is reversible. A session remembers what its agent read, so a write over a changed file is refused without the developer carrying a version. An action can be stopped before it happens and become a question a human answers — for vfs's own mutations, with a preview of what the world will look like if they say yes — and a run with several such questions picks up where it stopped, never from the top. One permission structure governs a file and a tool alike, and every call vfs makes is a row in the database you already run: who, what, how many rows, how long.** *Trash and restore are built. Version rows exist for replaced bodies; nothing reads them back yet (K8). The session's memory is K10. The stop, the preview, the durable run and the resume are domain B; the action log they stand on is H0. "A file and a tool alike" is I3.*
 
 ### 1.2 Who it is for
@@ -59,14 +59,16 @@ Said once here so nobody re-argues it (details in §15):
 
 Spec 166 defines the lane. This section says what each gate waits for. An **alpha** may break anything. A **beta** may fix, and may *add* names that are listed under *Added*, but may not rename, remove or change the meaning of a public name (decision D2; `versioning.md`, R5, writes this down). A **final** changes nothing until `0.1.1` or `0.2.0`.
 
+No alpha is published (D1, decided 2026-11-15). The alpha batches below and in §14 stand as the order of work, not as releases.
+
 | Gate | Enters when |
 |---|---|
-| **`0.1.0a1`** | This week, from the tree as it stands, decoupled from the shell. The 2026-10-15 amendment that tied a1 to spec 167 is reversed by decision D1. Carries R1–R3. |
-| **`0.1.0aN`** | One alpha per landed batch, cut by hand (§14 proposes the batches). |
+| **`0.1.0a1`** | Not cut: no alpha is published (D1). Its batch stands as the first step of the order of work. Carries R1–R3. |
+| **`0.1.0aN`** | Not cut (D1). Each batch is one step of the order of work (§14 proposes the batches). |
 | **`0.1.0b1`** — *the surface is frozen* | Every `b` story has landed; the frozen surface is written down (K9); every "proposed" ADR is ratified, amended or withdrawn (R7); Clay calls the freeze with a dated line (R5). |
 | **`0.1.0`** — *a beta has held* | Spec 166 decision 5's bar (one beta current ≥ 14 days with no breaking fix; the engine legs green **from the published wheel**, D6) **plus** every `f` story. Decision D2 confirms the feature gate is this list and not the bar alone. |
 
-**The gate list, generated from the story headings.** (`a` stories are not listed; they ride any alpha.)
+**The gate list, generated from the story headings.** (`a` stories are not listed; they are not gate items, and no alpha is published to carry them, D1.)
 
 | Domain | `b` (before the freeze) | `f` (before final) |
 |---|---|---|
@@ -85,23 +87,23 @@ Spec 166 defines the lane. This section says what each gate waits for. An **alph
 
 ## 3. State of the tree, in one table
 
-"Built" means on `main` with tests green. "Drafted" means a spec exists and nothing has started. "Missing" means neither. Evidence is from the audit set; EXECUTED unless noted.
+"Built" means on `main` with tests green. "Drafted" means a spec exists and nothing has started. "Missing" means neither. Evidence is from the audit set of 2026-10-28, trued on 2026-11-15 against `main` at `08c372af` and the spec archive; EXECUTED unless noted. Work in the working tree and not committed is "in flight", not built.
 
 | # | Theme | State |
 |---|---|---|
-| 1 | Public kernel API | **Built** as 25 async verbs behind one gate (`base.py:2835–3088`; `tests/test_ops.py:246` pins `ALL_OPS`). **None** of ADR 087's arguments exist: no cursor, no `range=`, no `if_version=`, no `replace=`, no request key, no `versions`. All three ADR 087 probes still reproduce on SQLite: twenty concurrent appends keep one line; a body changed by raw SQL reads as success; a replayed `move` is a bare `not_found` with no data. |
-| 1 | Interrupts | **Missing**, and the record contradicts itself: ADR 063 rule 5 and specs 148/149 define a `pending` kind and an ask ledger; the later ADR 084 pin 4 says "no `ask` inside vfs"; spec 170 maps a server's elicitation to `unsupported`. `cancelled` and `timeout` are declared kinds with no producer in `src/`. No run ledger exists; spec 169c's `/.vfs/run` record is per process by design. |
-| 2 | SQLite, Postgres, MSSQL, Oracle | **Built**, plus MariaDB and a generic floor (`dialects.py:389–561`). All four engine legs green together on 2026-10-15 (`ac5c515`). On 2026-10-28 the MSSQL leg is red at its `apt` step (run 40689014566; the tests never ran), so the five `fix(storage)` and one `perf(base)` commits of 2026-10-24 have no SQL Server evidence. No migration story: a format mismatch refuses "re-provision". |
-| 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `rebuild` (`backend.py:554–687`, `search.py:215–513`). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches). |
-| 4 | Three tool kinds | **Missing**. `run` is a routed verb no storage serves. Specs 169/170 drafted. "MCP servers authenticating as the user" is undecided; spec 170 §3.1 pins the opposite (one host credential per server). |
-| 5 | Sync calls, Jupyter, ETL | **Missing** sync facade. `asyncio.run` fails inside a running loop (reproduced). A 25-line thread-loop prototype works in a script and over the in-memory backend (audit 06). A 10,000-row `write` lands in 35–49 statements on SQLite depending on whether the parent exists and how the hook counts. |
-| 6 | Serve vfs as MCP | **Missing**. Spec 171 drafted (verbs as tools + one `cli` tool); spec 149 (token → `Authority`) a seed. No `[project.scripts]` entry; spec 171 decision 7 says "no `vfs serve`". |
-| 7 | Everything is a file, one permission structure | Ladder **built** (six rungs; every verb names its rung, `ops.py:134–160`); `/.vfs` serves only the trash view. Views, index and `rungs_at` drafted (169a, 170 §5). |
+| 1 | Public kernel API | **Built** as 25 async verbs behind one gate (`src/vfs/base.py:904–1720` on `main`; `tests/test_ops.py` pins `ALL_OPS`). **None** of the kernel plan's arguments exist: no cursor, no `range=`, no `if_version=`, no `replace=`, no request key, no `versions` (EXECUTED 2026-11-15: none of the names appears under `src/vfs`). The plan's names were ruled on 2026-11-15 (K1, in flight). The three probes reproduced on SQLite on 2026-10-28 (twenty concurrent appends keep one line; a body changed by raw SQL reads as success; a replayed `move` is a bare `not_found` with no data); they were not re-run on 2026-11-15, and nothing that would close them has landed. |
+| 1 | Interrupts | **Missing**, and the record contradicts itself: ADR 063 rule 5 and specs 148/149 define a `pending` kind and an ask ledger; the later ADR 084 pin 4 says "no `ask` inside vfs"; spec 170 maps a server's elicitation to `unsupported`. The decision records were retired on 2026-10-30 (commit `3667fec2`); specs 148, 149 and 170 still say what they said. `cancelled` and `timeout` are declared kinds with no producer in `src/` (EXECUTED 2026-11-15). No run ledger exists; spec 169c's `/.vfs/run` record is per process by design. |
+| 2 | SQLite, Postgres, MSSQL, Oracle | **Built**, plus MariaDB and a generic floor (`dialects.py`). All four engine legs green together on 2026-10-15 (`ac5c515`). The MSSQL leg was red at its `apt` step on 2026-10-28; [the release plumbing](../specifications/archive/2026-11-06-the-release-plumbing.md) moved it to the runner its sources list names, and all four legs were green on 2026-11-06 (run `42240017085`, READ in its landing notes). A spec that stops SQL Server readers waiting on writers is drafted ([on SQL Server a read never waits on a write](../specifications/active/2026-11-15-on-sql-server-a-read-never-waits-on-a-write.md)). No migration story: a format mismatch refuses "re-provision"; the format is 26 on `main` (`src/vfs/models/rows.py:139`). |
+| 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `rebuild`. Since 2026-11-13 an incremental `refresh` indexes only what changed since the last pass ([refresh](../specifications/archive/2026-10-31-refresh-the-incremental-index-verb.md)), and `rebuild` is the full pass ([the full pass is named rebuild](../specifications/archive/2026-11-12-the-full-pass-is-named-rebuild-and-its-pipeline-leaves-the-backend.md)). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches; `LOCAL_BATCH_INPUTS` is still 2,048 at `src/vfs/embedding/provider.py:42`); a batch the provider refuses for its content is split and set aside since 2026-11-07 ([a refused embed batch is split](../specifications/archive/2026-11-07-a-refused-embed-batch-is-split-and-its-refused-chunks-set-aside.md)). |
+| 4 | Three tool kinds | **Missing**. `run` is a routed verb no storage serves. Specs 169/170 drafted. MCP servers as views stay in 0.1.0 (D2, 2026-11-15). "MCP servers authenticating as the user" is undecided; spec 170 §3.1 pins the opposite (one host credential per server). |
+| 5 | Sync calls, Jupyter, ETL | **Built** on 2026-11-06. `VirtualFileSystem` is the synchronous face, a thread-loop facade in `vfs.sync` (`src/vfs/sync.py:82`), and `AsyncVirtualFileSystem` the kernel ([the sync facade](../specifications/archive/2026-11-06-the-sync-facade.md), [the two faces named](../specifications/archive/2026-11-06-the-two-faces-named.md); `tests/test_sync.py`). `Entry` and both storages import from `vfs`, and a 10,000-entry `write` is pinned at the router (`tests/base/test_write_at_scale.py:128`, [ETL ergonomics](../specifications/archive/2026-11-06-etl-ergonomics.md)). |
+| 6 | Serve vfs as MCP | **Missing**. Spec 171 drafted (verbs as tools + one `cli` tool); spec 149 (token → `Authority`) a seed. No `[project.scripts]` entry; spec 171 decision 7 says "no `vfs serve`". MCP ships with 0.1.0 (D2, 2026-11-15). |
+| 7 | Everything is a file, one permission structure | Ladder **built** (six rungs; every verb names its rung, `ops.py`); `/.vfs` serves only the trash view. Views, index and `rungs_at` drafted (169a, 170 §5). Four rights fixes landed after 2026-10-28 (§6); a fifth is in flight. |
 | 8 | The shell (bash) | **Missing**. Spec 167 (five slices, twenty tasks) and 168 drafted, reviewed, not started; the whole language is a sixth slice (F7) no spec yet carries. |
-| — | The action log and analytics | **Missing**. No `import logging` in `src/vfs`; no table records a call; the only call-shaped record anywhere is spec 169c's per-process `/.vfs/run` ring (drafted). Elapsed time per call is stored nowhere. |
-| — | Release | `0.0.22` on PyPI, none yanked; the seven-platform publish matrix has **never run**; the bump script cannot write `0.1.0a1`. |
+| — | The action log and analytics | **Missing**. No `import logging` in `src/vfs` (EXECUTED 2026-11-15); no table records a call; the only call-shaped record anywhere is spec 169c's per-process `/.vfs/run` ring (drafted). Elapsed time per call is stored nowhere. |
+| — | Release | No alpha is cut (D1). `0.0.22` is the version in `pyproject.toml`; the yank of 0.0.20–0.0.22 is pending (READ, the landing notes of [the release lane](../specifications/archive/166-the-release-lane-to-0-1-0/spec.md)). The publish matrix builds five wheels and an sdist and can be dry-run; its first dispatch, run `42326517501` on 2026-11-07, failed five jobs whose two causes were repaired, and no green dispatch is recorded. The bump script writes `0.1.0a1` (R1). |
 
-Counts to keep in view: 31 active specs (4 built but not archived, 3 overtaken); 10 ADRs "proposed" (022, 058, 069, 081–087); ADR 087 with 6 leans and 2 spec forks pending Clay; 36 `[NEEDS CLARIFICATION]` markers in specs 174–181; about 40 live open questions; 5,780 tests at 100% coverage; 24 error kinds.
+Counts to keep in view, 2026-11-15: 36 active specs on `main`, 30 numbered and 6 dated (39 in the working tree, with three drafted today); of the numbered, 4 built but not archived (165, 162, 152 A/B, 173) and 3 overtaken (161, 051, 102); 38 dated specs landed since 2026-10-29, 36 of them in November; the decision records, the open-questions pages and the architecture map retired on 2026-10-30 (commit `3667fec2`), so no ADR is "proposed" any more; the kernel plan's eight items ruled on 2026-11-15 (K1); 36 `[NEEDS CLARIFICATION]` markers in specs 174–181, unedited; 7,255 tests collected in the working tree (5,354 run with no engine URL set), coverage gated at 100%; 25 routed verbs; 24 error kinds.
 
 ---
 
@@ -121,19 +123,21 @@ Counts to keep in view: 31 active specs (4 built but not archived, 3 overtaken);
 | `write(if_version=, if_absent=, append=)` | missing (probe 1 live) |
 | verify `content_hash` on read | missing (probe 2 live) |
 | replay table, `request_key` | missing (probe 3 live) |
-| `move`/`copy(replace=)` | missing; specs 167/169/171 say `overwrite=`, ADR 087 and spec 181 say `replace=` |
+| `move`/`copy(replace=)` | missing; the flag is `replace=` and the moved file keeps its identity (K1), by the design of the deletes spec |
 | `versions(path)`, `read(version=)` | missing |
 | `entry_id` on `stat`/`ls`, `OpGroup` | missing |
 | `run`, `SupportsRun` | live but dead; retired on paper by ADR 082 pin 12 |
 
 ### Stories
 
-#### K1 — Ratify ADR 087 and resolve its six leans · ADR 087 · S · gate b
+#### K1 — The kernel's public names and argument families are ruled · the kernel rulings spec · S · gate b
 
-*Story.* As a software developer, I want the kernel's public names and argument families decided and written down once, so that the code I write against `0.1.0b1` keeps working at `0.1.0` and nothing I depend on is renamed under me. *Why.* Eight specs stand on a proposed ADR. Six pins carry a lean Clay has not confirmed; two change public names (pin 3, pin 16). Nothing in K2–K9 can freeze until they are decided. *Depends on.* Nothing. Decisions D4–D8. *Acceptance.*
-1. ADR 087's status line reads "accepted" with a date; *Pending Clay* records each of the six pins and the two spec forks as resolved.
-2. Specs 167, 169 and 171 say `replace=`; a grep over `context/specifications/active` for `overwrite=` finds only spec 174's removal note.
-3. Architecture page 02's *Open* list is empty.
+*State, 2026-11-15.* In flight. Clay ruled on the eight items on 2026-11-15. [The kernel rulings spec](../specifications/active/2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md) records them and is signed "Fit to build" by [its spec review](../reviews/2026-11-15-the-kernels-public-names-and-argument-families-are-ruled-spec-review.md); its edits to this page and to the constitution are in the working tree, not on `main`.
+
+*Story.* As a software developer, I want the kernel's public names and argument families decided and written down once, so that the code I write against `0.1.0b1` keeps working at `0.1.0` and nothing I depend on is renamed under me. *Why.* Twelve specs stand on a kernel plan whose record was retired with eight items unruled, two of them public verb names. Nothing in K2–K9 can freeze until they are decided. *Depends on.* Nothing. Decisions D4–D8, D11, D55 and D56. *Acceptance.*
+1. The rulings are decisions 2 to 11 of the kernel rulings spec, `2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md` under `context/specifications/`.
+2. Rows D4 to D8, D11, D55 and D56 of section 16 read "Decided".
+3. The numbered specs are read through the spec's decision 12 until each is converted.
 
 #### K2 — Write preconditions and the guarded append · spec 174 · L · gate b
 
@@ -148,7 +152,7 @@ Counts to keep in view: 31 active specs (4 built but not archived, 3 overtaken);
 #### K3 — Integrity: verify on read, hash on every written row · spec 175 A–C · M · gate b
 
 *Story.* As an ETL developer whose other jobs touch the same database with raw SQL, I want `read` to tell me when a body no longer matches the hash vfs stored, so that a corrupted or out-of-band-edited file is a classified error and never served as a success. *Why.* Probe 2: an out-of-band writer (an ETL job with SQL credentials) can change or delete a body and `read` serves it as success. The hash is stored and never compared. *Depends on.* K1 (D8 names the kind). *Acceptance.*
-1. After a raw `UPDATE vfs_content SET content='ROTTEN'`, the next `read` returns no content and one `vfs.unavailable.integrity` error (D8; spec 175's lean, retry class `never`) at the entry's path; `success is False`; on SQLite and on each engine leg.
+1. After a raw `UPDATE vfs_content SET content='ROTTEN'`, the next `read` returns no content and one `vfs.unavailable.integrity` error (D8, retry class `never`) at the entry's path; `success is False`; on SQLite and on each engine leg.
 2. A fault is reported only when two reads agree; the second read is exactly one extra statement.
 3. Every row that `write`, `edit`, `copy` or `move` returns carries `content_hash == sha256(body)`.
 4. Hashing is offloaded per call (spec 175 §1.3): a batch whose bodies sum below `MEASURE_OFFLOAD_BYTES` makes zero offload calls; one that sums above it makes exactly `len(byte_chunked(items, BLOB_PAGE_BYTES))` calls; a single 16 MB body makes one.
@@ -190,7 +194,7 @@ Counts to keep in view: 31 active specs (4 built but not archived, 3 overtaken);
 
 #### K8 — The history read side: `versions(path)` and `read(version=)` · spec 180 (read slice) · M · gate f
 
-*Story.* As an agent, I want to list a file's versions and read any one of them with who changed it and when, so that "what did this say yesterday" and "who changed this" have answers. *Why.* The promise says "every body change is versioned"; today version rows exist for replaced bodies and nothing reads them back. Without a read side, "who changed this" has no answer. `pack` and the bounded `sweep` (the rest of spec 180) are 0.2. *Depends on.* K1 (the verb's name, lean `versions`), K4. *Acceptance.*
+*Story.* As an agent, I want to list a file's versions and read any one of them with who changed it and when, so that "what did this say yesterday" and "who changed this" have answers. *Why.* The promise says "every body change is versioned"; today version rows exist for replaced bodies and nothing reads them back. Without a read side, "who changed this" has no answer. `pack` and the bounded `sweep` (the rest of spec 180) are 0.2. *Depends on.* K1 (the verb's name, `versions`), K4. *Acceptance.*
 1. `versions(path)` at rung `read` returns the version rows for the path with `actor`, `provenance`, `source_identity`, `subjects`, `grant_revision`, `created_at`, paged on the K4 key; a hidden path is `not_found`; a `list`-only path is `permission_denied`.
 2. `read(path, version=N)` returns body N with its hash verified (K3).
 3. The v1 version row of every entry carries the creator's `actor`, including `anon` and `system` (spec 180 gains the mint-on-create rule; a `created_by` column is D36's alternative).
@@ -258,7 +262,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 | A host policy hook before dispatch | missing |
 | A run ledger: steps recorded, stop, resume | missing (becomes a view over the action log's rows plus a result-page table; spec 177's replay store is the neighbouring table) |
 | `cancelled`, `timeout` kinds | declared, no producer in `src/` |
-| Deadline on fan-out | missing (spec 051, a stale draft since July) |
+| Deadline on fan-out | missing as H6 defines it: no public verb takes `deadline=` (spec 051, a stale draft since July). The `Deadline` value every bounded stage shares landed on 2026-11-07 ([bounded work has one home](../specifications/archive/2026-11-07-bounded-work-has-one-home.md)); glob and grep's planning walks run under it |
 
 ### Stories
 
@@ -294,7 +298,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 *Story.* As an agent, or a human approving an agent, I want to see what a `write`, `delete` or `move` would do to the files — the diff, the rows tombstoned, the path that would be replaced — before it happens, so that approval means approving a change and not a verb name. *Why.* The preview Clay asked for, and the half of an interrupt that makes an approval meaningful. A host can also call it with no interrupt at all, like `make -n` or `terraform plan`. *Depends on.* K2 (`if_versions` carries the preview's versions into the apply), K3. *Acceptance.*
 1. `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `restore`, `mkedge`, `rmedge`, `grant`, `revoke` and `posture` accept `plan=True` and return the planned `Observation` rows with `success=True`, one `vfs.plan` info record, and zero mutation statements (counted), on SQLite and on each engine leg.
-2. The planned rows say what changes: for `edit` and a text `write`, a unified diff of the current body against the planned body; for `delete`, every row that would be tombstoned, cascade included; for `move` and `copy`, the before and after paths and, with `replace=True`, the occupant that would be versioned; for `grant` and `posture`, the row that would appear and, for a relabel, the count of rows it would touch.
+2. The planned rows say what changes: for `edit` and a text `write`, a unified diff of the current body against the planned body; for `delete`, every row that would be tombstoned, cascade included; for `move` and `copy`, the before and after paths and, with `replace=True`, the occupant that would be replaced; for `grant` and `posture`, the row that would appear and, for a relabel, the count of rows it would touch.
 3. Every planned row carries the `version` it was computed against. For `write` and `edit` the apply carries `if_versions=` from the plan and a moved row is `vfs.conflict` with nothing written. For the other verbs the apply is `conflict` when a `stat` at apply time disagrees with the plan's versions (one extra chunked select, counted) and the remaining race window is documented; giving every verb a precondition argument is a 0.2 option (D37). On SQLite and on each engine leg.
 4. `plan=True` under a caller who may not perform the verb answers the refusal the real call would (`permission_denied`, `read_only`), never a plan; the approver's preview for that case is H3's.
 5. A 10,000-row `write(plan=True)` issues the same read statements as the real call's staging phase and no more (counted).
@@ -360,13 +364,13 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 | Piece | State |
 |---|---|
 | `Principal`, `Authority`, four doors, per-call `authority=`, `Session` | built |
-| Ladder (six rungs), grants, posture, members, rights compiled into every statement | built, on every engine leg |
+| Ladder (six rungs), grants, posture, members, rights compiled into every statement | built, on every engine leg. Four fixes landed after 2026-10-28: [grant and revoke judge the subtree](../specifications/archive/2026-11-07-the-grant-gate-judges-the-subtree.md), [a read-only rule gates the verbs beneath](../specifications/archive/2026-11-07-a-read-only-rule-gates-the-verbs-that-reach-beneath.md), [the scan tier reveals nothing about hidden rows](../specifications/archive/2026-11-12-the-scan-tier-reveals-nothing-about-rows-a-caller-cannot-read.md), and [a mutation is judged at its commit point](../specifications/archive/2026-11-14-a-mutation-is-authorized-for-the-rows-it-acts-on-at-its-commit-point.md). In flight: [a row minted across a posture change carries the standing posture's label](../specifications/active/2026-11-14-a-row-minted-across-a-posture-change-carries-the-label-the-standing-posture-gives.md). Drafted: [a miss beneath a hidden row](../specifications/active/2026-11-14-a-miss-beneath-a-row-the-caller-cannot-read-answers-as-a-miss-beneath-nothing.md) |
 | `TokenVerifier`, `authority_from_token`, `provenance="edge"` minted only at the edge | missing (spec 149 seed; `authority.py:18` names an edge factory that does not exist) |
 | `serve()` refusal on an open mount | missing; ADR 068's `open/shared/private` words were retired by ADR 080, and what rule 7's "open" means on the six-rung ladder is undecided (D15) |
 | Tools as paths a grant can name (`rungs_at`) | drafted (spec 170 §5) |
 | Per-principal credentials for a mounted MCP server | missing and undecided; spec 170 §3.1 pins one host credential per server |
 | `manage` rung, group ownership, non-system membership admin | parked |
-| 100k-user scale pins | memo only; no world above a few hundred rows in `tests/` |
+| 100k-user scale pins | drafted (I5); no world above a few hundred rows in `tests/` on 2026-10-28, not re-counted |
 
 ### Stories
 
@@ -412,6 +416,8 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 #### I5 — Scale pins for the rights compile · M · gate a (slow tier)
 
+*State, 2026-11-15.* Drafted. [The rights-compile spec](../specifications/active/2026-11-14-the-rights-compile-is-the-same-at-every-world-size.md) carries this story and replaces the acceptance below with measured laws when it lands. Its [spec review](../reviews/2026-11-14-the-rights-compile-is-the-same-at-every-world-size-spec-review.md) ends "Not yet", and work on it stopped at the developer's word (commit `7edd8901`).
+
 *Depends on.* Nothing. *Acceptance.*
 1. A generated world (10,000 users, one private home each, 100 shared folders, 50 groups, five per user): an ordinary caller's `Rights` compiles to ≤ 64 path ranges with a bound value ≤ 4 KiB, and the same bound holds at 1,000 users.
 2. `ls /` for that caller issues one visibility statement whose text is identical to the 1,000-user world's.
@@ -436,11 +442,11 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 |---|---|
 | Five tuned profiles + the generic floor; every op on all five; the floor withholds `search` only | built (spec 171 still says the floor withholds the walking verb too) |
 | Every `IN` list chunked by `membership()` | built (nine raw `.in_()` sites, all bounded) |
-| Four engine legs in CI (`test-dialects.yml`) | built; MSSQL leg red on 2026-10-28 at the `apt` step |
-| Schema lifecycle | refuse-and-re-provision only; `SCHEMA_FORMAT_VERSION = 23` vs ADR 020's "stays 1" |
+| Four engine legs in CI (`test-dialects.yml`) | built; the MSSQL leg, red on 2026-10-28 at the `apt` step, was green with the other three on 2026-11-06 (D6) |
+| Schema lifecycle | refuse-and-re-provision only; `SCHEMA_FORMAT_VERSION = 26` on `main` (`src/vfs/models/rows.py:139`; 27 in the working tree's label fix) vs ADR 020's "stays 1" |
 | `CREATE SCHEMA` for host apps, bulk path by driver, privilege refusals classified | missing (spec 157 draft) |
 | `install_extensions` | built on the storage; not reachable from the router |
-| 10k count pins | write, edges, glob, delete/restore, tombstoned read, traverse; none for move, copy, mkdir, sweep, grep, search, grants |
+| 10k count pins | write (and at the router since X2, `tests/base/test_write_at_scale.py:128`), edges, glob, delete/restore, tombstoned read, traverse; none for move, copy, mkdir, sweep, grep, search, grants |
 | Pool configuration | none; a borrowed MSSQL factory skips `use_setinputsizes=False` |
 | MariaDB guarded updates | per-row round trips (spec 080 researched) |
 | ANN index provisioned | Postgres only; MariaDB and Oracle profiles say `ann`, run exact |
@@ -486,6 +492,8 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 #### D6 — The SQL Server leg is reliable and the four legs run from the published wheel · spec 166 decision 5 · M · gate f
 
+*State, 2026-11-15.* Partly landed. Criterion 1's runner fix landed with [the release plumbing](../specifications/archive/2026-11-06-the-release-plumbing.md): the MSSQL job installs its ODBC driver on the runner its sources list names, and all four legs were green on 2026-11-06 (run `42240017085`, READ in its landing notes). Criteria 2 and 3 are not started; no wheel is published (D1). A spec that stops SQL Server readers waiting on writers is drafted: [on SQL Server a read never waits on a write](../specifications/active/2026-11-15-on-sql-server-a-read-never-waits-on-a-write.md).
+
 *Depends on.* R1, R2. *Acceptance.*
 1. The MSSQL job pins `ubuntu-24.04` or derives the package list from the runner's release; the next storage push is green on all four legs with per-leg pass counts in the commit body (CI evidence).
 2. A `workflow_dispatch` input runs any leg against `pip install vfs-py==<version>` in a clean venv with no Rust and no C compiler on the runner.
@@ -511,14 +519,15 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 | Lexical leg (block postings scored in Rust) + vector leg (in-engine cosine per dialect) + client-side convex fusion | built on all five engines |
 | Query-time embedding of the query string, 256-entry cache | built |
 | Embed step at `rebuild`: keyset pages, bounded batches, identity on the meta row, re-embed on model change at equal width | built |
+| `refresh`: an incremental pass over what changed since the last one, folded into the next `rebuild` | built, 2026-11-13 ([refresh](../specifications/archive/2026-10-31-refresh-the-incremental-index-verb.md)) |
 | Without a provider: lexical-only with an info record; stale identity: lexical-only with `conflict`; embed failure: retryable `unavailable` | built |
 | Default local model | model2vec potion shipped; ADR 060 says fastembed/MiniLM; no fastembed anywhere |
-| Slow-provider convergence | broken: never converges under ~17 chunks/s |
+| Slow-provider convergence | broken: never converges under ~17 chunks/s. A batch refused for its content is split and set aside since 2026-11-07; a timeout is still a transient failure that ends the step |
 | Provider by name/URL/env | missing |
 | Width change on a native column | refuses "re-provision" |
 | Ordered hybrid top-10 pin | SQLite and memory only |
-| ADR 065 statistics-leak regression test | missing |
-| `search_staleness` trait | says `overlay` for both legs; true for BM25 only |
+| ADR 065 statistics-leak regression test | missing; a neighbouring leak, the scan tier's counts, closed on 2026-11-12 (§6) |
+| `search_staleness` trait | says `overlay` for both legs (`src/vfs/storage/backends/database/backend.py:261`); true for BM25 only |
 | Renderers pdf/docx/pptx/xlsx; failures as row states | built; images (152 C) and render-at-write (159) planned |
 | `traverse`: frontier walk, four methods, rights per hop; `fs` and markdown `links` edges | built; `imports` edges (147) planned |
 | `docs/reference/api.md` search content | none |
@@ -584,7 +593,7 @@ Independent of theme 3. Render at write moves up if D21 says so.
 
 ### State today
 
-Nothing is built. `vfs.shell` does not exist; `crates/vfs-core` has no `shell` module. Three live-tree gaps the shell depends on: a bytes row renders empty, `to_payload` inlines base64 without bound, and the dead `run` verb sits where `cli` goes.
+Nothing is built (EXECUTED 2026-11-15). `vfs.shell` does not exist; `crates/vfs-core` has no `shell` module; no public method is named `cli`. Three live-tree gaps the shell depends on: a bytes row renders empty, `to_payload` inlines base64 without bound, and the dead `run` verb sits where `cli` goes.
 
 ### Stories
 
@@ -605,6 +614,8 @@ Nothing is built. `vfs.shell` does not exist; `crates/vfs-core` has no `shell` m
 
 #### F3 — The pipe, the ABI and `cli` with the minimal programs · spec 167 C · XL · gate b
 
+*State, 2026-11-15.* Not started. One half of criterion 8 landed early: `MANAGEMENT_METHODS` moved from `tests/test_ops.py` to `src/vfs/ops.py:106` with [the sync facade](../specifications/archive/2026-11-06-the-sync-facade.md).
+
 *Depends on.* F1, F2, K2 (`>>` is `write(append=True)`; `touch` is `write(if_absent=True)`). *Acceptance.*
 1. `ls /nope | wc -l` prints `0` with `statuses == [[1, 0]]`, `exit_code == 0`, `success is False`, one `not_found`; `grep zzz f` and `false` succeed with `exit_code == 1`.
 2. A 10,000-file `ls | wc -l` prints `10000` in 10 chunks at a maximum queue depth of 2 (counted); `head -3` on a 10,000-row producer closes after one chunk and the producer reports `vfs.cancelled` at info severity.
@@ -619,9 +630,9 @@ Nothing is built. `vfs.shell` does not exist; `crates/vfs-core` has no `shell` m
 
 #### F4 — The program forms, `replace=`, `glob(case_mode=)`, `set -e`, the never table · spec 167 D · L · gate b
 
-*Depends on.* F3; K1 (pin 17). *Acceptance.*
+*Depends on.* F3; K1; the deletes spec. *Acceptance.*
 1. Every row of 167 §4.1 has a test against a committed GNU fixture; `ls -l` prints `kind size_bytes updated_at owner_id version`, never mode bits.
-2. `move(src, dest, replace=True)` onto a file keeps the destination's `entry_id`, versions the replaced body and tombstones the source; a directory over a directory is `vfs.exists`; on SQLite and on each engine leg.
+2. `move(src, dest, replace=True)` onto a file leaves the moved file's `entry_id` at the destination and the replaced file undoable, by the design of the deletes spec; a directory over a directory is `vfs.exists`; on SQLite and on each engine leg.
 3. `glob(case_mode="insensitive")` matches a case-folded Python filter on SQLite and each engine leg in one statement per mount.
 4. `set -e` stops at the first failing statement; the exemptions pinned are the left side of `&&`/`||`, a `!`-negated pipeline, a pipeline whose last stage succeeds, and a subshell's inner failure.
 5. Each never-class name returns its kind, exit code and hint; `grant`, `revoke` and `grants` gain shell spellings (D34).
@@ -672,7 +683,7 @@ Every tool is a *path* an agent can see, grant and call. `cat` of a tool shows i
 
 ### State today
 
-Nothing is built. `/.agents` and `skills.py` exist and are retired by ADR 082 pin 6. Spec 170's "one small study" (a supervisor spike on 3.11 and 3.13, a real-server schema census, a legacy-server probe) is an afternoon each and becomes T4's first tasks.
+Nothing is built (EXECUTED 2026-11-15). `/.agents` and `skills.py` exist and are retired by ADR 082 pin 6. Spec 170's "one small study" (a supervisor spike on 3.11 and 3.13, a real-server schema census, a legacy-server probe) is an afternoon each and becomes T4's first tasks.
 
 ### Stories
 
@@ -747,7 +758,7 @@ A caller with no credential for a server that returns 401 gets `pending` carryin
 
 ### State today
 
-Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`serve()` only, no `vfs serve`" because nothing says how to build a router from a URL; D24 reverses that. `docs/how-to/expose-over-mcp.md` is a six-line stub.
+Nothing is built (EXECUTED 2026-11-15). MCP ships with 0.1.0 (D2, Clay, 2026-11-15). Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`serve()` only, no `vfs serve`" because nothing says how to build a router from a URL; D24 reverses that. `docs/how-to/expose-over-mcp.md` is a six-line stub.
 
 ### Stories
 
@@ -790,17 +801,19 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 | Piece | State |
 |---|---|
-| Every public verb `async def`; no sync facade | missing; a 25-line thread-loop prototype works in a script and over the in-memory backend (audit 06; the real-ipykernel run is the audit's, not re-verified) |
-| Top-level exports | `VirtualFileSystem` only |
-| 10,000-row `write(entries=)` | works, 35–49 statements on SQLite; pinned at storage level only |
-| Docs | 29 pages, 38 Sybil fences pass; 8 stub pages; `api.md` covers identity and traverse only; 5 pages off the nav |
-| Examples | 6 of 9 import dead names (`DatabaseFileSystem`, `VFSClient`, `grover.*`); none run in CI |
-| Logging | no `import logging` anywhere in `src/vfs` |
-| Install | `pip install vfs-py` gives 0.0.22; CONTRIBUTING and AGENTS.md disagree on the setup recipe |
+| A synchronous face | built, 2026-11-06 (X1): `VirtualFileSystem` and `Session` in `vfs.sync` over the async kernel `AsyncVirtualFileSystem`; its landing notes record a real ipykernel run and the Postgres leg |
+| Top-level exports | `Entry`, `DatabaseStorage`, `InMemoryStorage`, the four face names and the identity and error names (`src/vfs/__init__.py:26`; X2) |
+| 10,000-row `write(entries=)` | works; pinned at the router since X2 (`tests/base/test_write_at_scale.py:128`) and through the sync face (`tests/test_sync.py:587`) |
+| Docs | 30 pages under `docs/` and 24 under `documentation/`, the docs site's source since 2026-11-12 (commit `b11cc0dc`); 44 docs examples pass (READ, the 2026-11-14 landing notes). A Svelte docs app that retires the MkDocs build is on `main` and its spec is not landed ([the docs site spec](../specifications/active/2026-11-14-the-docs-site-is-a-svelte-app-in-this-repository-built-from-the-design-system.md)). The 2026-10-28 counts of stub pages and pages off the nav are not re-checked |
+| Examples | 2 remain, `glob_residuation.ipynb` and `search_walkthrough.ipynb`; seven were deleted on 2026-10-30 (commit `966e7441`); none runs in CI and no test guards their imports |
+| Logging | no `import logging` anywhere in `src/vfs` (EXECUTED 2026-11-15) |
+| Install | `pip install vfs-py` gives 0.0.22 and no alpha is cut (D1); `docs/how-to/install.md` exists since the release lane; whether CONTRIBUTING and AGENTS.md still disagree on the setup recipe is not re-checked |
 
 ### Stories
 
 #### X1 — `vfs.sync`: a synchronous facade for notebooks and scripts · new spec · M · gate b
+
+*State, 2026-11-06.* **Built.** Landed as [the sync facade](../specifications/archive/2026-11-06-the-sync-facade.md), with D26 and D27 taken as written; [the two faces named](../specifications/archive/2026-11-06-the-two-faces-named.md) then made `VirtualFileSystem` the synchronous face and `AsyncVirtualFileSystem` the kernel. `tests/test_sync.py` holds the pins; the ipykernel run and the Postgres leg (run `42249319285`) are in the landing notes. The parity test's later names (`cli`, `versions`, `answer`, `resume`, `cancel`, `calls`, `strict=`) wait on their own stories.
 
 *Why.* The smallest correct design is a facade that owns a private event loop on a daemon thread and forwards every verb to the one gate through `run_coroutine_threadsafe`: about 100 lines, no new dependency, no kernel change, a fourth front in ADR 087's sense. Greenlet (SQLAlchemy's bridge) is the inverse direction and would mean a kernel rewrite; `anyio`'s portal is the same design plus a core dependency; unasync codegen needs a whole sync storage path. The facade constructs the `VirtualFileSystem` itself so first touch lands on its loop (the asyncpg loop-affinity case); wrapping an already-awaited file system is documented as SQLite-only until pinned. *Depends on.* Nothing. D26, D27. *Acceptance.*
 1. `with VirtualFileSystem(storage=InMemoryStorage()) as fs: fs.write(path="/a.txt", content="x"); fs.read("/a.txt")` returns `Result`s with `success is True` in a plain `python -c` with no running loop.
@@ -814,12 +827,16 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 #### X2 — ETL ergonomics: top-level exports, iterables, a router-level 10k pin · S · gate b
 
+*State, 2026-11-06.* **Built.** Landed as [ETL ergonomics](../specifications/archive/2026-11-06-etl-ergonomics.md), under D28. The router-level pin is `tests/base/test_write_at_scale.py:128`; the generator case is the test after it.
+
 *Depends on.* X1. D28. *Acceptance.*
 1. `from vfs import Entry, DatabaseStorage, InMemoryStorage` imports (the four face names, `VirtualFileSystem`, `AsyncVirtualFileSystem`, `Session`, `AsyncSession`, already do); `__all__` lists them; the dependency walk still loads no numpy.
 2. `fs.write(entries=(Entry(...) for _ in range(10_000)), parents=True)` (a generator) succeeds with the same statement count as a list.
 3. A router-level pin counts statements for a 10k `write` through `AsyncVirtualFileSystem`, parents walk included, and asserts the count is independent of N beyond chunk arithmetic (the same family as D4).
 
 #### X3 — Getting-started tutorial, notebook how-to, pipeline how-to, human-in-the-loop how-to · M · gate f
+
+*State, 2026-11-15.* Partly overtaken. Since 2026-11-12 the docs site is built from `documentation/` (commit `b11cc0dc`), which holds a get-started page, five tutorials and a how-to for loading a folder of files; a Svelte app that retires the MkDocs build is on `main`, and its spec is not landed. The criteria below name paths under `docs/` and the mkdocs nav; they are not checked against the new site here.
 
 *Acceptance.*
 1. `docs/tutorials/getting-started.md`: install → construct → write → `glob`/`grep`/`search` → one rendered `Result`, every step a fence Sybil runs, no Postgres needed; the README's quick-start block is fence-tested too.
@@ -830,6 +847,8 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 #### X4 — Reference pages: `Result`, every verb, storage · M · gate f
 
+*State, 2026-11-15.* Partly started. `documentation/reference/python-api/` holds pages for results, errors, storage, entries, sessions and both faces, on `main` since commit `08c372af`, whose spec is not landed. The criteria below are not checked against them.
+
 *Acceptance.*
 1. `docs/reference/result.md`: `Result`, `Observation`, `ResultError`, the `ErrorKind` table generated from the enum (a test asserts every kind appears), `|` merging, `to_payload`/`from_payload`.
 2. `docs/reference/api.md` (K9) is the one signature page; a narrative page per verb family links to it; the import test runs against `api.md` only.
@@ -838,9 +857,13 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 #### X5 — Install page and the one setup recipe · S · gate f
 
+*State, 2026-11-15.* Partly landed. `docs/how-to/install.md` exists since [the release lane](../specifications/archive/166-the-release-lane-to-0-1-0/spec.md): it carries the pre-release install line and the Alpine note, and a lint test pins the line (`tests/lint/test_code_shape.py:335`). No test asserts every extra appears, and `CONTRIBUTING.md` does not carry the `uv sync --all-extras --group dev` recipe (EXECUTED).
+
 *Acceptance.* `docs/how-to/install.md` lists the extras (a test asserts every `pyproject.toml` extra appears), the wheel platforms from `publish.yml`, "no Rust toolchain on a listed platform", Python 3.11–3.14, and the Alpine note; `CONTRIBUTING.md` and `docs/contributing.md` are one source using `uv sync --all-extras --group dev`.
 
 #### X6 — Examples: delete the dead, run the live · S · gate b
+
+*State, 2026-10-30.* Partly landed at commit `966e7441`, housekeeping Clay asked for directly. Seven of the nine examples were deleted, `main.py` among them (D29's lean). `glob_residuation.ipynb` and `search_walkthrough.ipynb` remain; neither runs in CI, and no test guards the imports under `examples/` (EXECUTED 2026-11-15).
 
 *Acceptance.* `cli_query_demo.py`, `demo_dbfs.py`, `postgres_backend_playground.ipynb`, `postgres_repo_glob_grep.ipynb`, `repo_postgres_cli_smoke.ipynb` and `story_001_demo.ipynb` are removed (D29); `main.py` is removed or ported; `search_walkthrough.ipynb` is executed in CI via nbclient against the live tree; `glob_residuation.ipynb` uses public names or is removed; a test asserts no file under `examples/` imports `vfs.backends`, `vfs.client`, `vfs.query`, `sqlmodel` or `grover`.
 
@@ -861,23 +884,25 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 | Piece | State |
 |---|---|
-| `test.yml` (3.11–3.14; lint, format, types, 100% coverage, docs fences on 3.13) | green on `main` 2026-10-28 |
-| `test-dialects.yml` (four engines from `docker/compose.test.yml`) | MSSQL red at the `apt` step |
-| `publish.yml` seven-platform matrix | never run; no `workflow_dispatch`; no tag check; `macos-13` (retired) |
-| PyPI | 0.0.20–0.0.22 present, none yanked; `pyproject` 0.0.22; `__init__` a literal copy; `uv.lock` 0.0.22 |
-| `scripts/bump_version.py` | cannot emit `0.1.0a1` |
+| `test.yml` (3.11–3.14; lint, format, types, 100% coverage, docs fences on 3.13) | green on `main` 2026-10-28. GitHub's `main` stops at `79752e78` (2026-11-08), whose Tests, Dialect tests and Lint runs are red (run `42477067939` and its siblings; EXECUTED, `gh run list`); 41 local commits are not pushed, and pushing is on hold (D1). Each local landing records its own green `scripts/ci.sh` |
+| `test-dialects.yml` (four engines from `docker/compose.test.yml`) | all four green on 2026-11-06 (run `42240017085`), the MSSQL leg on the runner its sources list names (R2) |
+| `publish.yml` matrix | five wheels and an sdist, no musl; `workflow_dispatch` and a tag check (`scripts/check_release_tag.py`) since R1; the first dispatch, run `42326517501` on 2026-11-07, failed five jobs and both causes were repaired; no green dispatch is recorded |
+| PyPI | 0.0.20–0.0.22 present, the yank pending (READ, the release lane's landing notes); `pyproject` 0.0.22; `vfs.__version__` read from distribution metadata (R1); no alpha is cut (D1) |
+| `scripts/bump_version.py` | speaks the lane: `0.0.22 → 0.1.0a1` executed and restored in the release plumbing's landing notes (R1) |
 | `CHANGELOG.md` | deleted; the GitHub releases are the record |
-| README lines 19 and 135 | say PyPI ships the previous-generation API |
-| Standards | `tooling.md`, `testing.md` *Running*, `release.md`, this page's predecessor all describe a tree that no longer exists; `versioning.md` pending since the constitution; the constitution itself names `Candidate`, `VFSResult`, `if_revision` and seven kinds |
-| `SECURITY.md`, `THREAT_MODEL.md` | absent |
-| Root-level strays | `ROADMAP-v0.1.0.md`, `write-pipeline.md`, `pr_description.md`, a SQLModel issue write-up, `coverage.json` (tracked, 2026-04-23), `grep_glob research/`, `business/`, `vfs-app/`, `vfs-brand/`, `logos/` |
-| Context pipeline | 31 active specs; 165, 162, 152 A/B, 173 built but not archived; 161, 051, 102 overtaken; `STATUS.md` 1,168 lines and stale on 162 |
+| README install line | carries the pre-release specifier `vfs-py>=0.1.0a1,<0.2`, pinned by a lint test (R3) |
+| Standards | `release.md` carries the three-stage lane and its beta rule since the release lane; `versioning.md` does not exist; whether `tooling.md` and `testing.md` *Running* describe the tree is not re-checked; the constitution still names `Candidate`, `VFSResult` and seven kinds |
+| `SECURITY.md`, `THREAT_MODEL.md` | absent (EXECUTED 2026-11-15) |
+| Root-level strays | gone since 2026-10-30 (commit `966e7441`): the five stray files deleted, `coverage.json` ignored, `grep_glob research/` deleted, `business/`, `vfs-app/`, `vfs-brand/` and `logos/` moved to a sibling checkout (R6) |
+| Context pipeline | 36 active specs on `main`; 165, 162, 152 A/B, 173 built but not archived; 161, 051, 102 overtaken; decision records, open-questions pages and the architecture map retired on 2026-10-30 (commit `3667fec2`); `STATUS.md` frozen at 122 lines |
 
 ### Stories
 
 Spec 166's *Scope* items are numbered: 1 the version source, 2 the bump script, 3 the publish dispatch and tag check, 4 the maturin floor, 5 the changelog, 6 the README, 7 the matrix dry run, 8 the yank, 9 the cut. Its *decision* 5 is the final bar.
 
 #### R1 — Release plumbing · spec 166 scope 1–4 · S · gate a
+
+*State, 2026-11-06.* **Built.** Landed as [the release plumbing](../specifications/archive/2026-11-06-the-release-plumbing.md): one version source, a bump script that speaks the lane, a publish matrix that can be dry-run and refuses the wrong tag. Its landing notes record the real bump `0.0.22 → 0.1.0a1`, run and restored.
 
 *Acceptance.*
 1. `vfs.__version__` is read from distribution metadata; a test pins equality.
@@ -886,6 +911,8 @@ Spec 166's *Scope* items are numbered: 1 the version source, 2 the bump script, 
 
 #### R2 — Dry-run the matrix, fix the MSSQL leg, decide musl · spec 166 scope 7 · S · gate a
 
+*State, 2026-11-15.* Partly landed. Criterion 2: the MSSQL leg installs its driver again and all four legs were green on 2026-11-06 (run `42240017085`, [the release plumbing](../specifications/archive/2026-11-06-the-release-plumbing.md)). Criterion 3: musl is dropped, because `sqlite-vec` ships no musl wheel ([the release lane](../specifications/archive/166-the-release-lane-to-0-1-0/spec.md); `release.md`). Criteria 1 and 4 are not met: the first dispatch, run `42326517501` on 2026-11-07, failed five jobs and its two causes were repaired, no green dispatch is recorded, the matrix now has six jobs rather than eight, and trusted publishing is not confirmed.
+
 *Acceptance (CI evidence).*
 1. A dispatched `publish.yml` run from `main` is green on all eight jobs; its run id and per-wheel sizes are in spec 166's landing notes.
 2. The MSSQL leg installs the ODBC driver on the current runner; the next storage push is green on all four legs.
@@ -893,6 +920,8 @@ Spec 166's *Scope* items are numbered: 1 the version source, 2 the bump script, 
 4. Trusted publishing is confirmed configured (a note in `release.md`).
 
 #### R3 — Cut `0.1.0a1` from the tree as it stands · spec 166 scope 5, 6, 8, 9 · S · gate a
+
+*State, 2026-11-15.* Partly landed; the cut is not taken. The tree's half landed with [the release lane](../specifications/archive/166-the-release-lane-to-0-1-0/spec.md) on 2026-11-06: no `CHANGELOG.md`, the README's old-API lines gone, the install line `vfs-py>=0.1.0a1,<0.2` and the Alpine note. The release notes, the yank and the slim-image proofs (the rest of criteria 1, 3 and 4) were not done, and no alpha is published (D1). A release audit of the alpha's tree ran on 2026-11-07 (run `vfs-run-1-2026-11-07`, READ in [a refused embed batch is split](../specifications/archive/2026-11-07-a-refused-embed-batch-is-split-and-its-refused-chunks-set-aside.md)).
 
 *Acceptance.*
 1. The tree holds no `CHANGELOG.md`; the `v0.1.0a1` GitHub release notes list the verbs, backends, dialects, the ladder, the graph walk, trash-as-tombstone, binary bodies, with a *Breaking* group saying nothing from 0.0.x carries over, and the alpha template line about schema bumps (D2).
@@ -906,6 +935,8 @@ D6's items 2–3; listed here because it is the lane's final gate.
 
 #### R5 — Freeze the surface: the beta-entry decision · S · gate b
 
+*State, 2026-11-15.* Not started; two of its inputs moved. The decision records were retired on 2026-10-30 (commit `3667fec2`), so criterion 2's pins are answered by K1's rulings, not by a record. The beta rule of criterion 5 is written in `release.md`'s stage table since [the release lane](../specifications/archive/166-the-release-lane-to-0-1-0/spec.md); `versioning.md` does not exist.
+
 *Acceptance.*
 1. K9's list exists and `docs/reference/api.md` matches it.
 2. ADR 087's pins 3, 12, 16, 17 and spec 174's `overwrite=` question are resolved (K1).
@@ -917,6 +948,8 @@ D6's items 2–3; listed here because it is the lane's final gate.
 
 #### R6 — Repository hygiene · S · gate b
 
+*State, 2026-10-30.* Partly landed at commit `966e7441`, housekeeping Clay asked for directly. The root strays are gone and `coverage.json` is ignored; `grep_glob research/` was deleted, its conclusions already in the 2026-04-24 trigram-grep memo; `business/`, `vfs-app/`, `vfs-brand/` and `logos/` moved to a sibling checkout; `src2/` and `tests2/` were deleted (criteria 1 and 3, by the leans of D31 and D32). `SECURITY.md` and `THREAT_MODEL.md` are still absent (R8). Criteria 2, 4 and 5 are not checked here.
+
 *Acceptance.*
 1. The root holds only `AGENTS.md CLAUDE.md CONTRIBUTING.md Cargo.lock Cargo.toml LICENSE README.md SECURITY.md THREAT_MODEL.md conftest.py mkdocs.yml pyproject.toml uv.lock` plus dot-files and directories. Dispositions (D31): delete `ROADMAP-v0.1.0.md`, `write-pipeline.md`, `pr_description.md`, the SQLModel write-up, `coverage.json` (and ignore it); move `grep_glob research/` to `context/research/2026-04-24-grep-glob-pushdown/`; move `business/` under `context/product/` or to a sibling repo; move `vfs-app/`, `vfs-brand/` and `logos/` to their own repo.
 2. `tooling.md`, `testing.md` *Running*, `release.md`, `CONTRIBUTING.md` and `tests/conftest.py`'s docstring describe the maturin / `uv sync` / env-URL tree.
@@ -925,6 +958,8 @@ D6's items 2–3; listed here because it is the lane's final gate.
 5. The README gains a one-paragraph "when not to use vfs" (ADR 069 pin 6).
 
 #### R7 — Context-pipeline true-up · S · gate b
+
+*State, 2026-11-15.* Partly overtaken. The decision records and the open-questions pages were retired on 2026-10-30 (commit `3667fec2`), so criteria 4 and 5 have no record left to ratify or move; `STATUS.md` is frozen at 122 lines with a note saying where its content lives (criterion 3 in part). Criteria 1, 2 and 6 are not started: specs 165, 162, 152 and 173 are still under `active/`; 161, 051 and 102 are unchanged; AGENTS.md's *Production posture* still names two audiences.
 
 *Depends on.* K1, H1. *Acceptance.*
 1. Specs 165, 162, 152 (A/B closed; C/D re-cut or tagged 0.2), 173 move to `specifications/archive/` with landing notes; their stale "uncommitted" lines are corrected first.
@@ -951,9 +986,11 @@ D6's items 2–3; listed here because it is the lane's final gate.
 
 The order is dependency-driven, then harm-driven. Stories within a batch are independent unless an arrow says otherwise.
 
+No alpha is published (D1, decided 2026-11-15). The batches a1 to a6 stand as the order of work; none is cut as a release.
+
 | Alpha | Carries | Why this order |
 |---|---|---|
-| **a1** (this week) | R1, R2, R3 | The lane must exist before anything rides it. |
+| **a1** (not cut, D1) | R1, R2, R3 | The lane must exist before anything rides it. |
 | **a2** — the three defects, the two ADRs, the spike | K1, H1 → K2, K3, K5; F1, F2; L0; I6; X7; R8; K1, H1 → R6, R7 | The ADRs first: eight specs and every interrupt story stand on them. K2/K3/K5 close the three live defects. F2 is now the whole grammar. L0 prices the log before H0 is shaped. |
 | **a3** — the filesystem arguments, the session's memory, the lifecycle, the facade | K4, K6 → K9; K2, K3 → K10; H2; I3a; D1, D2 → D3; D4; E1, E2, E3, E5; X1 → X2; X6; I5 | Cursor, range, the regroup and the freeze list. The session stamps. `plan=` rides the write seam. Storage lifecycle and the matrix. Search defaults. The sync facade. |
 | **a4** — the log, the interrupt and the shell | L0, K4, K5 → H0 → H3; F3 → F4 → F7; I1; E4 | The action log first: H3's ledger lives in it. H3 then depends on H0, H1, H2 and K5, so Clay's first theme lands here, not last. The pipe, the forms and the language are the long pole. |
@@ -962,6 +999,8 @@ The order is dependency-driven, then harm-driven. Stories within a batch are ind
 | **b1** — freeze | R5 (after every `b` story above) | Nothing after b1 renames or removes a public name. |
 | **beta → final** | K7, K8; D6/R4, D7; E6; F5, F6; X3, X4, X5; R9 | Proof on every leg, docs, the bench. |
 | **0.1.0** | A beta held ≥ 14 days; D6/R4 green from the wheel; every `f` story landed. | |
+
+Landed since this table was written, as of 2026-11-15: R1, X1 and X2 in full; parts of R2, R3, R6, X5, X6 and D6 (each story says which). R5, R7 and X3 are partly overtaken by the retired records and the new docs site. K1 is in flight. The arithmetic below is the 2026-10-28 estimate and is not re-summed.
 
 **Critical path, in one line:** K1 → K2 → F3 → F4 → F7 → T1 → T3 → I3b → T4 → M1 → H4 → H5. Ten L or XL items in series; H0 sits beside F3 in a4 and gates H3, H4 and T2 but not the shell.
 
@@ -978,7 +1017,7 @@ The order is dependency-driven, then harm-driven. Stories within a batch are ind
 | beta → final | 1 L, 8 M, 4 S | 5.5–10 weeks |
 | **Total** | | **about 34–62 weeks** |
 
-The fourth revision added two L stories (F7, H0), two M stories (K10, T5b), two S spikes (L0, D49's) and widened F2 from M to L: roughly four to seven weeks on the page's scale. None of the four is a cut candidate (Clay, 2026-10-28); the cut order below is unchanged and the structural option (D2 item iii) is the lever that absorbs them.
+The fourth revision added two L stories (F7, H0), two M stories (K10, T5b), two S spikes (L0, D49's) and widened F2 from M to L: roughly four to seven weeks on the page's scale. None of the four is a cut candidate (Clay, 2026-10-28); the cut order below is unchanged and the structural option (D2 item iii) is the lever that absorbs them. That lever is not taken: Clay ruled on 2026-11-15 that "MCP ships with 0.1.0" (D2).
 
 Measured throughput from the spec archive (status lines "landed 2026-MM"): July 20, August 44, September 8, October 7 specs a month. The pace fell about five-fold as specs became kernel-sized. At the autumn rate the page's seventy-odd stories are eight to ten months; on the effort scale, eight to fourteen. The product plan's own finding was that every plan exceeded solo capacity three to four times. This page does not pretend otherwise; it gives Clay the cut order below and one structural option (D2).
 
@@ -992,7 +1031,7 @@ Measured throughput from the spec archive (status lines "landed 2026-MM"): July 
 6. H5's MCP-elicitation leg → 0.2; keep the host-tool interrupt, the guest's asks and the shell stage.
 7. T4's supervisor and respawn → 0.1.x; in-process and plain stdio only.
 8. T5's numpy/pandas bundle → 0.1.x; ship the stdlib-only guest first. The guest's shape and the door do not change.
-9. **The structural option (D2, lean):** ship 0.1.0 with the shell core (F3, F4, F7), host tools (T3) and the two guests (T5a, T5b), and make MCP servers as views (T4), the credential seam (I4) and OAuth on demand (T7) the headline of 0.2, where "acting as the user" can be done whole instead of half. This removes an L from the serial chain and the hardest cross-process piece. Theme 4(b) then moves to 0.2 cleanly rather than shipping as "one host credential per server" and being called "as the user". The durable run (H4) is not a cut candidate: it is what Clay's interrupt requirement means.
+9. **The structural option (D2, lean):** ship 0.1.0 with the shell core (F3, F4, F7), host tools (T3) and the two guests (T5a, T5b), and make MCP servers as views (T4), the credential seam (I4) and OAuth on demand (T7) the headline of 0.2, where "acting as the user" can be done whole instead of half. This removes an L from the serial chain and the hardest cross-process piece. Theme 4(b) then moves to 0.2 cleanly rather than shipping as "one host credential per server" and being called "as the user". The durable run (H4) is not a cut candidate: it is what Clay's interrupt requirement means. **Not taken** (D2, Clay, 2026-11-15: "MCP ships with 0.1.0"): MCP servers as views stay in 0.1.0.
 
 **Where the kernel specs and the shell specs touch.** Spec 167 as drafted ships a racy `>>` and a `stat`-then-`write` `touch`; spec 174 replaces both. K2 lands before F3 (D33). The one flag name is `replace=`.
 
@@ -1031,17 +1070,17 @@ A lean is the assistant's recommendation, not a decision.
 
 | # | Decision | Lean | Needed by |
 |---|---|---|---|
-| D1 | `0.1.0a1` ships the tree as it stands, decoupled from spec 167? | Yes; the shell is a4. | a1 |
-| D2 | What makes `0.1.0` final, and what does the beta freeze forbid? Options: (i) the held-beta bar alone; (ii) the bar plus the full `f` gate on this page; (iii) the bar plus the gate with the structural cut of §14 item 9 (shell core, host tools and the Python guest in; MCP servers as views, the credential seam and OAuth to 0.2). The freeze: no rename, removal or change of meaning; additions allowed and listed. | (iii), with the additive freeze rule. | before b1 |
+| D1 | `0.1.0a1` ships the tree as it stands, decoupled from spec 167? | **Decided** (Clay, 2026-11-15): "we are not doing any alpha releases, so hold on pushing to GitHub". No alpha release is cut; the alpha batches of §14 stand as the order of work. | a1 |
+| D2 | What makes `0.1.0` final, and what does the beta freeze forbid? Options: (i) the held-beta bar alone; (ii) the bar plus the full `f` gate on this page; (iii) the bar plus the gate with the structural cut of §14 item 9 (shell core, host tools and the Python guest in; MCP servers as views, the credential seam and OAuth to 0.2). The freeze: no rename, removal or change of meaning; additions allowed and listed. | **Decided in part** (Clay, 2026-11-15): "MCP ships with 0.1.0". Option (iii), the structural cut of §14 item 9, is not taken: MCP stays in 0.1.0. The choice between (i) and (ii) and the freeze rule are not ruled; the lean on the freeze stays the additive rule. | before b1 |
 | D3 | MariaDB: first tier, second tier (served, in CI, no ANN, per-row updates documented), or dropped? | Second tier. | D1 |
-| D4 | ADR 087 pin 3: keep `delete`/`move`, or rename `remove`/`rename`? | Keep. | K1 |
-| D5 | ADR 087 pin 16: flat names, or kernel groups as namespaces? | Flat. | K1 |
-| D6 | ADR 087 pin 12: the resumption key as a `Result` field, or a separate return? | A field. | K1, K4 |
-| D7 | Spec 174: `overwrite=` leaves `write`? | Yes. | K2 |
-| D8 | ADR 087 pin 9: the integrity kind. The first draft leaned a top-level `vfs.integrity`; spec 175 leans the child `vfs.unavailable.integrity` so old consumers degrade to EIO. Keep the 100 KB offload threshold. | The child kind, as spec 175 says. | K3 |
+| D4 | ADR 087 pin 3: keep `delete`/`move`, or rename `remove`/`rename`? | **Decided** (Clay, 2026-11-15): keep `delete` and `move`. | K1 |
+| D5 | ADR 087 pin 16: flat names, or kernel groups as namespaces? | **Decided** (Clay, 2026-11-15): flat; the groups are documentation. | K1 |
+| D6 | ADR 087 pin 12: the resumption key as a `Result` field, or a separate return? | **Decided** (Clay, 2026-11-15): a field of `Result`, `next_after`, typed as a path. | K1, K4 |
+| D7 | Spec 174: `overwrite=` leaves `write`? | **Decided** (Clay, 2026-11-15): yes; transfers use `replace=`. | K2 |
+| D8 | ADR 087 pin 9: the integrity kind. The first draft leaned a top-level `vfs.integrity`; spec 175 leans the child `vfs.unavailable.integrity` so old consumers degrade to EIO. Keep the 100 KB offload threshold. | **Decided** (Clay, 2026-11-15): the child kind `vfs.unavailable.integrity`, never retryable; the threshold stays; a failed check never locks a file. | K3 |
 | D9 | Amend ADR 084 pin 4 so vfs *carries* `pending` (never asks, never blocks)? | Yes. | H1 |
 | D10 | `pending`'s shape: top-level `vfs.pending` with a derived retry class `resume`, or a child of `permission_denied`? Ledger in the mount's schema? TTL? | Top-level; the mount's schema; 24 h. | H1 |
-| D11 | ADR 087 pin 10: withhold `idempotentHint` from a tool whose verb has one non-idempotent form? | Withhold. | K5, M1 |
+| D11 | ADR 087 pin 10: withhold `idempotentHint` from a tool whose verb has one non-idempotent form? | **Decided** (Clay, 2026-11-15): withhold; a stored answer is kept 24 hours by default. | K5, M1 |
 | D12 | The exit code for a suspended shell stage (this page's proposal; no spec carries it). | 75 (`EX_TEMPFAIL`). | H5 |
 | D13 | Spec 149: ignore a `groups` claim? | Ignore. | I1 |
 | D14 | Spec 149: add an `attested` provenance? | Add it. | I1 |
@@ -1056,20 +1095,20 @@ A lean is the assistant's recommendation, not a decision.
 | D23 | The guests: gate, stretch, or 0.2? | **Decided** (Clay, 2026-10-28): Python and JavaScript both in 0.1.0, gate b, behind `vfs-py[python]` and `vfs-py[javascript]`. | — |
 | D24 | Reverse spec 171 decision 7: ship `vfs serve` and `python -m vfs.mcp`? | Yes. | M2 |
 | D25 | A suspended `cli` line as an MCP task at 0.1.0? | No. | M3 |
-| D26 | Sync facade: thread-loop (no dependency) or `anyio` portal? | Thread-loop. | X1 |
-| D27 | May the facade wrap an already-awaited file system? | Yes, documented SQLite-only until pinned. | X1 |
-| D28 | Top-level exports `Entry`, `DatabaseStorage`, `InMemoryStorage`? (the four face names export already) | Yes. | X2 |
-| D29 | Stale examples: delete, or archive beside `src2/`? | Delete. | X6 |
-| D30 | musllinux wheels: keep or drop the two jobs? | Drop; note it. | R2 |
-| D31 | Where `business/`, `vfs-app/`, `vfs-brand/`, `logos/` live. | Sibling repos; `business/` under `context/product/` if it must stay. | R6 |
-| D32 | Delete `src2/` and `tests2/`, or keep shrinking? | Delete what `MINING.md` marks mined; list the rest. | R6 |
+| D26 | Sync facade: thread-loop (no dependency) or `anyio` portal? | Thread-loop. Taken as written by the sync facade, landed 2026-11-06 (X1). | X1 |
+| D27 | May the facade wrap an already-awaited file system? | Yes, documented SQLite-only until pinned. Taken as written by the sync facade, landed 2026-11-06 (X1). | X1 |
+| D28 | Top-level exports `Entry`, `DatabaseStorage`, `InMemoryStorage`? (the four face names export already) | Yes. Built by ETL ergonomics, landed 2026-11-06 (X2). | X2 |
+| D29 | Stale examples: delete, or archive beside `src2/`? | Delete. Done on 2026-10-30 (commit `966e7441`), at Clay's direct ask. | X6 |
+| D30 | musllinux wheels: keep or drop the two jobs? | Drop; note it. Done by the release lane on 2026-11-06, and noted in `release.md`. | R2 |
+| D31 | Where `business/`, `vfs-app/`, `vfs-brand/`, `logos/` live. | Sibling repos; `business/` under `context/product/` if it must stay. Done on 2026-10-30 (commit `966e7441`), at Clay's direct ask: all four moved to a sibling checkout. | R6 |
+| D32 | Delete `src2/` and `tests2/`, or keep shrinking? | Delete what `MINING.md` marks mined; list the rest. Done on 2026-10-30 (commit `966e7441`), at Clay's direct ask: both deleted whole. | R6 |
 | D33 | K2 (174) before F3 (167 C)? | Yes. | a2 |
 | D34 | The 0.1.0 program table: all of 167, 168a and 168b in; 168c, `awk`, `jq` out; shell spellings for `grant`/`revoke`/`grants`? | As stated; add the three spellings in F4. | F4 |
 | D35 | The JOSE library behind `vfs-py[serve]`. | `joserfc`. | I1 |
 | D36 | Creation attribution: the v1 version row carries the creator (K8 as written), or a `created_by` column on the entry row? | The version row. | K8 |
 | D37 | A precondition argument on every mutating verb now (H2 full form, size L) or stat-at-apply with a documented window? | Stat-at-apply at 0.1.0. | H2 |
 | D38 | A `/.vfs/mounts` view? | No; `mounts()` is the API. | T1 |
-| D39 | This page lives at `context/standards/roadmap.md` and the root `ROADMAP-v0.1.0.md` is deleted? | Yes. | R6 |
+| D39 | This page lives at `context/standards/roadmap.md` and the root `ROADMAP-v0.1.0.md` is deleted? | Yes. Done: the root file was deleted on 2026-10-30 (commit `966e7441`). | R6 |
 | D40 | When one step asks, does the run stop at once, or drain first — let the other stages of that pipeline finish or reach their own ask, so asks raised together are surfaced together? | Drain, then stop, per pipeline; a suspended stage's consumer sees neither data nor end-of-stream; later statements of the line are not run. | H4 |
 | D41 | What a run records: every step (reads too), or effects plus the reads the walk depends on? | Effects, expansion reads (`glob`, `$( )`, `find`, `stat`, `test`) and every read's identity triple always; bodies only where a guest or tool consumed them, within `RUN_LEDGER_BYTES`; a re-executed read is hash-checked. | H4 |
 | D42 | How a stopped Python guest or host tool resumes: re-enter from the start with its vfs calls served by fingerprint (a diverging call is made fresh and marked), record every host import for full determinism, or snapshot the guest's memory? | Re-enter and match by fingerprint at 0.1.0; the other two in 0.2. | H5 |
@@ -1085,6 +1124,11 @@ A lean is the assistant's recommendation, not a decision.
 | D52 | H0: the action log on by default with `LOG_RETENTION_DAYS = 30` and a `log=False` escape, or opt-in? Run and ask rows keep their own 24 h. | On by default; analytics is a 0.1.0 must (Clay). | H0 |
 | D53 | H0's read side at 0.1.0: a documented, frozen table schema plus `fs.calls(...)` on the developer plane for the system actor, with a `/.vfs/log` view and agent-readable rows in 0.2? | As stated; the database you already run is the analytics surface. | H0 |
 | D54 | The shell's nondeterministic words under the durable run (`$RANDOM`, `$SECONDS`, `$EPOCHSECONDS`, `$EPOCHREALTIME`, `$BASHPID`, `$$`, `date`): record each as an expansion read (D41) and replay it on resume, or refuse them in a line that may ask? | Record and replay. | F7, H4 |
+| D55 | ADR 087 pin 17: whose identity survives `move(replace=True)`? | **Decided** (Clay, 2026-11-15): the moved file's, as POSIX; the replaced file stays undoable. | F4 |
+| D56 | The irreversible verb's name: keep `sweep`, or rename it? | **Decided** (Clay, 2026-11-15): `destroy`. | the deletes spec |
+| D57 | Who may call `destroy`, and is it reachable through the `cli` tool? | **Decided** (Clay, 2026-11-15): "destroy is only available to system when the posture is anything besides read_write, and destroy is not accessible through the cli tool". | the deletes spec |
+| D58 | When a file's stored bytes no longer match its stored hash, may the bytes be accepted as they are (the hash re-stamped to match), for example for a file changed on purpose outside vfs? | **Decided** (Clay, 2026-11-15): "System actor only". As put to him: a separate, explicit repair act that only the system actor can run; it writes a new version, so history shows the acceptance; it is never automatic; named callers and agents fix a damaged file by overwriting it or restoring a prior version. | K3 (the conversion of spec 175) |
+| D59 | Should there be a salvage read, `read(verify=False)`, that returns a damaged file's bytes on request? The default read would still refuse with `vfs.unavailable.integrity`. | **Decided** (Clay, 2026-11-15): "Anyone who may read it". As put to him: an explicit opt-in on `read`; it succeeds with a warning that the body failed its check. | K3 |
 
 ---
 
