@@ -4,6 +4,7 @@ This page says how a person and a coding agent work together on vfs. It is a fir
 
 ## Before any work starts
 
+- **A person directs all work.** Guided or autonomous, a session starts on a person's decision. The agent may ask to start one. It never starts one by itself.
 - **Understand the goal first.** The agent asks what the goal is before any in-depth work. It then questions the goal the way an analyst would: is it specified, is it the right thing to build, what is left out. Work starts when the person and the agent agree on it.
 - **Ask which mode.** If the person has not said guided or autonomous, the agent asks.
 - **Ask questions through the question dialog** whenever there is more than one.
@@ -36,7 +37,7 @@ A session ends with a handoff note in the work directory, written for the autono
 
 ## Autonomous mode
 
-Autonomous mode is the agent working alone, before or after a guided session. Before, it prepares: constraints and prior art, so the session starts at the decisions. After, it takes a 90% solution to a reviewed 100% solution.
+Autonomous mode is the agent working alone, before or after a guided session. It starts when a person says so, with a goal the person has agreed. Before, it prepares: constraints and prior art, so the session starts at the decisions. After, it takes a 90% solution to a reviewed 100% solution.
 
 - More research.
 - Code, security and structural reviews of the code and of the feature. It may question whether the feature is the right thing to build.
@@ -85,7 +86,6 @@ At the end of a session the person and the agent ask what to change on this page
 
 ## Still to settle
 
-- When the autonomous pass starts.
 - The tests that hold the structure of `documentation/`, and which pages are generated.
 - The migration of the old `context/` tree into `agents/` and `documentation/`.
 - The templates in `agents/templates/`, and the review skills, which still write to `context/reviews/`.

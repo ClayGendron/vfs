@@ -116,6 +116,7 @@ How to use it: name the multiplier an idea rides on, then multiply.
 
 ## Development process and project knowledge
 
+- **The developer directs all work, guided and autonomous.** A session of either kind starts on the developer's decision. An agent may ask to start one, and never starts one by itself: a finished guided session does not begin an autonomous pass, and a finished pass does not begin the next piece of work.
 - **Understand the goal before starting in-depth work.** Ask the developer what the goal is, then question it the way an analyst would: is it specified, is it the right thing to build, what is left out. Work starts when the developer and the agent agree on the goal. A goal the agent guessed is how a day goes to the wrong change.
 - **Work is guided or autonomous; ask which when the developer has not said.** Guided work is live with the developer for one to four hours: act toward the goal, explain as you go, do most of the work yourself, start a subagent only for work better done in parallel and say so first, and do not run the full suite or the engine legs. Autonomous work is the agent alone, before a guided session to prepare it or after one to finish it: research, reviews, end-to-end tests and the full gate. [How we work](documentation/maintainers/how-we-work.md) has both in full.
 - **More than one question goes through the question dialog.** In Claude Code that is the `AskUserQuestion` tool. A list of questions in chat prose costs the developer more time to answer than a dialog with a recommended option.
