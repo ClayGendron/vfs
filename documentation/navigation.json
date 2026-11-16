@@ -59,6 +59,10 @@
     {
       "title": "Explanation",
       "groups": [{ "title": null, "pages": ["/explanation/why-vfs-stores-files-in-a-database"] }]
+    },
+    {
+      "title": "Maintainers",
+      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work"] }]
     }
   ]
 }
