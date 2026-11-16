@@ -1,0 +1,2 @@
+{"kind": "contention", "engine": "mariadb", "threads": 64, "hung": false, "outcomes": {"success": 790, "vfs.conflict/retryable": 14}, "multixacts_created": null, "marks_left": 1}
+{"kind": "contention-labels", "engine": "mariadb", "rows": 804, "wrong": 0, "sample": {}}

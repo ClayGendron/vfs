@@ -1,0 +1,166 @@
+commit 6644c60f03cafd5b68317e6bc49d2d2de770ba97
+Author: Clay Gendron <46005933+ClayGendron@users.noreply.github.com>
+Date:   Sat Nov 14 12:11:32 2026 -0500
+
+    wip(label): the mint-label node, to be decided
+
+diff --git a/tests/storage/database/test_races.py b/tests/storage/database/test_races.py
+index 45b29731..b3af8c32 100644
+--- a/tests/storage/database/test_races.py
++++ b/tests/storage/database/test_races.py
+@@ -25,18 +25,20 @@ import os
+ import random
+ from datetime import UTC, datetime
+ from functools import partial
+-from typing import Any, ClassVar
++from typing import Any, ClassVar, NamedTuple
+ 
+ import pytest
+ from sqlalchemy import event as sqlalchemy_event
+-from sqlalchemy import insert, select, text, update
++from sqlalchemy import func, insert, select, text, update
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import create_async_engine
+ from ulid import ULID
+ 
+ from tests.support.commit_worlds import (
+     ALICE,
++    ANONYMOUS,
+     BOB,
++    CAROL,
+     EVE,
+     attempts,
+     copy_world,
+@@ -51,6 +53,7 @@ from tests.support.commit_worlds import (
+ from tests.support.database_helpers import _url
+ from tests.support.oracles.postings import decode_postings
+ from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
++from vfs.authority import Authority
+ from vfs.models import Edge, Entry
+ from vfs.paths import Path
+ from vfs.results import ErrorKind, Result
+@@ -59,6 +62,7 @@ from vfs.storage.backends.database import DatabaseStorage, dialects, indexing, s
+ from vfs.storage.backends.database import backend as backend_module
+ from vfs.storage.backends.database import maintenance as maintenance_module
+ from vfs.storage.backends.database import search as search_module
++from vfs.storage.backends.database.labels import labels_for
+ from vfs.storage.backends.database.revision import hold_revision
+ from vfs.storage.grants import LEVEL_RANK, Posture
+ from vfs.storage.replace import EditOperation
+@@ -1673,6 +1677,20 @@ def _kinds_and_paths(result: Result) -> list[tuple[str, str | None]]:
+     return [(error.kind, error.path) for error in result.errors]
+ 
+ 
++async def _relabel_marks(storage: DatabaseStorage) -> int:
++    """How many relabels stand in flight: zero once every posture change has settled."""
++    relabels = storage._host.tables.relabels
++    async with storage._host.session_factory() as session:
++        return int((await session.execute(select(func.count()).select_from(relabels))).scalar_one())
++
++
++async def _standing_labels(storage: DatabaseStorage, paths: tuple[str, ...]) -> dict[str, int]:
++    """The everyone level the posture rows as they now stand give each of *paths*."""
++    host = storage._host
++    async with host.session_factory() as session:
++        return await labels_for(session, host.tables, host.profile, host.membership_budget, paths)
++
++
+ # The seam each topology verb's rival commits at: after the collection, before the act.
+ _TOPOLOGY_SEAMS = {
+     "delete": "delete:post-collect",
+@@ -1682,6 +1700,25 @@ _TOPOLOGY_SEAMS = {
+ }
+ 
+ 
++class _Tightening(NamedTuple):
++    """Where a rival tightens everyone to ``none``, the file a write creates, and every row that write mints."""
++
++    posture: str
++    target: str
++    minted: tuple[str, ...]
++
++
++# At the created path, at a directory the same write creates, and at the existing parent the write bumps.
++_TIGHTENINGS = {
++    "at-path": _Tightening("/p/new.txt", "/p/new.txt", ("/p/new.txt",)),
++    "at-minted-parent": _Tightening("/p/n", "/p/n/new.txt", ("/p/n", "/p/n/new.txt")),
++    "at-existing-parent": _Tightening("/p", "/p/new.txt", ("/p/new.txt",)),
++}
++
++# The writer granted read_write on /p by name, and the system actor, which no fence runs over.
++_MINTERS: dict[str, Authority | None] = {"granted": BOB, "system": None}
++
++
+ def _snapshot_writes(storage: DatabaseStorage) -> bool:
+     """Whether the profile pins a repeatable snapshot for writes, so a write's commit point is its first statement."""
+     return storage._host.profile.op_isolation is not None
+@@ -1912,6 +1949,69 @@ class TestRightsAtCommit:
+             assert await _liveness(storage) == before
+             await _audit(storage)
+ 
++    @pytest.mark.parametrize("minter", list(_MINTERS))
++    @pytest.mark.parametrize("shape", list(_TIGHTENINGS))
++    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
++    async def test_a_row_minted_across_a_posture_tightening_is_no_more_open_than_the_standing_posture(
++        self, env_var: str, shape: str, minter: str
++    ) -> None:
++        """A posture tightened and relabelled inside a write's window leaves no row the write mints more open than it.
++
++        Once the relabel settles, readers trust each row's stored label and
++        nothing rewrites it. So the write is refused, or every row it mints
++        carries the label the standing posture gives and stays hidden from a
++        caller holding nothing there, anonymous included.
++        """
++        async with server_storage(env_var, posture="none") as storage:
++            await label_world(storage)
++            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
++            tightening = _TIGHTENINGS[shape]
++            second = sibling(env_var, storage)
++            settled: list[int] = []
++
++            async def rival() -> Result:
++                tightened = await second.posture(path=Path(tightening.posture), posture="none")
++                settled.append(await _relabel_marks(second))
++                return tightened
++
++            handler, rivals = _self_clearing("write:before-apply", rival)
++            written = [Entry(path=Path(tightening.target), content="minted probe\n")]
++            try:
++                with seams.installed("write:before-apply", handler):
++                    result = await storage.write(entries=written, parents=True, authority=_MINTERS[minter])
++            finally:
++                await second.close()
++            assert rivals and rivals[0].success is True, rivals[0].errors if rivals else "the rival never ran"
++            assert settled == [0]
++            assert await _relabel_marks(storage) == 0
++            standing = await _standing_labels(storage, tightening.minted)
++            assert standing == dict.fromkeys(tightening.minted, LEVEL_RANK["none"])
++            rows = {path: await row_at(storage, path) for path in tightening.minted}
++            if rows[tightening.target] is None:
++                assert result.success is False
++                lawful = {(ErrorKind.permission_denied, False), (ErrorKind.conflict, True)}
++                assert {(error.kind, error.retryable) for error in result.errors} <= lawful, result.errors
++                assert all(row is None for row in rows.values()), sorted(path for path, row in rows.items() if row)
++                return
++            assert result.success is True, result.errors
++            stored = {path: None if row is None else row["everyone_level"] for path, row in rows.items()}
++            engine = storage._host.profile.name
++            assert stored == standing, f"{engine} {shape} {minter}: stored labels {stored}, standing posture {standing}"
++            control = await storage.grep(pattern="minted probe", allow_scan=True)
++            assert {str(row.path) for row in control.observations} == {tightening.target}
++            minted = set(tightening.minted)
++            hidden = {ErrorKind.not_found, ErrorKind.unauthenticated}
++            for reader in (CAROL, ANONYMOUS):
++                read = await storage.read(path=Path(tightening.target), authority=reader)
++                assert read.success is False, f"{engine} {shape} {minter}: {reader} read {tightening.target}"
++                globbed = await storage.glob(patterns=("/p/**",), authority=reader)
++                found = await storage.grep(pattern="minted probe", globs=("/p/**",), allow_scan=True, authority=reader)
++                # Anonymous is refused a scope everyone holds nothing at; that refusal hides the row too.
++                assert {error.kind for error in (*globbed.errors, *found.errors)} <= hidden, globbed.errors
++                seen = {str(row.path) for row in (*globbed.observations, *found.observations)}
++                assert not seen & minted, f"{engine} {shape} {minter}: {reader} found {sorted(seen & minted)}"
++            await _audit(storage)
++
+     @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id == "mariadb"])
+     async def test_the_mariadb_leg_runs_with_snapshot_isolation(self, env_var: str) -> None:
+         """The MariaDB leg's server runs with ``innodb_snapshot_isolation`` on, which a write's commit point needs."""

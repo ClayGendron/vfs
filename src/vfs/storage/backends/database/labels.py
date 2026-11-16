@@ -9,13 +9,15 @@ computes from them. A partial caller's read seeks it through the
 ``(everyone_level, path)`` index instead of carrying every other
 principal's posture in its predicate.
 
-Three moments write it. A mint (write, mkdir, copy, the trash chain)
-asks :func:`labels_for` once per batch: one chunked read of the posture
-rows among the batch's distinct ancestor prefixes, then a dictionary
-walk per path. A transfer (move, restore) asks :func:`posture_beneath`
-for the posture in force at its destination and every posture row under
-it, and stamps each rewritten row from that map in the same statement
-that rewrites its path. A posture change marks its row as *in flight*
+Three moments write it. A write or a mkdir, with every parent it
+creates, asks :func:`labels_for` once per batch: one chunked read of the
+posture rows among the batch's distinct ancestor prefixes, then a
+dictionary walk per path. A transfer (move, copy) asks
+:func:`posture_beneath` for the posture in force at its destination and
+every posture row under it, and stamps each row it rewrites or creates
+from that map. A delete and a restore stamp nothing: the row keeps its
+label, which a relabel reaches where the row sits. A posture change
+marks its row as *in flight*
 (:func:`mark_relabel`, in the transaction that writes the posture row)
 and the :class:`Relabeller` then rewrites the subtree under the path
 minus the subtrees of every deeper posture row, one bounded chunk per
@@ -31,6 +33,37 @@ planted under, so clearing it retires those compiles and the ones made
 before it stand again — a settled relabel changed labels, not rights.
 :func:`rebuild_labels` recomputes every row from the posture rows, for
 maintenance and for tests.
+
+A mint proves the label it stamps. The posture rows it read can be
+overtaken by a posture change that commits while it runs, and nothing
+rewrites a row the relabel never saw. So an attempt reads the everyone
+stamp before its first label read (:func:`watch_postures`) and again
+as its last statement, under a shared lock held to the commit
+(:func:`hold_postures`): a stamp that moved redrives the attempt, and a
+posture write that arrives later waits for the mint's commit, so its
+relabel finds the mint's rows. That is two statements for a call that
+creates a row, three on Oracle, at any batch size; a call that reads a
+label and is then refused pays the first alone, and a call that reads
+no label pays neither. Mints share the lock and never wait for each
+other. A posture write waits for the holds in flight when it arrives
+and for no later one (:func:`open_relabel`; on Postgres it locks the
+stamps table first, or later mints would pass it). While a posture
+write is open, calls that create a row and other rights changes wait
+for that one transaction; a read, a search and an edit of an existing
+file do not. A waiting create holds its parent's row, so a delete,
+move, copy or restore beneath that parent waits with it, and through
+the topology row every other topology verb waits behind that one.
+The stamp is one for the mount, so every posture write redrives every
+mint in flight, at the posture writer's own rate: a batch that meets one
+in each of its attempts lands nothing and answers a retryable conflict,
+so a host that sets many postures does it outside its ingest window.
+On Oracle the shared lock is on the stamps table, so a grant or
+membership write and a mint's hold wait for each other's commit. On
+Postgres two mints holding the row at once make a multixact, as every
+foreign-key check does. On SQL Server the driver runs each call on the
+event loop's executor, and the hold is one more call a mint needs a
+thread for while it holds its row locks: a host there gives the loop a
+thread for every pooled connection.
 
 A deleted row stays at its path with a tombstone and keeps its label,
 so a posture change after the delete reaches it exactly as it reaches
@@ -51,10 +84,11 @@ from vfs.authority import EVERYONE_NAME
 from vfs.models.rows import MSSQL_UTF8_COLLATION
 from vfs.paths import MAX_PATH_LENGTH, ROOT
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like
-from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, lock_rows
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.ranges import open_rows, range_counts
-from vfs.storage.backends.database.revision import bump_revision, hold_revision
+from vfs.storage.backends.database.revision import bump_revision, hold_revision, stamp_principals
+from vfs.storage.backends.database.seams import seam
 from vfs.storage.grants import (
     FULL,
     LEVEL_RANK,
@@ -159,9 +193,14 @@ async def labels_for(
     chunked under the membership budget.
     """
     wanted = list(dict.fromkeys(paths))
+    if wanted:
+        await watch_postures(session, tables)
     prefixes = {ancestor for path in wanted for ancestor in ancestors_and_self(path)}
     postures = await posture_rows(session, tables, profile, membership_budget, prefixes)
-    return {path: label_of(postures, path) for path in wanted}
+    labels = {path: label_of(postures, path) for path in wanted}
+    # Where a test stages a rival posture change: the labels are read and no row is stamped yet.
+    await seam("write:after-labels")
+    return labels
 
 
 async def posture_beneath(
@@ -174,6 +213,7 @@ async def posture_beneath(
     that decide beneath it. :func:`label_of` over this map answers for
     any path under *root* as the whole table would.
     """
+    await watch_postures(session, tables)
     above_root = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(root))
     postures: dict[str, GrantLevel] = {root: level_at(above_root, root)}
     postures.update(await _deeper_postures(session, tables, profile, root))
@@ -183,6 +223,69 @@ async def posture_beneath(
 def label_of(postures: PostureRows, path: str) -> int:
     """The stored label for *path* under *postures*."""
     return LEVEL_RANK[level_at(postures, path)]
+
+
+# ---------------------------------------------------------------------------
+# The proof — a label against a posture change committed inside a mint's window
+# ---------------------------------------------------------------------------
+
+# What a mint answers when a posture changed under every attempt it had; it names no path.
+POSTURE_MOVED: Final = "a posture changed while it ran"
+
+# Where an attempt keeps the everyone stamp its labels were read under.
+_WATCHED_KEY: Final = "vfs_posture_stamp"
+
+
+async def watch_postures(session: AsyncSession, tables: VFSTables) -> None:
+    """Read the everyone stamp once an attempt, before its first read of the posture rows.
+
+    Every posture write moves that stamp, so the value read here names
+    the posture rows the attempt's labels come from. A row that is
+    missing reads as zero; :func:`hold_postures` is what refuses it.
+    """
+    if _WATCHED_KEY in session.info:
+        return
+    revisions = tables.principal_revisions
+    stamp = select(revisions.c.revision).where(revisions.c.principal_id == EVERYONE_NAME)
+    session.info[_WATCHED_KEY] = int((await session.execute(stamp)).scalar_one_or_none() or 0)
+
+
+async def hold_postures(session: AsyncSession, tables: VFSTables, profile: DialectProfile) -> None:
+    """Raise :class:`StaleSnapshot` when a posture write committed since the watch, and hold the next one out.
+
+    The last statement a minting attempt issues: the stamp read again
+    under the profile's shared lock, held to the commit. Mints share
+    it, so none waits for another; a posture write takes the row whole
+    and waits behind it, so its relabel starts after the mint's rows
+    are visible. An attempt that read no label returns at once. A
+    missing row is refused too: a lock on no row holds nothing.
+    """
+    watched = session.info.get(_WATCHED_KEY)
+    if watched is None:
+        return
+    if await _stamp_under_share(session, tables, profile) != watched:
+        raise StaleSnapshot(POSTURE_MOVED)
+
+
+async def open_relabel(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, path: str, revision: int
+) -> None:
+    """A posture write's first acts: queue later mints behind it, stamp everyone, mark the relabel in flight.
+
+    Where the profile declares a door, the stamps table is locked
+    first in a mode that holds back a mint's shared read and lets a
+    plain read through: without it a mint that arrives while this
+    write waits is granted beside the mints already there, and mints
+    that keep arriving could hold a posture change off. The lock is
+    held for this one short transaction; calls that create a row and
+    other rights changes wait behind it, and no read does.
+    """
+    if profile.share_lock.door:
+        await session.execute(_lock_stamps(session, tables, "EXCLUSIVE"))
+    await stamp_principals(session, tables, [EVERYONE_NAME], revision)
+    await mark_relabel(session, tables, path, revision)
+    # Where a test holds a posture write open with its locks taken.
+    await seam("posture:after-stamp")
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +519,28 @@ async def rebuild_labels(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+async def _stamp_under_share(session: AsyncSession, tables: VFSTables, profile: DialectProfile) -> int | None:
+    """The everyone stamp read under the profile's shared lock, ``None`` where the row is missing."""
+    revisions = tables.principal_revisions
+    stamp = select(revisions.c.revision).where(revisions.c.principal_id == EVERYONE_NAME)
+    share = profile.share_lock
+    if share.form == "table":
+        await session.execute(_lock_stamps(session, tables, "SHARE"))
+    elif share.form == "exclusive":
+        stamp = lock_rows(stamp, revisions, profile)
+    elif share.hint is not None:
+        stamp = stamp.with_hint(revisions, f"WITH ({share.hint})", dialect_name=profile.name)
+    else:
+        stamp = stamp.with_for_update(read=True)
+    return (await session.execute(stamp)).scalar_one_or_none()
+
+
+def _lock_stamps(session: AsyncSession, tables: VFSTables, mode: str) -> TextClause:
+    """``LOCK TABLE`` on the stamps table in *mode*, the table named as the session's dialect quotes it."""
+    name = session.get_bind().dialect.identifier_preparer.format_table(tables.principal_revisions)
+    return text(f"LOCK TABLE {name} IN {mode} MODE")
 
 
 class _Batch(NamedTuple):

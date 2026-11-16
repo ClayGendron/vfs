@@ -147,6 +147,23 @@ class VectorFunction(NamedTuple):
     install: str | None = None
 
 
+class ShareLock(NamedTuple):
+    """How a mint shares the lock on the everyone stamp, which a posture write takes whole.
+
+    ``form`` is ``"row"`` for a shared row lock, ``"table"`` where the engine has none and
+    locks the table in share mode, ``"exclusive"`` for the floor's ``FOR UPDATE``. ``hint``
+    is the T-SQL table hint that holds a shared row lock to the commit. ``door`` has a
+    posture write lock the table first, where a later sharer would otherwise pass it.
+    """
+
+    form: Literal["row", "table", "exclusive"] = "row"
+    hint: str | None = None
+    door: bool = False
+
+
+ROW_SHARE: Final = ShareLock()
+
+
 @dataclass(frozen=True)
 class DialectProfile:
     """One engine's declared policy.
@@ -286,6 +303,9 @@ class DialectProfile:
     locks per row, never a table lock, at 40,000 rows in one
     transaction).
 
+    ``share_lock`` declares the shared lock a mint proves its label under
+    (:class:`ShareLock`), which SQLAlchemy renders on two engines of five.
+
     ``membership`` declares how a chunked membership predicate
     (``column IN (...)``) reaches the engine — a plan-quality decision
     SQLAlchemy takes no position on. ``in_list`` is the expanding bind
@@ -401,6 +421,7 @@ class DialectProfile:
     arbitration: Literal["upsert", "catch_retry"]
     guard_miss: Literal["reprobe", "redrive"] = "redrive"
     row_lock_hint: str | None = None
+    share_lock: ShareLock = ROW_SHARE
     membership: MembershipForm = "in_list"
     op_isolation: str | None = None
     topology_isolation: str | None = None
@@ -509,6 +530,7 @@ POSTGRESQL: Final = DialectProfile(
     in_list_budget=65_535,
     arbitration="upsert",
     guard_miss="reprobe",
+    share_lock=ShareLock(door=True),
     op_isolation="REPEATABLE READ",
     topology_isolation="READ COMMITTED",
     values_join=True,
@@ -549,6 +571,7 @@ MSSQL: Final = DialectProfile(
     # with_for_update() renders as a bare SELECT on T-SQL; the guard read
     # locks through this hint, and seeks, or the lock is a table lock.
     row_lock_hint="UPDLOCK, FORCESEEK",
+    share_lock=ShareLock(hint="REPEATABLEREAD, FORCESEEK"),
     membership="values",
     values_join=True,
     # T-SQL LIKE treats [...] as a character class; escape_like must
@@ -616,6 +639,7 @@ ORACLE: Final = DialectProfile(
     in_list_budget=1_000,
     arbitration="catch_retry",
     guard_miss="reprobe",
+    share_lock=ShareLock(form="table"),
     retryable_driver_codes=frozenset({60, 8177}),
     tuple_in=True,
     # Core already issues array DML here; the bare driver path loses the
@@ -639,6 +663,7 @@ GENERIC: Final = DialectProfile(
     key_byte_budget=1_700,
     in_list_budget=1_000,
     arbitration="catch_retry",
+    share_lock=ShareLock(form="exclusive"),
 )
 
 PROFILES: Final[dict[str, DialectProfile]] = {

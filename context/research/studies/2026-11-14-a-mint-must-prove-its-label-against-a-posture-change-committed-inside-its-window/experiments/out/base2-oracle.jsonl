@@ -1,0 +1,12 @@
+{"kind": "statements", "engine": "oracle", "call": "new file", "minter": "granted", "statements": 14}
+{"kind": "statements", "engine": "oracle", "call": "rewrite, no mint", "minter": "granted", "statements": 14}
+{"kind": "statements", "engine": "oracle", "call": "10,000 files with parents", "minter": "granted", "statements": 74}
+{"kind": "statements", "engine": "oracle", "call": "move one file", "minter": "granted", "statements": 23}
+{"kind": "statements", "engine": "oracle", "call": "copy one file", "minter": "granted", "statements": 22}
+{"kind": "statements", "engine": "oracle", "call": "new file", "minter": "system", "statements": 8}
+{"kind": "statements", "engine": "oracle", "call": "rewrite, no mint", "minter": "system", "statements": 8}
+{"kind": "contention", "engine": "oracle", "outcomes": {"success": 804}, "multixacts_created": null}
+{"kind": "contention-labels", "engine": "oracle", "rows": 816, "wrong": 0, "sample": {}}
+{"kind": "statements", "engine": "oracle", "call": "10,000 files with parents", "minter": "system", "statements": 48}
+{"kind": "statements", "engine": "oracle", "call": "move one file", "minter": "system", "statements": 15}
+{"kind": "statements", "engine": "oracle", "call": "copy one file", "minter": "system", "statements": 15}

@@ -23,21 +23,25 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 import pytest
 from sqlalchemy import event as sqlalchemy_event
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
 from tests.support.commit_worlds import (
     ALICE,
+    ANONYMOUS,
     BOB,
+    CAROL,
     EVE,
+    SYSTEM,
     attempts,
     copy_world,
     dest_world,
@@ -51,6 +55,7 @@ from tests.support.commit_worlds import (
 from tests.support.database_helpers import _url
 from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
+from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result
@@ -59,6 +64,7 @@ from vfs.storage.backends.database import DatabaseStorage, dialects, indexing, s
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import search as search_module
+from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.revision import hold_revision
 from vfs.storage.grants import LEVEL_RANK, Posture
 from vfs.storage.replace import EditOperation
@@ -1687,6 +1693,91 @@ def _snapshot_writes(storage: DatabaseStorage) -> bool:
     return storage._host.profile.op_isolation is not None
 
 
+class _Change(NamedTuple):
+    """Where a rival changes everyone's posture, the file a write creates, and every row that write mints."""
+
+    posture: str
+    target: str
+    minted: tuple[str, ...]
+
+
+# At the created path, at a directory the same write creates, and at the existing parent the write bumps.
+_CHANGES = {
+    "at-path": _Change("/p/new.txt", "/p/new.txt", ("/p/new.txt",)),
+    "at-minted-parent": _Change("/p/n", "/p/n/new.txt", ("/p/n", "/p/n/new.txt")),
+    "at-existing-parent": _Change("/p", "/p/new.txt", ("/p/new.txt",)),
+}
+
+# The writer granted read_write on /p by name, and the system actor, which no fence runs over.
+_MINTERS: dict[str, Authority | None] = {"granted": BOB, "system": None}
+
+# Before the label read, where a snapshot engine's window opens, and after it, where every engine's does.
+_MINT_SEAMS = ("write:before-apply", "write:after-labels")
+
+# A member of a group that holds nothing at /p: refused there exactly as a caller with no grant is.
+DAVE = Authority.of(Principal("dave"))
+
+# Every row a transfer of /p/d into /p/q creates or moves, and the file a reader is refused.
+_TRANSFERRED = ("/p/q/d", "/p/q/d/f.txt", "/p/q/d/sub", "/p/q/d/sub/g.txt")
+_TRANSFERRED_FILE = "/p/q/d/f.txt"
+
+# What a mint that lost to a posture change may answer: refused where it now may not write, or a retryable conflict.
+_REFUSED_MINT = frozenset({(ErrorKind.permission_denied, False), (ErrorKind.conflict, True)})
+
+
+async def _relabel_marks(storage: DatabaseStorage) -> int:
+    """How many relabels stand in flight: zero once every posture change has settled."""
+    relabels = storage._host.tables.relabels
+    async with storage._host.session_factory() as session:
+        return int((await session.execute(select(func.count()).select_from(relabels))).scalar_one())
+
+
+async def _standing_labels(storage: DatabaseStorage, paths: tuple[str, ...]) -> dict[str, int]:
+    """The everyone level the posture rows as they now stand give each of *paths*."""
+    host = storage._host
+    async with host.session_factory() as session:
+        return await labels_for(session, host.tables, host.profile, host.membership_budget, paths)
+
+
+async def _stored_labels(storage: DatabaseStorage, paths: tuple[str, ...]) -> dict[str, int | None]:
+    """The everyone level each of *paths*' rows carries, ``None`` where no row stands."""
+    rows = {path: await row_at(storage, path) for path in paths}
+    return {path: None if row is None else row["everyone_level"] for path, row in rows.items()}
+
+
+async def _minted_under_the_standing_posture(
+    storage: DatabaseStorage, result: Result, minted: tuple[str, ...], target: str, level: int
+) -> bool:
+    """Whether *result* minted: refused lawfully and left no row, or every row carries the standing posture's label."""
+    leg = storage._host.profile.name
+    assert await _relabel_marks(storage) == 0
+    standing = await _standing_labels(storage, minted)
+    assert standing == dict.fromkeys(minted, level), standing
+    stored = await _stored_labels(storage, minted)
+    if stored[target] is None:
+        assert result.success is False
+        assert {(error.kind, error.retryable) for error in result.errors} <= _REFUSED_MINT, result.errors
+        assert all(label is None for label in stored.values()), stored
+        return False
+    assert result.success is True, result.errors
+    assert stored == standing, f"{leg}: stored labels {stored}, standing posture {standing}"
+    return True
+
+
+async def _hidden_from(storage: DatabaseStorage, reader: Authority, target: str, minted: tuple[str, ...]) -> None:
+    """*reader* is refused *target* and finds none of *minted* by glob or grep under ``/p``."""
+    leg = storage._host.profile.name
+    read = await storage.read(path=Path(target), authority=reader)
+    assert read.success is False, f"{leg}: {reader} read {target}"
+    globbed = await storage.glob(patterns=("/p/**",), authority=reader)
+    found = await storage.grep(pattern="minted probe", globs=("/p/**",), allow_scan=True, authority=reader)
+    # Anonymous is refused a scope everyone holds nothing at; that refusal hides the row too.
+    hidden = {ErrorKind.not_found, ErrorKind.unauthenticated}
+    assert {error.kind for error in (*globbed.errors, *found.errors)} <= hidden, globbed.errors
+    seen = {str(row.path) for row in (*globbed.observations, *found.observations)}
+    assert not seen & set(minted), f"{leg}: {reader} found {sorted(seen & set(minted))}"
+
+
 class TestRightsAtCommit:
     """A mutation's rows and rights as they stand at its commit point, against a genuine committed rival."""
 
@@ -1833,7 +1924,7 @@ class TestRightsAtCommit:
                     sqlalchemy_event.remove(listen, "before_cursor_execute", record)
                 refused = [(ErrorKind.permission_denied, "/dst/c/d0")]
                 assert [_kinds_and_paths(result) for result in results] == [refused, refused]
-                assert counts == [3, 3]
+                assert counts == [4, 4]
                 await _audit(storage)
                 return
             await dest_world(storage)
@@ -1910,6 +2001,248 @@ class TestRightsAtCommit:
             assert sorted(error.path or "" for error in result.errors) == expected
             assert {error.kind for error in result.errors} == {ErrorKind.permission_denied}
             assert await _liveness(storage) == before
+            await _audit(storage)
+
+    @pytest.mark.parametrize("minter", list(_MINTERS))
+    @pytest.mark.parametrize("shape", list(_CHANGES))
+    @pytest.mark.parametrize("seam", _MINT_SEAMS)
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_row_minted_across_a_posture_tightening_is_no_more_open_than_the_standing_posture(
+        self, env_var: str, seam: str, shape: str, minter: str
+    ) -> None:
+        """A posture tightened and relabelled inside a write's window leaves no row the write mints more open than it.
+
+        Once the relabel settles, readers trust each row's stored label and
+        nothing rewrites it. So the write is refused, or every row it mints
+        carries the label the standing posture gives and stays hidden from a
+        caller holding nothing there, a group's member and anonymous included.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+            assert (await storage.add_member(group="group:eng", member="dave", authority=SYSTEM)).success is True
+            change = _CHANGES[shape]
+            second = sibling(env_var, storage)
+            handler, rivals = _self_clearing(seam, lambda: second.posture(path=Path(change.posture), posture="none"))
+            written = [Entry(path=Path(change.target), content="minted probe\n")]
+            try:
+                with seams.installed(seam, handler):
+                    result = await storage.write(entries=written, parents=True, authority=_MINTERS[minter])
+            finally:
+                await second.close()
+            assert rivals and rivals[0].success is True, rivals[0].errors if rivals else "the rival never ran"
+            none = LEVEL_RANK["none"]
+            if await _minted_under_the_standing_posture(storage, result, change.minted, change.target, none):
+                control = await storage.grep(pattern="minted probe", allow_scan=True)
+                assert {str(row.path) for row in control.observations} == {change.target}
+                for reader in (CAROL, DAVE, ANONYMOUS):
+                    await _hidden_from(storage, reader, change.target, change.minted)
+            await _audit(storage)
+
+    @pytest.mark.parametrize("minter", list(_MINTERS))
+    @pytest.mark.parametrize("shape", list(_CHANGES))
+    @pytest.mark.parametrize("seam", _MINT_SEAMS)
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_row_minted_across_a_posture_loosening_is_no_more_closed_than_the_standing_posture(
+        self, env_var: str, seam: str, shape: str, minter: str
+    ) -> None:
+        """A posture loosened and relabelled inside a write's window leaves no row the write mints hidden from it.
+
+        The other direction of the same property: a row stamped with the old,
+        closed label stays invisible to every caller the standing posture admits.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.posture(path=Path("/p"), posture="none")).success is True
+            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+            change = _CHANGES[shape]
+            second = sibling(env_var, storage)
+            rival = partial(second.posture, path=Path(change.posture), posture="read_write")
+            handler, rivals = _self_clearing(seam, rival)
+            written = [Entry(path=Path(change.target), content="minted probe\n")]
+            try:
+                with seams.installed(seam, handler):
+                    result = await storage.write(entries=written, parents=True, authority=_MINTERS[minter])
+            finally:
+                await second.close()
+            assert rivals and rivals[0].success is True, rivals[0].errors if rivals else "the rival never ran"
+            open_to_all = LEVEL_RANK["read_write"]
+            if await _minted_under_the_standing_posture(storage, result, change.minted, change.target, open_to_all):
+                read = await storage.read(path=Path(change.target), authority=CAROL)
+                assert read.success is True, read.errors
+            await _audit(storage)
+
+    @pytest.mark.parametrize("direction", ["tightening", "loosening"])
+    @pytest.mark.parametrize("minter", list(_MINTERS))
+    @pytest.mark.parametrize("verb", ["move", "copy"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_row_moved_or_copied_across_a_posture_change_carries_the_standing_postures_label(
+        self, env_var: str, verb: str, minter: str, direction: str
+    ) -> None:
+        """A posture changed at a transfer's destination, after the transfer read it, is not outlived by the old label.
+
+        A move restamps the rows it carries and a copy stamps the rows it
+        creates, both from the destination's postures as the transfer read them.
+        """
+        before, after = ("read_write", "none") if direction == "tightening" else ("none", "read_write")
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.mkdir(path=Path("/p/q"), authority=SYSTEM)).success is True
+            assert (await storage.posture(path=Path("/p/q"), posture=before)).success is True
+            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+            assert (await storage.add_member(group="group:eng", member="dave", authority=SYSTEM)).success is True
+            second = sibling(env_var, storage)
+            rival = partial(second.posture, path=Path("/p/q"), posture=after)
+            handler, rivals = _self_clearing("transfer:after-postures", rival)
+            pair = ResolvedPair(src=Path("/p/d"), dest=Path("/p/q/d"))
+            try:
+                with seams.installed("transfer:after-postures", handler):
+                    call = storage.move if verb == "move" else storage.copy
+                    result = await call(operations=[pair], authority=_MINTERS[minter])
+            finally:
+                await second.close()
+            assert rivals and rivals[0].success is True, rivals[0].errors if rivals else "the rival never ran"
+            landed = await _minted_under_the_standing_posture(
+                storage, result, _TRANSFERRED, "/p/q/d", LEVEL_RANK[after]
+            )
+            if landed and direction == "tightening":
+                for reader in (CAROL, DAVE, ANONYMOUS):
+                    await _hidden_from(storage, reader, _TRANSFERRED_FILE, _TRANSFERRED)
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_restored_row_carries_the_label_the_standing_posture_gives(self, env_var: str) -> None:
+        """A restore stamps no label: the relabel reached the tombstone where it sat, and the row returns with it."""
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.delete(path=Path("/p/d/f.txt"), authority=SYSTEM)).success is True
+            assert (await storage.posture(path=Path("/p/d"), posture="none")).success is True
+            restored = await storage.restore(path=Path("/p/d/f.txt"), authority=SYSTEM)
+            none = LEVEL_RANK["none"]
+            assert await _minted_under_the_standing_posture(storage, restored, ("/p/d/f.txt",), "/p/d/f.txt", none)
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id in ("postgres", "mariadb", "oracle")])
+    async def test_only_a_create_waits_while_a_posture_write_is_open(self, env_var: str) -> None:
+        """While a posture write stands open, calls that create a row wait for it and nothing else waits for it.
+
+        The posture write is stopped with every lock it takes held. A read by
+        each kind of caller, a glob, a grep, a search and a rewrite of an
+        existing file each run to their end beside it; the two creates have
+        not returned when the last of those has. A waiting create holds its
+        parent's row, so a delete of a sibling started behind it waits for
+        that create, and returns once the posture write commits. An order of
+        returns, never a clock.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+            sibling_file = Path("/p/old.txt")
+            assert (await storage.write(entries=[Entry(path=sibling_file, content="old")])).success is True
+            admin, callers = sibling(env_var, storage), sibling(env_var, storage)
+            existing, other = Path("/p/d/f.txt"), Path("/p/d/sub/g.txt")
+            created = ("/p/new-system.txt", "/p/new-granted.txt")
+            creates: list[asyncio.Future[Result]] = []
+            returned: list[Result] = []
+            still_waiting: list[bool] = []
+
+            async def beside_the_open_posture_write() -> Result:
+                for path, minter in zip(created, (None, BOB), strict=True):
+                    entries = [Entry(path=Path(path), content="minted probe\n")]
+                    creates.append(asyncio.ensure_future(callers.write(entries=entries, authority=minter)))
+                returned.extend([await callers.read(path=existing, authority=r) for r in (None, BOB, CAROL, ANONYMOUS)])
+                returned.append(await callers.glob(patterns=("/p/**",), authority=BOB))
+                returned.append(await callers.grep(pattern="f", allow_scan=True, authority=BOB))
+                returned.append(await callers.search(query="minted probe", authority=BOB))
+                returned.append(await callers.write(entries=[Entry(path=existing, content="f2")]))
+                returned.append(await callers.write(entries=[Entry(path=other, content="g2")], authority=BOB))
+                still_waiting.extend(not create.done() for create in creates)
+                # Behind the waiting creates: a delete beneath the parent whose row they hold.
+                creates.append(asyncio.ensure_future(callers.delete(path=sibling_file, authority=BOB)))
+                returned.extend([await callers.read(path=existing, authority=r) for r in (None, BOB, CAROL, ANONYMOUS)])
+                still_waiting.append(not creates[-1].done())
+                return Result(ops=("posture",))
+
+            handler, _ = _self_clearing("posture:after-stamp", beside_the_open_posture_write)
+            try:
+                with seams.installed("posture:after-stamp", handler):
+                    changed = await admin.posture(path=other.parent_dir, posture="read")
+                *minted, deleted = await asyncio.gather(*creates)
+            finally:
+                await admin.close()
+                await callers.close()
+            assert changed.success is True, changed.errors
+            assert [result.success for result in returned] == [True] * 13, [r.errors for r in returned]
+            assert still_waiting == [True, True, True]
+            assert [result.success for result in minted] == [True, True], [r.errors for r in minted]
+            assert deleted.success is True, deleted.errors
+            assert await _relabel_marks(storage) == 0
+            assert await _stored_labels(storage, created) == await _standing_labels(storage, created)
+            await _audit(storage)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_mints_posture_writes_relabel_chunks_and_a_sweep_finish_without_a_deadlock(
+        self, env_var: str
+    ) -> None:
+        """Sixteen writers, three posture writes with their relabels and a sweep run together and none deadlocks.
+
+        A mint's shared stamp lock is the last lock it takes and a posture
+        write reads no entry row after it takes the stamp, so neither new
+        wait closes a cycle. Outcomes are counted; nothing is timed.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+            doomed = [Entry(path=Path(f"/p/doomed/f{i}.txt"), content="x") for i in range(200)]
+            assert (await storage.write(entries=doomed, parents=True)).success is True
+            assert (await storage.delete(path=Path("/p/doomed"))).success is True
+            writers = 16
+            handles = [sibling(env_var, storage) for _ in range(writers + 2)]
+            outcomes: set[tuple[str, bool]] = set()
+            landed: list[bool] = []
+
+            def tally(result: Result) -> None:
+                outcomes.update((error.kind, error.retryable) for error in result.errors)
+
+            async def writer(index: int) -> None:
+                minter = BOB if index % 2 else None
+                for n in range(50):
+                    entries = [Entry(path=Path(f"/p/w{index}/f{n}.txt"), content="x")]
+                    result = await handles[index].write(entries=entries, parents=True, authority=minter)
+                    tally(result)
+                    landed.append(result.success)
+
+            async def admin() -> None:
+                for level in ("none", "read_write", "none"):
+                    await asyncio.sleep(0)
+                    tally(await handles[writers].posture(path=Path("/p"), posture=level))
+
+            async def sweeper() -> None:
+                tally(await handles[writers + 1].sweep(path=Path("/.vfs/trash")))
+
+            # aioodbc runs each driver call on the loop's default executor: more threads than calls in flight.
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(64))
+            try:
+                await asyncio.gather(*(writer(index) for index in range(writers)), admin(), sweeper())
+            finally:
+                for handle in handles:
+                    await handle.close()
+            assert outcomes <= {(ErrorKind.conflict, True)}, outcomes
+            # A posture call that lost a chunk leaves its mark for the next call; run what that call would.
+            assert (await storage._settled(Result(ops=("posture",)))).success is True
+            assert await _relabel_marks(storage) == 0
+            entry = storage._host.tables.entry
+            async with storage._host.session_factory() as session:
+                found = await session.execute(
+                    select(entry.c.path, entry.c.everyone_level).where(entry.c.path.like("/p/w%"))
+                )
+                stored = {row.path: row.everyone_level for row in found}
+            assert stored == await _standing_labels(storage, tuple(stored))
+            # A floor: the run is not one where every mint lost, and every write that landed left its file.
+            succeeded = landed.count(True)
+            assert succeeded > writers * 50 // 2, succeeded
+            assert len([path for path in stored if path.endswith(".txt")]) == succeeded
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id == "mariadb"])

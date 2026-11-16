@@ -1,0 +1,2 @@
+{"kind": "contention", "engine": "postgresql", "threads": 64, "hung": false, "outcomes": {"success": 771, "vfs.conflict/retryable": 33}, "multixacts_created": 272, "marks_left": 0}
+{"kind": "contention-labels", "engine": "postgresql", "rows": 783, "wrong": 0, "sample": {}}

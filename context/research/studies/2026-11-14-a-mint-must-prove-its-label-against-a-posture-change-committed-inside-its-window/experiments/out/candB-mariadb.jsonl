@@ -1,0 +1,24 @@
+{"kind": "attempts", "leg": "mariadb/write:after-labels/at-minted-parent/granted", "attempts": 1}
+{"kind": "attempts", "leg": "mariadb/write:before-apply/at-path/granted", "attempts": 1}
+{"kind": "tighten", "leg": "mariadb/write:after-labels/at-minted-parent/granted", "outcome": "OPEN", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "tighten", "leg": "mariadb/write:before-apply/at-path/granted", "outcome": "OPEN", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:before-apply/at-existing-parent/granted", "attempts": 2}
+{"kind": "tighten", "leg": "mariadb/write:before-apply/at-existing-parent/granted", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:after-labels/at-minted-parent/system", "attempts": 1}
+{"kind": "attempts", "leg": "mariadb/write:before-apply/at-path/system", "attempts": 1}
+{"kind": "tighten", "leg": "mariadb/write:after-labels/at-minted-parent/system", "outcome": "OPEN", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "tighten", "leg": "mariadb/write:before-apply/at-path/system", "outcome": "OPEN", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:before-apply/at-existing-parent/system", "attempts": 2}
+{"kind": "tighten", "leg": "mariadb/write:before-apply/at-existing-parent/system", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:before-apply/at-minted-parent/granted", "attempts": 1}
+{"kind": "tighten", "leg": "mariadb/write:before-apply/at-minted-parent/granted", "outcome": "OPEN", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:after-labels/at-existing-parent/granted", "attempts": 2}
+{"kind": "tighten", "leg": "mariadb/write:after-labels/at-existing-parent/granted", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:after-labels/at-path/granted", "attempts": 1}
+{"kind": "tighten", "leg": "mariadb/write:after-labels/at-path/granted", "outcome": "OPEN", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:before-apply/at-minted-parent/system", "attempts": 1}
+{"kind": "tighten", "leg": "mariadb/write:before-apply/at-minted-parent/system", "outcome": "OPEN", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:after-labels/at-existing-parent/system", "attempts": 2}
+{"kind": "tighten", "leg": "mariadb/write:after-labels/at-existing-parent/system", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "mariadb/write:after-labels/at-path/system", "attempts": 1}
+{"kind": "tighten", "leg": "mariadb/write:after-labels/at-path/system", "outcome": "OPEN", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 0}}

@@ -71,6 +71,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.util.concurrency import await_only
 from ulid import ULID
 
+from vfs.authority import EVERYONE_NAME
 from vfs.models import encoded_at_creation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
@@ -713,6 +714,7 @@ class EngineHost:
         await conn.execute(insert(self.tables.index_state).values(id=1))
         await conn.execute(insert(self.tables.lock).values(id=1))
         await conn.execute(insert(self.tables.grants).values(**posture_row(self.posture, now)))
+        await conn.execute(insert(self.tables.principal_revisions).values(principal_id=EVERYONE_NAME, revision=0))
         await conn.execute(
             insert(self.tables.entry).values(
                 entry_id=str(ULID()),

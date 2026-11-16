@@ -12,7 +12,10 @@ The value also stamps the principals a write names, one row each in
 membership write stamps the member whose closure it changes, a posture
 write stamps the everyone principal. A caller's compile is keyed on the
 greatest stamp over its subjects and their groups, so a write retires
-exactly the compiles of the callers it reaches and no other.
+exactly the compiles of the callers it reaches and no other. The
+everyone principal's row is seeded at provisioning, at zero: it is the
+row a call that creates an entry locks, shared, as its last statement,
+and a row that is missing cannot be locked.
 
     revision = await bump_revision(session, tables)             # the lock, then the new value
     await stamp_principals(session, tables, ["ann"], revision)  # ann's compile is retired

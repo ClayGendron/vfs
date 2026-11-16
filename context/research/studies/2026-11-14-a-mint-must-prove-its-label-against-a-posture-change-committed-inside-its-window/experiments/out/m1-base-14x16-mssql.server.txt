@@ -1,0 +1,8 @@
+the node wrote no line; read by hand before the run was stopped
+blocked requests 14
+idle sessions holding a transaction 5
+requests waiting on a shared lock 12
+requests waiting on an update or exclusive lock 2
+waits on the stamps table 0
+longest wait in seconds 3246
+blockers that are themselves idle 2

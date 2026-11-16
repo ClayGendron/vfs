@@ -38,6 +38,7 @@ FAMILIES: tuple[tuple[str, str], ...] = (
     ("revision", "SELECT vfs_meta.grant_revision"),
     ("grants", "SELECT vfs_grants."),
     ("principal revision", "SELECT max(vfs_principal_revisions.revision)"),
+    ("everyone stamp", "SELECT vfs_principal_revisions.revision"),
     ("relabels", "SELECT vfs_relabels."),
     ("target probe", "SELECT vfs_entries.path, vfs_entries.kind, vfs_entries.deleted_at"),
     ("committed fetch", "SELECT vfs_entries.entry_id, vfs_entries.path"),
@@ -110,6 +111,8 @@ def _expected(host: EngineHost, columns: dict[str, tuple[str, ...]], directories
             "revision": 1,
             "grants": 2 * math.ceil(paths / membership_budget),
             "principal revision": 2,
+            # What a create proves its labels with: read before them, held as the last statement.
+            "everyone stamp": 2,
             "relabels": 1,
             "target probe": math.ceil(paths / membership_budget),
             "committed fetch": math.ceil(paths / membership_budget),
@@ -157,7 +160,7 @@ async def test_the_formula_holds_under_a_shrunken_budget(tmp_path: FsPath) -> No
         min(
             expected[name]
             for name, _ in FAMILIES
-            if name not in ("begin", "revision", "principal revision", "relabels", "parent bump")
+            if name not in ("begin", "revision", "principal revision", "everyone stamp", "relabels", "parent bump")
         )
         > 1
     )

@@ -1,0 +1,2 @@
+{"kind": "contention", "engine": "mssql", "threads": 64, "writers": 16, "hung": false, "outcomes": {"success": 803, "vfs.conflict/retryable": 1}, "multixacts_created": null, "marks_left": 0}
+{"kind": "contention-labels", "engine": "mssql", "rows": 816, "wrong": 0, "sample": {}}

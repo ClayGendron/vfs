@@ -1,0 +1,13 @@
+{"kind": "statements", "engine": "postgresql", "call": "new file", "minter": "granted", "statements": 17}
+{"kind": "statements", "engine": "postgresql", "call": "rewrite, no mint", "minter": "granted", "statements": 13}
+{"kind": "locks", "engine": "postgresql", "sharer_beside_sharer": "share", "posture_behind_sharers": "waits (<class 'asyncpg.exceptions.LockNotAvailableError'>: canceling statement due to lock timeout)"}
+{"kind": "statements", "engine": "postgresql", "call": "10,000 files with parents", "minter": "granted", "statements": 47}
+{"kind": "statements", "engine": "postgresql", "call": "move one file", "minter": "granted", "statements": 26}
+{"kind": "statements", "engine": "postgresql", "call": "copy one file", "minter": "granted", "statements": 25}
+{"kind": "statements", "engine": "postgresql", "call": "new file", "minter": "system", "statements": 11}
+{"kind": "statements", "engine": "postgresql", "call": "rewrite, no mint", "minter": "system", "statements": 7}
+{"kind": "statements", "engine": "postgresql", "call": "10,000 files with parents", "minter": "system", "statements": 41}
+{"kind": "statements", "engine": "postgresql", "call": "move one file", "minter": "system", "statements": 18}
+{"kind": "statements", "engine": "postgresql", "call": "copy one file", "minter": "system", "statements": 18}
+{"kind": "contention", "engine": "postgresql", "outcomes": {"success": 780, "vfs.conflict/retryable": 24}, "multixacts_created": 301}
+{"kind": "contention-labels", "engine": "postgresql", "rows": 793, "wrong": 0, "sample": {}}

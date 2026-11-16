@@ -1,0 +1,7 @@
+the node wrote no line in 220 s
+blocked requests 14
+idle sessions holding a transaction 4
+requests waiting on a shared lock 0
+requests waiting on an update or exclusive lock 14
+waits on the stamps table 0
+longest wait in seconds 214

@@ -1,0 +1,11 @@
+{"kind": "statements", "engine": "postgresql", "call": "new file", "minter": "granted", "statements": 15}
+{"kind": "statements", "engine": "postgresql", "call": "rewrite, no mint", "minter": "granted", "statements": 13}
+{"kind": "statements", "engine": "postgresql", "call": "10,000 files with parents", "minter": "granted", "statements": 45}
+{"kind": "statements", "engine": "postgresql", "call": "move one file", "minter": "granted", "statements": 24}
+{"kind": "statements", "engine": "postgresql", "call": "copy one file", "minter": "granted", "statements": 23}
+{"kind": "statements", "engine": "postgresql", "call": "new file", "minter": "system", "statements": 9}
+{"kind": "statements", "engine": "postgresql", "call": "rewrite, no mint", "minter": "system", "statements": 7}
+{"kind": "statements", "engine": "postgresql", "call": "10,000 files with parents", "minter": "system", "statements": 39}
+{"kind": "statements", "engine": "postgresql", "call": "move one file", "minter": "system", "statements": 16}
+{"kind": "statements", "engine": "postgresql", "call": "copy one file", "minter": "system", "statements": 16}
+{"kind": "contention", "engine": "postgresql", "outcomes": {"success": 786, "vfs.conflict/retryable": 18}, "multixacts_created": 0}

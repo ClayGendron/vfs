@@ -1,0 +1,3 @@
+{"kind": "locks", "engine": "mssql", "sharer_beside_sharer": "share", "posture_behind_sharers": "waits (('42000', '[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Lock request time out period exceeded)"}
+{"kind": "statements", "engine": "mssql", "call": "new file", "minter": "granted", "statements": 17}
+{"kind": "statements", "engine": "mssql", "call": "rewrite, no mint", "minter": "granted", "statements": 13}

@@ -1,0 +1,5 @@
+blocked requests 14
+idle sessions holding a transaction 5
+requests waiting on a shared lock 10
+requests waiting on an update or exclusive lock 4
+waits on the stamps table 0

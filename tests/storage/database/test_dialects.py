@@ -41,6 +41,7 @@ from vfs.storage.backends.database.dialects import (
     SQLITE,
     BulkInsertMode,
     DialectProfile,
+    ShareLock,
     arm_budget,
     bulk_insert,
     is_permanent_defect,
@@ -54,6 +55,7 @@ from vfs.storage.backends.database.dialects import (
     wire_bytes,
 )
 from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.labels import hold_postures, open_relabel, watch_postures
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -415,6 +417,86 @@ class TestLockRows:
         profile = profile_for("duckdb")
         assert profile.row_lock_hint is None
         assert _lock_sql(profile, postgresql_dialect.dialect()).endswith("FOR UPDATE")
+
+
+class _Recorder:
+    """A session that compiles each statement for one dialect and answers every read with a stamp of zero."""
+
+    rowcount = 1
+
+    def __init__(self, dialect: Dialect) -> None:
+        self.dialect = dialect
+        self.info: dict[str, object] = {}
+        self.seen: list[str] = []
+
+    def get_bind(self) -> _Recorder:
+        return self
+
+    async def execute(self, statement: Any) -> _Recorder:
+        self.seen.append(" ".join(str(statement.compile(dialect=self.dialect)).split()))
+        return self
+
+    def scalar_one_or_none(self) -> int:
+        return 0
+
+
+# Each profile, the dialect that renders it, and what its hold must issue after the plain watch.
+_HOLDS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
+    (SQLITE, sqlite_dialect.dialect(), ("WHERE vfs_principal_revisions.principal_id = ?",)),
+    (POSTGRESQL, postgresql_dialect.dialect(), ("FOR SHARE",)),
+    (MARIADB, mysql_dialect.dialect(), ("LOCK IN SHARE MODE",)),
+    (MSSQL, mssql_dialect.dialect(), ("FROM vfs_principal_revisions WITH (REPEATABLEREAD, FORCESEEK) WHERE",)),
+    (ORACLE, oracle_dialect.dialect(), ("LOCK TABLE vfs_principal_revisions IN SHARE MODE", "principal_id = :")),
+    (GENERIC, postgresql_dialect.dialect(), ("FOR UPDATE",)),
+]
+
+
+def test_each_profile_declares_how_a_mint_shares_the_stamp_lock() -> None:
+    """The shared form is one profile fact: a row lock by default, and what each other engine needs spelled."""
+    assert SQLITE.share_lock == MARIADB.share_lock == ShareLock()
+    assert POSTGRESQL.share_lock == ShareLock(door=True)
+    assert MSSQL.share_lock == ShareLock(hint="REPEATABLEREAD, FORCESEEK")
+    assert ORACLE.share_lock == ShareLock(form="table")
+    assert GENERIC.share_lock == profile_for("duckdb").share_lock == ShareLock(form="exclusive")
+
+
+@pytest.mark.parametrize(("profile", "dialect", "hold"), _HOLDS, ids=[row[0].name for row in _HOLDS])
+async def test_the_hold_renders_each_profiles_shared_form(
+    profile: DialectProfile, dialect: Dialect, hold: tuple[str, ...]
+) -> None:
+    """The watch is a plain read on every engine; the hold is that read under the profile's shared lock.
+
+    Guards each arm of the hold's spelling: a hold that read plainly
+    would prove nothing a rival's commit could not undo before the mint's own.
+    """
+    recorder = _Recorder(dialect)
+    session, tables = cast("AsyncSession", recorder), build_vfs_tables()
+    await watch_postures(session, tables)
+    await hold_postures(session, tables, profile)
+    watch, *held = recorder.seen
+    assert not any(word in watch for word in ("FOR SHARE", "FOR UPDATE", "LOCK ", "WITH ("))
+    assert len(held) == len(hold)
+    for statement, fragment in zip(held, hold, strict=True):
+        assert fragment in statement, statement
+    locking = ("FOR SHARE", "FOR UPDATE", "LOCK IN SHARE MODE", "WITH (")
+    if profile in (SQLITE, ORACLE):
+        assert not any(word in held[-1] for word in locking), held[-1]
+
+
+@pytest.mark.parametrize(("profile", "dialect", "hold"), _HOLDS, ids=[row[0].name for row in _HOLDS])
+async def test_only_the_postgres_posture_write_locks_the_stamps_table_first(
+    profile: DialectProfile, dialect: Dialect, hold: tuple[str, ...]
+) -> None:
+    """On Postgres a later mint's shared read passes a waiting posture write unless the table is locked first."""
+    recorder = _Recorder(dialect)
+    await open_relabel(cast("AsyncSession", recorder), build_vfs_tables(), profile, "/p", 7)
+    doors = [statement for statement in recorder.seen if statement.startswith("LOCK TABLE")]
+    if profile is POSTGRESQL:
+        assert recorder.seen[0] == "LOCK TABLE vfs_principal_revisions IN EXCLUSIVE MODE"
+        assert len(doors) == 1
+    else:
+        assert doors == []
+    assert "UPDATE vfs_principal_revisions" in recorder.seen[len(doors)]
 
 
 # ---------------------------------------------------------------------------

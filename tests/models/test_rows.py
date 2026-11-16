@@ -210,7 +210,7 @@ class TestBuildVFSTables:
         keys = {str(index.name): [column.name for column in index.columns] for index in tables.entry.indexes}
         assert keys["ix_vfs_entries_index_pending"] == ["encoded", "chunked", "indexable", "deleted_at", "id"]
         assert keys["ix_vfs_entries_render_status"] == ["render_status", "deleted_at", "id"]
-        assert SCHEMA_FORMAT_VERSION == 26
+        assert SCHEMA_FORMAT_VERSION == 27
 
     def test_mounts_in_different_schemas_never_share_schema_objects(self, tables: VFSTables) -> None:
         other = build_vfs_tables(schema="tenant")

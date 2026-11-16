@@ -1,0 +1,12 @@
+{"kind": "statements", "engine": "mariadb", "call": "new file", "minter": "granted", "statements": 17}
+{"kind": "statements", "engine": "mariadb", "call": "rewrite, no mint", "minter": "granted", "statements": 15}
+{"kind": "locks", "engine": "mariadb", "sharer_beside_sharer": "share", "posture_behind_sharers": "waits ((1205, 'Lock wait timeout exceeded; try restarting transaction'))"}
+{"kind": "statements", "engine": "mariadb", "call": "10,000 files with parents", "minter": "granted", "statements": 49}
+{"kind": "statements", "engine": "mariadb", "call": "move one file", "minter": "granted", "statements": 26}
+{"kind": "statements", "engine": "mariadb", "call": "copy one file", "minter": "granted", "statements": 25}
+{"kind": "statements", "engine": "mariadb", "call": "new file", "minter": "system", "statements": 11}
+{"kind": "statements", "engine": "mariadb", "call": "rewrite, no mint", "minter": "system", "statements": 9}
+{"kind": "statements", "engine": "mariadb", "call": "10,000 files with parents", "minter": "system", "statements": 43}
+{"kind": "statements", "engine": "mariadb", "call": "move one file", "minter": "system", "statements": 18}
+{"kind": "statements", "engine": "mariadb", "call": "copy one file", "minter": "system", "statements": 18}
+{"kind": "contention", "engine": "mariadb", "outcomes": {"success": 788, "vfs.conflict/retryable": 16}, "multixacts_created": null}

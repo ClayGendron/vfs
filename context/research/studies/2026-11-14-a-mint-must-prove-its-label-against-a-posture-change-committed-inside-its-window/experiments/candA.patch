@@ -1,0 +1,121 @@
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/authorized.py candA/src/vfs/storage/backends/database/authorized.py
+--- src/vfs/storage/backends/database/authorized.py	2026-11-14 11:29:58
++++ src/vfs/storage/backends/database/authorized.py	2026-11-15 09:10:00
+@@ -52,7 +52,7 @@
+ from vfs.ops import VERB_RUNGS
+ from vfs.paths import ROOT, Path
+ from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
+-from vfs.storage.backends.database.labels import label_of, posture_beneath
++from vfs.storage.backends.database.labels import hold_postures, label_of, posture_beneath
+ from vfs.storage.backends.database.membership import membership
+ from vfs.storage.backends.database.revision import principal_revision, read_revision
+ from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied, unauthenticated_at
+@@ -220,6 +220,7 @@
+         result = await fn(session)
+         if result.success:
+             await hold_rights(session, host.tables, host.profile, host.membership_budget)
++            await hold_postures(session, host.tables, host.profile)
+         return result
+ 
+     return run
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/engine.py candA/src/vfs/storage/backends/database/engine.py
+--- src/vfs/storage/backends/database/engine.py	2026-11-14 04:16:23
++++ src/vfs/storage/backends/database/engine.py	2026-11-15 09:09:56
+@@ -713,6 +713,7 @@
+         await conn.execute(insert(self.tables.index_state).values(id=1))
+         await conn.execute(insert(self.tables.lock).values(id=1))
+         await conn.execute(insert(self.tables.grants).values(**posture_row(self.posture, now)))
++        await conn.execute(insert(self.tables.principal_revisions).values(principal_id="*", revision=0))
+         await conn.execute(
+             insert(self.tables.entry).values(
+                 entry_id=str(ULID()),
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/labels.py candA/src/vfs/storage/backends/database/labels.py
+--- src/vfs/storage/backends/database/labels.py	2026-11-12 07:33:06
++++ src/vfs/storage/backends/database/labels.py	2026-11-15 09:09:47
+@@ -51,7 +51,7 @@
+ from vfs.models.rows import MSSQL_UTF8_COLLATION
+ from vfs.paths import MAX_PATH_LENGTH, ROOT
+ from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like
+-from vfs.storage.backends.database.dialects import chunked
++from vfs.storage.backends.database.dialects import StaleSnapshot, chunked
+ from vfs.storage.backends.database.membership import membership
+ from vfs.storage.backends.database.ranges import open_rows, range_counts
+ from vfs.storage.backends.database.revision import bump_revision, hold_revision
+@@ -159,11 +159,47 @@
+     chunked under the membership budget.
+     """
+     wanted = list(dict.fromkeys(paths))
++    if wanted:
++        await watch_postures(session, tables)
+     prefixes = {ancestor for path in wanted for ancestor in ancestors_and_self(path)}
+     postures = await posture_rows(session, tables, profile, membership_budget, prefixes)
+     return {path: label_of(postures, path) for path in wanted}
+ 
+ 
++EPOCH_KEY: Final = "vfs_label_epoch"
++POSTURE_MOVED: Final = "a posture changed while it ran"
++
++
++async def watch_postures(session: AsyncSession, tables: VFSTables) -> None:
++    """Record the everyone stamp the attempt's labels are read under, before its first label read."""
++    if EPOCH_KEY not in session.info:
++        session.info[EPOCH_KEY] = await everyone_stamp(session, tables, None)
++
++
++async def hold_postures(session: AsyncSession, tables: VFSTables, profile: DialectProfile) -> None:
++    """Prove no posture write committed since the attempt's label read, and hold every later one out to the commit."""
++    epoch = session.info.get(EPOCH_KEY)
++    if epoch is None:
++        return
++    if await everyone_stamp(session, tables, profile) != epoch:
++        raise StaleSnapshot(POSTURE_MOVED)
++
++
++async def everyone_stamp(session: AsyncSession, tables: VFSTables, share: DialectProfile | None) -> int:
++    """The everyone principal's stamp; with *share*, read under a lock a posture write waits behind and mints share."""
++    revisions = tables.principal_revisions
++    stmt = select(revisions.c.revision).where(revisions.c.principal_id == EVERYONE_NAME)
++    if share is not None:
++        if share.name == "oracle":
++            name = session.get_bind().dialect.identifier_preparer.format_table(revisions)
++            await session.execute(text(f"LOCK TABLE {name} IN SHARE MODE"))
++        elif share.name == "mssql":
++            stmt = stmt.with_hint(revisions, "WITH (REPEATABLEREAD)", dialect_name="mssql")
++        else:
++            stmt = stmt.with_for_update(read=True)
++    return int((await session.execute(stmt)).scalar_one_or_none() or 0)
++
++
+ async def posture_beneath(
+     session: AsyncSession, tables: VFSTables, profile: DialectProfile, membership_budget: int, root: str
+ ) -> dict[str, GrantLevel]:
+@@ -174,6 +210,7 @@
+     that decide beneath it. :func:`label_of` over this map answers for
+     any path under *root* as the whole table would.
+     """
++    await watch_postures(session, tables)
+     above_root = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(root))
+     postures: dict[str, GrantLevel] = {root: level_at(above_root, root)}
+     postures.update(await _deeper_postures(session, tables, profile, root))
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/topology.py candA/src/vfs/storage/backends/database/topology.py
+--- src/vfs/storage/backends/database/topology.py	2026-11-14 11:29:58
++++ src/vfs/storage/backends/database/topology.py	2026-11-15 09:09:27
+@@ -205,6 +205,7 @@
+         # taken — a rival committing here must flip the claim's guard.
+         await seam("transfer:post-collect")
+         postures = await destination_postures(session, tables, profile, membership_budget, str(dest))
++        await seam("transfer:after-postures")
+         if op == "move":
+             error = await _execute_move(
+                 session, tables, profile, membership_budget, src_row, dest, parent_id, postures, now, op=op, own=own
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/writes.py candA/src/vfs/storage/backends/database/writes.py
+--- src/vfs/storage/backends/database/writes.py	2026-11-14 11:29:58
++++ src/vfs/storage/backends/database/writes.py	2026-11-15 09:09:27
+@@ -410,6 +410,7 @@
+     creates = [s for s in ordered if s.persistence == "insert"]
+     minted = frozenset(staged.entry_id for staged in creates)
+     labels = await labels_for(session, tables, profile, membership_budget, [str(s.path) for s in creates])
++    await seam("write:after-labels")
+     if errors := await _insert_creates(
+         session, tables.entry, profile, parameter_budget, creates, plan, labels, overwrite=overwrite, now=now
+     ):

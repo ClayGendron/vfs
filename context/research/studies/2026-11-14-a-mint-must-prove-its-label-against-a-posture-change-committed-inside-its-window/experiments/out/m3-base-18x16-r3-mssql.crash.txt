@@ -1,0 +1,28 @@
+run m3-base-18x16-r3, the test worker process, 2026-11-15 11:44:02.00 -0500
+exception EXC_BREAKPOINT SIGTRAP
+libsystem_malloc: BUG IN CLIENT OF LIBMALLOC: memory corruption of free block; Abort Cause 31018598400
+the crashed thread, innermost frame first, as image and symbol:
+  libsystem_malloc.dylib _xzm_xzone_malloc_freelist_outlined
+  libc++abi.dylib operator new(unsigned long)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libodbc.2.dylib SQLExecute
+  pyodbc.cpython-313-darwin.so execute(Cursor*, _object*, _object*, bool)
+  libpython3.13.dylib cfunction_call
+  libpython3.13.dylib PyObject_Call
+  libpython3.13.dylib partial_call
+  libpython3.13.dylib _PyEval_EvalFrameDefault

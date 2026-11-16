@@ -1,0 +1,11 @@
+{"kind": "statements", "engine": "mssql", "call": "new file", "minter": "granted", "statements": 17}
+{"kind": "statements", "engine": "mssql", "call": "rewrite, no mint", "minter": "granted", "statements": 13}
+{"kind": "locks", "engine": "mssql", "sharer_beside_sharer": "share", "posture_behind_sharers": "waits (('42000', '[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Lock request time out period exceeded)"}
+{"kind": "statements", "engine": "mssql", "call": "10,000 files with parents", "minter": "granted", "statements": 514}
+{"kind": "statements", "engine": "mssql", "call": "move one file", "minter": "granted", "statements": 26}
+{"kind": "statements", "engine": "mssql", "call": "copy one file", "minter": "granted", "statements": 25}
+{"kind": "statements", "engine": "mssql", "call": "new file", "minter": "system", "statements": 11}
+{"kind": "statements", "engine": "mssql", "call": "rewrite, no mint", "minter": "system", "statements": 7}
+{"kind": "statements", "engine": "mssql", "call": "10,000 files with parents", "minter": "system", "statements": 498}
+{"kind": "statements", "engine": "mssql", "call": "move one file", "minter": "system", "statements": 18}
+{"kind": "statements", "engine": "mssql", "call": "copy one file", "minter": "system", "statements": 18}

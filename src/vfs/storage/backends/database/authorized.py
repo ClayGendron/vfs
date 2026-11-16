@@ -9,7 +9,10 @@ rung the gate's own rule gives that row's role; and the attempt's last
 statement before its commit reads the stamps of the caller's ids and of
 the everyone principal, the fence, and compares them with the mount
 revision the gate read first. A stamp newer than that revision is an
-admin write committed while the verb ran that names the caller.
+admin write committed while the verb ran that names the caller. A body
+that created a row then proves that row's label, as the last statement
+of all and for the system actor too: the everyone stamp, read again
+under a shared lock (:func:`~vfs.storage.backends.database.labels.hold_postures`).
 
 The commit point, per engine: where each statement reads the latest
 commit (every SQL Server and Oracle verb, and the topology verbs on
@@ -52,10 +55,11 @@ from vfs.authority import EVERYONE_NAME
 from vfs.ops import VERB_RUNGS
 from vfs.paths import ROOT, Path
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
-from vfs.storage.backends.database.labels import label_of, posture_beneath
+from vfs.storage.backends.database.labels import hold_postures, label_of, posture_beneath
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.revision import principal_revision, read_revision
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied, unauthenticated_at
+from vfs.storage.backends.database.seams import seam
 from vfs.storage.grants import LEVEL_RANK, RangeSet, normalise, pieces, posture_regions, subtract, union
 
 if TYPE_CHECKING:
@@ -202,7 +206,10 @@ async def destination_postures(
     """The posture in force at *dest* and every posture row beneath it: the gate's read when it made one."""
     attempt: Attempt | None = session.info.get(ATTEMPT_KEY)
     held = None if attempt is None else attempt.postures.get(dest)
-    return held if held is not None else await posture_beneath(session, tables, profile, membership_budget, dest)
+    postures = held if held is not None else await posture_beneath(session, tables, profile, membership_budget, dest)
+    # Where a test stages a rival posture change: the postures are read and no row is stamped yet.
+    await seam("transfer:after-postures")
+    return postures
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +220,19 @@ async def destination_postures(
 def fenced(
     fn: Callable[[AsyncSession], Awaitable[Result]], host: EngineHost
 ) -> Callable[[AsyncSession], Awaitable[Result]]:
-    """*fn* with the fence after it: a successful body proves its caller's rights still stand before it commits."""
+    """*fn* with the fence after it: a successful body proves its caller's rights still stand before it commits.
+
+    A body that minted a row then proves that row's label the same
+    way, last: the system actor's too, since a label is not its rights
+    but what every other caller's read is judged by.
+    """
 
     async def run(session: AsyncSession) -> Result:
         session.info[_FENCED_KEY] = True
         result = await fn(session)
         if result.success:
             await hold_rights(session, host.tables, host.profile, host.membership_budget)
+            await hold_postures(session, host.tables, host.profile)
         return result
 
     return run

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -23,9 +24,20 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ulid import ULID
 
-from tests.support.commit_worlds import BOB, CAROL, attempts, clearing, drop_world, land, row_at, version_count
+from tests.support.commit_worlds import (
+    BOB,
+    CAROL,
+    attempts,
+    clearing,
+    drop_world,
+    label_world,
+    land,
+    row_at,
+    version_count,
+)
 from tests.support.commit_worlds import replace as replace_row
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
+from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import MEASURED_BODY, BodyMetrics, Entry, measure_bytes
@@ -54,9 +66,13 @@ from vfs.storage.protocol import ResolvedPair
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
+    from pathlib import Path as FsPath
     from typing import Any
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from vfs.results import Result
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +128,11 @@ class TestWriteMechanics:
         assert result.success is True
         assert len(result.observations) == 100
         await storage._host.settle_statistics()
-        # BEGIN + session PRAGMAs + plan select + one insert chunk +
-        # content insert + parent bump — O(tables), never O(entries).
+        # BEGIN + session PRAGMAs + plan select + the stamp watch + one insert
+        # chunk + content insert + parent bump + the stamp hold — O(tables),
+        # never O(entries).
         own = [statement for statement in statements if not is_statistics_statement(statement)]
-        assert len(own) <= 10, own
+        assert len(own) <= 12, own
         await storage.close()
 
     async def test_write_statement_counts_are_pinned(self, tmp_path) -> None:
@@ -133,10 +150,11 @@ class TestWriteMechanics:
 
         created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
         assert created.success is True
-        # The round-trip budget is a contract: fetch, the posture rows
-        # read for the label, insert, fs mirror insert, content insert,
-        # parent bump. A fresh row has no body to clear, so no delete runs.
-        assert len(mutations()) == 6, mutations()
+        # The round-trip budget is a contract: fetch, the stamp watch, the
+        # posture rows read for the label, insert, fs mirror insert, content
+        # insert, parent bump, the stamp hold. A fresh row has no body to
+        # clear, so no delete runs.
+        assert len(mutations()) == 8, mutations()
         assert not [s for s in mutations() if s.startswith("DELETE")], mutations()
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
@@ -456,14 +474,15 @@ class TestArbitration:
         assert written.success is True, written.errors[:3]
         created = [o for o in written.observations if str(o.path).endswith(".txt")]
         assert len(created) == 50
-        # "Nothing read back" is a pin: one plan-fetch SELECT, the posture
-        # rows SELECT that labels the creates, three depth-layer inserts, the
-        # segment-posting and fs-mirror inserts riding the creates, the
-        # content insert (fresh rows clear no bodies), parent bump.
+        # "Nothing read back" is a pin: one plan-fetch SELECT, the stamp watch
+        # and the posture rows SELECT that label the creates, three depth-layer
+        # inserts, the segment-posting and fs-mirror inserts riding the creates,
+        # the content insert (fresh rows clear no bodies), parent bump, and the
+        # stamp hold that proves the labels, last.
         own = [s for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
         shapes = [s.split(None, 1)[0] for s in own if not is_statistics_statement(s)]
-        expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT"]
-        expected.append("UPDATE")
+        expected = ["SELECT", "SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT"]
+        expected.extend(["UPDATE", "SELECT"])
         assert shapes == expected, statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
@@ -1716,3 +1735,98 @@ class TestStagedRowsAreJudged:
         row = await row_at(storage, "/drop/y.txt")
         assert row is not None
         assert (row["owner_id"], row["deleted_at"], row["version"]) == ("carol", None, 1)
+
+
+# ---------------------------------------------------------------------------
+# What a mint's label proof costs — two statements a call that creates a row
+# ---------------------------------------------------------------------------
+
+# Statements a driver issues around the body that are no part of it.
+_CONTROL = ("BEGIN", "SAVEPOINT", "RELEASE", "COMMIT", "ROLLBACK", "PRAGMA", "SAVE TRANSACTION", "SET ")
+
+
+def _body(statements: list[str]) -> list[str]:
+    """The statements a call's body issued: no transaction control, no statistics detection."""
+    return [s for s in statements if not s.lstrip().upper().startswith(_CONTROL) and not is_statistics_statement(s)]
+
+
+def _is_stamp_read(statement: str) -> bool:
+    """A read of one stamp row, the watch or the hold: never the fence's maximum over the caller's ids."""
+    lowered = statement.lstrip().lower()
+    return lowered.startswith("select") and "principal_revisions" in lowered and "max(" not in lowered
+
+
+@asynccontextmanager
+async def _label_store(env_var: str | None, tmp_path: FsPath) -> AsyncIterator[DatabaseStorage]:
+    """The label world on SQLite, or on the server leg *env_var* names, with bob granted ``read_write`` at ``/p``."""
+    if env_var is None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        try:
+            await _label_world_with_bob(storage)
+            yield storage
+        finally:
+            await storage.close()
+        return
+    async with server_storage(env_var, posture="none") as served:
+        await _label_world_with_bob(served)
+        yield served
+
+
+async def _label_world_with_bob(storage: DatabaseStorage) -> None:
+    await label_world(storage)
+    assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+
+
+def _mints(
+    storage: DatabaseStorage, who: str, minter: Authority | None, files: int
+) -> dict[str, Callable[[], Awaitable[Result]]]:
+    """Each call that creates a row, by *minter*: one file, a batch with parents, a move and a copy."""
+    one, moved, copied = (Path(f"/p/{name}-{who}.txt") for name in ("one", "moved", "copied"))
+    batch = [Entry(path=Path(f"/p/b-{who}/d{n % 100}/f{n}.txt"), content="x") for n in range(files)]
+    return {
+        "one file": lambda: storage.write(entries=[Entry(path=one, content="x")], authority=minter),
+        "batch": lambda: storage.write(entries=batch, parents=True, authority=minter),
+        "move": lambda: storage.move(operations=[ResolvedPair(src=one, dest=moved)], authority=minter),
+        "copy": lambda: storage.copy(operations=[ResolvedPair(src=moved, dest=copied)], authority=minter),
+    }
+
+
+class TestLabelCost:
+    """A call that creates a row reads the everyone stamp before its labels and holds it last; no other call does."""
+
+    @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
+    @pytest.mark.parametrize("env_var", [pytest.param(None, id="sqlite"), *ENGINE_LEGS])
+    async def test_a_mint_proves_its_label_in_two_statements(
+        self, env_var: str | None, files: int, tmp_path: FsPath
+    ) -> None:
+        """One watch before the first posture read and one hold as the body's last statement, at any batch size.
+
+        Guards the proof's cost and its order: a watch after the posture
+        read could be newer than the labels it vouches for, and a hold
+        that is not last would keep its lock through the rest of the body.
+        """
+        async with _label_store(env_var, tmp_path) as storage:
+            for minter in (None, BOB):
+                warm = [Entry(path=Path(f"/p/warm-{minter is None}.txt"), content="w")]
+                assert (await storage.write(entries=warm, authority=minter)).success is True
+            statements: list[str] = []
+            engine = storage._host.engine.sync_engine
+            event.listen(engine, "before_cursor_execute", lambda conn, cursor, sql, *rest: statements.append(sql))
+            table_lock = storage._host.profile.share_lock.form == "table"
+            for who, minter in (("system", None), ("granted", BOB)):
+                for name, call in _mints(storage, who, minter, files).items():
+                    statements.clear()
+                    result = await call()
+                    assert result.success is True, (name, who, result.errors)
+                    body = _body(statements)
+                    stamps = [n for n, sql in enumerate(body) if _is_stamp_read(sql)]
+                    locks = [n for n, sql in enumerate(body) if sql.lstrip().upper().startswith("LOCK TABLE")]
+                    assert len(stamps) == 2, (name, who, body)
+                    # The label's own read of the posture rows is the statement the watch precedes.
+                    assert "vfs_grants" in body[stamps[0] + 1], (name, who, body[stamps[0] : stamps[0] + 2])
+                    assert stamps[1] == len(body) - 1, (name, who, body[-3:])
+                    assert locks == ([stamps[1] - 1] if table_lock else []), (name, who, body[-3:])
+                statements.clear()
+                rewrite = [Entry(path=Path(f"/p/copied-{who}.txt"), content="again")]
+                assert (await storage.write(entries=rewrite, authority=minter)).success is True
+                assert not [sql for sql in _body(statements) if _is_stamp_read(sql)]

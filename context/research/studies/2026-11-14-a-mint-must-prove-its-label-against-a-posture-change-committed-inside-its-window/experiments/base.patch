@@ -1,0 +1,41 @@
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/rights.py base/src/vfs/storage/backends/database/rights.py
+--- src/vfs/storage/backends/database/rights.py	2026-11-12 07:32:47
++++ src/vfs/storage/backends/database/rights.py	2026-11-15 10:11:53
+@@ -109,6 +109,7 @@
+     read_revision,
+     stamp_principals,
+ )
++from vfs.storage.backends.database.seams import seam
+ from vfs.storage.grants import (
+     FULL,
+     GRANTABLE_LEVELS,
+@@ -1099,6 +1100,7 @@
+     await stamp_principals(session, tables, [EVERYONE_NAME], revision)
+     written = await _upsert_grant(session, tables, path, EVERYONE_NAME, posture, authority, revision)
+     await mark_relabel(session, tables, str(path), revision)
++    await seam("posture:before-commit")
+     return Result(ops=("posture",), grants=[written])
+ 
+ 
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/topology.py base/src/vfs/storage/backends/database/topology.py
+--- src/vfs/storage/backends/database/topology.py	2026-11-14 11:29:58
++++ src/vfs/storage/backends/database/topology.py	2026-11-15 09:06:11
+@@ -205,6 +205,7 @@
+         # taken — a rival committing here must flip the claim's guard.
+         await seam("transfer:post-collect")
+         postures = await destination_postures(session, tables, profile, membership_budget, str(dest))
++        await seam("transfer:after-postures")
+         if op == "move":
+             error = await _execute_move(
+                 session, tables, profile, membership_budget, src_row, dest, parent_id, postures, now, op=op, own=own
+diff -ru -x *.so -x __pycache__ -x test_label_experiment.py -x .pytest_cache -x *.pyc src/vfs/storage/backends/database/writes.py base/src/vfs/storage/backends/database/writes.py
+--- src/vfs/storage/backends/database/writes.py	2026-11-14 11:29:58
++++ src/vfs/storage/backends/database/writes.py	2026-11-15 09:06:11
+@@ -410,6 +410,7 @@
+     creates = [s for s in ordered if s.persistence == "insert"]
+     minted = frozenset(staged.entry_id for staged in creates)
+     labels = await labels_for(session, tables, profile, membership_budget, [str(s.path) for s in creates])
++    await seam("write:after-labels")
+     if errors := await _insert_creates(
+         session, tables.entry, profile, parameter_budget, creates, plan, labels, overwrite=overwrite, now=now
+     ):

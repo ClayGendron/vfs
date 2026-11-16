@@ -1,0 +1,10 @@
+{"kind": "statements", "engine": "mssql", "call": "new file", "minter": "granted", "statements": 15}
+{"kind": "statements", "engine": "mssql", "call": "rewrite, no mint", "minter": "granted", "statements": 13}
+{"kind": "statements", "engine": "mssql", "call": "10,000 files with parents", "minter": "granted", "statements": 512}
+{"kind": "statements", "engine": "mssql", "call": "move one file", "minter": "granted", "statements": 24}
+{"kind": "statements", "engine": "mssql", "call": "copy one file", "minter": "granted", "statements": 23}
+{"kind": "statements", "engine": "mssql", "call": "new file", "minter": "system", "statements": 9}
+{"kind": "statements", "engine": "mssql", "call": "rewrite, no mint", "minter": "system", "statements": 7}
+{"kind": "statements", "engine": "mssql", "call": "10,000 files with parents", "minter": "system", "statements": 496}
+{"kind": "statements", "engine": "mssql", "call": "move one file", "minter": "system", "statements": 16}
+{"kind": "statements", "engine": "mssql", "call": "copy one file", "minter": "system", "statements": 16}

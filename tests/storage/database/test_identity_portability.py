@@ -72,6 +72,8 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
         version_rows = [dict(m) for m in (await conn.execute(select(tables.versions))).mappings()]
         chunk_rows = [dict(m) for m in (await conn.execute(select(tables.chunks))).mappings()]
         edge_rows = [dict(m) for m in (await conn.execute(select(tables.edges))).mappings()]
+        # The everyone stamp is provisioned with the mount, and a mint's last statement locks it.
+        stamp_rows = [dict(m) for m in (await conn.execute(select(tables.principal_revisions))).mappings()]
     await src.close()
 
     # Row-wise copy: drop every integer id and insert entries children-first,
@@ -86,6 +88,8 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
             await conn.execute(insert(fresh.content).values(**row))
         for row in meta_rows:
             await conn.execute(insert(fresh.meta).values(**row))
+        for row in stamp_rows:
+            await conn.execute(insert(fresh.principal_revisions).values(**row))
         for row in version_rows:
             await conn.execute(insert(fresh.versions).values(**row))
         for row in chunk_rows:

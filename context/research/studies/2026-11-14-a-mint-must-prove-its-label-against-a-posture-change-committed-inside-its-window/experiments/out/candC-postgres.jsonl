@@ -1,0 +1,58 @@
+{"kind": "transfer", "leg": "postgresql/transfer:post-collect/move/system", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "attempts", "leg": "postgresql/write:before-apply/at-path/granted", "attempts": 2}
+{"kind": "attempts", "leg": "postgresql/write:after-labels/at-minted-parent/granted", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:before-apply/at-path/granted", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "tighten", "leg": "postgresql/write:after-labels/at-minted-parent/granted", "outcome": "closed", "stored": {"/p/n": 0, "/p/n/new.txt": 0}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:before-apply/at-existing-parent/granted", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:before-apply/at-existing-parent/granted", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:after-labels/at-minted-parent/system", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:after-labels/at-minted-parent/system", "outcome": "closed", "stored": {"/p/n": 0, "/p/n/new.txt": 0}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "attempts", "leg": "postgresql/write:before-apply/at-path/system", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:before-apply/at-path/system", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "transfer", "leg": "postgresql/transfer:post-collect/copy/granted", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:before-apply/at-existing-parent/system", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:before-apply/at-existing-parent/system", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:after-labels/at-existing-parent/granted", "attempts": 2}
+{"kind": "transfer", "leg": "postgresql/transfer:post-collect/copy/system", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "tighten", "leg": "postgresql/write:after-labels/at-existing-parent/granted", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "postgresql/write:before-apply/at-minted-parent/granted", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:before-apply/at-minted-parent/granted", "outcome": "closed", "stored": {"/p/n": 0, "/p/n/new.txt": 0}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:after-labels/at-path/granted", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:after-labels/at-path/granted", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:after-labels/at-existing-parent/system", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:after-labels/at-existing-parent/system", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "attempts", "leg": "postgresql/write:before-apply/at-minted-parent/system", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:before-apply/at-minted-parent/system", "outcome": "closed", "stored": {"/p/n": 0, "/p/n/new.txt": 0}, "standing": {"/p/n": 0, "/p/n/new.txt": 0}}
+{"kind": "transfer", "leg": "postgresql/transfer:after-postures/move/granted", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:after-labels/at-path/system", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:after-labels/at-path/system", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:before-apply/at-existing-parent/granted", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:before-apply/at-existing-parent/granted", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:before-apply/at-path/granted", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:before-apply/at-path/granted", "carol_reads": true}
+{"kind": "transfer", "leg": "postgresql/transfer:after-postures/move/system", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:after-labels/at-minted-parent/granted", "outcome": "closed", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 5, "/p/n/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:after-labels/at-minted-parent/granted", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:before-apply/at-existing-parent/system", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:before-apply/at-existing-parent/system", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:before-apply/at-path/system", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:before-apply/at-path/system", "carol_reads": true}
+{"kind": "transfer", "leg": "postgresql/transfer:after-postures/copy/granted", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:after-labels/at-minted-parent/system", "outcome": "closed", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 5, "/p/n/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:after-labels/at-minted-parent/system", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:after-labels/at-path/granted", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:after-labels/at-path/granted", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:before-apply/at-minted-parent/granted", "outcome": "closed", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 5, "/p/n/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:before-apply/at-minted-parent/granted", "carol_reads": true}
+{"kind": "transfer", "leg": "postgresql/transfer:after-postures/copy/system", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:after-labels/at-existing-parent/granted", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:after-labels/at-existing-parent/granted", "carol_reads": true}
+{"kind": "attempts", "leg": "postgresql/write:after-labels/at-path/system", "attempts": 2}
+{"kind": "tighten", "leg": "postgresql/write:after-labels/at-path/system", "outcome": "closed", "stored": {"/p/new.txt": 0}, "standing": {"/p/new.txt": 0}}
+{"kind": "restore", "leg": "postgresql", "outcome": "closed", "stored": {"/p/d/f.txt": 0}, "standing": {"/p/d/f.txt": 0}}
+{"kind": "loosen", "leg": "postgresql/write:before-apply/at-minted-parent/system", "outcome": "closed", "stored": {"/p/n": 5, "/p/n/new.txt": 5}, "standing": {"/p/n": 5, "/p/n/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:before-apply/at-minted-parent/system", "carol_reads": true}
+{"kind": "loosen", "leg": "postgresql/write:after-labels/at-existing-parent/system", "outcome": "closed", "stored": {"/p/new.txt": 5}, "standing": {"/p/new.txt": 5}}
+{"kind": "loosen-read", "leg": "postgresql/write:after-labels/at-existing-parent/system", "carol_reads": true}
+{"kind": "transfer", "leg": "postgresql/transfer:post-collect/move/granted", "outcome": "closed", "stored": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}, "standing": {"/p/q/d": 0, "/p/q/d/f.txt": 0, "/p/q/d/sub": 0, "/p/q/d/sub/g.txt": 0}}
+{"kind": "locks", "engine": "postgresql", "sharer_beside_sharer": "share", "posture_behind_sharers": "waits (<class 'asyncpg.exceptions.LockNotAvailableError'>: canceling statement due to lock timeout)"}

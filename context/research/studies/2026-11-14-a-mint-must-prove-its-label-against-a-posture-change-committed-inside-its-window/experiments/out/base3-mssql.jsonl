@@ -1,0 +1,2 @@
+{"kind": "contention", "engine": "mssql", "threads": 64, "hung": false, "outcomes": {"success": 804}, "multixacts_created": null, "marks_left": 0}
+{"kind": "contention-labels", "engine": "mssql", "rows": 816, "wrong": 0, "sample": {}}

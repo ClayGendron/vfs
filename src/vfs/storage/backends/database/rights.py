@@ -97,7 +97,7 @@ from vfs.storage.backends.database.labels import (
     inflight_marks,
     inflight_postures,
     label_of,
-    mark_relabel,
+    open_relabel,
     posture_rows,
     posture_rows_for_chunks,
 )
@@ -1096,9 +1096,8 @@ async def set_posture(
     )
     if refusal is not None:
         return Result(ops=("posture",), errors=[refusal])
-    await stamp_principals(session, tables, [EVERYONE_NAME], revision)
+    await open_relabel(session, tables, profile, str(path), revision)
     written = await _upsert_grant(session, tables, path, EVERYONE_NAME, posture, authority, revision)
-    await mark_relabel(session, tables, str(path), revision)
     return Result(ops=("posture",), grants=[written])
 
 

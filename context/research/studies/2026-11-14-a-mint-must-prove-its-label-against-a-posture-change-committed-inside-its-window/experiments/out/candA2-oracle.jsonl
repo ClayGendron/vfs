@@ -1,0 +1,13 @@
+{"kind": "statements", "engine": "oracle", "call": "new file", "minter": "granted", "statements": 17}
+{"kind": "statements", "engine": "oracle", "call": "rewrite, no mint", "minter": "granted", "statements": 14}
+{"kind": "locks", "engine": "oracle", "sharer_beside_sharer": "share", "posture_behind_sharers": "waits (ORA-00054: Failed to acquire a lock (Type: \"TM\", Name: \"DML\", Description: \"Synchronizes accesses to an object)"}
+{"kind": "statements", "engine": "oracle", "call": "10,000 files with parents", "minter": "granted", "statements": 77}
+{"kind": "statements", "engine": "oracle", "call": "move one file", "minter": "granted", "statements": 26}
+{"kind": "statements", "engine": "oracle", "call": "copy one file", "minter": "granted", "statements": 25}
+{"kind": "statements", "engine": "oracle", "call": "new file", "minter": "system", "statements": 11}
+{"kind": "statements", "engine": "oracle", "call": "rewrite, no mint", "minter": "system", "statements": 8}
+{"kind": "statements", "engine": "oracle", "call": "10,000 files with parents", "minter": "system", "statements": 51}
+{"kind": "statements", "engine": "oracle", "call": "move one file", "minter": "system", "statements": 18}
+{"kind": "statements", "engine": "oracle", "call": "copy one file", "minter": "system", "statements": 18}
+{"kind": "contention", "engine": "oracle", "outcomes": {"success": 804}, "multixacts_created": null}
+{"kind": "contention-labels", "engine": "oracle", "rows": 816, "wrong": 0, "sample": {}}

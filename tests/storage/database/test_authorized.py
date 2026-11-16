@@ -431,7 +431,11 @@ class TestCost:
     """Two point reads per non-system mutation; no statement per row; the destination's rules, never its rows."""
 
     async def test_a_fenced_mutation_reads_the_revision_first_and_the_stamps_once_more(self) -> None:
-        """bob's write reads ``vfs_meta`` once, first, and the stamps twice; the system actor's reads neither.
+        """bob's write reads ``vfs_meta`` once, first, and the stamps twice for his rights and twice for its label.
+
+        A call that creates a row reads the everyone stamp before its label
+        and again as its last statement, whoever makes it: four reads of
+        the stamps for bob, two for the system actor, which the fence skips.
 
         Guards the opening read's place: moved after the resolve, an admin
         write could commit between what the compile read and what the fence compares.
@@ -441,26 +445,26 @@ class TestCost:
         assert (await storage.stat(path=Path("/g/d"), authority=BOB)).success is True
         statements = _statements(storage)
         assert (await storage.write(entries=[Entry(path=Path("/g/new.txt"), content="n")], authority=BOB)).success
-        assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (2, 1)
+        assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (4, 1)
         begun = next(n for n, sql in enumerate(statements) if sql.startswith("BEGIN IMMEDIATE"))
         assert "vfs_meta" in statements[begun + 1]
         statements.clear()
         assert (await storage.write(entries=[Entry(path=Path("/g/sys.txt"), content="n")], authority=SYSTEM)).success
-        assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (0, 0)
+        assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (2, 0)
         statements.clear()
         assert (await storage.read(path=Path("/g/d/f.txt"), authority=BOB)).success is True
         assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (1, 0)
 
     @pytest.mark.slow
     async def test_a_ten_thousand_file_batch_pays_the_same_two_reads(self) -> None:
-        """bob's 10,000-file write with parents reads ``vfs_meta`` once and the stamps twice, as one file does."""
+        """bob's 10,000-file write with parents reads ``vfs_meta`` once and the stamps four times, as one file does."""
         storage = InMemoryStorage()
         await grant_world(storage)
         assert (await storage.stat(path=Path("/g/d"), authority=BOB)).success is True
         entries = [Entry(path=Path(f"/g/bulk/d{n // 100:03}/f{n:05}.txt"), content="n") for n in range(10_000)]
         statements = _statements(storage)
         assert (await storage.write(entries=entries, parents=True, authority=BOB)).success is True
-        assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (2, 1)
+        assert (_naming(statements, "vfs_principal_revisions"), _naming(statements, "vfs_meta")) == (4, 1)
 
     async def test_the_judgments_issue_no_statement_where_nothing_landed(self, monkeypatch) -> None:
         """The landing read runs only for a landed create; delete's second subtree read costs what its gate's does."""
@@ -522,8 +526,9 @@ class TestCost:
     async def test_the_destination_judgment_reads_rules_never_rows(self, monkeypatch, size: int) -> None:
         """The destination judgment's statements follow the rules beneath the destination, never the rows copied.
 
-        Guards the shape of ``admit_destinations``: two posture reads, then
-        one probe per chunk of the closed region's pieces, or none at all.
+        Guards the shape of ``admit_destinations``: the stamp watch and two
+        posture reads, then one probe per chunk of the closed region's
+        pieces, or none at all.
         """
         storage = await _gate_world(size)
         statements = _statements(storage)
@@ -535,19 +540,19 @@ class TestCost:
             return [copied, await storage.move(operations=pair, authority=who)]
 
         await calls(EVE)
-        assert counts == [2, 2]
+        assert counts == [3, 3]
         await _postures(storage, [("/dst/c/x001", "none")])
         await calls(EVE)
-        assert counts[2:] == [3, 3]
+        assert counts[2:] == [4, 4]
         await _postures(storage, [*((f"/dst/c/x{n:03}", "none") for n in range(2, 100)), ("/dst/c/d0", "none")])
         refused = await calls(EVE)
-        assert counts[4:] == [3, 3]
+        assert counts[4:] == [4, 4]
         assert [[(error.kind, error.path) for error in result.errors] for result in refused] == [
             [(ErrorKind.permission_denied, "/dst/c/d0")]
         ] * 2
         await _postures(storage, [("/dst/c/d0", "add")])
         await calls(EVE)
-        assert counts[6:] == [3, 3]
+        assert counts[6:] == [4, 4]
         granted = await storage.grant(path=Path("/dst"), principal="dan", level="add", authority=SYSTEM)
         assert granted.success is True
         await calls(SYSTEM)

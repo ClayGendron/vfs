@@ -22,6 +22,8 @@ from sqlalchemy.pool import QueuePool
 from ulid import ULID
 
 from tests.support.database_helpers import _fresh_url
+from tests.support.server_schemas import ENGINE_LEGS, server_storage
+from vfs.authority import EVERYONE_NAME
 from vfs.models import Entry
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import Path
@@ -539,3 +541,28 @@ class TestValueCapAtFirstTouch:
         assert (await storage.first_touch()).success is True
         assert storage._host.value_cap == ValueCap(4096, "max_allowed_packet")
         await storage.close()
+
+
+async def _stamps(storage: DatabaseStorage) -> list[tuple[str, int]]:
+    """Every row of the stamps table once *storage* has made its first touch."""
+    assert (await storage.first_touch()).success is True
+    revisions = storage._host.tables.principal_revisions
+    async with storage._host.session_factory() as session:
+        found = await session.execute(select(revisions.c.principal_id, revisions.c.revision))
+        return [(row.principal_id, row.revision) for row in found]
+
+
+@pytest.mark.parametrize("env_var", [pytest.param(None, id="sqlite"), *ENGINE_LEGS])
+async def test_provisioning_seeds_the_everyone_stamp(env_var: str | None, tmp_path) -> None:
+    """A fresh store holds the everyone stamp at zero: the row a mint's last statement locks must exist to be locked.
+
+    Guards the seed in ``_provision``: without it the first mint on a
+    fresh store finds no row to hold and is refused.
+    """
+    if env_var is None:
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
+        assert await _stamps(storage) == [(EVERYONE_NAME, 0)]
+        await storage.close()
+        return
+    async with server_storage(env_var) as served:
+        assert await _stamps(served) == [(EVERYONE_NAME, 0)]

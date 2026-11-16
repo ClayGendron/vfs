@@ -8,43 +8,58 @@ label from the posture rows alone.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, text, update
 from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
 from sqlalchemy.dialects.mysql import mariadb
+from sqlalchemy.exc import DBAPIError
 
+from tests.support.commit_worlds import ANONYMOUS, BOB, CAROL, attempts, clearing, label_world, row_at, stamp
 from tests.support.oracles.grants import GrantWorld, everyone_rank
-from vfs.authority import Authority
+from tests.support.server_schemas import ENGINE_LEGS, server_storage
+from vfs.authority import EVERYONE_NAME, Authority
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
-from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE
+from vfs.results import ErrorKind
+from vfs.storage import ResolvedPair
+from vfs.storage.backends.database import authorized as authorized_module
+from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE, StaleSnapshot
 from vfs.storage.backends.database.labels import (
+    POSTURE_MOVED,
     Mark,
     Relabel,
     Relabeller,
     _Batch,
     _batched,
     _relabel_opens,
+    hold_postures,
     inflight_marks,
     inflight_postures,
     labels_for,
     mark_relabel,
+    open_relabel,
     posture_beneath,
     rebuild_labels,
+    watch_postures,
 )
 from vfs.storage.backends.database.revision import bump_revision, hold_revision, read_revision
+from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import LEVEL_RANK, GrantRow, Posture, normalise
+from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from sqlalchemy.engine import Dialect
+    from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
 
 SYSTEM = Authority.system()
@@ -310,3 +325,224 @@ async def test_a_mount_with_no_root_posture_rebuilds_to_none(storage: InMemorySt
     async with host.session_factory() as session:
         levels = set((await session.execute(select(entry.c.everyone_level))).scalars())
     assert levels == {0}
+
+
+# ---------------------------------------------------------------------------
+# The proof — a mint's label against a posture change inside its window
+# ---------------------------------------------------------------------------
+
+# What a mint that arrives behind a waiting posture write sets before its hold, so the engine refuses it at once.
+_NO_WAIT = {
+    "postgresql": "SET LOCAL lock_timeout = '300ms'",
+    "mariadb": "SET SESSION innodb_lock_wait_timeout = 1",
+    "mssql": "SET LOCK_TIMEOUT 300",
+}
+
+
+def _statements(storage: InMemoryStorage) -> list[str]:
+    """Every statement *storage*'s engine issues from now on."""
+    seen: list[str] = []
+    engine = storage._host.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", lambda conn, cursor, statement, *rest: seen.append(statement))
+    return seen
+
+
+def _proof_reads(statements: list[str]) -> list[str]:
+    """The watch and the hold among *statements*: a read of one stamp row, never the fence's maximum over many."""
+    return [s for s in statements if "principal_revisions.revision" in s and "max(" not in s.lower()]
+
+
+def _stamp_then_postures(statements: list[str]) -> bool:
+    """Whether the first read of the stamps table among *statements* comes before the first read of the posture rows."""
+    order = [s for s in statements if "principal_revisions" in s or "vfs_grants" in s]
+    return len(order) >= 2 and "principal_revisions" in order[0] and "vfs_grants" in order[1]
+
+
+class TestProof:
+    """A mint reads the everyone stamp before its labels and again, under a shared lock, as its last statement."""
+
+    async def test_a_call_that_reads_no_label_holds_nothing(self, storage: InMemoryStorage) -> None:
+        """The hold is paid by the calls that mint, and by no other.
+
+        Guards the early return in ``hold_postures``: a hold that read the
+        stamp with no watch would add a statement to every mutation.
+        """
+        host = storage._host
+        seen = _statements(storage)
+        async with host.session_factory() as session:
+            await hold_postures(session, host.tables, host.profile)
+            assert await labels_for(session, host.tables, host.profile, host.membership_budget, []) == {}
+        assert _proof_reads(seen) == []
+        target = Path("/a/new.txt")
+        created = await storage.write(entries=[Entry(path=target, content="alpha\n")], parents=True, authority=SYSTEM)
+        assert created.success is True, created.errors
+        assert len(_proof_reads(seen)) == 2
+        seen.clear()
+        assert (await storage.write(entries=[Entry(path=target, content="alpha beta\n")], authority=SYSTEM)).success
+        edit = [EditOperation(old="alpha", new="gamma")]
+        assert (await storage.edit(edits=edit, path=target, authority=SYSTEM)).success is True
+        assert (await storage.delete(path=target, authority=SYSTEM)).success is True
+        assert (await storage.restore(path=target, authority=SYSTEM)).success is True
+        assert _proof_reads(seen) == []
+
+    async def test_the_watch_reads_once_an_attempt(self, storage: InMemoryStorage) -> None:
+        """Two label reads in one attempt share one watch: the stamp is the one read before the first of them."""
+        host = storage._host
+        seen = _statements(storage)
+        async with host.session_factory() as session:
+            await labels_for(session, host.tables, host.profile, host.membership_budget, ["/a/x.md"])
+            assert _stamp_then_postures(seen)
+            await labels_for(session, host.tables, host.profile, host.membership_budget, ["/b/y.md"])
+            await posture_beneath(session, host.tables, host.profile, host.membership_budget, "/a")
+            assert len(_proof_reads(seen)) == 1
+            await hold_postures(session, host.tables, host.profile)
+        assert len(_proof_reads(seen)) == 2
+
+    async def test_a_transfer_watches_before_it_reads_the_destinations_postures(self, storage: InMemoryStorage) -> None:
+        """``posture_beneath`` reads the stamp first: a posture read ahead of the watch could be older than it."""
+        host = storage._host
+        seen = _statements(storage)
+        async with host.session_factory() as session:
+            await posture_beneath(session, host.tables, host.profile, host.membership_budget, "/a")
+        assert _stamp_then_postures(seen)
+
+    @pytest.mark.parametrize("verb", ["write", "move", "copy"])
+    async def test_a_stamp_moved_since_the_watch_redrives(self, monkeypatch: pytest.MonkeyPatch, verb: str) -> None:
+        """A posture stamp that moves after a mint's label read makes the mint run again, for the system actor too.
+
+        Guards ``hold_postures`` in ``fenced`` and its comparison: with the
+        hold dropped or its test inverted, the call commits in one attempt
+        on the labels it read before the stamp moved.
+        """
+        storage = InMemoryStorage()
+        await label_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        raised: list[str] = []
+        hold = authorized_module.hold_postures
+
+        async def spied(session: AsyncSession, tables: VFSTables, profile: DialectProfile) -> None:
+            try:
+                await hold(session, tables, profile)
+            except StaleSnapshot as moved:
+                raised.append(moved.context)
+                raise
+
+        monkeypatch.setattr(authorized_module, "hold_postures", spied)
+        moved = [ResolvedPair(src=Path("/p/d"), dest=Path("/p/m"))]
+        copied = [ResolvedPair(src=Path("/p/d"), dest=Path("/p/c"))]
+        seam_name, call, minted = {
+            "write": (
+                "write:after-labels",
+                lambda: storage.write(entries=[Entry(path=Path("/p/n.txt"), content="n")]),
+                "/p/n.txt",
+            ),
+            "move": ("transfer:after-postures", lambda: storage.move(operations=moved), "/p/m/f.txt"),
+            "copy": ("transfer:after-postures", lambda: storage.copy(operations=copied), "/p/c/f.txt"),
+        }[verb]
+        rival = clearing(seam_name, lambda: stamp(sessions[-1], storage._host.tables, EVERYONE_NAME))
+        with installed(seam_name, rival):
+            result = await call()
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        assert raised == [POSTURE_MOVED]
+        assert await row_at(storage, minted) is not None
+        await storage.close()
+
+    async def test_a_mint_that_loses_every_attempt_answers_a_retryable_conflict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A posture stamp that moves under every attempt ends the call in one retryable conflict, naming no path."""
+        storage = InMemoryStorage()
+        await label_world(storage)
+        sessions = attempts(monkeypatch, storage)
+
+        async def moved() -> None:
+            await stamp(sessions[-1], storage._host.tables, EVERYONE_NAME)
+
+        with installed("write:after-labels", moved):
+            result = await storage.write(entries=[Entry(path=Path("/p/n.txt"), content="n")])
+        assert len(sessions) == 4
+        assert [(error.kind, error.retryable) for error in result.errors] == [(ErrorKind.conflict, True)]
+        assert POSTURE_MOVED in result.errors[0].message and "/p" not in result.errors[0].message
+        assert await row_at(storage, "/p/n.txt") is None
+        await storage.close()
+
+    async def test_a_hold_that_finds_no_stamp_row_refuses(self, storage: InMemoryStorage) -> None:
+        """A store whose everyone stamp is gone has nothing to lock: a mint there does not commit.
+
+        Guards the missing-row arm of ``hold_postures``: read as zero, the
+        hold would pass on a lock that holds nothing.
+        """
+        host = storage._host
+        async with host.session_factory() as session, session.begin():
+            await session.execute(host.tables.principal_revisions.delete())
+        result = await storage.write(entries=[Entry(path=Path("/new.txt"), content="x")], authority=SYSTEM)
+        assert [(error.kind, error.retryable) for error in result.errors] == [(ErrorKind.conflict, True)]
+        assert await row_at(storage, "/new.txt") is None
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_posture_write_waits_for_the_holds_in_flight_and_no_later_one(self, env_var: str) -> None:
+        """Mints share the stamp lock; a posture write waits for the holders it found and queues every later one.
+
+        Outcomes are counted: the engine's own lock error on a no-wait hold
+        is the signal that a later mint queued, within a bounded number of tries.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
+            host = storage._host
+            tables, profile = host.tables, host.profile
+            revisions = tables.principal_revisions
+            stamp_of_everyone = select(revisions.c.revision).where(revisions.c.principal_id == EVERYONE_NAME)
+
+            async def hold(session: AsyncSession) -> None:
+                await watch_postures(session, tables)
+                await hold_postures(session, tables, profile)
+
+            factory = host.session_factory
+            async with factory() as session:
+                standing = (await session.execute(stamp_of_everyone)).scalar_one()
+            async with factory() as first, factory() as second, factory() as third, factory() as fifth:
+                await hold(first)
+                await hold(second)
+                await second.rollback()
+                existing = Path("/p/d/f.txt")
+                assert (await storage.read(path=existing)).success is True
+                assert (await storage.glob(patterns=("/p/**",))).success is True
+                assert (await storage.write(entries=[Entry(path=existing, content="f2")])).success is True
+                # Beside a held hold every kind of caller reads, a named one searches and rewrites.
+                for reader in (BOB, CAROL, ANONYMOUS):
+                    assert (await storage.read(path=existing, authority=reader)).success is True
+                assert (await storage.search(query="held hold probe", authority=BOB)).success is True
+                rewrite = [Entry(path=existing, content="f3")]
+                assert (await storage.write(entries=rewrite, authority=BOB)).success is True
+                revision = await bump_revision(third, tables)
+                posture_write = asyncio.ensure_future(open_relabel(third, tables, profile, "/p", revision))
+                try:
+                    refused = False
+                    for _ in range(200):
+                        async with factory() as fourth:
+                            try:
+                                if profile.name == "oracle":
+                                    name = fourth.get_bind().dialect.identifier_preparer.format_table(revisions)
+                                    await fourth.execute(text(f"LOCK TABLE {name} IN SHARE MODE NOWAIT"))
+                                else:
+                                    await fourth.execute(text(_NO_WAIT[profile.name]))
+                                    await hold(fourth)
+                            except DBAPIError:
+                                refused = True
+                                break
+                            await fourth.rollback()
+                    assert refused, f"{profile.name}: a later hold was granted 200 times beside a waiting posture write"
+                    assert not posture_write.done()
+                    # The posture write has committed nothing, so a plain read still returns the standing stamp.
+                    if profile.name != "mssql":
+                        assert (await fifth.execute(stamp_of_everyone)).scalar_one() == standing
+                    await first.commit()
+                    await posture_write
+                    await third.commit()
+                finally:
+                    # A failed check must not leave the posture write waiting on a session the block is closing.
+                    posture_write.cancel()
+            async with factory() as session:
+                assert (await session.execute(stamp_of_everyone)).scalar_one() == revision
