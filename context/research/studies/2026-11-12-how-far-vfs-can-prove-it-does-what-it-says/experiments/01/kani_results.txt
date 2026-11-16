@@ -1,0 +1,21 @@
+# Kani 0.68.0 / CBMC 6.11.0, macOS arm64, 2026-11-12, run from a scratch copy of kani_toy/
+## cargo kani --harness midpoint_never_panics
+Check 1: midpoint.assertion.1                      - Status: FAILURE  - Description: "attempt to add with overflow"
+Check 2: midpoint.assertion.2                      - Status: SUCCESS  - Description: "attempt to divide by zero"
+Check 3: midpoint.arithmetic_overflow.1            - Status: SUCCESS  - Description: "attempt to divide by zero"
+Check 4: proofs::midpoint_never_panics.assertion.1 - Status: SUCCESS  - Description: "assertion failed: lo <= m && m <= hi"
+Failed Checks: attempt to add with overflow
+VERIFICATION:- FAILED
+Verification Time: 0.0227145s
+## cargo kani --harness midpoint_fixed_in_range
+VERIFICATION:- SUCCESSFUL
+Verification Time: 0.020409457s
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+## /usr/bin/time -l cargo kani --harness intersect_small   (two sorted [u32; 2] inputs, output a Vec)
+VERIFICATION:- SUCCESSFUL
+Verification Time: 152.50694s
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+      153.43 real       125.55 user         3.85 sys
+         13550616576  maximum resident set size
+## cargo kani (all harnesses, intersect over two [u32; 4] inputs with completeness check)
+stopped by hand after about 5 minutes of CBMC at about 6 GB resident, unfinished

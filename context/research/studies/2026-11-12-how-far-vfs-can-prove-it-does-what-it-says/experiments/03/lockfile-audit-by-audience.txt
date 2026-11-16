@@ -1,0 +1,24 @@
+== req-runtime-core (12 pins)
+== req-runtime-extras (68 pins)
+   2 anyio
+   2 certifi
+  11 cryptography
+   2 filelock
+   2 idna
+   5 langchain-core
+   5 langsmith
+  42 pillow
+  18 pypdf
+   2 requests
+   7 urllib3
+== req-dev (90 pins)
+   2 certifi
+   2 filelock
+   2 idna
+  42 pillow
+   2 pygments
+   2 pytest
+   2 requests
+  20 tornado
+   7 urllib3
+  19 virtualenv

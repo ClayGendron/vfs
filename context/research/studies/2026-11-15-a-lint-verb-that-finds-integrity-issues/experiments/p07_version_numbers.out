@@ -1,0 +1,8 @@
+    after create: /d/a.txt entry.version=1 version rows=[]
+    after overwrite: /d/a.txt entry.version=2 version rows=[1]
+    after an identical overwrite: /d/a.txt entry.version=3 version rows=[1]
+    after edit: /d/a.txt entry.version=4 version rows=[1, 3]
+    after move: /d/b.txt entry.version=5 version rows=[1, 3]
+    after delete and restore: /d/b.txt entry.version=7 version rows=[1, 3]
+    after copy: /d/b.txt entry.version=7 version rows=[1, 3]
+    after copy: /d/c.txt entry.version=1 version rows=[]

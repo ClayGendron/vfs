@@ -1,0 +1,10 @@
+  after write:    directory chunked=False encoded=True: 5, file chunked=False encoded=False: 200
+  rebuild errors: []
+  after rebuild:  directory chunked=False encoded=True: 5, file chunked=True encoded=True: 200
+  grep needle (count): 1 row(s): (/tree/d3/f007.txt kind=file version=1 size_bytes=28)
+  after delete:   directory chunked=False encoded=True: 5, file chunked=True encoded=False: 200
+  after restore:  directory chunked=False encoded=True: 5, file chunked=True encoded=False: 200
+  grep needle after restore: 1 row(s): (/tree/d3/f007.txt kind=file version=1 size_bytes=28)
+  after 2nd rebuild: directory chunked=False encoded=True: 5, file chunked=True encoded=True: 200
+  -- a move of the same tree, for comparison
+  after move:     directory chunked=False encoded=True: 5, file chunked=True encoded=True: 200

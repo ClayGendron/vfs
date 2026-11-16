@@ -1,0 +1,27 @@
+== 1. plans for the real statements (after ANALYZE, so the planner has statistics)
+  ls /dir as system: rows returned=10
+    statement: ... FROM vfs_entries WHERE vfs_entries.path IN (?, ?)
+    plan: ['SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path=?)']
+    statement: ... FROM vfs_entries WHERE vfs_entries.parent_id IN (?) AND vfs_entries.deleted_at IS NULL AND vfs_entries.path != ? AND vfs_entries.path NOT LIKE ? ESCAPE '\' ORDER BY vfs_entries.parent_id, vfs_entries.name
+    plan: ['SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=?)']
+  ls /.vfs/trash as system: rows returned=500
+    statement: ... FROM vfs_entries WHERE vfs_entries.path IN (?)
+    plan: ['SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path=?)']
+    statement: ... FROM vfs_entries WHERE vfs_entries.trash_root_id = vfs_entries.entry_id AND vfs_entries.deleted_at IS NOT NULL AND vfs_entries.path != ? AND vfs_entries.path NOT LIKE ? ESCAPE '\' ORDER BY vfs_entries.path
+    plan: ['SCAN vfs_entries USING INDEX ix_vfs_entries_path']
+  ls /.vfs/trash as alice: rows returned=500
+    statement: ... FROM vfs_entries WHERE vfs_entries.path IN (?)
+    plan: ['SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path=?)']
+
+== 2. the contribute rung: overwrite a live file, then write at the same path once it is deleted
+  bob (contribute) overwrites alice's live file: 1 row(s): (/p/shared.txt kind=file version=2 status=updated size_bytes=7)
+  bob (contribute) edits it: 1 row(s): (/p/shared.txt kind=file version=3 status=updated size_bytes=7)
+  bob (contribute) deletes it: ERROR kind=vfs.permission_denied path=/p/shared.txt sev=error msg='Permission denied' data=None
+  alice deletes it: 1 row(s): (/p/shared.txt kind=file version=3 status=deleted size_bytes=7 deleted_at=set)
+  bob (contribute) writes at the deleted path: ERROR kind=vfs.permission_denied path=/p/shared.txt sev=error msg='Permission denied' data=None
+  bob (contribute) restores it: ERROR kind=vfs.permission_denied path=/p/shared.txt sev=error msg='Permission denied' data=None
+
+== 3. key order for a generation column: which order lets a live listing skip tombstones
+  UNIQUE (parent_id, name, generation): rows=10 vm_steps=16073 plan=['SEARCH e USING COVERING INDEX sqlite_autoindex_e_1 (parent_id=?)']
+  UNIQUE (parent_id, generation, name): rows=10 vm_steps=54 plan=['SEARCH e USING COVERING INDEX sqlite_autoindex_e_1 (parent_id=? AND generation=?)']
+  partial UNIQUE (parent_id, name) WHERE deleted_at IS NULL: rows=10 vm_steps=63 plan=['SEARCH e USING INDEX uq_live (parent_id=?)']

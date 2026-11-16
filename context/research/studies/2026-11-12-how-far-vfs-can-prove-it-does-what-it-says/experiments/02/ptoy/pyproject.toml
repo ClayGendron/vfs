@@ -1,0 +1,11 @@
+[project]
+name = "ptoy"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.mutmut]
+paths_to_mutate = ["src/ptoy/"]
+tests_dir = ["tests/"]

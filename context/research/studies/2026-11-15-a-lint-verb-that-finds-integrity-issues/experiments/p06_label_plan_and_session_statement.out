@@ -1,0 +1,3 @@
+rows in the store: 5,051; statements=16; wrong labels found (path, stored, posture gives): [('/data/d007/f00712.txt', 5, 0), ('/data/d020/f02001.txt', 0, 5)]
+first statements of the session: ['BEGIN', 'SELECT path, everyone_level FROM vfs_entries WHERE everyone_level = ? AND path > ? AND path < ? ORDER BY path LIMIT ?']
+  plan: SEARCH vfs_entries USING COVERING INDEX ix_vfs_entries_everyone_path (everyone_level=? AND path>? AND path<?)

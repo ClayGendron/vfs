@@ -1,0 +1,42 @@
+cargo-mutants 27.1.0 on rtoy (5 example tests), 2026-11-12
+21 mutants tested in 2m: 6 missed, 12 caught, 3 timeouts
+missed:
+src/lib.rs:3:5: replace membership_budget -> usize with 1
+src/lib.rs:3:24: replace < with <= in membership_budget
+src/lib.rs:12:28: replace > with == in chunk_lengths
+src/lib.rs:12:28: replace > with < in chunk_lengths
+src/lib.rs:12:28: replace > with >= in chunk_lengths
+src/lib.rs:21:5: replace may_read -> bool with true
+
+coverage.py 7.17.3 --branch on ptoy example tests: 13 stmts, 2 branches, 100% (also 100% with test_budget_zero deselected)
+
+mutmut 3.8.1 on ptoy, example tests only: 26 mutants, 17 killed, 3 timeout, 6 survived
+mutmut 3.8.1 on ptoy, example + 3 hypothesis properties:
+    ptoy.x_membership_budget__mutmut_4: survived
+    ptoy.x_chunk_lengths__mutmut_3: timeout
+    ptoy.x_chunk_lengths__mutmut_8: survived
+    ptoy.x_chunk_lengths__mutmut_10: timeout
+    ptoy.x_chunk_lengths__mutmut_11: timeout
+
+hypothesis 6.170.15 stateful machine (tests/test_stateful_toy.py), planted sibling-prefix bug, 0.37s:
+E       AssertionError: assert 'missing' == 'denied'
+E         
+E         - denied
+E         + missing
+E       Failing test case: <state machine>
+E       state = GovernedStore()
+E       state.grants_agree()
+E       state.grant(path='/a')
+E       state.grants_agree()
+E       state.grant(path='/a')
+E       state.grants_agree()
+E       state.read(path='/ab')
+E       state.teardown()
+
+cargo-fuzz 0.13.2 (nightly libFuzzer), differential target fuzz/fuzz_targets/grants.rs:
+  against may_read_buggy: assertion left==right failed (left: true, right: false) after about 780 executions, under one second
+  against may_read: Done 6896515 runs in 31 second(s), no failure, cov: 196
+
+hand-applied 'always allow' (may_read body -> return True) in a copy of ptoy:
+  example tests (100% line+branch coverage): 5 passed in 0.14s
+  hypothesis properties: 1 failed, 2 passed in 1.90s

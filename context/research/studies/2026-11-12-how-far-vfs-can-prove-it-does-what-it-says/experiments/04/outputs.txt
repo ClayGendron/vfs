@@ -1,0 +1,42 @@
+Experiment outputs, Researcher 04, 2026-11-12, vfs at 3ea2465eda842a8d3ec54a6018db474a60198a9d with the working tree's uncommitted changes.
+
+== Fast tier: uv run pytest -m "not slow" -q
+1 failed, 4294 passed, 1 warning in 81.73s
+The failure is tests/lint/test_context_shape.py::test_links_resolve: the study brief links four study files not yet written when it ran.
+
+== Collection: uv run pytest --collect-only -q
+4900/6449 tests collected (1549 deselected)   # deselected = the four real-engine legs, no URL set
+uv run pytest --collect-only -q -m slow -> 605/6449
+
+== Rust: CARGO_TARGET_DIR=<scratch>/cargo-target cargo test -p vfs-core
+test result: ok. 115 passed; 0 failed   (unit tests)
+test result: ok. 2 passed; 0 failed     (doc tests)
+No workflow and no step of scripts/ci.sh runs this.
+
+== 04-b statement_width.py (parameter budget squeezed to 999 on SQLite)
+budget 999
+N=  100  write: 39 stmts, max 982 binds  stat: 5 stmts, max 199 binds  glob: 8 stmts, max 582 binds  reindex: 90 stmts, max 204 binds  grep: 7 stmts, max 105 binds  search: 8 stmts, max 106 binds  delete: 8 stmts, max 199 binds
+N= 1000  write: 119 stmts, max 982 binds  stat: 8 stmts, max 967 binds  glob: 6 stmts, max 582 binds  reindex: 103 stmts, max 970 binds  grep: 9 stmts, max 967 binds  search: 9 stmts, max 968 binds  delete: 10 stmts, max 967 binds
+N= 5000  write: 469 stmts, max 982 binds  stat: 15 stmts, max 967 binds  glob: 3 stmts, max 582 binds  reindex: 141 stmts, max 970 binds  grep: 17 stmts, max 967 binds  search: 10 stmts, max 968 binds  delete: 18 stmts, max 967 binds
+
+== 04-a generic_floor_plugin.py over tests/storage/test_conformance.py::TestSqliteConformance
+control (SQLite profile):                                 344 passed
+floor a (GENERIC named "exotic"):                         1 failed, 307 passed, 36 skipped
+floor b (a + SQLite's PRAGMAs and retry codes):           1 failed, 307 passed, 36 skipped
+  failed both times: test_move_batch_is_staged_atomic
+floor c (SQLite profile, one field from GENERIC), on the failing test, every differing field one at a time:
+  arbitration, guard_miss, op_isolation, topology_isolation, bulk_insert, key_byte_budget, in_list_budget,
+  tuple_in, content_bytes, range_source, range_join, range_fence, scope_facts_beside_fan,
+  statistics_listing, rarity_hint, probe_entry_filter: 1 passed each
+  name -> "exotic" alone: 1 failed
+  cause: engine.py installs pysqlite's transaction control only when profile.name == "sqlite"
+floor d (b + the name kept "sqlite"):                     308 passed, 36 skipped   # the 36 are the search tests, withheld by design
+
+== 04-c result_algebra_properties.py (Hypothesis 6.170.15, 2,000 examples a law)
+1 failed, 3 passed
+associativity, success homomorphism, wire round trip: passed
+identity: Result() | a != a for a = Result(ops=("glob",), errors=[e, e]) with e = not_found "a down"
+  a: 2 errors; a | Result(): 2 errors; Result() | a: 1 error; a | a: 2 errors
+
+== 04-d rights_resolver_search.py (Hypothesis-driven worlds through tests/support/grant_worlds.random_world)
+20000 passing, 0 failing, 3881 invalid; 75.69 s

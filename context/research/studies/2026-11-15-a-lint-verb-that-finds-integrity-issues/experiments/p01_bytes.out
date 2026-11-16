@@ -1,0 +1,56 @@
+== B1. A text body rewritten underneath vfs (hash now wrong)
+    rows changed: [1]
+    read: success=True | 1 row(s): (/docs/a.md kind=file version=2 size_bytes=27 content='tampered body\n')
+    stat: success=True | 1 row(s): (/docs/a.md kind=file version=2 size_bytes=27)
+    grep 'tampered': success=True
+    search 'tampered': success=True | 2 row(s): (/docs/a.md kind=file version=2 size_bytes=27) (/docs/b.md kind=file version=1 size_bytes=11)
+    copy to /docs/copy.md: success=True | 1 row(s): (/docs/copy.md kind=file version=1 status=created size_bytes=27)
+    read the copy: success=True | 1 row(s): (/docs/copy.md kind=file version=1 size_bytes=27 content='tampered body\n')
+    edit (body -> BODY): success=True | 1 row(s): (/docs/a.md kind=file version=3 status=updated size_bytes=14)
+    read after edit: success=True | 1 row(s): (/docs/a.md kind=file version=3 size_bytes=14 content='tampered BODY\n')
+    refresh: success=True
+    rebuild: success=True
+    sweep trash: success=True
+      version 1: body='alpha original body\nline two\n' hash matches its own body=True
+      version 2: body='tampered body\n' hash matches its own body=True
+== B2. A text body row deleted (hash present, body missing)
+    rows changed: [1]
+    read: success=True | 1 row(s): (/docs/b.md kind=file version=1 size_bytes=11)
+    stat: success=True | 1 row(s): (/docs/b.md kind=file version=1 size_bytes=11)
+    grep 'bravo': success=True
+    search 'bravo': success=True | 2 row(s): (/docs/b.md kind=file version=1 size_bytes=11) (/docs/a.md kind=file version=2 size_bytes=27)
+    copy to /docs/copy.md: success=True | 1 row(s): (/docs/copy.md kind=file version=1 status=created size_bytes=11)
+    read the copy: success=True | 1 row(s): (/docs/copy.md kind=file version=1 size_bytes=11)
+    edit (body -> BODY): success=False | ERR kind=vfs.wrong_kind sev=error path=/docs/b.md msg='Wrong kind: no editable content'
+    read after edit: success=True | 1 row(s): (/docs/b.md kind=file version=1 size_bytes=11)
+    refresh: success=True
+    rebuild: success=True
+    sweep trash: success=True
+    overwrite /docs/b.md: success=True | 1 row(s): (/docs/b.md kind=file version=2 status=updated size_bytes=16)
+    read after overwrite: success=True | 1 row(s): (/docs/b.md kind=file version=2 size_bytes=16 content='bravo rewritten\n')
+== B3. A bytes body row deleted
+    rows changed: [1]
+    read columns=data: success=True | 1 row(s): (/docs/c.bin kind=file version=1)
+    read default: success=True | ERR kind=vfs.unsupported sev=warning path=/docs/c.bin msg='Unsupported: no text rendering (unsupported)' | 1 row(s): (/docs/c.bin kind=file version=1 size_bytes=17)
+    stat: success=True | 1 row(s): (/docs/c.bin kind=file version=1 size_bytes=17)
+    copy: success=True | 1 row(s): (/docs/c2.bin kind=file version=1 status=created size_bytes=17)
+    rebuild: success=True
+== B4. The recorded hash set to NULL, then to a wrong value; size and lines set wrong
+    rows changed: [1]
+    read (hash NULL): success=True | 1 row(s): (/docs/b.md kind=file version=1 size_bytes=11 content='bravo body\n')
+    write the same body again: success=True | 1 row(s): (/docs/b.md kind=file version=2 status=updated size_bytes=11)
+    stored hash now: [('0939571cc0e7076c36554a9d7ce05c16cf1d4d7e447d1bdfa585bdf6926345b3', 2)]
+    read (hash wrong, size wrong): success=True | 1 row(s): (/docs/a.md kind=file version=2 size_bytes=999999 content='alpha second body\nline two\n')
+    stat (hash wrong, size wrong): success=True | 1 row(s): (/docs/a.md kind=file version=2 size_bytes=999999)
+    write the same body again: success=True | 1 row(s): (/docs/a.md kind=file version=3 status=updated size_bytes=27)
+    stored hash, size, lines, version now: [('5484791dfeab9c4fb6aee73096d655e379c679a00d88819e1d582c845a51c96f', 27, 3, 3)]
+    rebuild: success=True
+    after rebuild: [('5484791dfeab9c4fb6aee73096d655e379c679a00d88819e1d582c845a51c96f', 27, 3)]
+== B5. A version row's body rewritten
+    rows changed: [1]
+    read: success=True | 1 row(s): (/docs/a.md kind=file version=2 size_bytes=27 content='alpha second body\nline two\n')
+    rebuild: success=True
+      version 1: body='history rewritten\n' hash matches its own body=False
+== B6. A prototype of the check: one keyset page of entries joined to their bodies, hashed here
+    statements=2 rows visited=3 findings=[('/docs/a.md', 'mismatch'), ('/docs/b.md', 'missing body'), ('/docs/c.bin', 'missing body')]
+    table counts: {'entry': 5, 'content': 1, 'blobs': 0, 'versions': 1}

@@ -1,0 +1,4 @@
+== verify a real PEP 740 attestation
+OK: sigstore-4.5.1-py3-none-any.whl
+== same file, wrong repository claimed
+Verification failed: provenance was signed by repository "sigstore/sigstore-python", expected "pypa/pip"

@@ -1,0 +1,123 @@
+== setup: alice writes /d/a.txt twice, links it both ways, and holds a grant on its exact path
+  grant carol read at /d/a.txt: empty result (no rows, no errors)
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=2 label=5 deleted=no trash_root=None hash=310621a5
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  version rows: 1
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=838d3ce9 content='alice private draft v1\n'
+  edge rows: 2 (fs mirror rows hidden; total 5)
+    E3 -[cites]-> E4 provenance=system
+    E4 -[cites]-> E3 provenance=system
+  grant rows: 2
+    principal=* prefix=/ level=read_write
+    principal=carol prefix=/d/a.txt level=read
+    id=E3 path=/d/a.txt external_id=ext-alice-001 created_at==updated_at: False
+
+== 1. same caller: alice deletes, alice writes a new file at the path
+  delete: 1 row(s): (/d/a.txt kind=file version=2 status=deleted size_bytes=23 deleted_at=set)
+  write (same caller): 1 row(s): (/d/a.txt kind=file version=4 status=updated size_bytes=15)
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=5 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=4 label=5 deleted=no trash_root=None hash=50f48e42
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  version rows: 2
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=838d3ce9 content='alice private draft v1\n'
+    id=E3 n=3 snapshot=True actor=alice subjects=['alice'] hash=310621a5 content='alice private draft v2\n'
+  edge rows: 2 (fs mirror rows hidden; total 5)
+    E3 -[cites]-> E4 provenance=system
+    E4 -[cites]-> E3 provenance=system
+  restore after the revive: ERROR kind=vfs.exists path=/d/a.txt sev=error msg='Already exists' data=None
+  ls /.vfs/trash: empty result (no rows, no errors)
+
+== 2. different caller, open region: alice deletes, bob writes a new file at the path
+  delete as alice: 1 row(s): (/d/a.txt kind=file version=4 status=deleted size_bytes=15 deleted_at=set)
+  write as bob, overwrite=False: 1 row(s): (/d/a.txt kind=file version=6 status=updated size_bytes=19)
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=7 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=6 label=5 deleted=no trash_root=None hash=02a230a9
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  version rows: 3
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=838d3ce9 content='alice private draft v1\n'
+    id=E3 n=3 snapshot=True actor=alice subjects=['alice'] hash=310621a5 content='alice private draft v2\n'
+    id=E3 n=5 snapshot=True actor=bob subjects=['bob'] hash=50f48e42 content='alice new file\n'
+  edge rows: 2 (fs mirror rows hidden; total 5)
+    E3 -[cites]-> E4 provenance=system
+    E4 -[cites]-> E3 provenance=system
+  grant rows: 2
+    principal=* prefix=/ level=read_write
+    principal=carol prefix=/d/a.txt level=read
+    id=E3 path=/d/a.txt external_id=ext-alice-001 created_at==updated_at: False
+  traverse inbound /d/a.txt as bob: 4 row(s): (/d/a.txt kind=file version=6 size_bytes=19) (/d/other.txt kind=file version=1 size_bytes=6) (/d/a.txt) (/d/other.txt)
+  traverse outbound /d/a.txt as bob: 4 row(s): (/d/a.txt kind=file version=6 size_bytes=19) (/d/other.txt kind=file version=1 size_bytes=6) (/d/a.txt) (/d/other.txt)
+  restore as alice (her deleted file): ERROR kind=vfs.exists path=/d/a.txt sev=error msg='Already exists' data=None
+  read as alice: 1 row(s): (/d/a.txt kind=file version=6 size_bytes=19 content='bob brand new file\n')
+ -- now the region closes: everyone none at /d, bob granted read_write, alice granted nothing
+  posture /d none: empty result (no rows, no errors)
+  grant bob read_write /d: empty result (no rows, no errors)
+  read /d/a.txt as alice (owner of the row bob believes he created): 1 row(s): (/d/a.txt kind=file version=6 size_bytes=19 content='bob brand new file\n')
+  read /d/other.txt as alice (her own, for comparison): 1 row(s): (/d/other.txt kind=file version=1 size_bytes=6 content='other\n')
+  write /d/bob-own.txt as bob: 1 row(s): (/d/bob-own.txt kind=file version=1 status=created size_bytes=8)
+  read /d/bob-own.txt as alice (a row bob really created): ERROR kind=vfs.not_found path=/d/bob-own.txt sev=error msg='Not found' data=None
+  edit /d/a.txt as alice: 1 row(s): (/d/a.txt kind=file version=7 status=updated size_bytes=30)
+  delete /d/a.txt as alice: 1 row(s): (/d/a.txt kind=file version=7 status=deleted size_bytes=30 deleted_at=set)
+  read /d/a.txt as carol (grant on the exact path survived): 1 row(s): (/d/a.txt kind=file version=8 size_bytes=30 deleted_at=set content='ALICE WAS HERE brand new file\n')
+  rows under /d: 4
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=9 label=0 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=8 label=0 deleted=yes trash_root=E3 hash=01d1e82e
+    id=E5 path=/d/bob-own.txt parent=E1 name='bob-own.txt' kind=file owner=bob v=1 label=0 deleted=no trash_root=None hash=9620bf42
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=0 deleted=no trash_root=None hash=7e4fa2eb
+
+== 3. different caller, closed region: can bob come to hold or read alice's deleted file
+ -- bob holds nothing at /p
+  write /p/secret.txt as bob: ERROR kind=vfs.not_found path=/p sev=error msg='Not found' data={'vfs.target': '/p/secret.txt'}
+  write /p/secret.txt as anonymous: ERROR kind=vfs.unauthenticated path=/p/secret.txt sev=error msg='Unauthenticated' data=None
+  write /p/fresh.txt as bob (a name nobody used): ERROR kind=vfs.not_found path=/p sev=error msg='Not found' data={'vfs.target': '/p/fresh.txt'}
+ -- bob holds list at /p
+    read live path: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data=None
+    read trash view: ERROR kind=vfs.permission_denied path=/.vfs/trash/p/secret.txt sev=error msg='Permission denied' data=None
+    stat trash view: 1 row(s): (/p/secret.txt kind=file)
+    write at the deleted path: ERROR kind=vfs.permission_denied path=/p/secret.txt sev=error msg='Permission denied' data=None
+    write at a fresh name: ERROR kind=vfs.permission_denied path=/p/fresh-list.txt sev=error msg='Permission denied' data=None
+  rows under /p/secret.txt: 1
+    id=E6 path=/p/secret.txt parent=E7 name='secret.txt' kind=file owner=alice v=2 label=0 deleted=yes trash_root=E6 hash=6f965332
+ -- bob holds read at /p
+    read live path: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:35.925250'}
+    read trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set content='alice secret body\n')
+    stat trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set)
+    write at the deleted path: ERROR kind=vfs.permission_denied path=/p/secret.txt sev=error msg='Permission denied' data=None
+    write at a fresh name: ERROR kind=vfs.permission_denied path=/p/fresh-read.txt sev=error msg='Permission denied' data=None
+  rows under /p/secret.txt: 1
+    id=E6 path=/p/secret.txt parent=E7 name='secret.txt' kind=file owner=alice v=2 label=0 deleted=yes trash_root=E6 hash=6f965332
+ -- bob holds add at /p
+    read live path: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:35.925250'}
+    read trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set content='alice secret body\n')
+    stat trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set)
+    write at the deleted path: ERROR kind=vfs.permission_denied path=/p/secret.txt sev=error msg='Permission denied' data=None
+    write at a fresh name: 1 row(s): (/p/fresh-add.txt kind=file version=1 status=created size_bytes=4)
+  rows under /p/secret.txt: 1
+    id=E6 path=/p/secret.txt parent=E7 name='secret.txt' kind=file owner=alice v=2 label=0 deleted=yes trash_root=E6 hash=6f965332
+ -- bob holds contribute at /p
+    read live path: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:35.925250'}
+    read trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set content='alice secret body\n')
+    stat trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set)
+    write at the deleted path: ERROR kind=vfs.permission_denied path=/p/secret.txt sev=error msg='Permission denied' data=None
+    write at a fresh name: 1 row(s): (/p/fresh-contribute.txt kind=file version=1 status=created size_bytes=4)
+  rows under /p/secret.txt: 1
+    id=E6 path=/p/secret.txt parent=E7 name='secret.txt' kind=file owner=alice v=2 label=0 deleted=yes trash_root=E6 hash=6f965332
+ -- bob holds read_write at /p
+    read live path: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:35.925250'}
+    read trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set content='alice secret body\n')
+    stat trash view: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=18 deleted_at=set)
+    write at the deleted path: 1 row(s): (/p/secret.txt kind=file version=3 status=updated size_bytes=18)
+    write at a fresh name: 1 row(s): (/p/fresh-read_write.txt kind=file version=1 status=created size_bytes=4)
+  rows under /p/secret.txt: 1
+    id=E6 path=/p/secret.txt parent=E7 name='secret.txt' kind=file owner=alice v=3 label=0 deleted=no trash_root=None hash=64f9d94d
+  version rows: 1
+    id=E6 n=2 snapshot=True actor=bob subjects=['bob'] hash=6f965332 content='alice secret body\n'
+  rows under /p: 5
+    id=E7 path=/p parent=E8 name='p' kind=directory owner=None v=7 label=0 deleted=no trash_root=None hash=
+    id=E9 path=/p/fresh-add.txt parent=E7 name='fresh-add.txt' kind=file owner=bob v=1 label=0 deleted=no trash_root=None hash=1a1707bb
+    id=E10 path=/p/fresh-contribute.txt parent=E7 name='fresh-contribute.txt' kind=file owner=bob v=1 label=0 deleted=no trash_root=None hash=1a1707bb
+    id=E11 path=/p/fresh-read_write.txt parent=E7 name='fresh-read_write.txt' kind=file owner=bob v=1 label=0 deleted=no trash_root=None hash=1a1707bb
+    id=E6 path=/p/secret.txt parent=E7 name='secret.txt' kind=file owner=alice v=3 label=0 deleted=no trash_root=None hash=64f9d94d

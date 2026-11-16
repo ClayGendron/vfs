@@ -1,0 +1,33 @@
+sqlite library 3.50.4
+== option 1: the unique key covers live rows only (a partial unique index)
+  ok      create unique index on path where deleted_at is null
+  ok      create unique index on (parent_id, name) where deleted_at is null
+  ok      a live row at /d/a.txt
+  ok      tombstone it
+  ok      a second, live row at /d/a.txt
+  ok      tombstone the second too (two tombstones at one path)
+  ok      a third, live row at /d/a.txt
+  REFUSED a fourth, live row at /d/a.txt (must be refused): UNIQUE constraint failed: e.parent_id, e.name
+  REFUSED restore the first while the third is live (must be refused): UNIQUE constraint failed: e.parent_id, e.name
+  rows: [('A', '/d/a.txt', '2026-11-15'), ('B', '/d/a.txt', '2026-11-16'), ('C', '/d/a.txt', None)]
+  plan, live lookup by path: ['SEARCH e USING INDEX uq_live_path (path=?)']
+  plan, any-row lookup by path: ['SCAN e']
+  plan, live children by name: ['SEARCH e USING INDEX uq_live_name (parent_id=?)']
+== option 3: the unique key gains a generation (0 for the live row, a fresh value for each tombstone)
+  ok      a live row at /d/a.txt
+  ok      tombstone it, generation = its own row id
+  ok      a second, live row at /d/a.txt
+  ok      tombstone the second too
+  ok      a third, live row at /d/a.txt
+  REFUSED a fourth, live row at /d/a.txt (must be refused): UNIQUE constraint failed: e.parent_id, e.name, e.generation
+  REFUSED restore the first while the third is live (must be refused): UNIQUE constraint failed: e.parent_id, e.name, e.generation
+  rows: [('A', '/d/a.txt', '2026-11-15', 1), ('B', '/d/a.txt', '2026-11-16', 2), ('C', '/d/a.txt', None, 0)]
+  plan, live lookup by path: ['SEARCH e USING INDEX sqlite_autoindex_e_2 (path=? AND generation=?)']
+  plan, live children by name: ['SEARCH e USING INDEX sqlite_autoindex_e_3 (parent_id=?)']
+== option 1 without a partial index: a nullable key column (the spelling for an engine with no partial index)
+  ok      a live row
+  ok      tombstone it: live_path goes NULL
+  ok      a second, live row
+  ok      tombstone the second: two NULLs under one unique key
+  ok      a third, live row
+  REFUSED a fourth, live row (must be refused): UNIQUE constraint failed: e.live_path

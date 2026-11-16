@@ -1,0 +1,73 @@
+== 1. the keys and indexes on vfs_entries, as SQLite holds them
+  CREATE INDEX ix_vfs_entries_content_hash ON vfs_entries (content_hash)
+  CREATE INDEX ix_vfs_entries_deleted_at ON vfs_entries (deleted_at)
+  CREATE INDEX ix_vfs_entries_encoded_kind ON vfs_entries (encoded, kind)
+  CREATE UNIQUE INDEX ix_vfs_entries_entry_id ON vfs_entries (entry_id)
+  CREATE INDEX ix_vfs_entries_everyone_path ON vfs_entries (everyone_level, path)
+  CREATE INDEX ix_vfs_entries_ext ON vfs_entries (ext)
+  CREATE INDEX ix_vfs_entries_ext_kind ON vfs_entries (ext, kind)
+  CREATE INDEX ix_vfs_entries_index_pending ON vfs_entries (encoded, chunked, indexable, deleted_at, id)
+  CREATE INDEX ix_vfs_entries_kind ON vfs_entries (kind)
+  CREATE INDEX ix_vfs_entries_owner_id ON vfs_entries (owner_id)
+  CREATE UNIQUE INDEX ix_vfs_entries_path ON vfs_entries (path)
+  CREATE INDEX ix_vfs_entries_render_status ON vfs_entries (render_status, deleted_at, id)
+  CREATE INDEX ix_vfs_entries_trash_root ON vfs_entries (trash_root_id)
+  sqlite_autoindex_vfs_entries_1: (automatic index for a UNIQUE constraint)
+  table: id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  table: CONSTRAINT uq_vfs_entries_parent_name UNIQUE (parent_id, name)
+  index_list: name=ix_vfs_entries_ext unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_everyone_path unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_encoded_kind unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_owner_id unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_content_hash unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_entry_id unique=1 origin=c partial=0
+  index_list: name=ix_vfs_entries_path unique=1 origin=c partial=0
+  index_list: name=ix_vfs_entries_trash_root unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_deleted_at unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_index_pending unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_kind unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_render_status unique=0 origin=c partial=0
+  index_list: name=ix_vfs_entries_ext_kind unique=0 origin=c partial=0
+  index_list: name=sqlite_autoindex_vfs_entries_1 unique=1 origin=u partial=0
+
+== 2. a listing of a directory holding 10 live files and N tombstones
+ -- /dir0: 10 live, 0 tombstoned
+  ls /dir0 as system: rows returned=10 statements=3 vm_steps=355
+  ls /dir0 as alice: rows returned=10 statements=5 vm_steps=401
+  stat /dir0/live00.txt: rows returned=1 statements=2 vm_steps=117
+  glob /dir0/live* : rows returned=10 statements=2 vm_steps=341
+  delete /dir0/live09.txt cascade=False: rows returned=1 statements=10 vm_steps=805
+  restore /dir0/live09.txt: rows returned=1 statements=11 vm_steps=643
+ -- /dir1000: 10 live, 1000 tombstoned
+  ls /dir1000 as system: rows returned=10 statements=3 vm_steps=5362
+  ls /dir1000 as alice: rows returned=10 statements=5 vm_steps=5408
+  stat /dir1000/live00.txt: rows returned=1 statements=2 vm_steps=117
+  glob /dir1000/live* : rows returned=10 statements=2 vm_steps=345
+  delete /dir1000/live09.txt cascade=False: rows returned=1 statements=10 vm_steps=5819
+  restore /dir1000/live09.txt: rows returned=1 statements=11 vm_steps=643
+ -- /dir2000: 10 live, 2000 tombstoned
+  ls /dir2000 as system: rows returned=10 statements=3 vm_steps=10362
+  ls /dir2000 as alice: rows returned=10 statements=5 vm_steps=10408
+  stat /dir2000/live00.txt: rows returned=1 statements=2 vm_steps=117
+  glob /dir2000/live* : rows returned=10 statements=2 vm_steps=345
+  delete /dir2000/live09.txt cascade=False: rows returned=1 statements=10 vm_steps=10830
+  restore /dir2000/live09.txt: rows returned=1 statements=11 vm_steps=643
+ -- /dir4000: 10 live, 4000 tombstoned
+  ls /dir4000 as system: rows returned=10 statements=3 vm_steps=20362
+  ls /dir4000 as alice: rows returned=10 statements=5 vm_steps=20408
+  stat /dir4000/live00.txt: rows returned=1 statements=2 vm_steps=117
+  glob /dir4000/live* : rows returned=10 statements=2 vm_steps=345
+  delete /dir4000/live09.txt cascade=False: rows returned=1 statements=10 vm_steps=20841
+  restore /dir4000/live09.txt: rows returned=1 statements=11 vm_steps=643
+  the statements of that system ls, with SQLite's plan for each SELECT on vfs_entries:
+      SELECT vfs_entries.entry_id, vfs_entries.content_hash, vfs_entries.created_at, vfs_entries.deleted_at, vfs_entries.kind, vfs_entries.mime_type, vfs_en
+      SELECT vfs_entries.parent_id, vfs_entries.content_hash, vfs_entries.created_at, vfs_entries.deleted_at, vfs_entries.kind, vfs_entries.mime_type, vfs_e
+
+== 3. the plan SQLite picks for a children listing with the liveness term
+  children of one parent, live only, by name: ['SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=?)']
+  children of one parent, tombstoned only: ['SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=?)']
+  every tombstoned root: ['SCAN vfs_entries USING INDEX ix_vfs_entries_path']
+  every tombstoned root, as the retention sweep asks: ['SCAN vfs_entries USING INDEX ix_vfs_entries_path']
+
+== 4. the trash view over 7,000 tombstoned roots
+  ls /.vfs/trash as system: rows returned=7000 statements=3 vm_steps=168547

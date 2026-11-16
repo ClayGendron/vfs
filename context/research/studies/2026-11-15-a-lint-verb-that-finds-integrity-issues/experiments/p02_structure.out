@@ -1,0 +1,129 @@
+== S0. A clean store
+    prototype lint (10 statements): clean
+    segment postings that differ from the path: none
+    counts: {'entry': 7, 'segments': 5, 'edges': 6}
+== S1. path cache torn: /a/d.txt's path column rewritten to /a/zzz.txt, name and parent untouched
+    read /a/d.txt: success=False | ERR kind=vfs.not_found sev=error path=/a/d.txt msg='Not found'
+    stat /a/d.txt: success=False | ERR kind=vfs.not_found sev=error path=/a/d.txt msg='Not found'
+    read /a/zzz.txt: success=True | 1 row(s): (/a/zzz.txt kind=file version=1 size_bytes=19 content='needle in /a/d.txt\n')
+    stat /a/zzz.txt: success=True | 1 row(s): (/a/zzz.txt kind=file version=1 size_bytes=19)
+    ls /a: success=True | 2 row(s): (/a/b kind=directory version=1) (/a/zzz.txt kind=file version=1 size_bytes=19)
+    tree /: success=True | 6 row(s): (/a kind=directory version=2) (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/zzz.txt kind=file version=1 size_bytes=19) (/x kind=directory version=1) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/zzz.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/zzz.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a/zzz.txt']}
+    segment postings that differ from the path: none
+    rebuild: success=True
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a/zzz.txt']}
+    segment postings that differ from the path: none
+    write /a/d.txt: success=False | ERR kind=vfs.conflict sev=error path=/a/d.txt msg='Conflict: the address is held by a row this write may not adopt'
+    write /a/zzz.txt: success=True | 1 row(s): (/a/zzz.txt kind=file version=2 status=updated size_bytes=4)
+    move /a /a2: success=True | 1 row(s): (/a2 kind=directory version=3 status=created)
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a2/zzz.txt']}
+    segment postings that differ from the path: none
+== S2. dangling parent: /x/y.txt's parent_id points at no row
+    read /x/y.txt: success=True | 1 row(s): (/x/y.txt kind=file version=1 size_bytes=19 content='needle in /x/y.txt\n')
+    stat /x/y.txt: success=True | 1 row(s): (/x/y.txt kind=file version=1 size_bytes=19)
+    ls /x: success=True
+    tree /: success=True | 6 row(s): (/a kind=directory version=2) (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x kind=directory version=1) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'dangling parent': ['/x/y.txt'], 'fs edge missing or wrong': ['/x/y.txt']}
+    segment postings that differ from the path: none
+    rebuild: success=True | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild repaired the fs mirror for entry 01M7G51SBKFT6SY8MAHK1KNN8G: 1 wrong row(s), 1 missing'
+      rebuild note data={'entry_id': '01M7G51SBKFT6SY8MAHK1KNN8G', 'wrong': 1, 'missing': True}
+    prototype lint (10 statements): {'dangling parent': ['/x/y.txt'], 'edge endpoint has no entry': [7]}
+    segment postings that differ from the path: none
+    delete /x: success=True | 1 row(s): (/x kind=directory version=1 status=deleted)
+    read /x/y.txt after delete /x: success=False | ERR kind=vfs.not_found sev=error path=/x msg='Not found'
+    prototype lint (10 statements): {'dangling parent': ['/x/y.txt'], 'edge endpoint has no entry': [7]}
+    segment postings that differ from the path: none
+== S3. parent row removed: the row of /a/b deleted by SQL, its child left
+    read /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21 content='needle in /a/b/c.txt\n')
+    stat /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    read /a/b: success=False | ERR kind=vfs.not_found sev=error path=/a/b msg='Not found'
+    stat /a/b: success=False | ERR kind=vfs.not_found sev=error path=/a/b msg='Not found'
+    ls /a: success=True | 1 row(s): (/a/d.txt kind=file version=1 size_bytes=19)
+    ls /a/b: success=False | ERR kind=vfs.not_found sev=error path=/a/b msg='Not found'
+    tree /: success=True | 5 row(s): (/a kind=directory version=2) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x kind=directory version=1) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'dangling parent': ['/a/b/c.txt'], 'edge endpoint has no entry': [2, 3], 'segment posting with no entry': ['a']}
+    segment postings that differ from the path: none
+    rebuild: success=True | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild reclaimed 1 orphaned segment posting(s) for entry 01M7G51XCDGQRTGYQWPXWPCZBW: no entry row' | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild repaired the fs mirror for entry 01M7G51XCDGQRTGYQWPXWPCZBX: 0 wrong row(s), 1 missing' | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild reclaimed 2 edge row(s) naming an endpoint with no entry row'
+      rebuild note data={'entry_id': '01M7G51XCDGQRTGYQWPXWPCZBW', 'excess': ['a']}
+      rebuild note data={'entry_id': '01M7G51XCDGQRTGYQWPXWPCZBX', 'wrong': 0, 'missing': True}
+      rebuild note data={'dangling': 2}
+    prototype lint (10 statements): {'dangling parent': ['/a/b/c.txt'], 'edge endpoint has no entry': [7]}
+    segment postings that differ from the path: none
+    mkdir /a/b: success=True | 1 row(s): (/a/b kind=directory version=1 status=created)
+    ls /a/b after mkdir: success=True
+    write /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=2 status=updated size_bytes=6)
+    prototype lint (10 statements): {'dangling parent': ['/a/b/c.txt'], 'edge endpoint has no entry': [7]}
+    segment postings that differ from the path: none
+== S4. live child under a tombstoned parent: /x stamped deleted by SQL, /x/y.txt left live
+    read /x/y.txt: success=True | 1 row(s): (/x/y.txt kind=file version=1 size_bytes=19 content='needle in /x/y.txt\n')
+    stat /x/y.txt: success=True | 1 row(s): (/x/y.txt kind=file version=1 size_bytes=19)
+    ls /x: success=False | ERR kind=vfs.not_found sev=error path=/x msg='Not found'
+    ls /: success=True | 1 row(s): (/a kind=directory version=2)
+    tree /: success=True | 5 row(s): (/a kind=directory version=2) (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'live row under a tombstoned parent': ['/x/y.txt']}
+    segment postings that differ from the path: none
+    rebuild: success=True
+    prototype lint (10 statements): {'live row under a tombstoned parent': ['/x/y.txt']}
+    segment postings that differ from the path: none
+    restore /x: success=True | 1 row(s): (/x kind=directory version=2 status=created)
+    prototype lint (10 statements): clean
+    segment postings that differ from the path: none
+== S5. name disagrees: /a/d.txt's name column set to other.txt
+    read /a/d.txt: success=True | 1 row(s): (/a/d.txt kind=file version=1 size_bytes=19 content='needle in /a/d.txt\n')
+    stat /a/d.txt: success=True | 1 row(s): (/a/d.txt kind=file version=1 size_bytes=19)
+    read /a/other.txt: success=False | ERR kind=vfs.not_found sev=error path=/a/other.txt msg='Not found'
+    stat /a/other.txt: success=False | ERR kind=vfs.not_found sev=error path=/a/other.txt msg='Not found'
+    ls /a: success=True | 2 row(s): (/a/b kind=directory version=1) (/a/d.txt kind=file version=1 size_bytes=19)
+    tree /: success=True | 6 row(s): (/a kind=directory version=2) (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x kind=directory version=1) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a/d.txt']}
+    segment postings that differ from the path: none
+    rebuild: success=True
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a/d.txt']}
+    segment postings that differ from the path: none
+    write /a/other.txt: success=False | ERR kind=vfs.conflict sev=error path=/a/other.txt msg='Conflict: the address is held by a row this write may not adopt'
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a/d.txt']}
+    segment postings that differ from the path: none
+== S6. a cycle: /a's parent_id set to its own child /a/b
+    read /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21 content='needle in /a/b/c.txt\n')
+    stat /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    ls /: success=True | 1 row(s): (/x kind=directory version=1)
+    ls /a: success=True | 2 row(s): (/a/b kind=directory version=1) (/a/d.txt kind=file version=1 size_bytes=19)
+    tree /: success=True | 6 row(s): (/a kind=directory version=2) (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x kind=directory version=1) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a'], 'fs edge missing or wrong': ['/a']}
+    segment postings that differ from the path: none
+    rebuild: success=True | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild repaired the fs mirror for entry 01M7G52BCX7RCDTSGAVE3EV9SN: 1 wrong row(s), 1 missing'
+      rebuild note data={'entry_id': '01M7G52BCX7RCDTSGAVE3EV9SN', 'wrong': 1, 'missing': True}
+    prototype lint (10 statements): {'torn path (path <> parent path + name)': ['/a']}
+    segment postings that differ from the path: none
+== S7. segment postings and the fs edge of /a/b/c.txt removed
+    glob **/b/*.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    glob /a/b/*.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    traverse inbound /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    traverse outbound /a/b: success=True | 1 row(s): (/a/b kind=directory version=1)
+    read /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21 content='needle in /a/b/c.txt\n')
+    stat /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    ls /a/b: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)
+    tree /: success=True | 6 row(s): (/a kind=directory version=2) (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x kind=directory version=1) (/x/y.txt kind=file version=1 size_bytes=19)
+    glob **/*.txt: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    grep needle: success=True | 3 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21) (/a/d.txt kind=file version=1 size_bytes=19) (/x/y.txt kind=file version=1 size_bytes=19)
+    prototype lint (10 statements): {'fs edge missing or wrong': ['/a/b/c.txt']}
+    segment postings that differ from the path: ['/a/b/c.txt']
+    rebuild: success=True | ERR kind=vfs.internal sev=warning path=/a/b/c.txt msg='Internal error: rebuild repaired segment postings for entry 01M7G52GXGRE7BQ534SA0YYEQW: 2 missing, 0 excess' | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild repaired the fs mirror for entry 01M7G52GXGRE7BQ534SA0YYEQW: 0 wrong row(s), 1 missing'
+      rebuild note data={'entry_id': '01M7G52GXGRE7BQ534SA0YYEQW', 'missing': ['a', 'b'], 'excess': []}
+      rebuild note data={'entry_id': '01M7G52GXGRE7BQ534SA0YYEQW', 'wrong': 0, 'missing': True}
+    prototype lint (10 statements): clean
+    segment postings that differ from the path: none
+    glob **/b/*.txt after rebuild: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=21)

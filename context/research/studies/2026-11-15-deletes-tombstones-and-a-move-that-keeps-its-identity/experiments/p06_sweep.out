@@ -1,0 +1,67 @@
+== 1. sweep at the trash view, retention 90 days (the default)
+  table rows before: {'entry': 6, 'content': 3, 'blobs': 0, 'versions': 1, 'version_subjects': 1, 'chunks': 0, 'segments': 4, 'edges': 7}
+  sweep() default address: empty result (no rows, no errors)
+  sweep /.vfs/trash: empty result (no rows, no errors)
+  table rows after:  {'entry': 6, 'content': 3, 'blobs': 0, 'versions': 1, 'version_subjects': 1, 'chunks': 0, 'segments': 4, 'edges': 7}
+  sweep /.vfs/trash/work/a.txt (one row through the view): ERROR kind=vfs.invalid path=None sev=error msg="Invalid: Cannot mutate the trash view beneath '/.vfs/trash'" data={'raw': '/.vfs/trash/work/a.txt'}
+  sweep /work/a.txt (the tombstoned row by its own path): 1 row(s): (/work/a.txt kind=file version=3 status=deleted size_bytes=9)
+  table rows after:  {'entry': 5, 'content': 2, 'blobs': 0, 'versions': 0, 'version_subjects': 0, 'chunks': 0, 'segments': 3, 'edges': 4}
+  restore /work/a.txt after that sweep: ERROR kind=vfs.not_found path=/work/a.txt sev=error msg='Not found' data=None
+
+== 2. sweep at the trash view, retention 0 days
+  table rows before: {'entry': 6, 'content': 3, 'blobs': 0, 'versions': 1, 'version_subjects': 1, 'chunks': 0, 'segments': 4, 'edges': 7}
+  sweep /.vfs/trash as alice (everyone holds read_write here): 2 row(s): (/work/a.txt kind=file version=3 status=deleted size_bytes=9) (/work/sub kind=directory version=3 status=deleted)
+  table rows after:  {'entry': 3, 'content': 1, 'blobs': 0, 'versions': 0, 'version_subjects': 0, 'chunks': 0, 'segments': 0, 'edges': 2}
+  rows under /: 3
+    id=E1 path=/ parent=None name='/' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E2 path=/keep.txt parent=E1 name='keep.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=8be439ac
+    id=E3 path=/work parent=E1 name='work' kind=directory owner=None v=5 label=5 deleted=no trash_root=None hash=
+
+== 3. sweep at a live path: what it destroys, and whether anything warns first
+  table rows before: {'entry': 6, 'content': 3, 'blobs': 0, 'versions': 1, 'version_subjects': 1, 'chunks': 0, 'segments': 4, 'edges': 7}
+  rows under /: 6
+    id=E4 path=/ parent=None name='/' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E5 path=/keep.txt parent=E4 name='keep.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=8be439ac
+    id=E6 path=/work parent=E4 name='work' kind=directory owner=None v=2 label=5 deleted=no trash_root=None hash=
+    id=E7 path=/work/a.txt parent=E6 name='a.txt' kind=file owner=alice v=2 label=5 deleted=no trash_root=None hash=ac87f7fd
+    id=E8 path=/work/sub parent=E6 name='sub' kind=directory owner=None v=2 label=5 deleted=no trash_root=None hash=
+    id=E9 path=/work/sub/b.txt parent=E8 name='b.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=5da8f23d
+  sweep /work (a live directory holding live files) as system: 1 row(s): (/work kind=directory version=2 status=deleted)
+  full result: ops=('sweep',) observations=1 errors=[]
+  table rows after:  {'entry': 2, 'content': 1, 'blobs': 0, 'versions': 0, 'version_subjects': 0, 'chunks': 0, 'segments': 0, 'edges': 1}
+  rows under /: 2
+    id=E4 path=/ parent=None name='/' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E5 path=/keep.txt parent=E4 name='keep.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=8be439ac
+  ls /.vfs/trash: empty result (no rows, no errors)
+  restore /work: ERROR kind=vfs.not_found path=/work sev=error msg='Not found' data=None
+  read /work/a.txt: ERROR kind=vfs.not_found path=/work sev=error msg='Not found' data={'vfs.target': '/work/a.txt'}
+  traverse outbound /keep.txt (its edge pointed into /work): 1 row(s): (/keep.txt kind=file version=1 size_bytes=7)
+  sweep /: ERROR kind=vfs.invalid path=None sev=error msg='Invalid: Cannot mutate root path' data={'raw': '/'}
+  sweep a path that does not exist: ERROR kind=vfs.not_found path=/nothing sev=error msg='Not found' data=None
+
+== 4. who may sweep a live file
+  sweep /keep.txt as anonymous (everyone read_write): 1 row(s): (/keep.txt kind=file version=1 status=deleted size_bytes=7)
+  read /keep.txt: ERROR kind=vfs.not_found path=/keep.txt sev=error msg='Not found' data=None
+  sweep /work/a.txt as bob (not the owner; everyone read_write): 1 row(s): (/work/a.txt kind=file version=2 status=deleted size_bytes=9)
+  read /work/a.txt: ERROR kind=vfs.not_found path=/work/a.txt sev=error msg='Not found' data=None
+  alice (owner) holds add: delete: 1 row(s): (/p/add.txt kind=file version=1 status=deleted size_bytes=2 deleted_at=set)
+  alice (owner) holds add: restore: 1 row(s): (/p/add.txt kind=file version=3 status=created size_bytes=2)
+  bob (not owner) holds add: delete: ERROR kind=vfs.permission_denied path=/p/add.txt sev=error msg='Permission denied' data=None
+  bob (not owner) holds add: restore: ERROR kind=vfs.permission_denied path=/p/add.txt sev=error msg='Permission denied' data=None
+  bob (not owner) holds add: sweep: ERROR kind=vfs.permission_denied path=/p/add.txt sev=error msg='Permission denied' data=None
+  alice (owner) holds add: sweep: 1 row(s): (/p/add.txt kind=file version=3 status=deleted size_bytes=2)
+  alice holds add: sweep /.vfs/trash: ERROR kind=vfs.permission_denied path=/.vfs/trash sev=error msg='Permission denied' data=None
+  alice (owner) holds contribute: delete: 1 row(s): (/p/contribute.txt kind=file version=1 status=deleted size_bytes=2 deleted_at=set)
+  alice (owner) holds contribute: restore: 1 row(s): (/p/contribute.txt kind=file version=3 status=created size_bytes=2)
+  bob (not owner) holds contribute: delete: ERROR kind=vfs.permission_denied path=/p/contribute.txt sev=error msg='Permission denied' data=None
+  bob (not owner) holds contribute: restore: ERROR kind=vfs.permission_denied path=/p/contribute.txt sev=error msg='Permission denied' data=None
+  bob (not owner) holds contribute: sweep: ERROR kind=vfs.permission_denied path=/p/contribute.txt sev=error msg='Permission denied' data=None
+  alice (owner) holds contribute: sweep: 1 row(s): (/p/contribute.txt kind=file version=3 status=deleted size_bytes=2)
+  alice holds contribute: sweep /.vfs/trash: ERROR kind=vfs.permission_denied path=/.vfs/trash sev=error msg='Permission denied' data=None
+  alice (owner) holds read_write: delete: 1 row(s): (/p/read_write.txt kind=file version=1 status=deleted size_bytes=2 deleted_at=set)
+  alice (owner) holds read_write: restore: 1 row(s): (/p/read_write.txt kind=file version=3 status=created size_bytes=2)
+  bob (not owner) holds read_write: delete: 1 row(s): (/p/read_write.txt kind=file version=3 status=deleted size_bytes=2 deleted_at=set)
+  bob (not owner) holds read_write: restore: 1 row(s): (/p/read_write.txt kind=file version=5 status=created size_bytes=2)
+  bob (not owner) holds read_write: sweep: 1 row(s): (/p/read_write.txt kind=file version=5 status=deleted size_bytes=2)
+  alice (owner) holds read_write: sweep: ERROR kind=vfs.not_found path=/p/read_write.txt sev=error msg='Not found' data=None
+  alice holds read_write: sweep /.vfs/trash: empty result (no rows, no errors)

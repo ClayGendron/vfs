@@ -1,0 +1,85 @@
+== D0. A clean store
+    residue clean: clean
+    label lint (path, stored, posture gives): clean  postures={'/': 'read_write'}
+    counts: {'entry': 6, 'content': 3, 'blobs': 0, 'versions': 2, 'version_subjects': 2, 'chunks': 3, 'segments': 3, 'edges': 6, 'lex_docs': 3, 'grants': 2, 'relabels': 0, 'signals': 0}
+== D1. An entry row removed by SQL: every dependent row is left behind
+    residue after the SQL delete: {'content with no entry': 2, 'version with no entry': 2, 'chunk with no entry': 2, 'lexical doc with no entry': 2, 'segment with no entry': 2, 'edge with a missing endpoint': 3, 'grant on a path with no row': 1}
+    traverse outbound /p/b.md: success=True | 1 row(s): (/p/b.md kind=file version=1 size_bytes=11)
+    search apple: success=True | 1 row(s): (/p/b.md kind=file version=1 size_bytes=11)
+    grep apple: success=True
+    grants /q/c.md: success=True
+    refresh: success=True
+    residue after refresh: {'content with no entry': 2, 'version with no entry': 2, 'chunk with no entry': 2, 'lexical doc with no entry': 2, 'segment with no entry': 2, 'edge with a missing endpoint': 3, 'grant on a path with no row': 1}
+    sweep trash: success=True
+    residue after sweep (the orphan fence is an age): {'content with no entry': 2, 'version with no entry': 2, 'chunk with no entry': 2, 'lexical doc with no entry': 2, 'segment with no entry': 2, 'edge with a missing endpoint': 3, 'grant on a path with no row': 1}
+    rebuild: success=True | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild reclaimed 1 orphaned segment posting(s) for entry 01M7G551Q669Y93GFP9MY7YQG8: no entry row' | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild reclaimed 1 orphaned segment posting(s) for entry 01M7G552EQ0KBV7912MPHTG39Y: no entry row' | ERR kind=vfs.internal sev=warning path=None msg='Internal error: rebuild reclaimed 3 edge row(s) naming an endpoint with no entry row'
+    residue after rebuild: {'content with no entry': 2, 'version with no entry': 2, 'chunk with no entry': 2, 'lexical doc with no entry': 2, 'grant on a path with no row': 1}
+    write /q/c.md again by system: success=True | 1 row(s): (/q/c.md kind=file version=1 status=created size_bytes=27)
+    alice reads the new /q/c.md: success=True | 1 row(s): (/q/c.md kind=file version=1 size_bytes=27 content='a new file at the old path\n')
+    grants /q/c.md: success=True
+== D2. A grant outlives a purge done by the verbs themselves
+    sweep /q/c.md (purge arm): success=True | 1 row(s): (/q/c.md kind=file version=1 status=deleted size_bytes=11)
+    residue after the purge: {'lexical doc with no entry': 1, 'grant on a path with no row': 1}
+== D3. A version chain with a gap; a version numbered above its entry
+    versions before: [(1,), (2,)] entry.version: [(3,)]
+    read /p/a.md: success=True | 1 row(s): (/p/a.md kind=file version=3 size_bytes=12 content='apple three\n')
+    write /p/a.md: success=True | 1 row(s): (/p/a.md kind=file version=4 status=updated size_bytes=11)
+    rebuild: success=True
+    residue after the gap: {'version subject with no version': 1, 'version chain gap': 1}
+    write /p/a.md after entry.version reset to 1: success=True | 1 row(s): (/p/a.md kind=file version=2 status=updated size_bytes=11)
+    residue after the reset and a write: {'version chain gap': 1, "version number at or above the entry's": 2}
+== D4. A stored label that differs from the posture
+    posture /q none: success=True
+    label lint (path, stored, posture gives): clean  postures={'/': 'read_write', '/q': 'none'}
+    anonymous reads /q/c.md: success=False | ERR kind=vfs.unauthenticated sev=error path=/q/c.md msg='Unauthenticated'
+    anonymous glob **/*.md: success=True | 2 row(s): (/p/a.md kind=file version=3 size_bytes=12) (/p/b.md kind=file version=1 size_bytes=11)
+    -- label of /q/c.md raised to 5 by SQL
+    label lint (path, stored, posture gives): [('/q/c.md', 5, 0)]  postures={'/': 'read_write', '/q': 'none'}
+    anonymous reads /q/c.md: success=False | ERR kind=vfs.unauthenticated sev=error path=/q/c.md msg='Unauthenticated'
+    anonymous glob **/*.md: success=True | 3 row(s): (/p/a.md kind=file version=3 size_bytes=12) (/p/b.md kind=file version=1 size_bytes=11) (/q/c.md kind=file version=1 size_bytes=11)
+    anonymous grep cherry: success=True | 1 row(s): (/q/c.md kind=file version=1 size_bytes=11)
+    -- label of /p/b.md lowered to 0 by SQL
+    anonymous reads /p/b.md: success=False | ERR kind=vfs.not_found sev=error path=/p/b.md msg='Not found'
+    anonymous glob **/*.md: success=True | 2 row(s): (/p/a.md kind=file version=3 size_bytes=12) (/q/c.md kind=file version=1 size_bytes=11)
+    rebuild: success=True
+    refresh: success=True
+    label lint (path, stored, posture gives): [('/p/b.md', 0, 5), ('/q/c.md', 5, 0)]  postures={'/': 'read_write', '/q': 'none'}
+    posture /q none again: success=True
+    label lint (path, stored, posture gives): [('/p/b.md', 0, 5)]  postures={'/': 'read_write', '/q': 'none'}
+== D5. A relabel mark left standing with no relabel running
+    anonymous reads /p/b.md: RAISED KeyError: '/p'
+    alice writes /p/new.md: RAISED KeyError: '/p'
+    rebuild: success=True
+    residue after rebuild: {'relabel mark standing': 1}
+    posture /q read: success=True
+    residue after an unrelated posture call: clean
+== D6. Index cover: a row marked covered that the index does not hold
+    flags of /p/b.md: [(True, True, True, 1)]
+    grep banana (clean): success=True | 1 row(s): (/p/b.md kind=file version=1 size_bytes=11)
+    search banana (clean): success=True | 3 row(s): (/p/b.md kind=file version=1 size_bytes=11) (/q/c.md kind=file version=1 size_bytes=11) (/p/a.md kind=file version=3 size_bytes=12)
+    -- chunk rows of /p/b.md deleted by SQL, flags untouched
+    grep banana: success=True | 1 row(s): (/p/b.md kind=file version=1 size_bytes=11)
+    search banana: success=True | 3 row(s): (/p/b.md kind=file version=1 size_bytes=11) (/q/c.md kind=file version=1 size_bytes=11) (/p/a.md kind=file version=3 size_bytes=12)
+    residue after the chunk delete: {'marked covered, no chunk rows': 1}
+    refresh: success=True
+    grep banana after refresh: success=True | 1 row(s): (/p/b.md kind=file version=1 size_bytes=11)
+    rebuild: success=True
+    grep banana after rebuild: success=True | 1 row(s): (/p/b.md kind=file version=1 size_bytes=11)
+    search banana after rebuild: success=True | 3 row(s): (/p/b.md kind=file version=1 size_bytes=11) (/q/c.md kind=file version=1 size_bytes=11) (/p/a.md kind=file version=3 size_bytes=12)
+    residue after rebuild: {'marked covered, no chunk rows': 1}
+    -- a new file written, then stamped chunked and encoded by SQL before any index pass
+    grep durian: success=True
+    refresh: success=True
+    grep durian after refresh: success=True
+    rebuild: success=True
+    grep durian after rebuild: success=True
+    residue after rebuild: {'marked covered, no chunk rows': 1, 'marked encoded, chunk not in the lexical docs': 1}
+== D7. An index lease left behind by a dead runner
+    rebuild with a fresh foreign lease: success=False | ERR kind=vfs.conflict sev=error path=None msg='Conflict: an index run is already running (lease heartbeat 0s ago); retry after it finishes'
+    refresh with a fresh foreign lease: success=False | ERR kind=vfs.conflict sev=error path=None msg='Conflict: an index run is already running (lease heartbeat 0s ago); retry after it finishes'
+    rebuild once the heartbeat is six minutes old: success=True
+    residue after: clean
+== D8. A dangling parent: does a second rebuild settle
+    rebuild 1: warnings=['Internal error: rebuild repaired the fs mirror for entry 01M7G572X3ZC3134E4S5RG1Q6J: 1 wrong row(s), 1 missing']
+    rebuild 2: warnings=['Internal error: rebuild repaired the fs mirror for entry 01M7G572X3ZC3134E4S5RG1Q6J: 0 wrong row(s), 1 missing', 'Internal error: rebuild reclaimed 1 edge row(s) naming an endpoint with no entry row']
+    rebuild 3: warnings=['Internal error: rebuild repaired the fs mirror for entry 01M7G572X3ZC3134E4S5RG1Q6J: 0 wrong row(s), 1 missing', 'Internal error: rebuild reclaimed 1 edge row(s) naming an endpoint with no entry row']

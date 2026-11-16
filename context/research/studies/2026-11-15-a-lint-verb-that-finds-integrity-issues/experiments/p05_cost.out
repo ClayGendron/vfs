@@ -1,0 +1,66 @@
+machine: arm64 Darwin python 3.13.11; in-process SQLite
+seeded 20000 files in 8.4s; counts: {'entry': 20806, 'content': 20000, 'edges': 20805, 'segments': 61604, 'versions': 0, 'chunks': 0}
+== K1. The structure check: one statement per page, each row joined to its parent and its fs edge
+  whole mount, keyset on id: statements=22 rows visited=20805 findings=0 clock=119 ms
+      plan: SEARCH e USING INTEGER PRIMARY KEY (rowid>?)
+      plan: SEARCH p USING INDEX ix_vfs_entries_entry_id (entry_id=?) LEFT-JOIN
+      plan: SEARCH g USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=? AND target_id=? AND edge_type=?) LEFT-JOIN
+  one directory's children: statements=2 rows visited=25 findings=0 clock=9 ms
+      plan: SEARCH e USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=? AND name>?)
+      plan: SCALAR SUBQUERY 1
+      plan: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path=?)
+      plan: SEARCH p USING INDEX ix_vfs_entries_entry_id (entry_id=?) LEFT-JOIN
+      plan: SEARCH g USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=? AND target_id=? AND edge_type=?) LEFT-JOIN
+  one subtree, keyset on path: statements=2 rows visited=155 findings=0 clock=12 ms
+      plan: SEARCH e USING INDEX ix_vfs_entries_path (path>? AND path<?)
+      plan: SEARCH p USING INDEX ix_vfs_entries_entry_id (entry_id=?) LEFT-JOIN
+      plan: SEARCH g USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=? AND target_id=? AND edge_type=?) LEFT-JOIN
+== K2. The bytes check: one statement per page of bodies, hashed in this process
+  whole mount: statements=22 bodies=20000 bytes=757780 faults=0 clock=103 ms of which hashing 33 ms
+      plan: SEARCH e USING INDEX ix_vfs_entries_kind (kind=? AND rowid>?)
+      plan: SEARCH c USING INDEX sqlite_autoindex_vfs_content_1 (entry_id=?) LEFT-JOIN
+  sha256 of 64 MB in one call: 31 ms
+== K3. The plans of the dependent-row, index-cover and content checks
+  content with no entry: first page rows=0 clock=18 ms
+      plan: SEARCH c USING COVERING INDEX sqlite_autoindex_vfs_content_1 (entry_id>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  version with no entry: first page rows=0 clock=11 ms
+      plan: SEARCH v USING COVERING INDEX sqlite_autoindex_vfs_versions_1 (entry_id>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  chunk with no entry: first page rows=0 clock=8 ms
+      plan: SEARCH c USING INTEGER PRIMARY KEY (rowid>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  edge with a missing endpoint: first page rows=0 clock=17 ms
+      plan: SEARCH g USING INTEGER PRIMARY KEY (rowid>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_entry_id (entry_id=?)
+      plan: CORRELATED SCALAR SUBQUERY 2
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  grant on a path with no row: first page rows=0 clock=9 ms
+      plan: SCAN g
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_path (path=?)
+  version chain gap: first page rows=0 clock=11 ms
+      plan: SEARCH e USING INDEX ix_vfs_entries_kind (kind=? AND rowid>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH v USING COVERING INDEX sqlite_autoindex_vfs_versions_1 (entry_id=?)
+  marked covered, no chunk rows: first page rows=0 clock=10 ms
+      plan: SEARCH e USING INDEX ix_vfs_entries_kind (kind=? AND rowid>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH c USING COVERING INDEX ix_vfs_chunks_entry_id (entry_id=?)
+  file nothing links to: first page rows=1000 clock=8 ms
+      plan: SEARCH e USING INDEX ix_vfs_entries_kind (kind=? AND rowid>?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH g USING COVERING INDEX ix_vfs_edges_rev (target_id=?)
+  link to a tombstoned row: first page rows=0 clock=12 ms
+      plan: SEARCH g USING INTEGER PRIMARY KEY (rowid>?)
+      plan: SEARCH t USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  two files with one content hash (whole mount): first page rows=0 clock=21 ms
+      plan: SEARCH e USING COVERING INDEX ix_vfs_entries_content_hash (content_hash>?)
+  two files with one content hash (one subtree, probing the mount): first page rows=0 clock=7 ms
+      plan: SEARCH e USING INDEX ix_vfs_entries_path (path>? AND path<?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH o USING COVERING INDEX ix_vfs_entries_content_hash (content_hash=?)

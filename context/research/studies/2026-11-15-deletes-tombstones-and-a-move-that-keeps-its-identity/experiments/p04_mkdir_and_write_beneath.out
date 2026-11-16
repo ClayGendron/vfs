@@ -1,0 +1,35 @@
+  delete /proj/src (directory tree): 1 row(s): (/proj/src kind=directory version=2 status=deleted deleted_at=set)
+  delete /proj/notes (file): 1 row(s): (/proj/notes kind=file version=1 status=deleted size_bytes=19 deleted_at=set)
+  rows under /proj: 4
+    id=E1 path=/proj parent=E2 name='proj' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/proj/notes parent=E1 name='notes' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E3 hash=e7ba76bc
+    id=E4 path=/proj/src parent=E1 name='src' kind=directory owner=None v=3 label=5 deleted=yes trash_root=E4 hash=
+    id=E5 path=/proj/src/main.py parent=E4 name='main.py' kind=file owner=alice v=1 label=5 deleted=yes trash_root=E4 hash=cc421550
+== mkdir at the deleted directory's path
+  mkdir /proj/src: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388'}
+  mkdir /proj/src exist_ok=True: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388'}
+  mkdir /proj/src parents=True: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388'}
+  mkdir /proj/src as system: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388'}
+== a write beneath the deleted directory
+  write /proj/src/new.py: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/src/new.py'}
+  write /proj/src/new.py parents=True: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/src/new.py'}
+  write /proj/src/main.py (the deleted member's own path): ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/src/main.py'}
+  mkdir /proj/src/deeper parents=True: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/src/deeper'}
+== a file write at the deleted directory's own path, and a mkdir at a deleted file's path
+  write /proj/src as a file: ERROR kind=vfs.wrong_kind path=/proj/src sev=error msg='Wrong kind: directory' data={'kind': 'directory', 'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388'}
+  mkdir /proj/notes (a deleted file sits here): ERROR kind=vfs.not_found path=/proj/notes sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.947220'}
+  write /proj/notes/child.txt parents=True: ERROR kind=vfs.not_found path=/proj/notes sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.947220', 'vfs.target': '/proj/notes/child.txt'}
+== move and copy toward the tombstoned names
+  move /proj/other -> /proj/src: ERROR kind=vfs.exists path=/proj/src sev=error msg='Already exists' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/other'}
+  copy /proj/other -> /proj/src: ERROR kind=vfs.exists path=/proj/src sev=error msg='Already exists' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/other'}
+  move /proj/other -> /proj/src/inside: ERROR kind=vfs.not_found path=/proj/src sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:47.747388', 'vfs.target': '/proj/src/inside'}
+== the only two ways the name comes back
+  restore /proj/src: 1 row(s): (/proj/src kind=directory version=4 status=created)
+  delete /proj/src again: 1 row(s): (/proj/src kind=directory version=4 status=deleted deleted_at=set)
+  sweep /proj/src (destroys the tombstoned tree): 1 row(s): (/proj/src kind=directory version=5 status=deleted)
+  mkdir /proj/src after the sweep: 1 row(s): (/proj/src kind=directory version=1 status=created)
+  rows under /proj: 4
+    id=E1 path=/proj parent=E2 name='proj' kind=directory owner=None v=9 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/proj/notes parent=E1 name='notes' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E3 hash=e7ba76bc
+    id=E6 path=/proj/other parent=E1 name='other' kind=directory owner=alice v=1 label=5 deleted=no trash_root=None hash=
+    id=E7 path=/proj/src parent=E1 name='src' kind=directory owner=alice v=1 label=5 deleted=no trash_root=None hash=

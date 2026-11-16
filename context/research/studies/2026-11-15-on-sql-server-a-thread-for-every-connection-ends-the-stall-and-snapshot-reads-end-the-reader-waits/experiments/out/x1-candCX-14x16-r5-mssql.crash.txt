@@ -1,0 +1,27 @@
+run x1-candCX-14x16-r5, the test worker process, 2026-11-15 11:53:10.00 -0500
+exception EXC_BAD_ACCESS SIGSEGV
+the crashed thread, innermost frame first, as image and symbol:
+  libsystem_kernel.dylib __pthread_kill
+  libsystem_pthread.dylib pthread_kill
+  libsystem_c.dylib raise
+  libpython3.13.dylib faulthandler_fatal_error
+  libsystem_platform.dylib _sigtramp
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libodbc.2.dylib SQLExecute
+  pyodbc.cpython-313-darwin.so execute(Cursor*, _object*, _object*, bool)
+  libpython3.13.dylib cfunction_call
+  libpython3.13.dylib PyObject_Call
+  libpython3.13.dylib partial_call

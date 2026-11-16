@@ -1,0 +1,179 @@
+== setup: an open region /d and /t (everyone read_write), a closed region /p (everyone none, alice read_write)
+  posture /p none: empty result (no rows, no errors)
+  grant alice read_write /p: empty result (no rows, no errors)
+  write /p/secret.txt as alice: 1 row(s): (/p/secret.txt kind=file version=1 status=created size_bytes=14)
+  mkedge a.txt -> keep.txt: 1 row(s): (/d/a.txt status=created)
+  mkedge keep.txt -> a.txt: 1 row(s): (/d/keep.txt status=created)
+  rows under /: 11
+    id=E1 path=/ parent=None name='/' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E2 path=/d parent=E1 name='d' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E2 name='a.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=8cae540f
+    id=E4 path=/d/keep.txt parent=E2 name='keep.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=c0073426
+    id=E5 path=/p parent=E1 name='p' kind=directory owner=None v=2 label=0 deleted=no trash_root=None hash=
+    id=E6 path=/p/secret.txt parent=E5 name='secret.txt' kind=file owner=alice v=1 label=0 deleted=no trash_root=None hash=c8a15ef7
+    id=E7 path=/t parent=E1 name='t' kind=directory owner=None v=2 label=5 deleted=no trash_root=None hash=
+    id=E8 path=/t/sub parent=E7 name='sub' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E9 path=/t/sub/y.txt parent=E8 name='y.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=22f3ef94
+    id=E10 path=/t/sub/z.txt parent=E8 name='z.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=a1acf9ad
+    id=E11 path=/t/x.txt parent=E7 name='x.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=8cdb08d4
+
+== 1. delete a file: /d/a.txt as alice
+  delete /d/a.txt: 1 row(s): (/d/a.txt kind=file version=1 status=deleted size_bytes=17 deleted_at=set)
+  rows under /d: 3
+    id=E2 path=/d parent=E1 name='d' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E2 name='a.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E3 hash=8cae540f
+    id=E4 path=/d/keep.txt parent=E2 name='keep.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=c0073426
+  edge rows: 2 (fs mirror rows hidden; total 12)
+    E3 -[cites]-> E4 provenance=system
+    E4 -[cites]-> E3 provenance=system
+  version rows: 0
+ -- after delete, caller=system
+  read /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  stat /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  ls /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  tree /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  glob /d/**: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  grep needle: 5 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/p/secret.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+  search needle: 5 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/p/secret.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+ -- after delete, caller=alice
+  read /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  stat /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  ls /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  tree /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  glob /d/**: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  grep needle: 5 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/p/secret.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+  search needle: 5 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/p/secret.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+ -- after delete, caller=bob
+  read /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  stat /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  ls /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  tree /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  glob /d/**: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  grep needle: 4 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+  search needle: 4 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+ -- after delete, caller=anonymous
+  read /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  stat /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  ls /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  tree /d: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  glob /d/**: 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  grep needle: 4 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+  search needle: 4 row(s): (/d/keep.txt kind=file version=1 size_bytes=14) (/t/sub/y.txt kind=file version=1 size_bytes=13) (/t/sub/z.txt kind=file version=1 size_bytes=13) (/t/x.txt kind=file version=1 size_bytes=13)
+ -- trash view, caller=system
+  ls /.vfs/trash: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  tree /.vfs/trash: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  stat /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  read /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set content='alpha needle one\n')
+  glob /.vfs/trash/**: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  grep needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  search needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+ -- trash view, caller=alice
+  ls /.vfs/trash: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  tree /.vfs/trash: 2 row(s): (/d kind=directory) (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  stat /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  read /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set content='alpha needle one\n')
+  glob /.vfs/trash/**: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  grep needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  search needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+ -- trash view, caller=bob
+  ls /.vfs/trash: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  tree /.vfs/trash: 2 row(s): (/d kind=directory) (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  stat /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  read /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set content='alpha needle one\n')
+  glob /.vfs/trash/**: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  grep needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  search needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+ -- trash view, caller=anonymous
+  ls /.vfs/trash: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  tree /.vfs/trash: 2 row(s): (/d kind=directory) (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  stat /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  read /.vfs/trash/d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set content='alpha needle one\n')
+  glob /.vfs/trash/**: 1 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set)
+  grep needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  search needle paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  traverse outbound from /d/keep.txt (edge to the deleted file): 1 row(s): (/d/keep.txt kind=file version=1 size_bytes=14)
+  traverse outbound from /d/a.txt (deleted seed): empty result (no rows, no errors)
+  delete /d/a.txt again: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+  edit the deleted file: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:50.203148'}
+
+== 2. delete a directory tree: /t
+  delete /t cascade=False: ERROR kind=vfs.not_empty path=/t sev=error msg='Directory not empty' data=None
+  delete /t/sub/z.txt first (its own root): 1 row(s): (/t/sub/z.txt kind=file version=1 status=deleted size_bytes=13 deleted_at=set)
+  delete /t (cascade) as system: 1 row(s): (/t kind=directory version=2 status=deleted deleted_at=set)
+  rows under /t: 5
+    id=E7 path=/t parent=E1 name='t' kind=directory owner=None v=3 label=5 deleted=yes trash_root=E7 hash=
+    id=E8 path=/t/sub parent=E7 name='sub' kind=directory owner=None v=4 label=5 deleted=yes trash_root=E7 hash=
+    id=E9 path=/t/sub/y.txt parent=E8 name='y.txt' kind=file owner=bob v=1 label=5 deleted=yes trash_root=E7 hash=22f3ef94
+    id=E10 path=/t/sub/z.txt parent=E8 name='z.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E10 hash=a1acf9ad
+    id=E11 path=/t/x.txt parent=E7 name='x.txt' kind=file owner=alice v=1 label=5 deleted=yes trash_root=E7 hash=8cdb08d4
+ -- after tree delete, caller=system
+  read /t/x.txt: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172', 'vfs.target': '/t/x.txt'}
+  stat /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  ls /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  ls /: 2 row(s): (/d kind=directory version=4) (/p kind=directory version=2)
+  tree /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  glob /t/**: empty result (no rows, no errors)
+  grep treex: empty result (no rows, no errors)
+  ls /.vfs/trash: 3 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set) (/t kind=directory version=3 deleted_at=set) (/t/sub/z.txt kind=file version=2 size_bytes=13 deleted_at=set)
+  ls /.vfs/trash/t: 2 row(s): (/t/sub kind=directory version=4 deleted_at=set) (/t/x.txt kind=file version=1 size_bytes=13 deleted_at=set)
+  tree /.vfs/trash: 6 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set) (/t kind=directory version=3 deleted_at=set) (/t/sub kind=directory version=4 deleted_at=set) (/t/sub/y.txt kind=file version=1 size_bytes=13 deleted_at=set) (/t/sub/z.txt kind=file version=2 size_bytes=13 deleted_at=set) (/t/x.txt kind=file version=1 size_bytes=13 deleted_at=set)
+  read /.vfs/trash/t/sub/y.txt: 1 row(s): (/t/sub/y.txt kind=file version=1 size_bytes=13 deleted_at=set content='treey needle\n')
+ -- after tree delete, caller=alice
+  read /t/x.txt: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172', 'vfs.target': '/t/x.txt'}
+  stat /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  ls /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  ls /: 2 row(s): (/d kind=directory version=4) (/p kind=directory version=2)
+  tree /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  glob /t/**: empty result (no rows, no errors)
+  grep treex: empty result (no rows, no errors)
+  ls /.vfs/trash: 3 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set) (/t kind=directory version=3 deleted_at=set) (/t/sub/z.txt kind=file version=2 size_bytes=13 deleted_at=set)
+  ls /.vfs/trash/t: 2 row(s): (/t/sub kind=directory version=4 deleted_at=set) (/t/x.txt kind=file version=1 size_bytes=13 deleted_at=set)
+  tree /.vfs/trash: 7 row(s): (/d kind=directory) (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set) (/t kind=directory version=3 deleted_at=set) (/t/sub kind=directory version=4 deleted_at=set) (/t/sub/y.txt kind=file version=1 size_bytes=13 deleted_at=set) (/t/sub/z.txt kind=file version=2 size_bytes=13 deleted_at=set) (/t/x.txt kind=file version=1 size_bytes=13 deleted_at=set)
+  read /.vfs/trash/t/sub/y.txt: 1 row(s): (/t/sub/y.txt kind=file version=1 size_bytes=13 deleted_at=set content='treey needle\n')
+ -- after tree delete, caller=anonymous
+  read /t/x.txt: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172', 'vfs.target': '/t/x.txt'}
+  stat /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  ls /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  ls /: 1 row(s): (/d kind=directory version=4)
+  tree /t: ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:35:59.255172'}
+  glob /t/**: empty result (no rows, no errors)
+  grep treex: empty result (no rows, no errors)
+  ls /.vfs/trash: 3 row(s): (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set) (/t kind=directory version=3 deleted_at=set) (/t/sub/z.txt kind=file version=2 size_bytes=13 deleted_at=set)
+  ls /.vfs/trash/t: 2 row(s): (/t/sub kind=directory version=4 deleted_at=set) (/t/x.txt kind=file version=1 size_bytes=13 deleted_at=set)
+  tree /.vfs/trash: 7 row(s): (/d kind=directory) (/d/a.txt kind=file version=2 size_bytes=17 deleted_at=set) (/t kind=directory version=3 deleted_at=set) (/t/sub kind=directory version=4 deleted_at=set) (/t/sub/y.txt kind=file version=1 size_bytes=13 deleted_at=set) (/t/sub/z.txt kind=file version=2 size_bytes=13 deleted_at=set) (/t/x.txt kind=file version=1 size_bytes=13 deleted_at=set)
+  read /.vfs/trash/t/sub/y.txt: 1 row(s): (/t/sub/y.txt kind=file version=1 size_bytes=13 deleted_at=set content='treey needle\n')
+
+== 3. delete in the closed region: /p/secret.txt as alice; what bob and anonymous then learn
+  delete /p/secret.txt as bob (no rights): ERROR kind=vfs.not_found path=/p sev=error msg='Not found' data={'vfs.target': '/p/secret.txt'}
+  delete /p/secret.txt as alice: 1 row(s): (/p/secret.txt kind=file version=1 status=deleted size_bytes=14 deleted_at=set)
+  rows under /p: 2
+    id=E5 path=/p parent=E1 name='p' kind=directory owner=None v=3 label=0 deleted=no trash_root=None hash=
+    id=E6 path=/p/secret.txt parent=E5 name='secret.txt' kind=file owner=alice v=2 label=0 deleted=yes trash_root=E6 hash=c8a15ef7
+ -- caller=system
+  read /p/secret.txt: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:02.898320'}
+  stat /p/secret.txt: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:02.898320'}
+  read /.vfs/trash/p/secret.txt: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=14 deleted_at=set content='secret needle\n')
+  ls /.vfs/trash/p: ERROR kind=vfs.not_found path=/.vfs/trash/p sev=error msg='Not found' data=None
+  grep secret paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  restore /p/secret.txt (dry look: expect refusal for non-holders): 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=14 deleted_at=set)
+ -- caller=alice
+  read /p/secret.txt: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:02.898320'}
+  stat /p/secret.txt: ERROR kind=vfs.not_found path=/p/secret.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:02.898320'}
+  read /.vfs/trash/p/secret.txt: 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=14 deleted_at=set content='secret needle\n')
+  ls /.vfs/trash/p: ERROR kind=vfs.not_found path=/.vfs/trash/p sev=error msg='Not found' data=None
+  grep secret paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  restore /p/secret.txt (dry look: expect refusal for non-holders): 1 row(s): (/p/secret.txt kind=file version=2 size_bytes=14 deleted_at=set)
+ -- caller=bob
+  read /p/secret.txt: ERROR kind=vfs.not_found path=/p sev=error msg='Not found' data={'vfs.target': '/p/secret.txt'}
+  stat /p/secret.txt: ERROR kind=vfs.not_found path=/p sev=error msg='Not found' data={'vfs.target': '/p/secret.txt'}
+  read /.vfs/trash/p/secret.txt: ERROR kind=vfs.not_found path=/.vfs/trash/p sev=error msg='Not found' data={'vfs.target': '/.vfs/trash/p/secret.txt'}
+  ls /.vfs/trash/p: ERROR kind=vfs.not_found path=/.vfs/trash/p sev=error msg='Not found' data=None
+  grep secret paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  restore /p/secret.txt (dry look: expect refusal for non-holders): ERROR kind=vfs.not_found path=/.vfs/trash/p sev=error msg='Not found' data={'vfs.target': '/.vfs/trash/p/secret.txt'}
+ -- caller=anonymous
+  read /p/secret.txt: ERROR kind=vfs.unauthenticated path=/p/secret.txt sev=error msg='Unauthenticated' data=None
+  stat /p/secret.txt: ERROR kind=vfs.unauthenticated path=/p/secret.txt sev=error msg='Unauthenticated' data=None
+  read /.vfs/trash/p/secret.txt: ERROR kind=vfs.unauthenticated path=/p/secret.txt sev=error msg='Unauthenticated' data=None
+  ls /.vfs/trash/p: ERROR kind=vfs.unauthenticated path=/p sev=error msg='Unauthenticated' data=None
+  grep secret paths=trash: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: grep glob '/.vfs/trash': the view's head is a directory, not a pattern; scope beneath it with '/.vfs/trash/**'" data=None
+  restore /p/secret.txt (dry look: expect refusal for non-holders): ERROR kind=vfs.unauthenticated path=/p/secret.txt sev=error msg='Unauthenticated' data=None

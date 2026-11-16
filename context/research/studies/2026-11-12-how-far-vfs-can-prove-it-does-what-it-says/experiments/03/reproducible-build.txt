@@ -1,0 +1,28 @@
+SDE=1794525170
+
+real	1m59.014s
+user	1m54.991s
+sys	0m23.189s
+
+real	1m36.999s
+user	1m56.133s
+sys	0m26.041s
+maturin 1.16.0
+ffa6b164c628adba311d1471fc507ed4f6860589da17a5ebeeb5eaf52a1fe7ee  out-a/vfs_py-0.0.22-cp311-abi3-macosx_11_0_arm64.whl
+848b3f0bc433835b749984e012ab22e9315b1813e4affc111c92e1aa6eebef33  out-b/vfs_py-0.0.22-cp311-abi3-macosx_11_0_arm64.whl
+commit 3ea2465eda842a8d3ec54a6018db474a60198a9d
+vfs/_native.abi3.so: byte-identical
+Files /private/tmp/claude-501/verif-03/repro/ua/vfs_py-0.0.22.dist-info/RECORD and /private/tmp/claude-501/verif-03/repro/ub/vfs_py-0.0.22.dist-info/RECORD differ
+Files /private/tmp/claude-501/verif-03/repro/ua/vfs_py-0.0.22.dist-info/sboms/vfs-core.cyclonedx.json and /private/tmp/claude-501/verif-03/repro/ub/vfs_py-0.0.22.dist-info/sboms/vfs-core.cyclonedx.json differ
+16c16
+<             "bom-ref": "path+file:///private/tmp/claude-501/verif-03/repro/a/crates/vfs-core#0.1.0",
+---
+>             "bom-ref": "path+file:///private/tmp/claude-501/verif-03/repro/b/crates/vfs-core#0.1.0",
+30c30
+<                     "bom-ref": "path+file:///private/tmp/claude-501/verif-03/repro/a/crates/vfs-core#0.1.0 bin-target-0",
+---
+>                     "bom-ref": "path+file:///private/tmp/claude-501/verif-03/repro/b/crates/vfs-core#0.1.0 bin-target-0",
+2846c2846
+<             "ref": "path+file:///private/tmp/claude-501/verif-03/repro/a/crates/vfs-core#0.1.0",
+---
+>             "ref": "path+file:///private/tmp/claude-501/verif-03/repro/b/crates/vfs-core#0.1.0",

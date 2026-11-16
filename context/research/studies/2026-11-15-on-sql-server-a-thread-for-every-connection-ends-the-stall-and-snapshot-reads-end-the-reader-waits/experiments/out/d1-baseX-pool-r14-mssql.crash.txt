@@ -1,0 +1,28 @@
+run d1-baseX-pool-r14, the test worker process, 2026-11-15 13:08:22.00 -0500
+exception EXC_BREAKPOINT SIGTRAP
+libsystem_malloc.dylib: BUG IN CLIENT OF LIBMALLOC: memory corruption of free block; Abort Cause 39717912576
+the crashed thread, innermost frame first, as image and symbol:
+  libsystem_malloc.dylib _xzm_xzone_malloc_from_freelist_chunk.cold.1
+  libsystem_malloc.dylib _xzm_xzone_malloc_from_freelist_chunk
+  libsystem_malloc.dylib _xzm_xzone_find_and_malloc_from_freelist_chunk
+  libsystem_malloc.dylib _xzm_xzone_malloc_freelist_outlined
+  libc++abi.dylib operator new(unsigned long)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libmsodbcsql.18.dylib (no symbol)
+  libodbc.2.dylib SQLSetConnectAttr
+  pyodbc.cpython-313-darwin.so Connection_New(_object*, bool, long, bool, _object*, _object*)
+  pyodbc.cpython-313-darwin.so mod_connect(_object*, _object*, _object*)
+  libpython3.13.dylib cfunction_call
+  libpython3.13.dylib PyObject_Call

@@ -1,0 +1,16 @@
+[run]
+source = src/vfs
+branch = true
+concurrency = greenlet,thread
+omit = tests/*
+[report]
+show_missing = true
+skip_empty = true
+skip_covered = true
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    if __name__ == .__main__.
+    @overload
+    raise NotImplementedError
+    \.\.\.

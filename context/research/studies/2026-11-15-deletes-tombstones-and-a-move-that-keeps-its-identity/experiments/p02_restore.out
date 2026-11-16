@@ -1,0 +1,88 @@
+== 1. restore a file
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=2 label=5 deleted=no trash_root=None hash=ac87f7fd
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  version rows: 1
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=0ce09c65 content='alpha v1\n'
+  delete /d/a.txt: 1 row(s): (/d/a.txt kind=file version=2 status=deleted size_bytes=9 deleted_at=set)
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=3 label=5 deleted=yes trash_root=E3 hash=ac87f7fd
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  restore /d/a.txt as alice: 1 row(s): (/d/a.txt kind=file version=4 status=created size_bytes=9)
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=5 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=4 label=5 deleted=no trash_root=None hash=ac87f7fd
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  version rows: 1
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=0ce09c65 content='alpha v1\n'
+  edge rows: 2 (fs mirror rows hidden; total 10)
+    E3 -[cites]-> E4 provenance=system
+    E4 -[cites]-> E3 provenance=system
+  read after restore: 1 row(s): (/d/a.txt kind=file version=4 size_bytes=9 content='alpha v2\n')
+  traverse outbound /d/other.txt: 4 row(s): (/d/other.txt kind=file version=1 size_bytes=6) (/d/a.txt kind=file version=4 size_bytes=9) (/d/a.txt) (/d/other.txt)
+  restore again (live row): ERROR kind=vfs.exists path=/d/a.txt sev=error msg='Already exists' data=None
+  restore a path that never existed: ERROR kind=vfs.not_found path=/d/never.txt sev=error msg='Not found' data=None
+  restore by the trash-view address: ERROR kind=vfs.invalid path=None sev=error msg="Invalid: Cannot mutate the trash view beneath '/.vfs/trash'" data={'raw': '/.vfs/trash/d/a.txt'}
+
+== 2. restore a tree; one row deleted earlier keeps its own root
+  delete /t/sub/z.txt (own root): 1 row(s): (/t/sub/z.txt kind=file version=1 status=deleted size_bytes=6 deleted_at=set)
+  delete /t: 1 row(s): (/t kind=directory version=2 status=deleted deleted_at=set)
+  rows under /t: 5
+    id=E5 path=/t parent=E2 name='t' kind=directory owner=None v=3 label=5 deleted=yes trash_root=E5 hash=
+    id=E6 path=/t/sub parent=E5 name='sub' kind=directory owner=None v=4 label=5 deleted=yes trash_root=E5 hash=
+    id=E7 path=/t/sub/y.txt parent=E6 name='y.txt' kind=file owner=bob v=1 label=5 deleted=yes trash_root=E5 hash=c587ef88
+    id=E8 path=/t/sub/z.txt parent=E6 name='z.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E8 hash=2e3fd9e9
+    id=E9 path=/t/x.txt parent=E5 name='x.txt' kind=file owner=alice v=1 label=5 deleted=yes trash_root=E5 hash=43696c3e
+ -- one row inside the deleted tree
+  restore /t/x.txt (member of /t's set): ERROR kind=vfs.not_found path=/t/x.txt sev=error msg='Not found: inside a deleted tree; restore its root' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:10.955738', 'vfs.trash_root': '01M7G4FQJYF0EVAWA9CCBDB8PS'}
+  restore /t/sub (member directory): ERROR kind=vfs.not_found path=/t/sub sev=error msg='Not found: inside a deleted tree; restore its root' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:10.955738', 'vfs.trash_root': '01M7G4FQJYF0EVAWA9CCBDB8PS'}
+  restore /t/sub/z.txt (own root, parent still deleted): ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:10.955738', 'vfs.target': '/t/sub/z.txt'}
+ -- the tree
+  restore /t as anonymous: 1 row(s): (/t kind=directory version=4 status=created)
+  restore /t as alice (holds read_write through everyone; owns two of the files): ERROR kind=vfs.exists path=/t sev=error msg='Already exists' data=None
+  rows under /t: 5
+    id=E5 path=/t parent=E2 name='t' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E6 path=/t/sub parent=E5 name='sub' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E7 path=/t/sub/y.txt parent=E6 name='y.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=c587ef88
+    id=E8 path=/t/sub/z.txt parent=E6 name='z.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E8 hash=2e3fd9e9
+    id=E9 path=/t/x.txt parent=E5 name='x.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=43696c3e
+  ls /t/sub after tree restore: 1 row(s): (/t/sub/y.txt kind=file version=1 size_bytes=6)
+  ls /.vfs/trash: 1 row(s): (/t/sub/z.txt kind=file version=2 size_bytes=6 deleted_at=set)
+  restore /t/sub/z.txt now: 1 row(s): (/t/sub/z.txt kind=file version=3 status=created size_bytes=6)
+  rows under /t: 5
+    id=E5 path=/t parent=E2 name='t' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E6 path=/t/sub parent=E5 name='sub' kind=directory owner=None v=5 label=5 deleted=no trash_root=None hash=
+    id=E7 path=/t/sub/y.txt parent=E6 name='y.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=c587ef88
+    id=E8 path=/t/sub/z.txt parent=E6 name='z.txt' kind=file owner=alice v=3 label=5 deleted=no trash_root=None hash=2e3fd9e9
+    id=E9 path=/t/x.txt parent=E5 name='x.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=43696c3e
+
+== 3. restore onto a path occupied since the delete
+  delete /d/a.txt: 1 row(s): (/d/a.txt kind=file version=4 status=deleted size_bytes=9 deleted_at=set)
+  move /d/other.txt -> /d/a.txt (try to occupy the deleted path with another row): ERROR kind=vfs.exists path=/d/a.txt sev=error msg='Already exists' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:13.106385', 'vfs.target': '/d/other.txt'}
+  copy /d/other.txt -> /d/a.txt: ERROR kind=vfs.exists path=/d/a.txt sev=error msg='Already exists' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:13.106385', 'vfs.target': '/d/other.txt'}
+  mkdir /d/a.txt: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:36:13.106385'}
+  write /d/a.txt overwrite=False (the only way to occupy: a revive): 1 row(s): (/d/a.txt kind=file version=6 status=updated size_bytes=11)
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=7 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=6 label=5 deleted=no trash_root=None hash=230e95ba
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  restore /d/a.txt after the revive: ERROR kind=vfs.exists path=/d/a.txt sev=error msg='Already exists' data=None
+  read /d/a.txt: 1 row(s): (/d/a.txt kind=file version=6 size_bytes=11 content='fresh body\n')
+  version rows: 2
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=0ce09c65 content='alpha v1\n'
+    id=E3 n=5 snapshot=True actor=bob subjects=['bob'] hash=ac87f7fd content='alpha v2\n'
+
+== 4. restore in a closed region: who may
+  write /p/mine.txt as alice (add): 1 row(s): (/p/mine.txt kind=file version=1 status=created size_bytes=5)
+  delete /p/mine.txt as alice (add, owner): 1 row(s): (/p/mine.txt kind=file version=1 status=deleted size_bytes=5 deleted_at=set)
+  rows under /p: 2
+    id=E10 path=/p parent=E2 name='p' kind=directory owner=None v=3 label=0 deleted=no trash_root=None hash=
+    id=E11 path=/p/mine.txt parent=E10 name='mine.txt' kind=file owner=alice v=2 label=0 deleted=yes trash_root=E11 hash=fcbc800d
+  restore /p/mine.txt as bob (nothing): ERROR kind=vfs.not_found path=/p sev=error msg='Not found' data={'vfs.target': '/p/mine.txt'}
+  restore /p/mine.txt as anonymous: ERROR kind=vfs.unauthenticated path=/p/mine.txt sev=error msg='Unauthenticated' data=None
+  restore /p/mine.txt as alice (add, owner): 1 row(s): (/p/mine.txt kind=file version=3 status=created size_bytes=5)
+  rows under /p: 2
+    id=E10 path=/p parent=E2 name='p' kind=directory owner=None v=4 label=0 deleted=no trash_root=None hash=
+    id=E11 path=/p/mine.txt parent=E10 name='mine.txt' kind=file owner=alice v=3 label=0 deleted=no trash_root=None hash=fcbc800d

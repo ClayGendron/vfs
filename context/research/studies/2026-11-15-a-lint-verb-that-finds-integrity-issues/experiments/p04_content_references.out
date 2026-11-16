@@ -1,0 +1,53 @@
+== C1. What the rebuild's extractor says and stores
+    rebuild note: kind=vfs.not_found sev=info msg='Not found: 2 markdown references across 7 documents name no live entry' data={'leg': 'links', 'sources': 7, 'edges': 4, 'unresolved': 2}
+    link rows after the first rebuild:
+      /wiki/a.md -[links/extracted w=1.0]-> /private/secret.md  context='Builds on [B](b.md) and [the secret](/private/secret.md).'
+      /wiki/a.md -[links/extracted w=1.0]-> /wiki/b.md  context='Builds on [B](b.md) and [the secret](/private/secret.md).'
+      /wiki/index.md -[links/extracted w=1.0]-> /wiki/a.md  context='See [A](a.md), [B](b.md), [gone](nope.md), [later](later.md) and `b.md`.'
+      /wiki/index.md -[links/extracted w=2.0]-> /wiki/b.md  context='See [A](a.md), [B](b.md), [gone](nope.md), [later](later.md) and `b.md`.'
+    re-extraction after the first rebuild: documents=7 candidate paths=9 statements=4 broken=[('/wiki/index.md', 'nope.md'), ('/wiki/index.md', 'later.md')]
+== C2. The missing target is created later
+    refresh: success=True
+    rebuild: success=True
+    link rows after later.md exists and a refresh and a rebuild ran:
+      /wiki/a.md -[links/extracted w=1.0]-> /private/secret.md  context='Builds on [B](b.md) and [the secret](/private/secret.md).'
+      /wiki/a.md -[links/extracted w=1.0]-> /wiki/b.md  context='Builds on [B](b.md) and [the secret](/private/secret.md).'
+      /wiki/index.md -[links/extracted w=1.0]-> /wiki/a.md  context='See [A](a.md), [B](b.md), [gone](nope.md), [later](later.md) and `b.md`.'
+      /wiki/index.md -[links/extracted w=2.0]-> /wiki/b.md  context='See [A](a.md), [B](b.md), [gone](nope.md), [later](later.md) and `b.md`.'
+    stamps of index.md: [(True, 'md:2')]
+== C3. A link target is deleted, and another is moved
+    delete /wiki/b.md: success=True | 1 row(s): (/wiki/b.md kind=file version=1 status=deleted size_bytes=19)
+    move /wiki/a.md /wiki/a2.md: success=True | 1 row(s): (/wiki/a2.md kind=file version=2 status=created size_bytes=62)
+    rebuild: success=True
+    link rows after the delete, the move and a rebuild:
+      /wiki/a2.md -[links/extracted w=1.0]-> /private/secret.md  context='Builds on [B](b.md) and [the secret](/private/secret.md).'
+      /wiki/a2.md -[links/extracted w=1.0]-> /wiki/b.md (tombstoned)  context='Builds on [B](b.md) and [the secret](/private/secret.md).'
+      /wiki/index.md -[links/extracted w=1.0]-> /wiki/a2.md  context='See [A](a.md), [B](b.md), [gone](nope.md), [later](later.md) and `b.md`.'
+      /wiki/index.md -[links/extracted w=2.0]-> /wiki/b.md (tombstoned)  context='See [A](a.md), [B](b.md), [gone](nope.md), [later](later.md) and `b.md`.'
+    rows-only check, link to a tombstoned row: [('/wiki/index.md', '/wiki/b.md'), ('/wiki/a2.md', '/wiki/b.md')]
+    traverse outbound /wiki/index.md: success=True | 3 row(s): (/wiki/index.md kind=file version=1 size_bytes=81) (/wiki/a2.md kind=file version=2 size_bytes=62) (/wiki/index.md)
+    re-extraction after the delete and the move: documents=7 candidate paths=9 statements=4 broken=[('/wiki/a2.md', 'b.md'), ('/wiki/index.md', 'a.md'), ('/wiki/index.md', 'b.md'), ('/wiki/index.md', 'nope.md'), ('/wiki/index.md', 'b.md')]
+== C4. Rows-only wiki checks and their plans
+    files nothing links to: ['/wiki/dup1.md', '/wiki/dup2.md', '/wiki/index.md', '/wiki/later.md', '/wiki/lonely.md']
+      plan: SEARCH e USING INDEX ix_vfs_entries_path (path>? AND path<?)
+      plan: CORRELATED SCALAR SUBQUERY 1
+      plan: SEARCH g USING COVERING INDEX ix_vfs_edges_rev (target_id=?)
+    content hashes held by more than one live file: [('99604089', 2)]
+      99604089: ['/wiki/dup1.md', '/wiki/dup2.md']
+      plan: SCAN e
+      plan: USE TEMP B-TREE FOR GROUP BY
+== C5. What a caller who may not read a target learns today
+    alice reads /private/secret.md (exists, hidden): success=False | ERR kind=vfs.not_found sev=error path=/private msg='Not found'
+    alice reads /private/nothing.md (does not exist): success=False | ERR kind=vfs.not_found sev=error path=/private msg='Not found'
+    alice stats /private/secret.md: success=False | ERR kind=vfs.not_found sev=error path=/private msg='Not found'
+    alice traverse outbound /wiki/a2.md: success=True | 1 row(s): (/wiki/a2.md kind=file version=2 size_bytes=62)
+    system traverse outbound /wiki/a2.md: success=True | 3 row(s): (/wiki/a2.md kind=file version=2 size_bytes=62) (/private/secret.md kind=file version=1 size_bytes=32) (/wiki/a2.md)
+    alice traverse inbound /wiki/lonely.md: success=True | 1 row(s): (/wiki/lonely.md kind=file version=1 size_bytes=37)
+    alice globs /private/**: success=True
+== C6. A grant on a path whose row was purged, then the path is written again
+    grant /private/secret.md alice read: success=True
+    alice reads /private/secret.md: success=True | 1 row(s): (/private/secret.md kind=file version=1 size_bytes=32 content='# Secret\nonly system reads this\n')
+    sweep /private/secret.md (purge): success=True | 1 row(s): (/private/secret.md kind=file version=1 status=deleted size_bytes=32)
+    grant rows left: [('*', '/', 'read_write'), ('*', '/private', 'none'), ('alice', '/private/secret.md', 'read')]
+    system writes a new /private/secret.md: success=True | 1 row(s): (/private/secret.md kind=file version=1 status=created size_bytes=19)
+    alice reads the new /private/secret.md: success=True | 1 row(s): (/private/secret.md kind=file version=1 size_bytes=19 content='a different secret\n')

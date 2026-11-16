@@ -1,0 +1,27 @@
+Name                                            Stmts   Miss Branch BrPart  Cover   Missing
+src/vfs/models/chunk.py                            53      0     14      1    99%   76->78
+src/vfs/models/code_grams.py                      182      0     78      1    99%   350->348
+src/vfs/models/entry.py                           206      0     62      2    99%   258->260, 260->263
+src/vfs/offload.py                                 75      0     18      1    99%   273->exit
+src/vfs/params.py                                 164      0     82      1    99%   571->573
+src/vfs/pattern_matching/glob.py                  309      0    142      1    99%   429->431
+src/vfs/rendering/docx.py                         109      0     44      1    99%   99->97
+src/vfs/rendering/markdown.py                     184      0     78      3    99%   174->exit, 186->180, 219->exit
+src/vfs/rendering/pptx.py                          64      0     28      1    99%   97->exit
+src/vfs/rendering/xlsx.py                         101      0     40      1    99%   170->165
+src/vfs/results/envelope.py                       337      0    102      2    99%   131->133, 216->219
+src/vfs/skills.py                                 110      0     38      1    99%   124->126
+src/vfs/storage/backends/database/backend.py      674      0    208      1    99%   1589->1586
+src/vfs/storage/backends/database/edges.py        197      0     62      2    99%   326->328, 329->331
+src/vfs/storage/backends/database/embed.py        245      0     64      2    99%   380->374, 416->414
+src/vfs/storage/backends/database/engine.py       518      0    138      4    99%   564->568, 576->578, 578->583, 585->589
+src/vfs/storage/backends/database/labels.py       222      0     58      1    99%   285->293
+src/vfs/storage/backends/database/ranges.py       180      0     44      2    99%   152->155, 155->158
+src/vfs/storage/backends/database/reads.py        473      0    194      2    99%   228->230, 1076->1075
+src/vfs/storage/backends/database/rights.py       638      0    220      3    99%   504->506, 1146->1149, 1530->1540
+src/vfs/storage/backends/database/search.py       369      0    106      3    99%   796->807, 929->928, 1151->1150
+src/vfs/storage/backends/database/signals.py      140      0     46      1    99%   251->250
+src/vfs/storage/backends/database/traverse.py     344      0    124      2    99%   227->221, 232->231
+src/vfs/storage/backends/database/writes.py       436      0    188      1    99%   761->794
+TOTAL                                           13215      0   4296     40    99%
+2 failed, 4892 passed, 6 skipped, 7 warnings in 344.61s (0:05:44)

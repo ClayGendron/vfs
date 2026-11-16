@@ -1,0 +1,14 @@
+urllib3 2.8.0: provenance YES publisher=GitHub repo=urllib3/urllib3 workflow=publish.yml
+cryptography 50.0.2: provenance YES publisher=GitHub repo=pyca/cryptography workflow=pypi-publish.yml
+pydantic 2.14.3: provenance YES publisher=GitHub repo=pydantic/pydantic workflow=ci.yml
+pydantic-core 2.50.4: provenance NO (404)
+ruff 0.17.5: provenance NO (404)
+orjson 3.13.0: provenance YES publisher=GitHub repo=ijl/orjson workflow=artifact.yaml
+polars 2.1.0: provenance YES publisher=GitHub repo=pola-rs/polars workflow=release-python.yml
+sqlalchemy 2.1.8: provenance YES publisher=GitHub repo=sqlalchemy/sqlalchemy workflow=create-wheels.yaml
+requests 2.34.2: provenance YES publisher=GitHub repo=psf/requests workflow=publish.yml
+sigstore 4.5.1: provenance YES publisher=GitHub repo=sigstore/sigstore-python workflow=release.yml
+uv 0.13.8: provenance NO (404)
+maturin 1.16.0: provenance YES publisher=GitHub repo=PyO3/maturin workflow=release.yml
+rpds-py 2026.9.1: provenance YES publisher=GitHub repo=crate-py/rpds workflow=CI.yml
+vfs-py 0.0.22: provenance NO (404)

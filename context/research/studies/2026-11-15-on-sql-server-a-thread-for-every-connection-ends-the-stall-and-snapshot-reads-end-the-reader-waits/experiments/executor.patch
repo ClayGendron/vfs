@@ -1,0 +1,20 @@
+--- a/src/vfs/storage/backends/database/engine.py	2026-11-14 18:02:45
++++ b/src/vfs/storage/backends/database/engine.py	2026-11-15 11:49:45
+@@ -61,6 +61,7 @@
+ import sqlite3
+ from contextlib import suppress
+ from datetime import UTC, datetime
++from concurrent.futures import ThreadPoolExecutor
+ from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
+ 
+ from sqlalchemy import Engine, event, func, insert, inspect, select
+@@ -996,7 +997,8 @@
+     factories carry their builder's engine and must apply this themselves.
+     """
+     if make_url(url).get_backend_name() == "mssql":
+-        return {"use_setinputsizes": False}
++        # Research: one driver thread for every connection the default pool can hold (5 + 10 overflow).
++        return {"use_setinputsizes": False, "connect_args": {"executor": ThreadPoolExecutor(15)}}  # ty: ignore
+     return {}
+ 
+ 

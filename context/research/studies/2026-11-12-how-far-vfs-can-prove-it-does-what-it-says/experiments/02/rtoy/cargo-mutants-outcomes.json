@@ -1,0 +1,1391 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.218380166,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.256794,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:5: replace membership_budget -> usize with 0",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "membership_budget",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 5
+            },
+            "end": {
+              "line": 4,
+              "column": 31
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_3_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.217795667,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.08750525,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:5: replace membership_budget -> usize with 1",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "membership_budget",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 5
+            },
+            "end": {
+              "line": 4,
+              "column": 31
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_3_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.26533925,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.156982542,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:24: replace < with == in membership_budget",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "membership_budget",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 24
+            },
+            "end": {
+              "line": 3,
+              "column": 25
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_3_col_24.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.322355042,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.2217825,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:24: replace < with > in membership_budget",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "membership_budget",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 24
+            },
+            "end": {
+              "line": 3,
+              "column": 25
+            }
+          },
+          "replacement": ">",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_3_col_24_001.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_24_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.335774375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.069627125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:24: replace < with <= in membership_budget",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "membership_budget",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 24
+            },
+            "end": {
+              "line": 3,
+              "column": 25
+            }
+          },
+          "replacement": "<=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_3_col_24_002.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_24_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.488229375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.273278125,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:4:10: replace == with != in membership_budget",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "membership_budget",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "column": 10
+            },
+            "end": {
+              "line": 4,
+              "column": 12
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_4_col_10.log",
+      "diff_path": "diff/src__lib.rs_line_4_col_10.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.417091,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.998905542,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:9:5: replace chunk_lengths -> Vec<usize> with vec![]",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 9,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 8
+            }
+          },
+          "replacement": "vec![]",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_9_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_9_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.326814917,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.096660542,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:9:5: replace chunk_lengths -> Vec<usize> with vec![0]",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 9,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 8
+            }
+          },
+          "replacement": "vec![0]",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_9_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_9_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.215071209,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.127315292,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:9:5: replace chunk_lengths -> Vec<usize> with vec![1]",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 9,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 8
+            }
+          },
+          "replacement": "vec![1]",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_9_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_9_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.215190875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.027197334,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:11:16: replace > with == in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 11,
+              "column": 16
+            },
+            "end": {
+              "line": 11,
+              "column": 17
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_11_col_16.log",
+      "diff_path": "diff/src__lib.rs_line_11_col_16.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.217671583,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.198665208,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:11:16: replace > with < in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 11,
+              "column": 16
+            },
+            "end": {
+              "line": 11,
+              "column": 17
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_11_col_16_001.log",
+      "diff_path": "diff/src__lib.rs_line_11_col_16_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.221947667,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.026272875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:11:16: replace > with >= in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 11,
+              "column": 16
+            },
+            "end": {
+              "line": 11,
+              "column": 17
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "Timeout",
+      "log_path": "log/src__lib.rs_line_11_col_16_002.log",
+      "diff_path": "diff/src__lib.rs_line_11_col_16_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.214162166,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 20.021418875,
+          "process_status": "Timeout",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:28: replace > with == in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 28
+            },
+            "end": {
+              "line": 12,
+              "column": 29
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_28.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_28.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.635551083,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.410386292,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:28: replace > with < in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 28
+            },
+            "end": {
+              "line": 12,
+              "column": 29
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_28_001.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_28_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.2630035,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.807030083,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:28: replace > with >= in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 28
+            },
+            "end": {
+              "line": 12,
+              "column": 29
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_28_002.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_28_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.553925833,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.666704458,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:14:14: replace -= with += in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 14,
+              "column": 14
+            },
+            "end": {
+              "line": 14,
+              "column": 16
+            }
+          },
+          "replacement": "+=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "Timeout",
+      "log_path": "log/src__lib.rs_line_14_col_14.log",
+      "diff_path": "diff/src__lib.rs_line_14_col_14.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.215522,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 20.017932208,
+          "process_status": "Timeout",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:14:14: replace -= with /= in chunk_lengths",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "chunk_lengths",
+            "return_type": "-> Vec<usize>",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 14,
+              "column": 14
+            },
+            "end": {
+              "line": 14,
+              "column": 16
+            }
+          },
+          "replacement": "/=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "Timeout",
+      "log_path": "log/src__lib.rs_line_14_col_14_001.log",
+      "diff_path": "diff/src__lib.rs_line_14_col_14_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.019103417,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 20.033491667,
+          "process_status": "Timeout",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:21:5: replace may_read -> bool with true",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "may_read",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 22,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 21,
+              "column": 5
+            },
+            "end": {
+              "line": 21,
+              "column": 78
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_21_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_21_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.290015916,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.363225208,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:21:5: replace may_read -> bool with false",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "may_read",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 22,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 21,
+              "column": 5
+            },
+            "end": {
+              "line": 21,
+              "column": 78
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_21_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_21_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.215345042,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.871537833,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:21:38: replace || with && in may_read",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "may_read",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 22,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 21,
+              "column": 38
+            },
+            "end": {
+              "line": 21,
+              "column": 40
+            }
+          },
+          "replacement": "&&",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_21_col_38.log",
+      "diff_path": "diff/src__lib.rs_line_21_col_38.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.260265667,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.482455459,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:21:32: replace == with != in may_read",
+          "package": "rtoy",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "may_read",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 22,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 21,
+              "column": 32
+            },
+            "end": {
+              "line": 21,
+              "column": 34
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_21_col_32.log",
+      "diff_path": "diff/src__lib.rs_line_21_col_32.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.275694875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 7.877343667,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=rtoy@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 21,
+  "missed": 6,
+  "caught": 12,
+  "timeout": 3,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-11-13T01:05:12.512909Z",
+  "end_time": "2026-11-13T01:06:57.185847Z",
+  "cargo_mutants_version": "27.1.0"
+}

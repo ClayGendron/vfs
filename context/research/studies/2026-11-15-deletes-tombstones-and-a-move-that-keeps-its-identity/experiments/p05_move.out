@@ -1,0 +1,128 @@
+== 1. move a file
+  rows under /d: 3
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/a.txt parent=E1 name='a.txt' kind=file owner=alice v=2 label=5 deleted=no trash_root=None hash=ac87f7fd
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  move /d/a.txt -> /e/b.md as bob (not the owner): 1 row(s): (/e/b.md kind=file version=3 status=created size_bytes=9)
+  rows under /d: 2
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+  rows under /e: 2
+    id=E5 path=/e parent=E2 name='e' kind=directory owner=None v=2 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/e/b.md parent=E5 name='b.md' kind=file owner=alice v=3 label=5 deleted=no trash_root=None hash=ac87f7fd
+  version rows: 1
+    id=E3 n=1 snapshot=True actor=alice subjects=['alice'] hash=0ce09c65 content='alpha v1\n'
+  edge rows: 2 (fs mirror rows hidden; total 6)
+    E3 -[cites]-> E4 provenance=system
+    E4 -[cites]-> E3 provenance=system
+  read old path: ERROR kind=vfs.not_found path=/d/a.txt sev=error msg='Not found' data=None
+  read new path: 1 row(s): (/e/b.md kind=file version=3 size_bytes=9 content='alpha v2\n')
+  ls /.vfs/trash (does a move leave anything behind): empty result (no rows, no errors)
+
+== 2. move onto an occupant
+  move file onto a live file: ERROR kind=vfs.exists path=/d/live.txt sev=error msg='Already exists' data={'vfs.target': '/e/b.md'}
+  move file onto a tombstoned file: ERROR kind=vfs.exists path=/d/dead.txt sev=error msg='Already exists' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:38:01.375371', 'vfs.target': '/e/b.md'}
+  move directory onto an empty live directory: ERROR kind=vfs.exists path=/d/emptydir sev=error msg='Already exists' data={'vfs.target': '/d/srcdir'}
+  move file onto itself: 1 row(s): (/e/b.md kind=file version=3 status=unchanged size_bytes=9)
+  move a tombstoned source: ERROR kind=vfs.not_found path=/d/dead.txt sev=error msg='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:38:01.375371'}
+ -- the caller's own displacement: delete the occupant, then move
+  delete /d/live.txt: 1 row(s): (/d/live.txt kind=file version=1 status=deleted size_bytes=14 deleted_at=set)
+  move file onto the path just deleted: ERROR kind=vfs.exists path=/d/live.txt sev=error msg='Already exists' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-11-15T17:38:01.603341', 'vfs.target': '/e/b.md'}
+ -- and with sweep: destroy the occupant, then move
+  sweep /d/live.txt: 1 row(s): (/d/live.txt kind=file version=2 status=deleted size_bytes=14)
+  move file onto the swept path: 1 row(s): (/d/live.txt kind=file version=4 status=created size_bytes=9)
+  rows under /d: 6
+    id=E1 path=/d parent=E2 name='d' kind=directory owner=None v=12 label=5 deleted=no trash_root=None hash=
+    id=E6 path=/d/dead.txt parent=E1 name='dead.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E6 hash=0be77649
+    id=E7 path=/d/emptydir parent=E1 name='emptydir' kind=directory owner=alice v=1 label=5 deleted=no trash_root=None hash=
+    id=E3 path=/d/live.txt parent=E1 name='live.txt' kind=file owner=alice v=4 label=5 deleted=no trash_root=None hash=ac87f7fd
+    id=E4 path=/d/other.txt parent=E1 name='other.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=7e4fa2eb
+    id=E8 path=/d/srcdir parent=E1 name='srcdir' kind=directory owner=alice v=1 label=5 deleted=no trash_root=None hash=
+
+== 3. move a tree that holds a tombstone
+  delete /t/sub/z.txt: 1 row(s): (/t/sub/z.txt kind=file version=1 status=deleted size_bytes=6 deleted_at=set)
+  rows under /t: 5
+    id=E9 path=/t parent=E2 name='t' kind=directory owner=None v=2 label=5 deleted=no trash_root=None hash=
+    id=E10 path=/t/sub parent=E9 name='sub' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E11 path=/t/sub/y.txt parent=E10 name='y.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=c587ef88
+    id=E12 path=/t/sub/z.txt parent=E10 name='z.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E12 hash=2e3fd9e9
+    id=E13 path=/t/x.txt parent=E9 name='x.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=43696c3e
+  move /t -> /u: 1 row(s): (/u kind=directory version=3 status=created)
+  rows under /u: 5
+    id=E9 path=/u parent=E2 name='u' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E10 path=/u/sub parent=E9 name='sub' kind=directory owner=None v=4 label=5 deleted=no trash_root=None hash=
+    id=E11 path=/u/sub/y.txt parent=E10 name='y.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=c587ef88
+    id=E12 path=/u/sub/z.txt parent=E10 name='z.txt' kind=file owner=alice v=2 label=5 deleted=yes trash_root=E12 hash=2e3fd9e9
+    id=E13 path=/u/x.txt parent=E9 name='x.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=43696c3e
+  ls /.vfs/trash: 2 row(s): (/d/dead.txt kind=file version=2 size_bytes=14 deleted_at=set) (/u/sub/z.txt kind=file version=2 size_bytes=6 deleted_at=set)
+  restore at the path the delete reported (/t/sub/z.txt): ERROR kind=vfs.not_found path=/t sev=error msg='Not found' data={'vfs.target': '/t/sub/z.txt'}
+  restore at the moved path (/u/sub/z.txt): 1 row(s): (/u/sub/z.txt kind=file version=3 status=created size_bytes=6)
+ -- a fresh tree at the old name, then the old tombstone's path is free for an unrelated file
+  delete /u/sub/z.txt again: 1 row(s): (/u/sub/z.txt kind=file version=3 status=deleted size_bytes=6 deleted_at=set)
+  mkdir /t/sub parents: 2 row(s): (/t kind=directory version=1 status=created) (/t/sub kind=directory version=1 status=created)
+  write /t/sub/z.txt (old path of a row now tombstoned at /u/sub/z.txt): 1 row(s): (/t/sub/z.txt kind=file version=1 status=created size_bytes=10)
+  rows under /t: 3
+    id=E14 path=/t parent=E2 name='t' kind=directory owner=alice v=1 label=5 deleted=no trash_root=None hash=
+    id=E15 path=/t/sub parent=E14 name='sub' kind=directory owner=alice v=2 label=5 deleted=no trash_root=None hash=
+    id=E16 path=/t/sub/z.txt parent=E15 name='z.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=f641f022
+  rows under /u: 5
+    id=E9 path=/u parent=E2 name='u' kind=directory owner=None v=3 label=5 deleted=no trash_root=None hash=
+    id=E10 path=/u/sub parent=E9 name='sub' kind=directory owner=None v=6 label=5 deleted=no trash_root=None hash=
+    id=E11 path=/u/sub/y.txt parent=E10 name='y.txt' kind=file owner=bob v=1 label=5 deleted=no trash_root=None hash=c587ef88
+    id=E12 path=/u/sub/z.txt parent=E10 name='z.txt' kind=file owner=alice v=4 label=5 deleted=yes trash_root=E12 hash=2e3fd9e9
+    id=E13 path=/u/x.txt parent=E9 name='x.txt' kind=file owner=alice v=1 label=5 deleted=no trash_root=None hash=43696c3e
+
+== 4. statements issued by a move, a delete, a restore and a sweep of big trees
+ -- tree of 100 rows
+  move /big -> /moved (100 rows): statements=32 parameter_sets=130 by_verb={'BEGIN': 1, 'SELECT': 20, 'SAVEPOINT': 2, 'UPDATE': 5, 'RELEASE': 2, 'UPDATE(many)': 1, 'PRAGMA': 1}
+  delete /moved (100 rows): statements=18 parameter_sets=18 by_verb={'BEGIN': 1, 'SELECT': 11, 'UPDATE': 3, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+    rows, tombstoned after delete: (100, 100)
+  restore /moved (100 rows): statements=16 parameter_sets=16 by_verb={'BEGIN': 1, 'SELECT': 9, 'UPDATE': 3, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+  sweep /moved, live (100 rows): statements=19 parameter_sets=19 by_verb={'BEGIN': 1, 'SELECT': 5, 'DELETE': 9, 'UPDATE': 1, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+    rows left after sweep: (0, 0)
+ -- tree of 1000 rows
+  move /big -> /moved (1000 rows): statements=32 parameter_sets=1030 by_verb={'BEGIN': 1, 'SELECT': 20, 'SAVEPOINT': 2, 'UPDATE': 5, 'RELEASE': 2, 'UPDATE(many)': 1, 'PRAGMA': 1}
+      BEGIN IMMEDIATE
+      SELECT vfs_lock.id FROM vfs_lock WHERE vfs_lock.id = ?
+      SELECT vfs_meta.grant_revision FROM vfs_meta WHERE vfs_meta.id = ?
+      SELECT max(vfs_principal_revisions.revision) AS max_1 FROM vfs_principal_revisions WHERE vfs_principal_revisions.principal_id IN (?)
+      SELECT vfs_relabels.path_prefix, vfs_relabels.revision FROM vfs_relabels ORDER BY vfs_relabels.path_prefix
+      SELECT vfs_entries.path, vfs_entries.kind, vfs_entries.deleted_at, vfs_entries.everyone_level, vfs_entries.owner_id FROM vfs_entries WHERE vfs_entries
+      SELECT vfs_grants.path_prefix, vfs_grants.level FROM vfs_grants WHERE vfs_grants.principal_id = ? AND vfs_grants.path_prefix IN (?, ?)
+      SELECT vfs_entries.path, vfs_entries.kind, vfs_entries.deleted_at, vfs_entries.everyone_level, vfs_entries.owner_id FROM vfs_entries WHERE vfs_entries
+      SELECT vfs_grants.path_prefix, vfs_grants.level FROM vfs_grants WHERE vfs_grants.principal_id = ? AND vfs_grants.path_prefix IN (?, ?)
+      SELECT vfs_entries.path, vfs_entries.kind, vfs_entries.deleted_at, vfs_entries.everyone_level, vfs_entries.owner_id FROM vfs_entries WHERE vfs_entries
+      SELECT vfs_grants.path_prefix, vfs_grants.level FROM vfs_grants WHERE vfs_grants.principal_id = ? AND vfs_grants.path_prefix IN (?, ?)
+      SELECT vfs_grants.path_prefix, vfs_grants.level FROM vfs_grants WHERE vfs_grants.principal_id = ? AND vfs_grants.path_prefix LIKE ? ESCAPE '\'
+      SELECT vfs_entries.entry_id, vfs_entries.parent_id, vfs_entries.path, vfs_entries.name, vfs_entries.kind, vfs_entries.version, vfs_entries.size_bytes,
+      SELECT vfs_entries.entry_id, vfs_entries.parent_id, vfs_entries.path, vfs_entries.name, vfs_entries.kind, vfs_entries.version, vfs_entries.size_bytes,
+      SELECT vfs_entries.entry_id, vfs_entries.path, vfs_entries.kind, vfs_entries.deleted_at FROM vfs_entries WHERE vfs_entries.path IN (?)
+      SELECT vfs_entries.entry_id, vfs_entries.parent_id, vfs_entries.path, vfs_entries.name, vfs_entries.kind, vfs_entries.version, vfs_entries.size_bytes,
+      SELECT vfs_entries.entry_id, vfs_entries.parent_id, vfs_entries.path, vfs_entries.name, vfs_entries.kind, vfs_entries.version, vfs_entries.size_bytes,
+      SAVEPOINT sa_savepoint_1
+      UPDATE vfs_entries SET parent_id=?, path=?, name=?, version=(vfs_entries.version + ?), ext=?, everyone_level=?, updated_at=? WHERE vfs_entries.entry_i
+      RELEASE SAVEPOINT sa_savepoint_1
+      UPDATE vfs_edges SET source_id=? WHERE vfs_edges.target_id = ? AND vfs_edges.edge_type = ?
+      SELECT vfs_entries.entry_id, vfs_entries.path, vfs_entries.owner_id, vfs_entries.everyone_level FROM vfs_entries WHERE vfs_entries.path LIKE ? ESCAPE 
+      UPDATE vfs_entries SET path=?, everyone_level=? WHERE vfs_entries.entry_id = ?  [x999]
+      UPDATE vfs_segments SET segment=? WHERE vfs_segments.segment = ? AND vfs_segments.entry_id IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      UPDATE vfs_entries SET version=(vfs_entries.version + ?) WHERE vfs_entries.entry_id = ?
+      UPDATE vfs_entries SET version=(vfs_entries.version + ?) WHERE vfs_entries.entry_id = ?
+      SELECT vfs_entries.path, vfs_entries.kind, vfs_entries.version, vfs_entries.size_bytes FROM vfs_entries WHERE vfs_entries.path IN (?)
+      SELECT max(vfs_principal_revisions.revision) AS max_1 FROM vfs_principal_revisions WHERE vfs_principal_revisions.principal_id IN (?, ?)
+      SAVEPOINT vfs_statistics
+      SELECT group_concat(tbl || ' ' || coalesce(idx, '') || ' ' || stat, ';') FROM "main".sqlite_stat1
+      PRAGMA "main".optimize = 0x10003
+      RELEASE vfs_statistics
+  delete /moved (1000 rows): statements=18 parameter_sets=18 by_verb={'BEGIN': 1, 'SELECT': 11, 'UPDATE': 3, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+    rows, tombstoned after delete: (1000, 1000)
+  restore /moved (1000 rows): statements=16 parameter_sets=16 by_verb={'BEGIN': 1, 'SELECT': 9, 'UPDATE': 3, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+  sweep /moved, live (1000 rows): statements=19 parameter_sets=19 by_verb={'BEGIN': 1, 'SELECT': 5, 'DELETE': 9, 'UPDATE': 1, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+    rows left after sweep: (0, 0)
+ -- tree of 2000 rows
+  move /big -> /moved (2000 rows): statements=32 parameter_sets=2030 by_verb={'BEGIN': 1, 'SELECT': 20, 'SAVEPOINT': 2, 'UPDATE': 5, 'RELEASE': 2, 'UPDATE(many)': 1, 'PRAGMA': 1}
+  delete /moved (2000 rows): statements=18 parameter_sets=18 by_verb={'BEGIN': 1, 'SELECT': 11, 'UPDATE': 3, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+    rows, tombstoned after delete: (2000, 2000)
+  restore /moved (2000 rows): statements=16 parameter_sets=16 by_verb={'BEGIN': 1, 'SELECT': 9, 'UPDATE': 3, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+  sweep /moved, live (2000 rows): statements=19 parameter_sets=19 by_verb={'BEGIN': 1, 'SELECT': 5, 'DELETE': 9, 'UPDATE': 1, 'SAVEPOINT': 1, 'PRAGMA': 1, 'RELEASE': 1}
+    rows left after sweep: (0, 0)

@@ -1,0 +1,4 @@
+# deal 4.24.6 with deal-solver 0.1.2, 2026-11-12: python -m deal prove deal_toy.py
+deal_toy.py
+  resolve
+    failed post-condition. Example: path='A', rule=''.

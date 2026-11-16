@@ -1,0 +1,156 @@
+== R1. The first rebuild over 2,000 new files: statements by verb and table
+    statements=244
+         11  ANALYZE (none)
+         32  BEGIN (none)
+          8  DELETE vfs_chunks
+          8  DELETE vfs_edges
+          1  DELETE vfs_gram_epochs
+          1  DELETE vfs_grams_posting_list
+          1  DELETE vfs_lex_df
+          1  DELETE vfs_lex_docs
+          1  DELETE vfs_lex_postings
+          1  DELETE vfs_lex_stats
+          1  DELETE vfs_signal_epochs
+          1  DELETE vfs_signals
+          8  INSERT vfs_chunks
+          1  INSERT vfs_gram_epochs
+          1  INSERT vfs_grams_posting_list
+          1  INSERT vfs_lex_df
+          1  INSERT vfs_lex_docs
+          1  INSERT vfs_lex_postings
+          1  INSERT vfs_lex_stats
+         26  PRAGMA (none)
+         15  RELEASE (none)
+         15  SAVEPOINT (none)
+         41  SELECT (none)
+         22  SELECT vfs_chunks
+          1  SELECT vfs_content
+          1  SELECT vfs_edges
+          9  SELECT vfs_entries
+          1  SELECT vfs_gram_epochs
+          2  SELECT vfs_index_state
+          1  SELECT vfs_meta
+          1  SELECT vfs_segments
+          1  UPDATE vfs_chunks
+         17  UPDATE vfs_entries
+         12  UPDATE vfs_index_state
+          1  UPDATE vfs_meta
+== R2. A second rebuild with nothing changed
+    statements=57
+         15  BEGIN (none)
+          1  DELETE vfs_signal_epochs
+          1  DELETE vfs_signals
+          5  PRAGMA (none)
+          5  RELEASE (none)
+          5  SAVEPOINT (none)
+          6  SELECT (none)
+          3  SELECT vfs_chunks
+          1  SELECT vfs_edges
+          9  SELECT vfs_entries
+          2  SELECT vfs_gram_epochs
+          1  SELECT vfs_index_state
+          1  SELECT vfs_meta
+          1  SELECT vfs_segments
+          3  UPDATE vfs_index_state
+      entries read: SELECT vfs_entries.id, vfs_entries.entry_id, vfs_entries.name, vfs_entries.mime_type, vfs_entries.content_hash, vfs_entries.size_bytes FROM vfs_entrie
+      entries read: SELECT count(*) AS count_1 FROM vfs_entries WHERE vfs_entries.source = ? AND vfs_entries.deleted_at IS NULL AND unlikely(vfs_entries.render_status = ?
+      entries read: SELECT ? AS anon_1 FROM vfs_entries WHERE vfs_entries.chunked = 1 AND (vfs_entries.chunk_generation IS NULL OR vfs_entries.chunk_generation != ? OR vf
+      entries read: SELECT ? AS anon_1 FROM vfs_entries WHERE vfs_entries.chunked = 1 AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at
+      entries read: SELECT vfs_entries.entry_id, vfs_entries.path FROM vfs_entries
+      entries read: SELECT vfs_entries.entry_id, vfs_entries.parent_id FROM vfs_entries
+      entries read: SELECT vfs_entries.entry_id FROM vfs_entries WHERE vfs_entries.kind = ? AND vfs_entries.encoded = 0
+      entries read: SELECT count(*) AS count_1 FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_chunks.embedding IS NULL AND vfs_e
+      entries read: SELECT count(*) AS count_1 FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_chunks.embedding IS NULL AND vfs_e
+== R3. A rebuild after one file changed
+    statements=116
+          1  ANALYZE (none)
+         21  BEGIN (none)
+          1  DELETE vfs_chunks
+          1  DELETE vfs_edges
+          1  DELETE vfs_gram_epochs
+          1  DELETE vfs_grams_posting_list
+          1  DELETE vfs_lex_df
+          1  DELETE vfs_lex_docs
+          1  DELETE vfs_lex_postings
+          1  DELETE vfs_lex_stats
+          1  DELETE vfs_signal_epochs
+          1  DELETE vfs_signals
+          1  INSERT vfs_chunks
+          1  INSERT vfs_gram_epochs
+          1  INSERT vfs_grams_posting_list
+          1  INSERT vfs_lex_df
+          1  INSERT vfs_lex_docs
+          1  INSERT vfs_lex_postings
+          1  INSERT vfs_lex_stats
+          9  PRAGMA (none)
+          8  RELEASE (none)
+          8  SAVEPOINT (none)
+         12  SELECT (none)
+         15  SELECT vfs_chunks
+          1  SELECT vfs_content
+          1  SELECT vfs_edges
+         10  SELECT vfs_entries
+          3  SELECT vfs_gram_epochs
+          2  SELECT vfs_index_state
+          1  SELECT vfs_meta
+          1  SELECT vfs_segments
+          1  UPDATE vfs_chunks
+          3  UPDATE vfs_entries
+          5  UPDATE vfs_index_state
+      body or chunk read: SELECT candidates.id, CASE WHEN (candidates.source = ?) THEN coalesce(length(vfs_content.content), ?) ELSE candidates.size_bytes END AS meter FROM (SELECT vfs_e
+      body or chunk read: SELECT vfs_chunks.content_hash, vfs_chunks.embedding FROM vfs_chunks WHERE vfs_chunks.entry_id IN (?) AND vfs_chunks.embedding IS NOT NULL
+      body or chunk read: SELECT vfs_entries.id, vfs_entries.entry_id, vfs_entries.version, vfs_content.content FROM vfs_entries LEFT OUTER JOIN vfs_content ON vfs_content.entry_id = vfs
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ? OFFSET ?
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.content_hash, vfs_chunks.content, vfs_chunks.entry_id FROM vfs_chunks WHERE vfs_chunks.id > ? AND vfs_chunks.embedding IS NULL 
+      body or chunk read: SELECT vfs_chunks.content_hash, min(vfs_chunks.id) AS min_1 FROM vfs_chunks WHERE vfs_chunks.content_hash IN (?) AND vfs_chunks.embedding IS NOT NULL GROUP BY v
+      body or chunk read: SELECT vfs_chunks.id, vfs_chunks.content_hash, vfs_chunks.content, vfs_chunks.entry_id FROM vfs_chunks WHERE vfs_chunks.id > ? AND vfs_chunks.embedding IS NULL 
+      body or chunk read: SELECT count(*) AS count_1 FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_chunks.embedding IS NULL AND vfs_entries.chu
+      body or chunk read: SELECT count(*) AS count_1 FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_chunks.embedding IS NULL AND vfs_entries.chu
+== R4. A refresh after one file changed
+    statements=79
+         13  BEGIN (none)
+          1  DELETE vfs_chunks
+          1  DELETE vfs_edges
+          1  DELETE vfs_lex_docs
+          1  INSERT vfs_chunks
+          1  INSERT vfs_gram_epochs
+          1  INSERT vfs_grams_posting_list
+          1  INSERT vfs_lex_df
+          1  INSERT vfs_lex_docs
+          1  INSERT vfs_lex_postings
+          1  INSERT vfs_lex_stats
+          6  PRAGMA (none)
+          6  RELEASE (none)
+          6  SAVEPOINT (none)
+          8  SELECT (none)
+          7  SELECT vfs_chunks
+          1  SELECT vfs_content
+          1  SELECT vfs_embed_refusals
+          5  SELECT vfs_entries
+          3  SELECT vfs_gram_epochs
+          2  SELECT vfs_index_state
+          1  SELECT vfs_lex_df
+          2  SELECT vfs_lex_stats
+          1  SELECT vfs_meta
+          1  UPDATE vfs_chunks
+          3  UPDATE vfs_entries
+          1  UPDATE vfs_gram_epochs
+          5  UPDATE vfs_index_state
+== R5. traverse on a clean store, for comparison with the store whose fs edge was deleted
+    traverse inbound /a/b/c.txt: success=True | 1 row(s): (/a/b/c.txt kind=file version=1 size_bytes=2)
+    traverse outbound /a/b: success=True | 1 row(s): (/a/b kind=directory version=1)
+    traverse outbound /a/b edge_types=fs: success=True | 3 row(s): (/a/b kind=directory version=1) (/a/b/c.txt kind=file version=1 size_bytes=2) (/a/b)
+== R6. An entry's version reset below its version rows, then two overwrites
+    overwrite 1: success=False | ERR kind=vfs.unavailable sev=error path=None msg='Unavailable: write failed: UNIQUE constraint failed: vfs_versions.entry_id, vfs_versions.version_number'
+    overwrite 2: success=False | ERR kind=vfs.unavailable sev=error path=None msg='Unavailable: write failed: UNIQUE constraint failed: vfs_versions.entry_id, vfs_versions.version_number'
+    read: success=True | 1 row(s): (/v.txt kind=file version=1 size_bytes=6 content='three\n')
+    entry.version: [(1,)]
+    version rows: [(1, 'one\n'), (2, 'two\n')]
