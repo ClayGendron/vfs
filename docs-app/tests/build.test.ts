@@ -168,6 +168,27 @@ describe("the real pages", () => {
     }
   });
 
+  test("a glossary term shows its types, its code, its pages and its related terms", () => {
+    const html = page(real, "reference/glossary").replace(/<!--.*?-->/g, "");
+    const terms = html.split("<dl data-term").slice(1).map((rest) => rest.slice(0, rest.indexOf("</dl>")));
+    // One block per term, and the list the page writes its types in is not drawn beside it.
+    expect(terms.length).toBe((html.match(/<h2 id="/g) ?? []).length);
+    expect(html).not.toContain("<strong>Types:</strong>");
+    for (const term of terms) {
+      expect([...term.matchAll(/<dt[^>]*>([^<]+)<\/dt>/g)].map((label) => label[1])).toEqual([
+        "Types",
+        "Code",
+        "Documentation",
+        "Related terms",
+      ]);
+    }
+    const entry = terms.find((term) => term.includes('href="/reference/python-api/entry#vfs.Entry"'));
+    // A type links to its place on its API page, and a related term to its own heading on this page.
+    expect(entry).toContain('href="#mount"');
+    // A term with no class of its own keeps the words the page writes for it.
+    expect(html).toContain("None. An arm is a plain string.");
+  });
+
   test("a link that leaves the site opens in a new tab and says so", () => {
     const html = page(real, "overview").replace(/<!--.*?-->/g, "");
     const article = html.slice(html.indexOf("<article"), html.indexOf("</article>"));

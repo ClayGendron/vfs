@@ -2,7 +2,7 @@ import { marked, type Token } from "marked";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, posix, resolve } from "node:path";
 import { highlightCode, type HighlightedLine } from "#lib/highlighter";
-import { api, DocsError, nameOf, pageFiles } from "./content.server";
+import { api, DocsError, nameOf, navigation, pageFiles } from "./content.server";
 import type {
   ApiExport,
   ApiMember,
@@ -10,8 +10,12 @@ import type {
   ApiSymbol,
   Block,
   ExportedMember,
+  ExportedName,
+  ExportedTerm,
+  GlossaryTerm,
   Inline,
   Page,
+  TermRow,
   TocEntry,
 } from "./types";
 
@@ -50,7 +54,8 @@ export async function renderPage(route: string): Promise<Page> {
   const file = pageFiles().get(route);
   if (!file) throw new DocsError(`${route} has no file under documentation/`);
   const context: Context = { where: nameOf(file), route, file, anchors: new Set(), toc: [], export: null };
-  const blocks = await blocksOf(marked.lexer(readFileSync(file, "utf8")), context);
+  const drawn = await blocksOf(marked.lexer(readFileSync(file, "utf8")), context);
+  const blocks = route === GLOSSARY_ROUTE ? withTerms(drawn, context) : drawn;
   const titles = blocks.filter((block) => block.type === "heading" && block.depth === 1);
   if (titles.length !== 1) {
     throw new DocsError(`${context.where}: a page has one first-level heading, and this one has ${titles.length}`);
@@ -224,6 +229,93 @@ function plainText(inlines: Inline[]): string {
   return inlines
     .map((inline) => ("text" in inline ? inline.text : "children" in inline ? plainText(inline.children) : ""))
     .join("");
+}
+
+// ---------------------------------------------------------------------------
+// Glossary terms
+// ---------------------------------------------------------------------------
+
+// The glossary page, and the label that opens the one part a term writes by hand.
+const GLOSSARY_ROUTE = "/reference/glossary";
+const TYPES_LABEL = "Types:";
+
+/** The glossary's blocks with each term's Types list replaced by the term's rows: what it names, then what the build found. */
+function withTerms(blocks: Block[], context: Context): Block[] {
+  context.export ??= api();
+  const exported = context.export.glossary ?? {};
+  const places = placesByRoute();
+  const drawn = new Set<string>();
+  let term: string | null = null;
+  const result = blocks.map((block): Block => {
+    if (block.type === "heading" && block.depth === 2) term = plainText(block.children);
+    const note = block.type === "list" ? typesNote(block.items) : null;
+    if (term === null || note === null) return block;
+    const found = exported[term];
+    if (!found) throw new DocsError(`${context.where}: the term "${term}" is not in the export; run scripts/docs.sh export`);
+    drawn.add(term);
+    return { type: "term", term: termOf(found, note, places) };
+  });
+  const missing = Object.keys(exported).filter((name) => !drawn.has(name));
+  if (missing.length) {
+    throw new DocsError(`${context.where}: the export holds terms the page does not draw: ${missing.join(", ")}`);
+  }
+  return result;
+}
+
+/** What a list writes after its Types label, when the list is a term's Types part; null for any other list. */
+function typesNote(items: Block[][]): Inline[] | null {
+  const first = items.length === 1 ? items[0][0] : undefined;
+  if (first?.type !== "plain") return null;
+  const [label, ...rest] = first.children;
+  if (label?.type !== "strong" || plainText(label.children) !== TYPES_LABEL) return null;
+  const [lead, ...tail] = rest;
+  // The words begin after the label's own space, with their first letter raised: "none." reads "None." in a row.
+  if (lead?.type !== "text") return rest;
+  const text = lead.text.trimStart();
+  return [{ type: "text", text: text.charAt(0).toUpperCase() + text.slice(1) }, ...tail];
+}
+
+function termOf(found: ExportedTerm, note: Inline[], places: Map<string, Place>): GlossaryTerm {
+  const named = (cited: ExportedName): TermRow => {
+    const route = cited.page === null ? null : routeOfPage(cited.page);
+    const place = route === null ? undefined : places.get(route);
+    return {
+      name: cited.name,
+      href: route === null ? null : `${route}#${cited.id}`,
+      where: place ? `${place.tab} › ${place.title}` : null,
+      code: true,
+    };
+  };
+  const related = [...new Set([...found.mentions, ...found.mentioned_by])];
+  return {
+    note: found.types.length ? [] : note,
+    types: found.types.map(named),
+    code: found.code.map(named),
+    documentation: found.documentation.map((page) => {
+      const route = routeOfPage(page.page);
+      return { name: page.title, href: route, where: places.get(route)?.tab ?? null, code: false };
+    }),
+    related: related.map((name) => ({ name, href: `#${anchorOf(name)}`, where: null, code: false })),
+  };
+}
+
+/** Where a page sits in the navigation: its tab, and the name the navigation shows for it. */
+type Place = { tab: string; title: string };
+
+function placesByRoute(): Map<string, Place> {
+  const places = new Map<string, Place>();
+  for (const tab of navigation()) {
+    for (const group of tab.groups) {
+      for (const page of group.pages) places.set(page.route, { tab: tab.title, title: page.title });
+    }
+  }
+  return places;
+}
+
+/** A page's path inside the documentation folder, as the route the site serves it at. */
+function routeOfPage(page: string): string {
+  const route = `/${page.replace(/\.md$/, "")}`;
+  return route.endsWith("/index") ? route.slice(0, -"/index".length) : route;
 }
 
 // ---------------------------------------------------------------------------

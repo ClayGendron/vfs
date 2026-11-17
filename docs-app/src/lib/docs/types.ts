@@ -20,7 +20,24 @@ export type Block =
   | { type: "list"; ordered: boolean; items: Block[][] }
   | { type: "quote"; children: Block[] }
   | { type: "rule" }
-  | { type: "api"; object: ApiObject };
+  | { type: "api"; object: ApiObject }
+  | { type: "term"; term: GlossaryTerm };
+
+/** One row under a glossary term: a name, the place it links to when it has one, and where that place is. */
+export type TermRow = { name: string; href: string | null; where: string | null; code: boolean };
+
+/** What stands under a glossary term's definition: its types as the page names them, then what the build found. */
+export type GlossaryTerm = {
+  /** What the page writes under Types when it names no class, such as "None. An arm is a plain string." */
+  note: Inline[];
+  types: TermRow[];
+  /** Every class and function whose docstring marks the term. */
+  code: TermRow[];
+  /** Every page outside the reference section that links to the term. */
+  documentation: TermRow[];
+  /** The terms this definition links to, then the terms that link to it. */
+  related: TermRow[];
+};
 
 /** What a name is, as the short word shown before it: a class, a method, an attribute, a function or a module. */
 export type ApiSymbol = "class" | "meth" | "attr" | "func" | "mod";
@@ -74,8 +91,23 @@ export type ExportedMember = {
   members: ExportedMember[];
 };
 
+/** A class or function the glossary lists, as the Python script writes it: its page is null when it is on none. */
+export type ExportedName = { name: string; id: string; page: string | null; public: boolean };
+
+/** One glossary term, as the Python script writes it. */
+export type ExportedTerm = {
+  anchor: string;
+  short: string;
+  types: ExportedName[];
+  code: ExportedName[];
+  documentation: { page: string; title: string }[];
+  mentions: string[];
+  mentioned_by: string[];
+};
+
 /** The export the Python script writes, as the app reads it. */
 export type ApiExport = {
+  glossary: Record<string, ExportedTerm>;
   names: string[];
   objects: Record<
     string,
