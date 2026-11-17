@@ -290,7 +290,8 @@ function termOf(found: ExportedTerm, note: Inline[], places: Map<string, Place>)
   return {
     note: found.types.length ? [] : note,
     types: found.types.map(named),
-    code: found.code.map(named),
+    // A row of code is its name alone: the name already says which class it is on.
+    code: found.code.map((cited) => ({ ...named(cited), where: null })),
     documentation: found.documentation.map((page) => {
       const route = routeOfPage(page.page);
       return { name: page.title, href: route, where: places.get(route)?.tab ?? null, code: false };

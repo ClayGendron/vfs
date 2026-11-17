@@ -185,6 +185,10 @@ describe("the real pages", () => {
     const entry = terms.find((term) => term.includes('href="/reference/python-api/entry#vfs.Entry"'));
     // A type links to its place on its API page, and a related term to its own heading on this page.
     expect(entry).toContain('href="#mount"');
+    // A row of code is its name alone, with no line under it saying where its page is.
+    for (const term of terms) {
+      expect(term.slice(term.indexOf(">Code</dt>"), term.indexOf(">Documentation</dt>"))).not.toContain("data-term-where");
+    }
     // A term with no class of its own keeps the words the page writes for it.
     expect(html).toContain("None. An arm is a plain string.");
   });
