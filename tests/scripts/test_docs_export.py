@@ -17,7 +17,23 @@ assert _SPEC is not None and _SPEC.loader is not None
 docs_export = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(docs_export)
 
-GLOSSARY = "# Glossary\n\n## Arm\n\nOne plain pattern.\n\n## Mount\n\nA storage attached at a path.\n"
+PARTS = {
+    "Seen by callers": "- **Seen by callers:** yes.\n",
+    "In code": "- **In code:**\n    - [`helper`](python-api/things.md#pkg.helper) helps with it.\n",
+    "Instead of": "- **Instead of:** none.\n",
+}
+
+
+def _term(name: str, *, parts: tuple[str, ...] = tuple(PARTS), definition: str = "One plain thing.\n\n") -> str:
+    """One glossary term as the page writes it: a heading, a definition, then *parts* in the order given."""
+    return f"## {name}\n\n{definition}" + "".join(PARTS.get(part, f"- **{part}:** yes.\n") for part in parts) + "\n"
+
+
+def _glossary(*terms: str) -> str:
+    return "# Glossary\n\nThe words.\n\n" + "".join(terms)
+
+
+GLOSSARY = _glossary(_term("Arm"), _term("Mount"))
 
 THINGS = '''
 """A module of things."""
@@ -263,6 +279,41 @@ def test_a_term_the_glossary_lacks_refuses_the_export(tmp_path: Path) -> None:
     )
     assert code == 1
     assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    ("glossary", "named"),
+    [
+        (_glossary(_term("Arm"), _term("Mount", parts=("Seen by callers", "Instead of"))), ("Mount", "In code")),
+        (_glossary(_term("Arm", parts=("In code", "Seen by callers", "Instead of")), _term("Mount")), ("Arm",)),
+        (_glossary(_term("Arm", parts=(*PARTS, "See also")), _term("Mount")), ("Arm", "See also")),
+        (_glossary(_term("Arm", parts=(*PARTS, "Instead of")), _term("Mount")), ("Arm", "Instead of")),
+        (_glossary(_term("Arm"), _term("Mount", definition="")), ("Mount", "definition")),
+        (_glossary(_term("Mount"), _term("Arm")), ("Arm", "alphabetical")),
+        (_glossary(_term("Arm"), _term("arm"), _term("Mount")), ("arm", "twice")),
+    ],
+    ids=["a-part-missing", "parts-out-of-order", "an-unknown-part", "a-part-twice", "no-definition", "order", "twice"],
+)
+def test_a_glossary_term_out_of_shape_refuses_the_export(tmp_path: Path, glossary: str, named: tuple[str, ...]) -> None:
+    """Reading only the headings lets a term with no code reference, or a part nobody defined, onto the site."""
+    source = _package(tmp_path)
+    documentation = _pages(tmp_path, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"}, glossary=glossary)
+    with pytest.raises(docs_export.ExportError) as refusal:
+        docs_export.export(source, documentation, package="pkg")
+    assert all(name in str(refusal.value) for name in named)
+
+
+def test_a_heading_inside_a_code_block_is_not_a_term(tmp_path: Path) -> None:
+    """Finding headings in the raw text would read a fenced example as a term with no parts."""
+    fenced = _term("Arm", definition="One plain thing.\n\n```markdown\n## Not a term\n```\n\n")
+    source = _package(tmp_path)
+    documentation = _pages(
+        tmp_path,
+        {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"},
+        glossary=_glossary(fenced, _term("Mount")),
+    )
+    assert docs_export.glossary_terms(documentation) == {"arm": "arm", "mount": "mount"}
+    assert docs_export.export(source, documentation, package="pkg")["names"] == ["Thing", "helper"]
 
 
 @pytest.mark.parametrize(

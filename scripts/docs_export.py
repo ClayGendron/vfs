@@ -14,10 +14,16 @@ is Markdown with every marker already replaced, and a field with no value is
 null. A member's own ``members`` are empty, except for a class that a module
 lists and no page pulls in by name: it has no other place for its fields.
 
-Three things are refused, each as an ``ExportError`` that names the place: a
+Four things are refused, each as an ``ExportError`` that names the place: a
 ``:term:`` marker for a term the glossary does not define, an exported name that
-is on no API page or on two, and a page that pulls in a name the package does
-not export. An API page pulls a name in with a line of its own, ``::: vfs.Name``.
+is on no API page or on two, a page that pulls in a name the package does not
+export, and a glossary term out of shape. An API page pulls a name in with a
+line of its own, ``::: vfs.Name``.
+
+A glossary term is a second-level heading, a definition, and three labelled
+parts in a fixed order, each a list item that opens ``- **Label:**``: "Seen by
+callers", "In code" and "Instead of". Terms are in alphabetical order, and none
+is defined twice.
 """
 
 from __future__ import annotations
@@ -45,7 +51,11 @@ PACKAGE = "vfs"
 GLOSSARY_PAGE = Path("reference") / "glossary.md"
 GLOSSARY_ROUTE = "/reference/glossary"
 
-TERM_HEADING = re.compile(r"^## (?P<term>.+?)\s*$", re.MULTILINE)
+# The labelled parts every glossary term carries after its definition, in this order.
+GLOSSARY_PARTS = ("Seen by callers", "In code", "Instead of")
+
+TERM_HEADING = re.compile(r"^## (?P<term>.+?)\s*$")
+TERM_PART = re.compile(r"^- \*\*(?P<label>[^*:]+):\*\*")
 TERM_ROLE = re.compile(r":term:`(?P<body>[^`]+)`")
 CODE_ROLE = re.compile(r":(?:py:)?(?:func|meth|class|data|attr|mod|exc|obj|const):`(?P<body>[^`]+)`")
 
@@ -117,12 +127,16 @@ def public_names(init: Path) -> list[str]:
 
 
 def glossary_terms(documentation: Path) -> dict[str, str]:
-    """Each glossary term, case-folded, with the anchor of its heading; empty when there is no glossary page."""
+    """Each glossary term, case-folded, with the anchor of its heading; empty when there is no glossary page.
+
+    A term out of shape is refused here, before any docstring is read against the glossary.
+    """
     page = documentation / GLOSSARY_PAGE
     if not page.is_file():
         return {}
-    headings = TERM_HEADING.finditer(page.read_text(encoding="utf-8"))
-    return {match["term"].casefold(): anchor_of(match["term"]) for match in headings}
+    sections = _term_sections(page.read_text(encoding="utf-8"))
+    _check_glossary(sections)
+    return {term.casefold(): anchor_of(term) for term, _ in sections}
 
 
 def anchor_of(heading: str) -> str:
@@ -155,6 +169,40 @@ def _lines_outside_fences(text: str) -> Iterator[str]:
             fenced = not fenced
         elif not fenced:
             yield line
+
+
+def _term_sections(text: str) -> list[tuple[str, list[str]]]:
+    """Each term of the glossary page with the lines under its heading, in the page's order."""
+    sections: list[tuple[str, list[str]]] = []
+    for line in _lines_outside_fences(text):
+        heading = TERM_HEADING.match(line)
+        if heading:
+            sections.append((heading["term"], []))
+        elif sections:
+            sections[-1][1].append(line)
+    return sections
+
+
+def _check_glossary(sections: list[tuple[str, list[str]]]) -> None:
+    """Refuse a term defined twice, out of alphabetical order, with no definition, or without its three parts."""
+    keys: list[str] = []
+    for term, lines in sections:
+        key = term.casefold()
+        if key in keys:
+            msg = f"the glossary defines the term {term!r} twice"
+            raise ExportError(msg)
+        if keys and key < keys[-1]:
+            msg = f"the glossary term {term!r} is out of alphabetical order"
+            raise ExportError(msg)
+        keys.append(key)
+        labels = [part["label"] for line in lines if (part := TERM_PART.match(line))]
+        before_parts = lines[: next((at for at, line in enumerate(lines) if TERM_PART.match(line)), len(lines))]
+        if not any(line.strip() for line in before_parts):
+            msg = f"the glossary term {term!r} has no definition above its parts"
+            raise ExportError(msg)
+        if labels != list(GLOSSARY_PARTS):
+            msg = f"the glossary term {term!r} has the parts {labels}; a term has {list(GLOSSARY_PARTS)}, in that order"
+            raise ExportError(msg)
 
 
 def _check_placement(names: list[str], blocks: dict[str, list[str]], package: str) -> None:
