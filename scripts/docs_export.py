@@ -24,10 +24,10 @@ is on no API page or on two, a page that pulls in a name the package does not
 export, and a glossary term out of shape. An API page pulls a name in with a
 line of its own, ``::: vfs.Name``.
 
-A glossary term is a second-level heading, a definition, and three labelled
-parts in a fixed order, each a list item that opens ``- **Label:**``: "Seen by
-callers", "In code" and "Instead of". Terms are in alphabetical order, and none
-is defined twice.
+A glossary term is a second-level heading, a definition, and four labelled
+parts in a fixed order, each a list item that opens ``- **Label:**``: "Types",
+"Producers", "Consumers" and "Instead of". Terms are in alphabetical order, and
+none is defined twice.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ GLOSSARY_ROUTE = "/reference/glossary"
 INTERNAL_PAGES = "maintainers"
 
 # The labelled parts every glossary term carries after its definition, in this order.
-GLOSSARY_PARTS = ("Seen by callers", "In code", "Instead of")
+GLOSSARY_PARTS = ("Types", "Producers", "Consumers", "Instead of")
 
 TERM_HEADING = re.compile(r"^## (?P<term>.+?)\s*$")
 TERM_PART = re.compile(r"^- \*\*(?P<label>[^*:]+):\*\*")
@@ -194,7 +194,7 @@ def _term_sections(text: str) -> list[tuple[str, list[str]]]:
 
 
 def _check_glossary(sections: list[tuple[str, list[str]]]) -> None:
-    """Refuse a term defined twice, out of alphabetical order, with no definition, or without its three parts."""
+    """Refuse a term defined twice, out of alphabetical order, with no definition, or without its four parts."""
     keys: list[str] = []
     for term, lines in sections:
         key = term.casefold()

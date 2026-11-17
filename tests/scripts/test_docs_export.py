@@ -18,8 +18,9 @@ docs_export = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(docs_export)
 
 PARTS = {
-    "Seen by callers": "- **Seen by callers:** yes.\n",
-    "In code": "- **In code:**\n    - [`helper`](python-api/things.md#pkg.helper) helps with it.\n",
+    "Types": "- **Types:** none.\n",
+    "Producers": "- **Producers:**\n    - [`helper`](python-api/things.md#pkg.helper) makes one.\n",
+    "Consumers": "- **Consumers:** none.\n",
     "Instead of": "- **Instead of:** none.\n",
 }
 
@@ -290,15 +291,25 @@ def test_a_term_the_glossary_lacks_refuses_the_export(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("glossary", "named"),
     [
-        (_glossary(_term("Arm"), _term("Mount", parts=("Seen by callers", "Instead of"))), ("Mount", "In code")),
-        (_glossary(_term("Arm", parts=("In code", "Seen by callers", "Instead of")), _term("Mount")), ("Arm",)),
+        (_glossary(_term("Arm"), _term("Mount", parts=("Types", "Producers", "Instead of"))), ("Mount", "Consumers")),
+        (_glossary(_term("Arm", parts=("Producers", "Types", "Consumers", "Instead of")), _term("Mount")), ("Arm",)),
+        (_glossary(_term("Arm", parts=("Seen by callers", "In code", "Instead of")), _term("Mount")), ("Arm", "Types")),
         (_glossary(_term("Arm", parts=(*PARTS, "See also")), _term("Mount")), ("Arm", "See also")),
         (_glossary(_term("Arm", parts=(*PARTS, "Instead of")), _term("Mount")), ("Arm", "Instead of")),
         (_glossary(_term("Arm"), _term("Mount", definition="")), ("Mount", "definition")),
         (_glossary(_term("Mount"), _term("Arm")), ("Arm", "alphabetical")),
         (_glossary(_term("Arm"), _term("arm"), _term("Mount")), ("arm", "twice")),
     ],
-    ids=["a-part-missing", "parts-out-of-order", "an-unknown-part", "a-part-twice", "no-definition", "order", "twice"],
+    ids=[
+        "a-part-missing",
+        "parts-out-of-order",
+        "the-earlier-parts",
+        "an-unknown-part",
+        "a-part-twice",
+        "no-definition",
+        "order",
+        "twice",
+    ],
 )
 def test_a_glossary_term_out_of_shape_refuses_the_export(tmp_path: Path, glossary: str, named: tuple[str, ...]) -> None:
     """Reading only the headings lets a term with no code reference, or a part nobody defined, onto the site."""
