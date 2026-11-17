@@ -29,11 +29,10 @@ parts in a fixed order, each a list item that opens ``- **Label:**``: "Types",
 "Producers" and "Consumers". Terms are in alphabetical order, and none is
 defined twice. A part holds names only, each in backticks: an exported name
 (``Entry``, ``Entry.with_content``) or a path inside the package
-(``paths.split``). A term names at least one, each must be in the source, and
-each must have a docstring, whose first paragraph the export carries as the
-name's description. ``glossary`` in the export is ``{term: {anchor, types,
-producers, consumers}}``, each a list of ``{name, id, page, summary, public,
-generated}``: the names the page writes, then the public functions whose
+(``paths.split``). A term names at least one, and each must be in the source.
+``glossary`` in the export is ``{term: {anchor, types, producers,
+consumers}}``, each a list of ``{name, id, page, public, generated}``: the
+names the page writes, then the public functions whose
 return hint names one of the term's types (producers) or whose parameter hints
 do (consumers). A name the page writes is never also listed from a hint.
 """
@@ -254,19 +253,12 @@ def _describe_term(term: str, lines: list[str], book: _Book) -> dict[str, Any]:
     if not taken:
         msg = f"the glossary term {term!r} names no class or function under {', '.join(GLOSSARY_PARTS)}"
         raise ExportError(msg)
-    for part in GLOSSARY_PARTS:
-        bare = [cited["name"] for cited in by_hand[part] if not cited["summary"]]
-        if bare:
-            msg = f"the glossary term {term!r} names {', '.join(bare)}, which has no docstring to describe it"
-            raise ExportError(msg)
     types = [_cited_target(name, term, book) for name in written[TYPES_PART]]
     hinted = dict(zip((PRODUCERS_PART, CONSUMERS_PART), _hinted(types, book), strict=True))
     described: dict[str, Any] = {"anchor": anchor_of(term)}
     for part in GLOSSARY_PARTS:
         found = [_cite(function, book, generated=True) for function in hinted.get(part, [])]
-        described[part.lower()] = by_hand[part] + [
-            cited for cited in found if cited["name"] not in taken and cited["summary"]
-        ]
+        described[part.lower()] = by_hand[part] + [cited for cited in found if cited["name"] not in taken]
     return described
 
 
@@ -300,17 +292,9 @@ def _cited_target(written: str, term: str, book: _Book) -> griffe.Object:
 
 
 def _cite(target: griffe.Object, book: _Book, *, generated: bool = False) -> dict[str, Any]:
-    """One cited object: its name as a caller writes it, the page that holds it, and its docstring's first paragraph."""
+    """One cited object: its name as a caller writes it, the page that holds it, and how it came to be listed."""
     name, page, public = _placed(target, book)
-    summary = " ".join(_markdown(target, book.terms).split("\n\n")[0].split())
-    return {
-        "name": name,
-        "id": f"{book.package}.{name}",
-        "page": page,
-        "summary": summary,
-        "public": public,
-        "generated": generated,
-    }
+    return {"name": name, "id": f"{book.package}.{name}", "page": page, "public": public, "generated": generated}
 
 
 def _placed(target: griffe.Object, book: _Book) -> tuple[str, str | None, bool]:

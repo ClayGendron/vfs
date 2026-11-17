@@ -11,7 +11,7 @@ Terms are in alphabetical order. Each term has four parts:
 | Producers | The functions that create one or return one. |
 | Consumers | The functions that take one or act on one. |
 
-Under Types, Producers and Consumers this page writes names only. The site shows each name with the first paragraph of its docstring, and adds the functions whose type hints return or take one of the term's types.
+Under Types, Producers and Consumers this page writes names only. The site links each name to its page, and adds the functions whose type hints return or take one of the term's types.
 
 ## Arm
 
@@ -50,4 +50,4 @@ A mount added with `fs.bind()` is attached at an [entry](#entry): an empty direc
 
 - **Types:** `MountInfo`, `base.Binding`
 - **Producers:** `AsyncVirtualFileSystem.bind`
-- **Consumers:** `AsyncVirtualFileSystem.unbind`
+- **Consumers:** `AsyncVirtualFileSystem.unbind`, `VirtualFileSystem.unbind`

@@ -455,22 +455,18 @@ from collections.abc import Iterable
 
 
 class Widget:
-    """A widget.
-
-    More about it, which is no part of its summary.
-    """
+    """A widget."""
 
     def copy(self) -> "Widget":
         """A copy of this widget."""
         return self
 
-    def bare(self) -> None:
-        return None
+    def bare(self) -> "Widget":
+        return self
 
 
 def make_widget() -> Widget:
-    """Make a widget
-    out of nothing."""
+    """Make a widget."""
     return Widget()
 
 
@@ -501,48 +497,40 @@ def _widget_glossary(root: Path, glossary: str, *, maintainers: dict[str, str] |
     return docs_export.export(source, documentation, package="pkg")["glossary"]["Widget"]
 
 
-def _cited(name: str, summary: str, *, generated: bool, page: str | None = WIDGET_PAGE, public: bool = True) -> dict:
-    return {
-        "name": name,
-        "id": f"pkg.{name}",
-        "page": page,
-        "summary": summary,
-        "public": public,
-        "generated": generated,
-    }
+def _cited(name: str, *, generated: bool, page: str | None = WIDGET_PAGE, public: bool = True) -> dict[str, Any]:
+    return {"name": name, "id": f"pkg.{name}", "page": page, "public": public, "generated": generated}
 
 
 def test_a_term_lists_its_types_and_what_the_type_hints_show(tmp_path: Path) -> None:
-    """Listing only what the page writes by hand leaves every function that returns or takes the type unlisted."""
+    """Listing only what the page writes by hand leaves every function that returns or takes the type unlisted.
+
+    ``Widget.bare`` has no docstring: a list of names needs none, and the sync facade's methods have none.
+    """
     widget = _widget_glossary(tmp_path, _cites(types="`Widget`"))
     assert widget == {
         "anchor": "widget",
-        "types": [_cited("Widget", "A widget.", generated=False)],
+        "types": [_cited("Widget", generated=False)],
         "producers": [
-            _cited("Widget.copy", "A copy of this widget.", generated=True),
-            _cited("make_widget", "Make a widget out of nothing.", generated=True),
+            _cited("Widget.copy", generated=True),
+            _cited("Widget.bare", generated=True),
+            _cited("make_widget", generated=True),
         ],
-        "consumers": [_cited("use_widgets", "Use every widget.", generated=True)],
+        "consumers": [_cited("use_widgets", generated=True)],
     }
 
 
 def test_a_name_written_by_hand_keeps_its_side(tmp_path: Path) -> None:
     """Trusting the hint over the page lists a function that returns the thing it removes as a producer of it."""
     widget = _widget_glossary(tmp_path, _cites(types="`Widget`", consumers="`make_widget`"))
-    assert [cited["name"] for cited in widget["producers"]] == ["Widget.copy"]
-    assert widget["consumers"] == [
-        _cited("make_widget", "Make a widget out of nothing.", generated=False),
-        _cited("use_widgets", "Use every widget.", generated=True),
-    ]
+    assert [cited["name"] for cited in widget["producers"]] == ["Widget.copy", "Widget.bare"]
+    assert widget["consumers"] == [_cited("make_widget", generated=False), _cited("use_widgets", generated=True)]
 
 
 def test_a_term_with_no_type_lists_what_the_page_names(tmp_path: Path) -> None:
     """A thing that is a plain string has no hint to find it by, so its functions are the ones the page names."""
     widget = _widget_glossary(tmp_path, _cites(producers="`things.shape`", consumers="`make_widget`, `use_widgets`"))
     assert widget["types"] == []
-    assert widget["producers"] == [
-        _cited("things.shape", "Shape a path; not exported.", generated=False, page=None, public=False)
-    ]
+    assert widget["producers"] == [_cited("things.shape", generated=False, page=None, public=False)]
     assert [cited["name"] for cited in widget["consumers"]] == ["make_widget", "use_widgets"]
 
 
@@ -551,15 +539,15 @@ def test_a_private_name_links_to_the_maintainer_page_that_pulls_it_in(tmp_path: 
     page = {"internals.md": "# Internals\n\n::: pkg.things.shape\n"}
     widget = _widget_glossary(tmp_path, _cites(types="`Widget`", producers="`things.shape`"), maintainers=page)
     assert widget["producers"][0] == _cited(
-        "things.shape", "Shape a path; not exported.", generated=False, page="maintainers/internals.md", public=False
+        "things.shape", generated=False, page="maintainers/internals.md", public=False
     )
 
 
 def test_a_public_object_named_by_its_path_is_cited_by_its_public_name(tmp_path: Path) -> None:
     """Citing where the object is defined would link an exported class to no page."""
     widget = _widget_glossary(tmp_path, _cites(types="`things.Widget`", producers="`things.Widget.copy`"))
-    assert widget["types"] == [_cited("Widget", "A widget.", generated=False)]
-    assert widget["producers"][0] == _cited("Widget.copy", "A copy of this widget.", generated=False)
+    assert widget["types"] == [_cited("Widget", generated=False)]
+    assert widget["producers"][0] == _cited("Widget.copy", generated=False)
 
 
 @pytest.mark.parametrize(
@@ -568,9 +556,8 @@ def test_a_public_object_named_by_its_path_is_cited_by_its_public_name(tmp_path:
         (_cites(types="`Widget`", producers="`make_gadget`"), ("Widget", "make_gadget")),
         (_cites(types="`Widget.melt`"), ("Widget", "Widget.melt")),
         (_cites(), ("Widget", "names no")),
-        (_cites(types="`Widget`", consumers="`Widget.bare`"), ("Widget", "Widget.bare", "docstring")),
     ],
-    ids=["a-name-not-in-the-source", "a-member-not-in-the-class", "nothing-cited", "a-name-with-no-docstring"],
+    ids=["a-name-not-in-the-source", "a-member-not-in-the-class", "nothing-cited"],
 )
 def test_a_term_that_cites_nothing_real_refuses_the_export(
     tmp_path: Path, glossary: str, named: tuple[str, ...]
@@ -582,11 +569,9 @@ def test_a_term_that_cites_nothing_real_refuses_the_export(
 
 
 def test_the_real_glossary_cites_only_what_exists(real_export: dict[str, Any]) -> None:
-    """A term of the real page with no name under any part, or a name with no summary, shows an empty row."""
+    """A term of the real page with no name under any part shows three empty rows."""
     for term, parts in real_export["glossary"].items():
-        cited = [*parts["types"], *parts["producers"], *parts["consumers"]]
-        assert cited, term
-        assert all(entry["summary"] for entry in cited), term
+        assert [*parts["types"], *parts["producers"], *parts["consumers"]], term
 
 
 def test_the_command_writes_the_export_as_json(tmp_path: Path) -> None:
