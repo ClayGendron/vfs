@@ -243,7 +243,7 @@ const TYPES_LABEL = "Types:";
 function withTerms(blocks: Block[], context: Context): Block[] {
   context.export ??= api();
   const exported = context.export.glossary ?? {};
-  const places = placesByRoute();
+  const tabs = tabsByRoute();
   const drawn = new Set<string>();
   let term: string | null = null;
   const result = blocks.map((block): Block => {
@@ -253,7 +253,7 @@ function withTerms(blocks: Block[], context: Context): Block[] {
     const found = exported[term];
     if (!found) throw new DocsError(`${context.where}: the term "${term}" is not in the export; run scripts/docs.sh export`);
     drawn.add(term);
-    return { type: "term", term: termOf(found, note, places) };
+    return { type: "term", term: termOf(found, note, tabs) };
   });
   const missing = Object.keys(exported).filter((name) => !drawn.has(name));
   if (missing.length) {
@@ -275,42 +275,36 @@ function typesNote(items: Block[][]): Inline[] | null {
   return [{ type: "text", text: text.charAt(0).toUpperCase() + text.slice(1) }, ...tail];
 }
 
-function termOf(found: ExportedTerm, note: Inline[], places: Map<string, Place>): GlossaryTerm {
-  const named = (cited: ExportedName): TermRow => {
-    const route = cited.page === null ? null : routeOfPage(cited.page);
-    const place = route === null ? undefined : places.get(route);
-    return {
-      name: cited.name,
-      href: route === null ? null : `${route}#${cited.id}`,
-      where: place ? `${place.tab} › ${place.title}` : null,
-      code: true,
-    };
-  };
+function termOf(found: ExportedTerm, note: Inline[], tabs: Map<string, string>): GlossaryTerm {
+  // A class or a function is its name alone: the name already says which class it is on.
+  const named = (cited: ExportedName): TermRow => ({
+    name: cited.name,
+    href: cited.page === null ? null : `${routeOfPage(cited.page)}#${cited.id}`,
+    where: null,
+    code: true,
+  });
   const related = [...new Set([...found.mentions, ...found.mentioned_by])];
   return {
     note: found.types.length ? [] : note,
     types: found.types.map(named),
-    // A row of code is its name alone: the name already says which class it is on.
-    code: found.code.map((cited) => ({ ...named(cited), where: null })),
+    code: found.code.map(named),
     documentation: found.documentation.map((page) => {
       const route = routeOfPage(page.page);
-      return { name: page.title, href: route, where: places.get(route)?.tab ?? null, code: false };
+      return { name: page.title, href: route, where: tabs.get(route) ?? null, code: false };
     }),
     related: related.map((name) => ({ name, href: `#${anchorOf(name)}`, where: null, code: false })),
   };
 }
 
-/** Where a page sits in the navigation: its tab, and the name the navigation shows for it. */
-type Place = { tab: string; title: string };
-
-function placesByRoute(): Map<string, Place> {
-  const places = new Map<string, Place>();
+/** Each page's tab in the navigation, by the page's route. */
+function tabsByRoute(): Map<string, string> {
+  const tabs = new Map<string, string>();
   for (const tab of navigation()) {
     for (const group of tab.groups) {
-      for (const page of group.pages) places.set(page.route, { tab: tab.title, title: page.title });
+      for (const page of group.pages) tabs.set(page.route, tab.title);
     }
   }
-  return places;
+  return tabs;
 }
 
 /** A page's path inside the documentation folder, as the route the site serves it at. */
