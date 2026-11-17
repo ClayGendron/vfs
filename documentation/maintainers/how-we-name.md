@@ -58,3 +58,15 @@ These names were decided on 2026-11-16 and are not changed in the code yet. This
 | `session()` | `open_session()` | It creates something that must be closed |
 | `posture()` | `set_posture()` | It sets |
 | `StorageBackend`, `ObjectKind` are private | public | Public signatures name them |
+
+### What `Mount` will be
+
+- **`Mount` is a frozen dataclass with slots, not a `NamedTuple`.** Its `caps` field is computed once, when the mount is built, as `declared_caps - deny_ops`. Every permission check reads it. A `NamedTuple` cannot compute a field when it is built.
+- **Its fields are `path`, `storage`, `permissions`, `deny_ops`, `no_overlay`, `owned`, `declared_caps` and the computed `caps`.** These are the fields of `Binding` and `MountMeta` today, in one flat class.
+- **`Mount.to_payload()` returns the JSON-native fields that `MountInfo` has today.** A `Mount` holds a live storage object, so `json.dumps` cannot take it whole. `PermissionMap.to_payload()` already uses this name for the same job.
+- **`add_mount()` and `remove_mount()` follow a pair that exists.** `add_member()` and `remove_member()` already use the same two verbs.
+
+### Two tests that come with the change
+
+- **Every type named in a public signature is exported.** The docs export holds every public signature, so the rule can be checked from it.
+- **A session has no way to reach a `Mount`.** A `Mount` carries the storage object, and a session is what an agent holds. Reaching the storage would go around permissions. Today only the file-system object has mount methods, and the test keeps it so.

@@ -4,16 +4,14 @@ The words VFS uses, and what each one means. **A word has one meaning here, and 
 
 Terms are in alphabetical order. Each term has six parts.
 
-| Part | What it holds | Where it comes from |
-|---|---|---|
-| The name | The word itself. | This page |
-| The description | The full meaning. It says what the term is, then gives its rules, an example and its edges. It stands on its own. Another term from this page appears only as a link. | This page |
-| Types | The class or classes that are this thing in code. "None" when the thing has no class of its own. | `glossary.json`, the file beside this page |
-| Code | Every class and function whose docstring marks the term. | The docstrings |
-| Documentation | Every page outside this reference section that links to the term. | The pages |
-| Related terms | The terms this description links to, and the terms whose descriptions link to it. | This page |
-
-`glossary.json` also holds a one-sentence summary of each term, of at most 25 words.
+| Part | What it holds |
+|---|---|
+| Name | The word itself. |
+| Description | The full meaning. It says what the term is, then gives its rules, an example and its edges. It stands on its own. Another term from this page appears only as a link. |
+| Types | The class or classes that are this thing in code. "None" when the thing has no class of its own. |
+| Code | Every class and function whose docstring marks the term. |
+| Documentation | Every page outside this reference section that links to the term. |
+| Related terms | The terms this description links to, and the terms whose descriptions link to it. |
 
 ## Arm
 
