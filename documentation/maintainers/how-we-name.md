@@ -1,6 +1,10 @@
 # How we name things
 
-This page holds the rules for naming classes and methods in vfs. They exist so that a word has one meaning, and a meaning has one word, in the code as well as in the [glossary](../reference/glossary.md).
+This page holds the rules for naming classes and methods in VFS. They exist so that a word has one meaning, and a meaning has one word, in the code as well as in the [glossary](../reference/glossary.md).
+
+## The name of the project
+
+In prose the project is **VFS**, in capitals. The lower-case `vfs` is the Python package, and it appears only as code: `from vfs import Entry`, `vfs.Mount`, `src/vfs/`.
 
 ## Nouns
 
@@ -33,13 +37,13 @@ A method that acts on a noun takes its verb from this list, so a name can be gue
 
 ## Public and private
 
-- **A type that a public signature names is public.** A caller who reads `storage: StorageBackend` on a reference page can import `StorageBackend` from `vfs` and open its page.
+- **A type that a public signature names is public.** A caller who reads `storage: StorageBackend` on a reference page can write `from vfs import StorageBackend` and open its page.
 - **A private object is documented on a Maintainers page,** never beside the public API. It carries no compatibility promise.
-- **"Bind" is kept free.** In Plan 9 and in Linux, to bind is to make something already in the file tree appear at a second path. vfs does not do that today, and the word is reserved for it.
+- **"Bind" is kept free.** In Plan 9 and in Linux, to bind is to make something already in the file tree appear at a second path. VFS does not do that today, and the word is reserved for it.
 
 ## Why "mount" and not "binding"
 
-Plan 9 and Linux each keep a private live record of a mount and publish a separate description of it. Every layer is named for the mount: Plan 9's kernel record is `Mount` whether the `bind` call or the `mount` call made it, and Linux has `mount`, `vfsmount`, `statmount` and `mountinfo`. Neither uses "binding" as a noun. vfs follows them with one class, `Mount`.
+Plan 9 and Linux each keep a private live record of a mount and publish a separate description of it. Every layer is named for the mount: Plan 9's kernel record is `Mount` whether the `bind` call or the `mount` call made it, and Linux has `mount`, `vfsmount`, `statmount` and `mountinfo`. Neither uses "binding" as a noun. VFS follows them with one class, `Mount`.
 
 ## Where the code does not follow these rules yet
 
