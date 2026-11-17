@@ -19,9 +19,8 @@ _SPEC.loader.exec_module(docs_export)
 
 PARTS = {
     "Types": "- **Types:** none.\n",
-    "Producers": "- **Producers:**\n    - [`helper`](python-api/things.md#pkg.helper) makes one.\n",
+    "Producers": "- **Producers:** `things.helper`\n",
     "Consumers": "- **Consumers:** none.\n",
-    "Instead of": "- **Instead of:** none.\n",
 }
 
 
@@ -121,8 +120,10 @@ def test_the_export_holds_exactly_the_names_of_all(real_export: dict[str, Any]) 
 def test_the_export_has_the_documented_shape(tmp_path: Path) -> None:
     """A renamed key, or a missing value written as an absent key and not as null, breaks the app's reader."""
     exported = _export(tmp_path)
-    assert set(exported) == {"names", "objects", "internals"}
+    assert set(exported) == {"names", "objects", "internals", "glossary"}
     assert exported["internals"] == {}
+    assert list(exported["glossary"]) == ["Arm", "Mount"]
+    assert set(exported["glossary"]["Arm"]) == {"anchor", "types", "producers", "consumers"}
     thing = exported["objects"]["Thing"]
     assert set(thing) == {"kind", "labels", "signature", "bases", "doc", "members"}
     assert thing["kind"] == "class"
@@ -291,11 +292,11 @@ def test_a_term_the_glossary_lacks_refuses_the_export(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("glossary", "named"),
     [
-        (_glossary(_term("Arm"), _term("Mount", parts=("Types", "Producers", "Instead of"))), ("Mount", "Consumers")),
-        (_glossary(_term("Arm", parts=("Producers", "Types", "Consumers", "Instead of")), _term("Mount")), ("Arm",)),
+        (_glossary(_term("Arm"), _term("Mount", parts=("Types", "Producers"))), ("Mount", "Consumers")),
+        (_glossary(_term("Arm", parts=("Producers", "Types", "Consumers")), _term("Mount")), ("Arm",)),
         (_glossary(_term("Arm", parts=("Seen by callers", "In code", "Instead of")), _term("Mount")), ("Arm", "Types")),
-        (_glossary(_term("Arm", parts=(*PARTS, "See also")), _term("Mount")), ("Arm", "See also")),
         (_glossary(_term("Arm", parts=(*PARTS, "Instead of")), _term("Mount")), ("Arm", "Instead of")),
+        (_glossary(_term("Arm", parts=(*PARTS, "Consumers")), _term("Mount")), ("Arm", "Consumers")),
         (_glossary(_term("Arm"), _term("Mount", definition="")), ("Mount", "definition")),
         (_glossary(_term("Mount"), _term("Arm")), ("Arm", "alphabetical")),
         (_glossary(_term("Arm"), _term("arm"), _term("Mount")), ("arm", "twice")),
@@ -445,6 +446,147 @@ def test_a_private_object_on_an_api_page_is_still_refused(tmp_path: Path) -> Non
         docs_export.export(source, _pages(tmp_path, pages), package="pkg")
     assert "pkg.things.hidden" in str(refusal.value)
     assert "__all__" in str(refusal.value)
+
+
+WIDGETS = '''
+"""A module of widgets."""
+
+from collections.abc import Iterable
+
+
+class Widget:
+    """A widget.
+
+    More about it, which is no part of its summary.
+    """
+
+    def copy(self) -> "Widget":
+        """A copy of this widget."""
+        return self
+
+    def bare(self) -> None:
+        return None
+
+
+def make_widget() -> Widget:
+    """Make a widget
+    out of nothing."""
+    return Widget()
+
+
+def use_widgets(widgets: Iterable[Widget]) -> None:
+    """Use every widget."""
+
+
+def shape(path: str) -> str:
+    """Shape a path; not exported."""
+    return path
+'''
+
+WIDGET_PAGE = "reference/python-api/things.md"
+
+
+def _cites(*, types: str = "none", producers: str = "none", consumers: str = "none") -> str:
+    """A glossary whose one term, Widget, cites the names written in each part."""
+    parts = f"- **Types:** {types}\n- **Producers:** {producers}\n- **Consumers:** {consumers}\n"
+    return _glossary(f"## Widget\n\nA thing.\n\n{parts}\n")
+
+
+def _widget_glossary(root: Path, glossary: str, *, maintainers: dict[str, str] | None = None) -> dict[str, Any]:
+    """The Widget term as the export describes it, from a package that exports the class and two functions."""
+    names = ("Widget", "make_widget", "use_widgets")
+    source = _package(root, things=WIDGETS, names=names)
+    page = "# Things\n" + "".join(f"\n::: pkg.{name}\n" for name in names)
+    documentation = _pages(root, {"things.md": page}, glossary=glossary, maintainers=maintainers)
+    return docs_export.export(source, documentation, package="pkg")["glossary"]["Widget"]
+
+
+def _cited(name: str, summary: str, *, generated: bool, page: str | None = WIDGET_PAGE, public: bool = True) -> dict:
+    return {
+        "name": name,
+        "id": f"pkg.{name}",
+        "page": page,
+        "summary": summary,
+        "public": public,
+        "generated": generated,
+    }
+
+
+def test_a_term_lists_its_types_and_what_the_type_hints_show(tmp_path: Path) -> None:
+    """Listing only what the page writes by hand leaves every function that returns or takes the type unlisted."""
+    widget = _widget_glossary(tmp_path, _cites(types="`Widget`"))
+    assert widget == {
+        "anchor": "widget",
+        "types": [_cited("Widget", "A widget.", generated=False)],
+        "producers": [
+            _cited("Widget.copy", "A copy of this widget.", generated=True),
+            _cited("make_widget", "Make a widget out of nothing.", generated=True),
+        ],
+        "consumers": [_cited("use_widgets", "Use every widget.", generated=True)],
+    }
+
+
+def test_a_name_written_by_hand_keeps_its_side(tmp_path: Path) -> None:
+    """Trusting the hint over the page lists a function that returns the thing it removes as a producer of it."""
+    widget = _widget_glossary(tmp_path, _cites(types="`Widget`", consumers="`make_widget`"))
+    assert [cited["name"] for cited in widget["producers"]] == ["Widget.copy"]
+    assert widget["consumers"] == [
+        _cited("make_widget", "Make a widget out of nothing.", generated=False),
+        _cited("use_widgets", "Use every widget.", generated=True),
+    ]
+
+
+def test_a_term_with_no_type_lists_what_the_page_names(tmp_path: Path) -> None:
+    """A thing that is a plain string has no hint to find it by, so its functions are the ones the page names."""
+    widget = _widget_glossary(tmp_path, _cites(producers="`things.shape`", consumers="`make_widget`, `use_widgets`"))
+    assert widget["types"] == []
+    assert widget["producers"] == [
+        _cited("things.shape", "Shape a path; not exported.", generated=False, page=None, public=False)
+    ]
+    assert [cited["name"] for cited in widget["consumers"]] == ["make_widget", "use_widgets"]
+
+
+def test_a_private_name_links_to_the_maintainer_page_that_pulls_it_in(tmp_path: Path) -> None:
+    """Leaving the page out gives the site a private name with nowhere to send the reader."""
+    page = {"internals.md": "# Internals\n\n::: pkg.things.shape\n"}
+    widget = _widget_glossary(tmp_path, _cites(types="`Widget`", producers="`things.shape`"), maintainers=page)
+    assert widget["producers"][0] == _cited(
+        "things.shape", "Shape a path; not exported.", generated=False, page="maintainers/internals.md", public=False
+    )
+
+
+def test_a_public_object_named_by_its_path_is_cited_by_its_public_name(tmp_path: Path) -> None:
+    """Citing where the object is defined would link an exported class to no page."""
+    widget = _widget_glossary(tmp_path, _cites(types="`things.Widget`", producers="`things.Widget.copy`"))
+    assert widget["types"] == [_cited("Widget", "A widget.", generated=False)]
+    assert widget["producers"][0] == _cited("Widget.copy", "A copy of this widget.", generated=False)
+
+
+@pytest.mark.parametrize(
+    ("glossary", "named"),
+    [
+        (_cites(types="`Widget`", producers="`make_gadget`"), ("Widget", "make_gadget")),
+        (_cites(types="`Widget.melt`"), ("Widget", "Widget.melt")),
+        (_cites(), ("Widget", "names no")),
+        (_cites(types="`Widget`", consumers="`Widget.bare`"), ("Widget", "Widget.bare", "docstring")),
+    ],
+    ids=["a-name-not-in-the-source", "a-member-not-in-the-class", "nothing-cited", "a-name-with-no-docstring"],
+)
+def test_a_term_that_cites_nothing_real_refuses_the_export(
+    tmp_path: Path, glossary: str, named: tuple[str, ...]
+) -> None:
+    """Printing a name the code no longer has leaves the glossary pointing at nothing after a rename."""
+    with pytest.raises(docs_export.ExportError) as refusal:
+        _widget_glossary(tmp_path, glossary)
+    assert all(name in str(refusal.value) for name in named)
+
+
+def test_the_real_glossary_cites_only_what_exists(real_export: dict[str, Any]) -> None:
+    """A term of the real page with no name under any part, or a name with no summary, shows an empty row."""
+    for term, parts in real_export["glossary"].items():
+        cited = [*parts["types"], *parts["producers"], *parts["consumers"]]
+        assert cited, term
+        assert all(entry["summary"] for entry in cited), term
 
 
 def test_the_command_writes_the_export_as_json(tmp_path: Path) -> None:

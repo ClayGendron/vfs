@@ -24,10 +24,18 @@ is on no API page or on two, a page that pulls in a name the package does not
 export, and a glossary term out of shape. An API page pulls a name in with a
 line of its own, ``::: vfs.Name``.
 
-A glossary term is a second-level heading, a definition, and four labelled
+A glossary term is a second-level heading, a definition, and three labelled
 parts in a fixed order, each a list item that opens ``- **Label:**``: "Types",
-"Producers", "Consumers" and "Instead of". Terms are in alphabetical order, and
-none is defined twice.
+"Producers" and "Consumers". Terms are in alphabetical order, and none is
+defined twice. A part holds names only, each in backticks: an exported name
+(``Entry``, ``Entry.with_content``) or a path inside the package
+(``paths.split``). A term names at least one, each must be in the source, and
+each must have a docstring, whose first paragraph the export carries as the
+name's description. ``glossary`` in the export is ``{term: {anchor, types,
+producers, consumers}}``, each a list of ``{name, id, page, summary, public,
+generated}``: the names the page writes, then the public functions whose
+return hint names one of the term's types (producers) or whose parameter hints
+do (consumers). A name the page writes is never also listed from a hint.
 """
 
 from __future__ import annotations
@@ -38,7 +46,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import griffe
 
@@ -59,7 +67,8 @@ GLOSSARY_ROUTE = "/reference/glossary"
 INTERNAL_PAGES = "maintainers"
 
 # The labelled parts every glossary term carries after its definition, in this order.
-GLOSSARY_PARTS = ("Types", "Producers", "Consumers", "Instead of")
+TYPES_PART, PRODUCERS_PART, CONSUMERS_PART = GLOSSARY_PARTS = ("Types", "Producers", "Consumers")
+CODE_SPAN = re.compile(r"`([^`]+)`")
 
 TERM_HEADING = re.compile(r"^## (?P<term>.+?)\s*$")
 TERM_PART = re.compile(r"^- \*\*(?P<label>[^*:]+):\*\*")
@@ -98,7 +107,10 @@ def export(source: Path, documentation: Path, *, package: str = PACKAGE) -> dict
     objects = {name: _describe_object(target, terms, exported) for name, target in resolved.items()}
     private = {name: _private_target(loaded, name, pages, exported, package) for name, pages in internal.items()}
     internals = {name: _describe_object(target, terms, exported) for name, target in private.items()}
-    return {"names": names, "objects": objects, "internals": internals}
+    public = {target.path: name for name, target in resolved.items()}
+    book = _Book(package, loaded, resolved, public, api, internal, terms)
+    glossary = {term: _describe_term(term, lines, book) for term, lines in _glossary_sections(documentation)}
+    return {"names": names, "objects": objects, "internals": internals, "glossary": glossary}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -141,12 +153,7 @@ def glossary_terms(documentation: Path) -> dict[str, str]:
 
     A term out of shape is refused here, before any docstring is read against the glossary.
     """
-    page = documentation / GLOSSARY_PAGE
-    if not page.is_file():
-        return {}
-    sections = _term_sections(page.read_text(encoding="utf-8"))
-    _check_glossary(sections)
-    return {term.casefold(): anchor_of(term) for term, _ in sections}
+    return {term.casefold(): anchor_of(term) for term, _ in _glossary_sections(documentation)}
 
 
 def anchor_of(heading: str) -> str:
@@ -181,6 +188,16 @@ def _lines_outside_fences(text: str) -> Iterator[str]:
             yield line
 
 
+def _glossary_sections(documentation: Path) -> list[tuple[str, list[str]]]:
+    """Each term of the glossary page with its lines, checked for shape; empty when there is no page."""
+    page = documentation / GLOSSARY_PAGE
+    if not page.is_file():
+        return []
+    sections = _term_sections(page.read_text(encoding="utf-8"))
+    _check_glossary(sections)
+    return sections
+
+
 def _term_sections(text: str) -> list[tuple[str, list[str]]]:
     """Each term of the glossary page with the lines under its heading, in the page's order."""
     sections: list[tuple[str, list[str]]] = []
@@ -194,7 +211,7 @@ def _term_sections(text: str) -> list[tuple[str, list[str]]]:
 
 
 def _check_glossary(sections: list[tuple[str, list[str]]]) -> None:
-    """Refuse a term defined twice, out of alphabetical order, with no definition, or without its four parts."""
+    """Refuse a term defined twice, out of alphabetical order, with no definition, or without its three parts."""
     keys: list[str] = []
     for term, lines in sections:
         key = term.casefold()
@@ -213,6 +230,128 @@ def _check_glossary(sections: list[tuple[str, list[str]]]) -> None:
         if labels != list(GLOSSARY_PARTS):
             msg = f"the glossary term {term!r} has the parts {labels}; a term has {list(GLOSSARY_PARTS)}, in that order"
             raise ExportError(msg)
+
+
+class _Book(NamedTuple):
+    """What a name the glossary cites is read against: the source, the exported names, and the pages that hold them."""
+
+    package: str
+    loaded: griffe.Object | griffe.Alias
+    resolved: dict[str, griffe.Object]
+    public: dict[str, str]
+    api: dict[str, list[str]]
+    internal: dict[str, list[str]]
+    terms: dict[str, str]
+
+
+def _describe_term(term: str, lines: list[str], book: _Book) -> dict[str, Any]:
+    """One term: its anchor, and under each part the names the page cites, then those the type hints show."""
+    written = _names_by_part(lines)
+    by_hand = {
+        part: [_cite(_cited_target(name, term, book), book) for name in written[part]] for part in GLOSSARY_PARTS
+    }
+    taken = {cited["name"] for part in GLOSSARY_PARTS for cited in by_hand[part]}
+    if not taken:
+        msg = f"the glossary term {term!r} names no class or function under {', '.join(GLOSSARY_PARTS)}"
+        raise ExportError(msg)
+    for part in GLOSSARY_PARTS:
+        bare = [cited["name"] for cited in by_hand[part] if not cited["summary"]]
+        if bare:
+            msg = f"the glossary term {term!r} names {', '.join(bare)}, which has no docstring to describe it"
+            raise ExportError(msg)
+    types = [_cited_target(name, term, book) for name in written[TYPES_PART]]
+    hinted = dict(zip((PRODUCERS_PART, CONSUMERS_PART), _hinted(types, book), strict=True))
+    described: dict[str, Any] = {"anchor": anchor_of(term)}
+    for part in GLOSSARY_PARTS:
+        found = [_cite(function, book, generated=True) for function in hinted.get(part, [])]
+        described[part.lower()] = by_hand[part] + [
+            cited for cited in found if cited["name"] not in taken and cited["summary"]
+        ]
+    return described
+
+
+def _names_by_part(lines: list[str]) -> dict[str, list[str]]:
+    """The names a term writes under each part: every code span from the part's label to the next label."""
+    names: dict[str, list[str]] = {part: [] for part in GLOSSARY_PARTS}
+    current: list[str] | None = None
+    for line in lines:
+        label = TERM_PART.match(line)
+        if label:
+            current = names[label["label"]]
+        if current is not None:
+            current.extend(CODE_SPAN.findall(line))
+    return names
+
+
+def _cited_target(written: str, term: str, book: _Book) -> griffe.Object:
+    """The object a cited name stands for: read from an exported name first, then as a path inside the package."""
+    first, _, rest = written.partition(".")
+    places: list[tuple[griffe.Object | griffe.Alias, str]] = [(book.loaded, written)]
+    if first in book.resolved:
+        places.insert(0, (book.resolved[first], rest))
+    for root, path in places:
+        try:
+            found = root[path] if path else root
+            return found.final_target if isinstance(found, griffe.Alias) else found
+        except (KeyError, griffe.AliasResolutionError, griffe.CyclicAliasError):
+            continue
+    msg = f"the glossary term {term!r} names `{written}`, which is not in the source"
+    raise ExportError(msg)
+
+
+def _cite(target: griffe.Object, book: _Book, *, generated: bool = False) -> dict[str, Any]:
+    """One cited object: its name as a caller writes it, the page that holds it, and its docstring's first paragraph."""
+    name, page, public = _placed(target, book)
+    summary = " ".join(_markdown(target, book.terms).split("\n\n")[0].split())
+    return {
+        "name": name,
+        "id": f"{book.package}.{name}",
+        "page": page,
+        "summary": summary,
+        "public": public,
+        "generated": generated,
+    }
+
+
+def _placed(target: griffe.Object, book: _Book) -> tuple[str, str | None, bool]:
+    """An object's name, its page and whether it is public: by the exported name above it, or by its own path."""
+    parts = target.path.split(".")
+    for cut in range(len(parts), 0, -1):
+        exported = book.public.get(".".join(parts[:cut]))
+        if exported is not None:
+            return ".".join([exported, *parts[cut:]]), book.api[exported][0], True
+    inside = parts[1:]
+    for cut in range(len(inside), 0, -1):
+        pages = book.internal.get(".".join(inside[:cut]))
+        if pages:
+            return ".".join(inside), pages[0], False
+    return ".".join(inside), None, False
+
+
+def _hinted(types: list[griffe.Object], book: _Book) -> tuple[list[griffe.Function], list[griffe.Function]]:
+    """The public functions whose return hint names one of *types*, and those with a parameter hint that does."""
+    named = [re.compile(rf"\b{re.escape(kind.name)}\b") for kind in types]
+    producers: list[griffe.Function] = []
+    consumers: list[griffe.Function] = []
+    for function in _public_functions(book) if named else ():
+        returns = str(function.returns or "")
+        takes = " ".join(str(parameter.annotation or "") for parameter in function.parameters)
+        if any(name.search(returns) for name in named):
+            producers.append(function)
+        if any(name.search(takes) for name in named):
+            consumers.append(function)
+    return producers, consumers
+
+
+def _public_functions(book: _Book) -> Iterator[griffe.Function]:
+    """Every exported function and every public method of an exported class, in the export's order."""
+    for target in book.resolved.values():
+        holders = [target, *(member for member in _public_members(target) if member.is_class and target.is_module)]
+        for holder in holders:
+            if isinstance(holder, griffe.Function):
+                yield holder
+            elif holder.is_class or holder.is_module:
+                yield from (member for member in _public_members(holder) if isinstance(member, griffe.Function))
 
 
 def _api_and_internal(blocks: dict[str, list[str]]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
