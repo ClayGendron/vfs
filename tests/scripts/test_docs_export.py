@@ -17,21 +17,16 @@ assert _SPEC is not None and _SPEC.loader is not None
 docs_export = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(docs_export)
 
-DESCRIPTION = "More about it, in plain words.\n\n"
+
+def _term(name: str, *, description: str | None = None) -> str:
+    """One glossary term as the page writes it: a heading, then its description."""
+    described = f"The {name.lower()} is one plain thing, and more.\n\n" if description is None else description
+    return f"## {name}\n\n{described}"
 
 
-def _term(
-    name: str,
-    *,
-    parts: tuple[str, ...] = ("Types",),
-    short: str = "One plain thing.",
-    description: str = DESCRIPTION,
-    types: str = "none.",
-) -> str:
-    """One glossary term as the page writes it: a heading, a sentence, a description, then *parts* in order."""
-    opening = f"{short}\n\n" if short else ""
-    written = "".join(f"- **{part}:** {types}\n" for part in parts)
-    return f"## {name}\n\n{opening}{description}{written}\n"
+def _entry(name: str, *, summary: str = "One plain thing.", types: tuple[str, ...] = ()) -> dict[str, Any]:
+    """One glossary term as ``glossary.json`` holds it: its name, its one sentence and its types."""
+    return {"term": name, "summary": summary, "types": list(types)}
 
 
 def _glossary(*terms: str) -> str:
@@ -39,6 +34,7 @@ def _glossary(*terms: str) -> str:
 
 
 GLOSSARY = _glossary(_term("Arm"), _term("Mount"))
+TERMS = [_entry("Arm"), _entry("Mount")]
 
 THINGS = '''
 """A module of things."""
@@ -88,17 +84,21 @@ def _pages(
     pages: dict[str, str],
     *,
     glossary: str = GLOSSARY,
+    terms: Any = TERMS,
     maintainers: dict[str, str] | None = None,
     others: dict[str, str] | None = None,
 ) -> Path:
     """A documentation folder: the glossary, *pages* under ``reference/python-api/``, *maintainers* under its own.
 
-    *others* are pages by their path inside the folder, such as ``tutorials/first.md``.
+    *terms* is what ``glossary.json`` holds, and None writes no such file. *others* are pages by their path
+    inside the folder, such as ``tutorials/first.md``.
     """
     documentation = root / "documentation"
     (documentation / "reference" / "python-api").mkdir(parents=True)
     (documentation / "maintainers").mkdir()
     (documentation / "reference" / "glossary.md").write_text(glossary)
+    if terms is not None:
+        (documentation / "reference" / "glossary.json").write_text(json.dumps(terms))
     for name, text in pages.items():
         (documentation / "reference" / "python-api" / name).write_text(text)
     for name, text in (maintainers or {}).items():
@@ -139,7 +139,7 @@ def test_the_export_has_the_documented_shape(tmp_path: Path) -> None:
     assert set(exported) == {"names", "objects", "internals", "glossary"}
     assert exported["internals"] == {}
     assert list(exported["glossary"]) == ["Arm", "Mount"]
-    term_keys = {"anchor", "short", "types", "code", "documentation", "mentions", "mentioned_by"}
+    term_keys = {"anchor", "summary", "types", "code", "documentation", "related"}
     assert all(set(term) == term_keys for term in exported["glossary"].values())
     thing = exported["objects"]["Thing"]
     assert set(thing) == {"kind", "labels", "signature", "bases", "doc", "members"}
@@ -309,32 +309,15 @@ def test_a_term_the_glossary_lacks_refuses_the_export(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("glossary", "named"),
     [
-        (_glossary(_term("Arm"), _term("Mount", parts=())), ("Mount", "Types")),
-        (_glossary(_term("Arm", parts=("Types", "Producers", "Consumers")), _term("Mount")), ("Arm", "Producers")),
-        (_glossary(_term("Arm", parts=("Types", "See also")), _term("Mount")), ("Arm", "See also")),
-        (_glossary(_term("Arm", parts=("Types", "Types")), _term("Mount")), ("Arm", "Types")),
-        (_glossary(_term("Arm"), _term("Mount", short="", description="")), ("Mount", "definition")),
-        (_glossary(_term("Arm"), _term("Mount", description="")), ("Mount", "longer description")),
-        (_glossary(_term("Arm", short=" ".join(["word"] * 25) + " more."), _term("Mount")), ("Arm", "26 words")),
-        (_glossary(_term("Arm", short="One plain thing"), _term("Mount")), ("Arm", "full stop")),
+        (_glossary(_term("Arm"), _term("Mount", description="")), ("Mount", "no description")),
+        (_glossary(_term("Arm"), _term("Mount", description="It has no content.\n\n")), ("Mount", "stands on its own")),
         (_glossary(_term("Mount"), _term("Arm")), ("Arm", "alphabetical")),
         (_glossary(_term("Arm"), _term("arm"), _term("Mount")), ("arm", "twice")),
     ],
-    ids=[
-        "the-part-missing",
-        "the-earlier-parts",
-        "an-unknown-part",
-        "the-part-twice",
-        "no-definition",
-        "no-longer-description",
-        "an-opening-past-25-words",
-        "an-opening-with-no-full-stop",
-        "order",
-        "twice",
-    ],
+    ids=["no-description", "a-description-that-does-not-name-the-term", "order", "twice"],
 )
-def test_a_glossary_term_out_of_shape_refuses_the_export(tmp_path: Path, glossary: str, named: tuple[str, ...]) -> None:
-    """Reading only the headings lets a term with no code reference, or a part nobody defined, onto the site."""
+def test_a_description_out_of_shape_refuses_the_export(tmp_path: Path, glossary: str, named: tuple[str, ...]) -> None:
+    """Reading only the headings lets a term with nothing under it, or one that leans on another line, onto the site."""
     source = _package(tmp_path)
     documentation = _pages(tmp_path, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"}, glossary=glossary)
     with pytest.raises(docs_export.ExportError) as refusal:
@@ -342,9 +325,61 @@ def test_a_glossary_term_out_of_shape_refuses_the_export(tmp_path: Path, glossar
     assert all(name in str(refusal.value) for name in named)
 
 
+@pytest.mark.parametrize(
+    ("terms", "named"),
+    [
+        ({"Arm": "One plain thing."}, ("glossary.json", "list")),
+        (["Arm", "Mount"], ("glossary.json", "no term")),
+        ([{**_entry("Arm"), "avoid": ["limb"]}, _entry("Mount")], ("Arm", "avoid")),
+        ([{"term": "Arm", "summary": "One plain thing."}, _entry("Mount")], ("Arm", "keys")),
+        ([_entry("Arm", summary=" ".join(["word"] * 25) + " more."), _entry("Mount")], ("Arm", "26 words")),
+        ([_entry("Arm", summary="One plain thing"), _entry("Mount")], ("Arm", "full stop")),
+        ([_entry("Arm", summary="Part of a [mount](#mount)."), _entry("Mount")], ("Arm", "link")),
+        ([{**_entry("Arm"), "types": "Thing"}, _entry("Mount")], ("Arm", "list of names")),
+    ],
+    ids=[
+        "not-a-list",
+        "an-entry-with-no-term",
+        "an-unknown-key",
+        "a-missing-key",
+        "a-summary-past-25-words",
+        "a-summary-with-no-full-stop",
+        "a-summary-with-a-link",
+        "types-that-are-not-a-list",
+    ],
+)
+def test_a_term_entry_out_of_shape_refuses_the_export(tmp_path: Path, terms: Any, named: tuple[str, ...]) -> None:
+    """Passing the file through unread puts a key nobody defined, or a summary too long for a link, on the site."""
+    source = _package(tmp_path)
+    documentation = _pages(tmp_path, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"}, terms=terms)
+    with pytest.raises(docs_export.ExportError) as refusal:
+        docs_export.export(source, documentation, package="pkg")
+    assert all(name in str(refusal.value) for name in named)
+
+
+@pytest.mark.parametrize(
+    ("terms", "named"),
+    [
+        ([_entry("Arm")], ("Mount", "glossary.json does not hold")),
+        (None, ("Arm", "glossary.json does not hold")),
+        ([_entry("Arm"), _entry("Gear"), _entry("Mount")], ("Gear", "does not define")),
+        ([_entry("Mount"), _entry("Arm")], ("glossary.json", "order")),
+        ([_entry("Arm"), _entry("Arm"), _entry("Mount")], ("Arm", "twice")),
+    ],
+    ids=["a-term-only-on-the-page", "no-file", "a-term-only-in-the-file", "another-order", "twice-in-the-file"],
+)
+def test_the_page_and_the_file_hold_the_same_terms(tmp_path: Path, terms: Any, named: tuple[str, ...]) -> None:
+    """Pairing the two by position, or by the names they share, shows a term with another term's summary or none."""
+    source = _package(tmp_path)
+    documentation = _pages(tmp_path, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"}, terms=terms)
+    with pytest.raises(docs_export.ExportError) as refusal:
+        docs_export.export(source, documentation, package="pkg")
+    assert all(name in str(refusal.value) for name in named)
+
+
 def test_a_heading_inside_a_code_block_is_not_a_term(tmp_path: Path) -> None:
     """Finding headings in the raw text would read a fenced example as a term with no parts."""
-    fenced = _term("Arm", description="More about it.\n\n```markdown\n## Not a term\n```\n\n")
+    fenced = _term("Arm", description="An arm is more than that.\n\n```markdown\n## Not a term\n```\n\n")
     source = _package(tmp_path)
     documentation = _pages(
         tmp_path,
@@ -494,7 +529,8 @@ def shape(path: str) -> str:
 WIDGET_PAGE = "reference/python-api/things.md"
 
 
-GADGET = "## Gadget\n\nA thing that holds a [widget](#widget).\n\nMore about gadgets.\n\n- **Types:** none.\n\n"
+COG = "## Cog\n\nA cog turns a [gadget](#gadget).\n\n"
+GADGET = "## Gadget\n\nA gadget is a thing that holds a [widget](#widget).\n\nMore about gadgets.\n\n"
 
 LINKING_PAGES = {
     "get-started.md": (
@@ -511,16 +547,20 @@ LINKING_PAGES = {
 
 
 def _widget_export(
-    root: Path, *, types: str = "none.", things: str = WIDGETS, maintainers: dict[str, str] | None = None
+    root: Path, *, types: tuple[str, ...] = (), things: str = WIDGETS, maintainers: dict[str, str] | None = None
 ) -> dict[str, Any]:
-    """The glossary of a package that exports ``Widget`` and ``make_widget``, with the terms Gadget and Widget."""
+    """The glossary of a package that exports ``Widget`` and ``make_widget``, with the terms Cog, Gadget and Widget."""
     names = ("Widget", "make_widget")
     source = _package(root, things=things, names=names)
     page = "# Things\n" + "".join(f"\n::: pkg.{name}\n" for name in names)
-    described = "More about widgets, and a [widget](#widget) links to itself.\n\n"
-    widget = _term("Widget", short="A small thing with a handle.", description=described, types=types)
+    widget = _term("Widget", description="A widget is small, and a [widget](#widget) links to itself.\n\n")
     documentation = _pages(
-        root, {"things.md": page}, glossary=_glossary(GADGET, widget), maintainers=maintainers, others=LINKING_PAGES
+        root,
+        {"things.md": page},
+        glossary=_glossary(COG, GADGET, widget),
+        terms=[_entry("Cog"), _entry("Gadget"), _entry("Widget", summary="A small thing with a handle.", types=types)],
+        maintainers=maintainers,
+        others=LINKING_PAGES,
     )
     return docs_export.export(source, documentation, package="pkg")["glossary"]
 
@@ -529,10 +569,10 @@ def _cited(name: str, *, page: str | None = WIDGET_PAGE, public: bool = True) ->
     return {"name": name, "id": f"pkg.{name}", "page": page, "public": public}
 
 
-def test_a_term_carries_its_opening_sentence_and_its_types(tmp_path: Path) -> None:
-    """Dropping the sentence leaves a linked term with nothing to show on hover; dropping the types, no class."""
-    widget = _widget_export(tmp_path, types="`Widget`")["Widget"]
-    assert (widget["anchor"], widget["short"]) == ("widget", "A small thing with a handle.")
+def test_a_term_carries_its_summary_and_its_types_from_the_file(tmp_path: Path) -> None:
+    """Dropping the summary leaves a linked term with nothing to show on hover; dropping the types, no class."""
+    widget = _widget_export(tmp_path, types=("Widget",))["Widget"]
+    assert (widget["anchor"], widget["summary"]) == ("widget", "A small thing with a handle.")
     assert widget["types"] == [_cited("Widget")]
 
 
@@ -557,31 +597,35 @@ def test_documentation_is_every_page_outside_reference_that_links_the_term(tmp_p
     assert glossary["Gadget"]["documentation"] == [{"page": "tutorials/first.md", "title": "First Steps"}]
 
 
-def test_related_terms_are_read_from_the_links_between_definitions(tmp_path: Path) -> None:
-    """Counting a term's link to itself, or reading one direction only, misstates which terms build on which."""
+def test_related_terms_are_both_directions_of_a_link_in_alphabetical_order(tmp_path: Path) -> None:
+    """Counting a term's link to itself, reading one direction only, or listing the linked-to terms first, breaks a leg.
+
+    Gadget links to Widget and is linked from Cog: the terms it links to first would read Widget, then Cog.
+    """
     glossary = _widget_export(tmp_path)
-    assert (glossary["Gadget"]["mentions"], glossary["Gadget"]["mentioned_by"]) == (["Widget"], [])
-    assert (glossary["Widget"]["mentions"], glossary["Widget"]["mentioned_by"]) == ([], ["Gadget"])
+    assert glossary["Cog"]["related"] == ["Gadget"]
+    assert glossary["Gadget"]["related"] == ["Cog", "Widget"]
+    assert glossary["Widget"]["related"] == ["Gadget"]
 
 
 def test_a_type_is_named_by_its_public_name_and_placed_on_its_page(tmp_path: Path) -> None:
     """Citing where an exported class is defined links it to no page; a private name has only a maintainer page."""
-    by_path = _widget_export(tmp_path / "path", types="`things.Widget`")["Widget"]
+    by_path = _widget_export(tmp_path / "path", types=("things.Widget",))["Widget"]
     assert by_path["types"] == [_cited("Widget")]
-    unplaced = _widget_export(tmp_path / "unplaced", types="`Widget`, `things.shape`")["Widget"]
+    unplaced = _widget_export(tmp_path / "unplaced", types=("Widget", "things.shape"))["Widget"]
     assert unplaced["types"] == [_cited("Widget"), _cited("things.shape", page=None, public=False)]
     page = {"internals.md": "# Internals\n\n::: pkg.things.shape\n"}
-    placed = _widget_export(tmp_path / "placed", types="`things.shape`", maintainers=page)["Widget"]
+    placed = _widget_export(tmp_path / "placed", types=("things.shape",), maintainers=page)["Widget"]
     assert placed["types"] == [_cited("things.shape", page="maintainers/internals.md", public=False)]
 
 
-@pytest.mark.parametrize("types", ["`Gizmo`", "`Widget.melt`"], ids=["not-in-the-source", "not-in-the-class"])
-def test_a_type_the_code_does_not_have_refuses_the_export(tmp_path: Path, types: str) -> None:
+@pytest.mark.parametrize("name", ["Gizmo", "Widget.melt"], ids=["not-in-the-source", "not-in-the-class"])
+def test_a_type_the_code_does_not_have_refuses_the_export(tmp_path: Path, name: str) -> None:
     """Printing a name the code no longer has leaves the glossary pointing at nothing after a rename."""
     with pytest.raises(docs_export.ExportError) as refusal:
-        _widget_export(tmp_path, types=types)
+        _widget_export(tmp_path, types=(name,))
     assert "Widget" in str(refusal.value)
-    assert types.strip("`") in str(refusal.value)
+    assert name in str(refusal.value)
 
 
 def test_a_private_docstring_that_marks_an_unknown_term_refuses_the_export(tmp_path: Path) -> None:
@@ -593,9 +637,10 @@ def test_a_private_docstring_that_marks_an_unknown_term_refuses_the_export(tmp_p
 
 
 def test_the_real_glossary_exports(real_export: dict[str, Any]) -> None:
-    """A real term whose opening sentence or type did not survive the export shows an empty entry on the site."""
+    """A real term whose summary or type did not survive the export shows an empty entry on the site."""
     assert list(real_export["glossary"]) == ["Arm", "Entry", "Mount"]
-    assert all(term["short"] for term in real_export["glossary"].values())
+    assert all(term["summary"] for term in real_export["glossary"].values())
+    assert real_export["glossary"]["Entry"]["related"] == ["Arm", "Mount"]
     assert [cited["name"] for cited in real_export["glossary"]["Entry"]["types"]] == ["Entry"]
 
 

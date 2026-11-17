@@ -171,9 +171,14 @@ describe("the real pages", () => {
   test("a glossary term shows its types, its code, its pages and its related terms", () => {
     const html = page(real, "reference/glossary").replace(/<!--.*?-->/g, "");
     const terms = html.split("<dl data-term").slice(1).map((rest) => rest.slice(0, rest.indexOf("</dl>")));
-    // One block per term, and the list the page writes its types in is not drawn beside it.
+    // One block per term, at the end of the term: the next thing after it is the next term's heading, or the page's end.
     expect(terms.length).toBe((html.match(/<h2 id="/g) ?? []).length);
-    expect(html).not.toContain("<strong>Types:</strong>");
+    const article = html.slice(html.indexOf("<article"), html.indexOf("</article>"));
+    const after = article.split("</dl>").slice(1).map((rest) => rest.trimStart());
+    expect(after.slice(0, -1).every((rest) => rest.startsWith("<h2 "))).toBe(true);
+    expect(after[after.length - 1]).not.toContain("<h2 ");
+    // The summary is what a link to the term shows, and the page does not print it under the heading.
+    expect(html).not.toContain("<p>One file or directory in the file tree.</p>");
     for (const term of terms) {
       expect([...term.matchAll(/<dt[^>]*>([^<]+)<\/dt>/g)].map((label) => label[1])).toEqual([
         "Types",
@@ -189,8 +194,9 @@ describe("the real pages", () => {
     for (const term of terms) {
       expect(term.slice(0, term.indexOf(">Documentation</dt>"))).not.toContain("data-term-where");
     }
-    // A term with no class of its own keeps the words the page writes for it.
-    expect(html).toContain("None. An arm is a plain string.");
+    // A term with no class of its own says so in its Types row.
+    const arm = terms[0];
+    expect(arm.slice(arm.indexOf(">Types</dt>"), arm.indexOf(">Code</dt>"))).toContain("None.");
   });
 
   test("a link that leaves the site opens in a new tab and says so", () => {

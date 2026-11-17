@@ -1,0 +1,17 @@
+[
+  {
+    "term": "Arm",
+    "summary": "One plain file pattern, with no {a,b} choices in it.",
+    "types": []
+  },
+  {
+    "term": "Entry",
+    "summary": "One file or directory in the file tree.",
+    "types": ["Entry"]
+  },
+  {
+    "term": "Mount",
+    "summary": "A storage backend attached at a path in the file tree.",
+    "types": ["MountInfo", "base.Binding"]
+  }
+]

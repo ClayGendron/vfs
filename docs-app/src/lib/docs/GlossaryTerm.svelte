@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Inline from "./Inline.svelte";
   import type { GlossaryTerm, TermRow } from "./types";
 
   let { term }: { term: GlossaryTerm } = $props();
@@ -22,12 +21,10 @@
   </ul>
 {/snippet}
 
-<!-- What stands under a term's definition: the types the page names, then what the build found for the term. -->
+<!-- What stands under a term's description: the types the glossary file names, then what the build found for the term. -->
 <dl data-term>
   <dt>Types</dt>
-  <dd>
-    {#if term.types.length}{@render rows(term.types)}{:else}<span data-term-none><Inline nodes={term.note} /></span>{/if}
-  </dd>
+  <dd>{#if term.types.length}{@render rows(term.types)}{:else}<span data-term-none>None.</span>{/if}</dd>
   <dt>Code</dt>
   <dd>{#if term.code.length}{@render rows(term.code)}{:else}<span data-term-none>None yet.</span>{/if}</dd>
   <dt>Documentation</dt>

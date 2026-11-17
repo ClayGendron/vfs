@@ -26,16 +26,15 @@ export type Block =
 /** One row under a glossary term: a name, the place it links to when it has one, and where that place is. */
 export type TermRow = { name: string; href: string | null; where: string | null; code: boolean };
 
-/** What stands under a glossary term's definition: its types as the page names them, then what the build found. */
+/** What stands under a glossary term's description: its types as the glossary file names them, then what the build found. */
 export type GlossaryTerm = {
-  /** What the page writes under Types when it names no class, such as "None. An arm is a plain string." */
-  note: Inline[];
+  /** The class or classes that are the term; empty when it has no class of its own. */
   types: TermRow[];
   /** Every class and function whose docstring marks the term. */
   code: TermRow[];
   /** Every page outside the reference section that links to the term. */
   documentation: TermRow[];
-  /** The terms this definition links to, then the terms that link to it. */
+  /** The terms this description links to and the terms that link to it, in alphabetical order. */
   related: TermRow[];
 };
 
@@ -97,12 +96,12 @@ export type ExportedName = { name: string; id: string; page: string | null; publ
 /** One glossary term, as the Python script writes it. */
 export type ExportedTerm = {
   anchor: string;
-  short: string;
+  /** One sentence of plain text, for a link to the term to show; the glossary page does not print it. */
+  summary: string;
   types: ExportedName[];
   code: ExportedName[];
   documentation: { page: string; title: string }[];
-  mentions: string[];
-  mentioned_by: string[];
+  related: string[];
 };
 
 /** The export the Python script writes, as the app reads it. */

@@ -235,26 +235,33 @@ function plainText(inlines: Inline[]): string {
 // Glossary terms
 // ---------------------------------------------------------------------------
 
-// The glossary page, and the label that opens the one part a term writes by hand.
+// The glossary page: each second-level heading on it is a term.
 const GLOSSARY_ROUTE = "/reference/glossary";
-const TYPES_LABEL = "Types:";
 
-/** The glossary's blocks with each term's Types list replaced by the term's rows: what it names, then what the build found. */
+/** The glossary's blocks with each term's rows placed after its description: its types, then what the build found. */
 function withTerms(blocks: Block[], context: Context): Block[] {
   context.export ??= api();
   const exported = context.export.glossary ?? {};
   const tabs = tabsByRoute();
   const drawn = new Set<string>();
+  const result: Block[] = [];
   let term: string | null = null;
-  const result = blocks.map((block): Block => {
-    if (block.type === "heading" && block.depth === 2) term = plainText(block.children);
-    const note = block.type === "list" ? typesNote(block.items) : null;
-    if (term === null || note === null) return block;
+  // A term ends where the next one's heading begins, and the last one ends with the page.
+  const close = () => {
+    if (term === null) return;
     const found = exported[term];
     if (!found) throw new DocsError(`${context.where}: the term "${term}" is not in the export; run scripts/docs.sh export`);
     drawn.add(term);
-    return { type: "term", term: termOf(found, note, tabs) };
-  });
+    result.push({ type: "term", term: termOf(found, tabs) });
+  };
+  for (const block of blocks) {
+    if (block.type === "heading" && block.depth === 2) {
+      close();
+      term = plainText(block.children);
+    }
+    result.push(block);
+  }
+  close();
   const missing = Object.keys(exported).filter((name) => !drawn.has(name));
   if (missing.length) {
     throw new DocsError(`${context.where}: the export holds terms the page does not draw: ${missing.join(", ")}`);
@@ -262,20 +269,7 @@ function withTerms(blocks: Block[], context: Context): Block[] {
   return result;
 }
 
-/** What a list writes after its Types label, when the list is a term's Types part; null for any other list. */
-function typesNote(items: Block[][]): Inline[] | null {
-  const first = items.length === 1 ? items[0][0] : undefined;
-  if (first?.type !== "plain") return null;
-  const [label, ...rest] = first.children;
-  if (label?.type !== "strong" || plainText(label.children) !== TYPES_LABEL) return null;
-  const [lead, ...tail] = rest;
-  // The words begin after the label's own space, with their first letter raised: "none." reads "None." in a row.
-  if (lead?.type !== "text") return rest;
-  const text = lead.text.trimStart();
-  return [{ type: "text", text: text.charAt(0).toUpperCase() + text.slice(1) }, ...tail];
-}
-
-function termOf(found: ExportedTerm, note: Inline[], tabs: Map<string, string>): GlossaryTerm {
+function termOf(found: ExportedTerm, tabs: Map<string, string>): GlossaryTerm {
   // A class or a function is its name alone: the name already says which class it is on.
   const named = (cited: ExportedName): TermRow => ({
     name: cited.name,
@@ -283,16 +277,14 @@ function termOf(found: ExportedTerm, note: Inline[], tabs: Map<string, string>):
     where: null,
     code: true,
   });
-  const related = [...new Set([...found.mentions, ...found.mentioned_by])];
   return {
-    note: found.types.length ? [] : note,
     types: found.types.map(named),
     code: found.code.map(named),
     documentation: found.documentation.map((page) => {
       const route = routeOfPage(page.page);
       return { name: page.title, href: route, where: tabs.get(route) ?? null, code: false };
     }),
-    related: related.map((name) => ({ name, href: `#${anchorOf(name)}`, where: null, code: false })),
+    related: found.related.map((name) => ({ name, href: `#${anchorOf(name)}`, where: null, code: false })),
   };
 }
 
