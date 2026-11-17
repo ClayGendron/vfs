@@ -78,13 +78,18 @@ def _package(root: Path, *, things: str = THINGS, names: tuple[str, ...] = ("Thi
     return root / "src"
 
 
-def _pages(root: Path, pages: dict[str, str], *, glossary: str = GLOSSARY) -> Path:
-    """A documentation folder holding the glossary and *pages*, each a path under ``reference/python-api/``."""
+def _pages(
+    root: Path, pages: dict[str, str], *, glossary: str = GLOSSARY, maintainers: dict[str, str] | None = None
+) -> Path:
+    """A documentation folder: the glossary, *pages* under ``reference/python-api/``, *maintainers* under its own."""
     documentation = root / "documentation"
     (documentation / "reference" / "python-api").mkdir(parents=True)
+    (documentation / "maintainers").mkdir()
     (documentation / "reference" / "glossary.md").write_text(glossary)
     for name, text in pages.items():
         (documentation / "reference" / "python-api" / name).write_text(text)
+    for name, text in (maintainers or {}).items():
+        (documentation / "maintainers" / name).write_text(text)
     return documentation
 
 
@@ -115,7 +120,8 @@ def test_the_export_holds_exactly_the_names_of_all(real_export: dict[str, Any]) 
 def test_the_export_has_the_documented_shape(tmp_path: Path) -> None:
     """A renamed key, or a missing value written as an absent key and not as null, breaks the app's reader."""
     exported = _export(tmp_path)
-    assert set(exported) == {"names", "objects"}
+    assert set(exported) == {"names", "objects", "internals"}
+    assert exported["internals"] == {}
     thing = exported["objects"]["Thing"]
     assert set(thing) == {"kind", "labels", "signature", "bases", "doc", "members"}
     assert thing["kind"] == "class"
@@ -353,6 +359,81 @@ def test_every_exported_name_is_on_exactly_one_page(
     with pytest.raises(docs_export.ExportError) as refusal:
         _export(tmp_path, pages=pages)
     assert all(name in str(refusal.value) for name in named)
+
+
+HIDDEN = (
+    THINGS
+    + '''
+
+def hidden(path: str) -> bool:
+    """Not exported; it sits on a :term:`mount`."""
+    return True
+
+
+class _Engine:
+    """Not exported either."""
+
+    def turn(self) -> None:
+        """Turn once."""
+'''
+)
+
+API_PAGE = {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"}
+
+
+def _internal_export(root: Path, maintainers: dict[str, str]) -> dict[str, Any]:
+    """The export of a package with two private objects, with *maintainers* as its maintainer pages."""
+    source = _package(root, things=HIDDEN)
+    documentation = _pages(root, API_PAGE, maintainers=maintainers)
+    return docs_export.export(source, documentation, package="pkg")
+
+
+def test_a_maintainer_page_pulls_in_a_private_object(tmp_path: Path) -> None:
+    """Refusing every unexported name leaves the engine's own parts with no page for the glossary to point at."""
+    page = "# Internals\n\n::: pkg.things.hidden\n\n::: pkg.things._Engine\n"
+    exported = _internal_export(tmp_path, {"internals.md": page})
+    assert exported["names"] == ["Thing", "helper"]
+    assert set(exported["internals"]) == {"things.hidden", "things._Engine"}
+    hidden = exported["internals"]["things.hidden"]
+    assert set(hidden) == set(exported["objects"]["helper"])
+    assert (hidden["kind"], hidden["signature"]) == ("function", "(path: str) -> bool")
+    assert hidden["doc"] == "Not exported; it sits on a [mount](/reference/glossary#mount)."
+    assert [member["name"] for member in exported["internals"]["things._Engine"]["members"]] == ["turn"]
+
+
+@pytest.mark.parametrize(
+    ("maintainers", "named"),
+    [
+        (
+            {"internals.md": "# Internals\n\n::: pkg.things.missing\n"},
+            ("pkg.things.missing", "maintainers/internals.md"),
+        ),
+        ({"internals.md": "# Internals\n\n::: pkg.things.Thing\n"}, ("pkg.things.Thing", "public")),
+        ({"internals.md": "# Internals\n\n::: pkg.helper\n"}, ("pkg.helper", "public")),
+        (
+            {"one.md": "# One\n\n::: pkg.things.hidden\n", "two.md": "# Two\n\n::: pkg.things.hidden\n"},
+            ("pkg.things.hidden", "maintainers/one.md", "maintainers/two.md"),
+        ),
+    ],
+    ids=["not-in-the-source", "public-by-its-path", "public-by-its-name", "on-two-pages"],
+)
+def test_a_maintainer_page_holds_only_private_objects_once(
+    tmp_path: Path, maintainers: dict[str, str], named: tuple[str, ...]
+) -> None:
+    """Describing a public object twice, or a name nobody defined, puts a second or an empty entry on the site."""
+    with pytest.raises(docs_export.ExportError) as refusal:
+        _internal_export(tmp_path, maintainers)
+    assert all(name in str(refusal.value) for name in named)
+
+
+def test_a_private_object_on_an_api_page_is_still_refused(tmp_path: Path) -> None:
+    """Letting any page pull in a private object would show it beside the public API as if it were promised."""
+    source = _package(tmp_path, things=HIDDEN)
+    pages = {"things.md": API_PAGE["things.md"] + "\n::: pkg.things.hidden\n"}
+    with pytest.raises(docs_export.ExportError) as refusal:
+        docs_export.export(source, _pages(tmp_path, pages), package="pkg")
+    assert "pkg.things.hidden" in str(refusal.value)
+    assert "__all__" in str(refusal.value)
 
 
 def test_the_command_writes_the_export_as_json(tmp_path: Path) -> None:

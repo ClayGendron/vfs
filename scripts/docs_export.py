@@ -8,7 +8,11 @@ no build of the Rust extension::
 
 The export is ``{"names": [...], "objects": {name: {kind, labels, signature,
 bases, doc, members: [{name, kind, labels, signature, annotation, value, doc,
-members}]}}}``. ``names`` is the package's ``__all__`` in its own order, ``labels``
+members}]}}, "internals": {path: {...}}}``. ``internals`` holds the private
+objects a page under ``maintainers/`` pulls in, each under its dotted path inside
+the package and in the shape of an exported one; a private object on any other
+page, or a public one on a maintainer page, is refused.
+``names`` is the package's ``__all__`` in its own order, ``labels``
 says how a name is declared (``async``, ``property``, ``classmethod``), ``doc``
 is Markdown with every marker already replaced, and a field with no value is
 null. A member's own ``members`` are empty, except for a class that a module
@@ -51,6 +55,9 @@ PACKAGE = "vfs"
 GLOSSARY_PAGE = Path("reference") / "glossary.md"
 GLOSSARY_ROUTE = "/reference/glossary"
 
+# The folder of pages for people who change the package; only these pages may pull in a private object.
+INTERNAL_PAGES = "maintainers"
+
 # The labelled parts every glossary term carries after its definition, in this order.
 GLOSSARY_PARTS = ("Seen by callers", "In code", "Instead of")
 
@@ -81,14 +88,17 @@ class ExportError(Exception):
 def export(source: Path, documentation: Path, *, package: str = PACKAGE) -> dict[str, Any]:
     """The public API of *package* under *source*, placed on the API pages of *documentation*."""
     names = public_names(source / package / "__init__.py")
-    _check_placement(names, api_blocks(documentation, package), package)
+    api, internal = _api_and_internal(api_blocks(documentation, package))
+    _check_placement(names, api, package)
     terms = glossary_terms(documentation)
     loaded = griffe.load(package, search_paths=[str(source)])
     resolved = {name: _resolved(loaded, name, package) for name in names}
     # Where each exported name is defined: a class a module lists is described in full only if it is not one.
     exported = frozenset(target.path for target in resolved.values())
     objects = {name: _describe_object(target, terms, exported) for name, target in resolved.items()}
-    return {"names": names, "objects": objects}
+    private = {name: _private_target(loaded, name, pages, exported, package) for name, pages in internal.items()}
+    internals = {name: _describe_object(target, terms, exported) for name, target in private.items()}
+    return {"names": names, "objects": objects, "internals": internals}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -203,6 +213,37 @@ def _check_glossary(sections: list[tuple[str, list[str]]]) -> None:
         if labels != list(GLOSSARY_PARTS):
             msg = f"the glossary term {term!r} has the parts {labels}; a term has {list(GLOSSARY_PARTS)}, in that order"
             raise ExportError(msg)
+
+
+def _api_and_internal(blocks: dict[str, list[str]]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """The blocks split by where their page sits: on an API page, or on a maintainer page."""
+    api: dict[str, list[str]] = {}
+    internal: dict[str, list[str]] = {}
+    for name, pages in blocks.items():
+        for page in pages:
+            side = internal if Path(page).parts[0] == INTERNAL_PAGES else api
+            side.setdefault(name, []).append(page)
+    return api, internal
+
+
+def _private_target(
+    loaded: griffe.Object | griffe.Alias, name: str, pages: list[str], exported: frozenset[str], package: str
+) -> griffe.Object:
+    """The private object a maintainer page pulls in by its path; refused when missing, public, or on two pages."""
+    where = ", ".join(pages)
+    if len(pages) > 1:
+        msg = f"{package}.{name} is on {len(pages)} maintainer pages: {where}"
+        raise ExportError(msg)
+    try:
+        member = loaded[name]
+        target = member.final_target if member.is_alias else member
+    except (KeyError, griffe.AliasResolutionError, griffe.CyclicAliasError) as error:
+        msg = f"{package}.{name}, pulled in by {where}, cannot be read from the source: {error}"
+        raise ExportError(msg) from error
+    if target.path in exported:
+        msg = f"{package}.{name}, pulled in by {where}, is public and belongs on an API page"
+        raise ExportError(msg)
+    return target
 
 
 def _check_placement(names: list[str], blocks: dict[str, list[str]], package: str) -> None:
