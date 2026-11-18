@@ -148,18 +148,18 @@ async def test_default_capabilities_derive_from_the_backend() -> None:
     assert full.capabilities() == ALL_OPS
 
 
-async def test_capabilities_union_across_bindings() -> None:
+async def test_capabilities_union_across_mounts() -> None:
     # The router's capabilities() is the union of every entry's declared
     # snapshot, self included.
     # The root declares mkdir: a mount is a write at its mount point.
     root = AsyncVirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree", "mkdir"})))
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "mkdir"})
-    await root._attach_mount(BindableStorage(caps=frozenset({"search"})), "/m")
+    await root.add_mount(BindableStorage(caps=frozenset({"search"})), "/m")
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "mkdir", "search"})
 
 
-async def test_capability_snapshot_is_pinned_at_bind_not_live() -> None:
-    # Decision 2: the gate consults the bind-time snapshot. An in-process
+async def test_capability_snapshot_is_pinned_at_mount_time_not_live() -> None:
+    # Decision 2: the gate consults the mount-time snapshot. An in-process
     # backend that later "declares" more never widens what the table sees.
     backend = BindableStorage(caps=frozenset({"read"}))
     root = AsyncVirtualFileSystem(storage=backend)
@@ -321,7 +321,7 @@ GATE_FAILURES = [
 @pytest.mark.parametrize(("call", "kind", "path"), [c[1:] for c in GATE_FAILURES], ids=[c[0] for c in GATE_FAILURES])
 async def test_gate_failures_carry_the_router_side_path(call: Any, kind: ErrorKind, path: str) -> None:
     # Every chokepoint x every gate failure: a permission denial reports the
-    # addressed path; a capability miss reports the entry's bind path.
+    # addressed path; a capability miss reports the entry's mount path.
     root = await _gated_namespace()
     result = await call(root)
     assert result.success is False
@@ -350,7 +350,7 @@ async def test_gate_order_capability_outranks_permission() -> None:
 
 async def test_gate_order_busy_outranks_capability_and_permission() -> None:
     # The busy guard runs before the entry is even resolved for gating — a
-    # live bind site refuses busy no matter what the terminal would say.
+    # live mount point refuses busy no matter what the terminal would say.
     root = AsyncVirtualFileSystem()
     child = RecorderStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m", permissions="read")
