@@ -777,6 +777,24 @@ def test_code_is_every_docstring_that_marks_the_term(tmp_path: Path) -> None:
     assert glossary["Gadget"]["code"] == []
 
 
+PRIVATE_METHOD = '''
+    def _polish(self) -> None:
+        """Polish this :term:`widget`."""
+'''
+
+
+def test_a_private_member_of_a_public_class_is_cited_as_private(tmp_path: Path) -> None:
+    """A reference page does not draw a private method, so a row that links to one there links to nothing."""
+    things = WIDGETS.replace("\n\ndef make_widget", PRIVATE_METHOD + "\n\ndef make_widget")
+    code = _widget_export(tmp_path, things=things)["Widget"]["code"]
+    assert code == [
+        _cited("Widget"),
+        _cited("Widget.copy"),
+        _cited("things.Widget._polish", page=None, public=False),
+        _cited("things.shape", page=None, public=False),
+    ]
+
+
 def test_documentation_is_every_page_outside_reference_that_links_the_term(tmp_path: Path) -> None:
     """Counting a reference page, a link in a code block, or a page twice for two links puts a wrong row on the term."""
     glossary = _widget_export(tmp_path)

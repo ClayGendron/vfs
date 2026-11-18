@@ -473,6 +473,9 @@ def _placed(target: griffe.Object, book: _Book) -> tuple[str, str | None, bool]:
         # A module that lists its own names reaches those names alone, and each is in the book by its own path.
         if exported is None or (cut < len(parts) and above in book.listing):
             continue
+        # A page draws the public members of a name. A private member beneath it is on no page.
+        if not all(_is_public(part) for part in parts[cut:]):
+            break
         return ".".join([exported, *parts[cut:]]), book.api[exported.partition(".")[0]][0], True
     inside = parts[1:]
     for cut in range(len(inside), 0, -1):
