@@ -37,23 +37,14 @@ A method that acts on a noun takes its verb from this list, so a name can be gue
 
 ## Public and private
 
-- **A type that a public signature names is public.** A caller who reads `storage: StorageBackend` on a reference page can write `from vfs import StorageBackend` and open its page.
+- **A type that a public signature names is public.** A caller who reads `storage: StorageBackend` on a reference page can write `from vfs import StorageBackend` and open its page. The docs export refuses to build when a public signature names a type that no exported name reaches.
+- **A family of types for one specialist job is a public module.** `ranking`, `rerank`, `rendering` and `embedding` are imported as modules, as `permissions` is, so a name such as `Linear` or `Unit` is not a top-level name of `vfs`. A public module lists what it offers in its own `__all__`.
 - **A private object is documented on a Maintainers page,** never beside the public API. It carries no compatibility promise.
 - **"Bind" is kept free.** In Plan 9 and in Linux, to bind is to make something already in the file tree appear at a second path. VFS does not do that today, and the word is reserved for it.
 
 ## Why "mount" and not "binding"
 
 Plan 9 and Linux each keep a private live record of a mount and publish a separate description of it. Every layer is named for the mount: Plan 9's kernel record is `Mount` whether the `bind` call or the `mount` call made it, and Linux has `mount`, `vfsmount`, `statmount` and `mountinfo`. Neither uses "binding" as a noun. VFS follows them with one class, `Mount`.
-
-## Where the code does not follow these rules yet
-
-These names were decided on 2026-11-16 and are not changed in the code yet. This section is deleted when they are.
-
-| Today | Under the rules | Why |
-|---|---|---|
-| `StorageBackend`, `ObjectKind` are private | public | Public signatures name them |
-
-One test comes with this change. **Every type named in a public signature is exported.** The docs export holds every public signature, so the rule can be checked from it.
 
 ## How `Mount` is built
 

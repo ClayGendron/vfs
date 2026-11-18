@@ -12,8 +12,11 @@ interleave; within a mount the rows keep the order the mount gave them.
 Isotonic repair along each mount's list makes that well defined, and it
 follows that every mount contributes a prefix of its own answer.
 
-    merged = merge_ranked("lease heartbeat", answers, limit=10, rerankers=(BM25Rerank(),))
-    merged.observations  # the union's top ten, one scale, each mount's order intact
+A file system takes its stages as ``rerankers``, and runs them in order.
+
+```python
+fs = AsyncVirtualFileSystem(rerankers=(BM25Rerank(),))
+```
 """
 
 from __future__ import annotations
@@ -30,6 +33,9 @@ if TYPE_CHECKING:
     from vfs.models import Match, Observation
     from vfs.paths import Path
     from vfs.results import Result
+
+# What a caller writing a reranker needs. The rest serves the file system's own merge.
+__all__ = ["BM25Rerank", "Candidate", "Reranker", "Statistics"]
 
 # ---------------------------------------------------------------------------
 # Module constants and shared types

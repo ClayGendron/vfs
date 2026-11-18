@@ -60,6 +60,8 @@ Op = Literal[
     "add_member",
     "remove_member",
 ]
+"""The name of one verb. A storage may declare a name that is not in this list, so a set of capabilities holds
+plain strings."""
 
 MUTATING_OPS: Final[frozenset[Op]] = frozenset(
     {"write", "edit", "delete", "restore", "sweep", "mkdir", "mkedge", "rmedge", "move", "copy"},
@@ -181,7 +183,10 @@ axis.
 # Grep option vocabularies — shared by the router, the storage protocols,
 # and the CLI grammar when it lands.
 CaseMode = Literal["sensitive", "insensitive", "smart"]
+"""How ``grep`` treats letter case. ``smart`` ignores case unless the pattern has an upper-case letter."""
+
 GrepOutputMode = Literal["lines", "files", "count"]
+"""What ``grep`` returns. The matching lines, the files that hold a match, or the number of matches in each file."""
 
 # The graph walk's defaults, carried by the verb's signature and by the
 # params table alike: the gate never substitutes a schema default.

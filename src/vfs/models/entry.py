@@ -55,6 +55,7 @@ def encoded_at_creation(kind: str) -> bool:
 
 
 ContentHash = Annotated[str, "sha-256 hex of the body, 64 lowercase chars"]
+"""The SHA-256 of a body, written as 64 lowercase hex characters."""
 
 
 # ---------------------------------------------------------------------------

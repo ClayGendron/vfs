@@ -17,6 +17,7 @@ from vfs.embedding.provider import (
     estimate_tokens,
     qualified_model_id,
 )
+from vfs.models.vector import NativeEmbeddingConfig
 
 __all__ = [
     "HASH_DIMENSION",
@@ -26,6 +27,7 @@ __all__ = [
     "LangChainEmbeddingProvider",
     "LocalEmbeddingProvider",
     "Model2VecEmbeddingProvider",
+    "NativeEmbeddingConfig",
     "OpenAIEmbeddingProvider",
     "estimate_tokens",
     "hash_embedding",

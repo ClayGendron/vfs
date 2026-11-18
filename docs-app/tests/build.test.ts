@@ -365,3 +365,26 @@ test("an API block renders the name and its members", () => {
   expect(article).toMatch(/<strong>\s*Inside the Docstring\s*<\/strong>/);
   expect(article).not.toContain('id="inside-the-docstring"');
 });
+
+test("an exported type alias shows the type it stands for", () => {
+  const Size = {
+    kind: "attribute",
+    labels: [],
+    signature: null,
+    annotation: null,
+    value: "Literal['small', 'large']",
+    bases: [],
+    doc: "How big a thing is.",
+    members: [],
+  };
+  const built = build(pages({ "a.md": "# A\n\n::: vfs.Size\n" }), exported({ Size }));
+  expect(built.output).toContain("done");
+  expect(built.code).toBe(0);
+  const html = page(built, "a").replace(/<!--.*?-->/g, "");
+  const article = html.slice(html.indexOf("<article"), html.indexOf("</article>"));
+  expect(article).toMatch(/<h2 [^>]*>\s*<span data-api-symbol="attr"/);
+  // The declaration is drawn as code: the name, then the type it is assigned.
+  const text = article.replace(/<[^>]+>/g, "").replace(/&#39;|&apos;/g, "'");
+  expect(text).toContain("Size = Literal['small', 'large']");
+  expect(text).toContain("How big a thing is.");
+});

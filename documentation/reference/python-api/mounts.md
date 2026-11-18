@@ -15,3 +15,15 @@ from vfs import MountPayload
 ```
 
 ::: vfs.MountPayload
+
+## Where a Path Lives
+
+`locate()` returns a `Location`, which names the mount that holds a path. `locate_edge()` returns an `EdgeLocation`, which does the same for the two ends of an edge.
+
+```python
+from vfs import EdgeLocation, Location
+```
+
+::: vfs.Location
+
+::: vfs.EdgeLocation

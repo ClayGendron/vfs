@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -142,9 +143,10 @@ def test_the_export_has_the_documented_shape(tmp_path: Path) -> None:
     term_keys = {"anchor", "summary", "types", "code", "documentation", "related"}
     assert all(set(term) == term_keys for term in exported["glossary"].values())
     thing = exported["objects"]["Thing"]
-    assert set(thing) == {"kind", "labels", "signature", "bases", "doc", "members"}
+    assert set(thing) == {"kind", "labels", "signature", "annotation", "value", "bases", "doc", "members"}
     assert thing["kind"] == "class"
     assert thing["signature"] == "(name: str, *, size: int = 0) -> None"
+    assert (thing["annotation"], thing["value"]) == (None, None)
     member_keys = {"name", "kind", "labels", "signature", "annotation", "value", "doc", "members"}
     assert all(set(member) == member_keys for member in thing["members"])
     zeta = thing["members"][0]
@@ -273,6 +275,194 @@ def test_a_class_only_a_module_lists_carries_its_own_members(tmp_path: Path) -> 
     thing = next(member for member in exported_too["things"]["members"] if member["name"] == "Thing")
     assert thing["members"] == []
     assert len(exported_too["Thing"]["members"]) == 5
+
+
+GEARS = '''
+"""A module of gears."""
+
+from typing import Literal, TypeVar
+
+T = TypeVar("T")
+
+Size = Literal["small", "large"]
+"""How big a gear is."""
+
+
+class Gear:
+    """A gear."""
+
+
+class Tooth:
+    """A tooth of a gear."""
+
+
+Part = Gear | Tooth
+"""A part of a machine."""
+'''
+
+FITTED = '''
+"""A module of things."""
+
+from pathlib import Path
+
+from pkg.gears import Gear, Size, T
+
+
+class Thing:
+    """A thing."""
+
+    spare: Gear | None = None
+
+    def __init__(self, gear: Gear) -> None:
+        self.gear = gear
+
+    def fit(self, where: Path, size: Size = "small") -> list[Gear]:
+        """Fit a gear."""
+        return []
+
+    def pick(self, item: T) -> T:
+        """Hand an item back."""
+        return item
+
+    def _grind(self, gear: Gear) -> None:
+        """Not for callers."""
+'''
+
+
+def _fitted_export(root: Path, *, names: tuple[str, ...]) -> dict[str, Any]:
+    """The export of a package whose ``Thing`` names two types of ``pkg.gears`` in its signatures."""
+    package = root / "src" / "pkg"
+    package.mkdir(parents=True)
+    modules = [name for name in names if name == "gears"]
+    gears = [name for name in names if name in ("Gear", "Size", "Part", "Tooth")]
+    imports = "from pkg.things import Thing\n"
+    imports += "from pkg import gears\n" if modules else ""
+    imports += f"from pkg.gears import {', '.join(gears)}\n" if gears else ""
+    (package / "__init__.py").write_text(f"{imports}\n__all__ = {list(names)!r}\n")
+    (package / "things.py").write_text(FITTED)
+    (package / "gears.py").write_text(GEARS)
+    blocks = "".join(f"\n::: pkg.{name}\n" for name in names)
+    documentation = _pages(root, {"things.md": f"# Things\n{blocks}"})
+    return docs_export.export(root / "src", documentation, package="pkg")
+
+
+def test_a_type_a_public_signature_names_is_exported(tmp_path: Path) -> None:
+    """A caller who reads a type on a reference page can import it; a private method's types are its own."""
+    with pytest.raises(docs_export.ExportError) as refusal:
+        _fitted_export(tmp_path / "neither", names=("Thing",))
+    message = str(refusal.value)
+    assert "pkg.gears.Gear" in message and "pkg.gears.Size" in message
+    assert "Thing.fit" in message and "Thing.spare" in message and "Thing.__init__" in message
+    assert "_grind" not in message and "Path" not in message
+    with pytest.raises(docs_export.ExportError, match=r"pkg\.gears\.Size") as refusal:
+        _fitted_export(tmp_path / "one", names=("Thing", "Gear"))
+    assert "pkg.gears.Gear" not in str(refusal.value)
+    assert set(_fitted_export(tmp_path / "both", names=("Thing", "Gear", "Size"))["objects"]) == {
+        "Thing",
+        "Gear",
+        "Size",
+    }
+
+
+def test_a_type_variable_is_not_a_type_to_export(tmp_path: Path) -> None:
+    """A type variable stands for the caller's own type, so a signature that names one names nothing to import."""
+    with pytest.raises(docs_export.ExportError) as refusal:
+        _fitted_export(tmp_path, names=("Thing",))
+    assert re.findall(r"(pkg\.gears\.\w+), named by", str(refusal.value)) == ["pkg.gears.Gear", "pkg.gears.Size"]
+
+
+def test_an_exported_type_alias_names_what_its_value_names(tmp_path: Path) -> None:
+    """An alias is its value: a caller who can import ``Part`` and not ``Tooth`` cannot build one."""
+    with pytest.raises(docs_export.ExportError, match=r"pkg\.gears\.Tooth, named by pkg\.Part"):
+        _fitted_export(tmp_path / "alias", names=("Thing", "Gear", "Size", "Part"))
+    whole = _fitted_export(tmp_path / "whole", names=("Thing", "Gear", "Size", "Part", "Tooth"))
+    assert set(whole["objects"]) == {"Thing", "Gear", "Size", "Part", "Tooth"}
+    part = whole["objects"]["Part"]
+    assert (part["kind"], part["annotation"], part["value"], part["doc"]) == (
+        "attribute",
+        None,
+        "Gear | Tooth",
+        "A part of a machine.",
+    )
+
+
+def test_a_type_an_exported_module_holds_is_public(tmp_path: Path) -> None:
+    """A module's page lists what the module defines, so its types can be imported from it."""
+    assert set(_fitted_export(tmp_path, names=("Thing", "gears"))["objects"]) == {"Thing", "gears"}
+
+
+KIT_PARTS = '''
+"""The parts of a kit."""
+
+
+class Bolt:
+    """A bolt."""
+
+    length: int = 1
+
+
+class Nut:
+    """A nut."""
+
+
+class Spare:
+    """A part the kit does not list."""
+'''
+
+KIT = '''
+"""A kit of parts."""
+
+from pkg.kit.parts import Bolt, Nut, Spare
+
+__all__ = ["Nut", "Bolt"]
+'''
+
+HOLDER = '''
+"""A module of things."""
+
+from pkg.kit import Bolt, Spare
+
+
+class Thing:
+    """A thing."""
+
+    def hold(self, bolt: Bolt) -> None:
+        """Hold a bolt."""
+'''
+
+KEEPS_A_SPARE = '''
+    def keep(self, spare: Spare) -> None:
+        """Keep a spare."""
+'''
+
+
+def _kit_export(root: Path, *, things: str = HOLDER) -> dict[str, Any]:
+    """The export of a package that exports ``Thing`` and ``kit``, a package that lists two of its three parts."""
+    package = root / "src" / "pkg"
+    (package / "kit").mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "from pkg import kit\nfrom pkg.things import Thing\n\n__all__ = ['Thing', 'kit']\n"
+    )
+    (package / "things.py").write_text(things)
+    (package / "kit" / "__init__.py").write_text(KIT)
+    (package / "kit" / "parts.py").write_text(KIT_PARTS)
+    documentation = _pages(root, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.kit\n"})
+    return docs_export.export(root / "src", documentation, package="pkg")
+
+
+def test_a_module_with_its_own_list_shows_that_list(tmp_path: Path) -> None:
+    """A package's ``__all__`` is what it offers: its page follows the re-exports, in the list's order."""
+    kit = _kit_export(tmp_path)["objects"]["kit"]
+    assert [member["name"] for member in kit["members"]] == ["Nut", "Bolt"]
+    bolt = kit["members"][1]
+    assert (bolt["kind"], bolt["doc"]) == ("class", "A bolt.")
+    assert [field["name"] for field in bolt["members"]] == ["length"]
+
+
+def test_a_type_a_module_does_not_list_is_not_reached_through_it(tmp_path: Path) -> None:
+    """A name under an exported package that the package leaves out of ``__all__`` is not public."""
+    with pytest.raises(docs_export.ExportError, match=r"pkg\.kit\.parts\.Spare, named by pkg\.Thing\.keep"):
+        _kit_export(tmp_path, things=HOLDER + KEEPS_A_SPARE)
 
 
 @pytest.mark.parametrize(

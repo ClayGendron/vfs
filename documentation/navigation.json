@@ -44,11 +44,15 @@
             "/reference/python-api/entry",
             "/reference/python-api/path",
             "/reference/python-api/sessions",
+            "/reference/python-api/operations",
             "/reference/python-api/results",
             "/reference/python-api/authority",
             "/reference/python-api/permissions",
             "/reference/python-api/mounts",
             "/reference/python-api/storage",
+            "/reference/python-api/ranking",
+            "/reference/python-api/embedding",
+            "/reference/python-api/rendering",
             "/reference/python-api/errors"
           ]
         },

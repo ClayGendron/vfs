@@ -36,6 +36,7 @@ _BrandedT = TypeVar("_BrandedT", bound=str)
 
 
 ObjectKind = Literal["file", "directory"]
+"""What an :term:`entry` is, a file or a directory."""
 
 MAX_PATH_LENGTH = 1024  # UTF-8 bytes (BSD/macOS PATH_MAX) — see Path docstring
 MAX_SEGMENT_LENGTH = 255  # UTF-8 bytes (POSIX NAME_MAX)

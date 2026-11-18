@@ -331,7 +331,7 @@ async function apiObject(name: string, context: Context): Promise<ApiObject> {
     symbol,
     labels: object.labels,
     bases: object.bases,
-    code: object.signature === null ? null : await declaration(name, object),
+    code: await declaration(name, object),
     doc: await docstring(object.doc, id),
     members,
   };
