@@ -77,6 +77,12 @@ Each of these calls also takes `authority=`, which names the caller making the c
 
 A caller with `Authority.system()` passes every check on this page. It stands for your own application code.
 
+The right to change a mount is kept by the storage above the mount, on the directory the mount is attached at. Three things follow.
+
+- **To add a mount, a caller must also be able to make its directory.** `add_mount` makes the directory with the caller's own `mkdir`. If the directory is already there, `read_write` at it is enough.
+- **Give the right before you add the mount, or on a directory above it.** Once a mount is at `/data`, `grant("/data", ...)` reaches the mounted storage. It no longer changes who may change the mount.
+- **Whoever may change a mount may replace what is at its path.** They can remove the mount and add another storage there. They can also change the mount's permissions in place.
+
 ## Callers with No Name
 
 A call made with no authority holds only what everyone holds. When that level does not allow the call, the error is "Unauthenticated".
