@@ -48,7 +48,7 @@ from vfs import Authority
 
 system = Authority.system()
 
-fs.posture("/", "none", authority=system)
+fs.set_posture("/", "none", authority=system)
 ```
 
 ```text
@@ -198,7 +198,7 @@ The write goes through. Her access to the finance folder has not changed.
 
 You closed a file system and opened it again for two people, one folder at a time.
 
-- `fs.posture` set what everyone gets by default. You set it to `none`.
+- `fs.set_posture` set what everyone gets by default. You set it to `none`.
 - `fs.grant` gave one person a level of access to one folder.
 - `fs.open_session` ran calls as a named person.
 

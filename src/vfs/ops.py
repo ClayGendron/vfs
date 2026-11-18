@@ -56,7 +56,7 @@ Op = Literal[
     "grant",
     "revoke",
     "grants",
-    "posture",
+    "set_posture",
     "add_member",
     "remove_member",
 ]
@@ -85,7 +85,7 @@ READ_OPS: Final[frozenset[Op]] = frozenset(
 EXEC_OPS: Final[frozenset[Op]] = frozenset({"run"})
 """Ops that execute a capability — not a namespace mutation, not a read."""
 
-GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "posture", "add_member", "remove_member"})
+GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "set_posture", "add_member", "remove_member"})
 """Ops over the grant and membership rows — who may see and write what."""
 
 GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
@@ -94,7 +94,7 @@ GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
 WRITE_GATED_OPS: Final[frozenset[Op]] = MUTATING_OPS | GRANT_WRITE_OPS
 """Every op a read-only mount refuses: the mutations and the grant writes."""
 
-DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "posture", "add_member", "remove_member"})
+DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "set_posture", "add_member", "remove_member"})
 """Developer-plane ops: never registered on any agent-facing tool surface
 (MCP serve, CLI) — Python-API only. Sweep destroys; agents only delete.
 Posture and group membership shape a whole mount's policy, so they stay
@@ -159,7 +159,7 @@ VERB_RUNGS: Final[dict[Op, Needs]] = {
     "rmedge": Needs("contribute", passing="list"),
     "grant": Needs("read_write"),
     "revoke": Needs("read_write"),
-    "posture": Needs("read_write"),
+    "set_posture": Needs("read_write"),
     "grants": Needs("read"),
     "run": Needs("read"),
     "sweep": Needs("read_write"),

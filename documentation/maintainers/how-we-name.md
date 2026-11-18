@@ -51,10 +51,9 @@ These names were decided on 2026-11-16 and are not changed in the code yet. This
 
 | Today | Under the rules | Why |
 |---|---|---|
-| `posture()` | `set_posture()` | It sets |
 | `StorageBackend`, `ObjectKind` are private | public | Public signatures name them |
 
-One test comes with the second row. **Every type named in a public signature is exported.** The docs export holds every public signature, so the rule can be checked from it.
+One test comes with this change. **Every type named in a public signature is exported.** The docs export holds every public signature, so the rule can be checked from it.
 
 ## How `Mount` is built
 

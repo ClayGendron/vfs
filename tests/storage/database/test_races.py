@@ -1144,7 +1144,7 @@ class TestLeaseFence:
                 holding.set()
                 stmt = update(tables.entry).where(tables.entry.c.entry_id == target).values(everyone_level=level)
                 await session.execute(stmt)
-                return Result(ops=("posture",))
+                return Result(ops=("set_posture",))
 
             real_flip = indexing._flip_flags
 
@@ -1152,7 +1152,7 @@ class TestLeaseFence:
                 await real_flip(session, *args, assignments=assignments, **stamp)
                 ours = _eligible(assignments) if phase == "chunk" else assignments == {"encoded": True}
                 if ours and not started:
-                    started.append(asyncio.create_task(writer._execute_topology("posture", relabel)))
+                    started.append(asyncio.create_task(writer._execute_topology("set_posture", relabel)))
                     await _arrived(holding, started[0])
                     if sessions:  # the relabel parked on the slice's row, holding whatever key it sought
                         await asyncio.wait_for(_lock_waiting(watcher, engine, sessions[0]), 30)
@@ -1898,7 +1898,7 @@ class TestRightsAtCommit:
                 rules.append(("/dst/c/d0", "none"))
                 rules += [(f"/dst/c/x{n:03}", "none") for n in range(99)]
                 for path, level in rules:
-                    assert (await storage.posture(path=Path(path), posture=level)).success is True
+                    assert (await storage.set_posture(path=Path(path), posture=level)).success is True
                 recorded: list[str] = []
                 counts: list[int] = []
                 listen = storage._host.engine.sync_engine
@@ -1929,7 +1929,7 @@ class TestRightsAtCommit:
                 return
             await dest_world(storage)
             if shape == "open-copy":
-                assert (await storage.posture(path=Path("/dst/c/sub"), posture="add")).success is True
+                assert (await storage.set_posture(path=Path("/dst/c/sub"), posture="add")).success is True
             before = await _liveness(storage)
             if shape == "move":
                 result = await storage.move(operations=pair, authority=EVE)
@@ -1986,7 +1986,7 @@ class TestRightsAtCommit:
             await label_world(storage)
             before = await _liveness(storage)
             seam_name = "write:before-apply" if verb == "write" else _TOPOLOGY_SEAMS[verb]
-            handler, rivals = _self_clearing(seam_name, lambda: storage.posture(path=Path("/p"), posture="read"))
+            handler, rivals = _self_clearing(seam_name, lambda: storage.set_posture(path=Path("/p"), posture="read"))
             with seams.installed(seam_name, handler):
                 if verb == "write":
                     result = await storage.write(entries=[Entry(path=Path("/p/new.txt"), content="n")], authority=EVE)
@@ -2023,7 +2023,9 @@ class TestRightsAtCommit:
             assert (await storage.add_member(group="group:eng", member="dave", authority=SYSTEM)).success is True
             change = _CHANGES[shape]
             second = sibling(env_var, storage)
-            handler, rivals = _self_clearing(seam, lambda: second.posture(path=Path(change.posture), posture="none"))
+            handler, rivals = _self_clearing(
+                seam, lambda: second.set_posture(path=Path(change.posture), posture="none")
+            )
             written = [Entry(path=Path(change.target), content="minted probe\n")]
             try:
                 with seams.installed(seam, handler):
@@ -2053,11 +2055,11 @@ class TestRightsAtCommit:
         """
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
-            assert (await storage.posture(path=Path("/p"), posture="none")).success is True
+            assert (await storage.set_posture(path=Path("/p"), posture="none")).success is True
             assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
             change = _CHANGES[shape]
             second = sibling(env_var, storage)
-            rival = partial(second.posture, path=Path(change.posture), posture="read_write")
+            rival = partial(second.set_posture, path=Path(change.posture), posture="read_write")
             handler, rivals = _self_clearing(seam, rival)
             written = [Entry(path=Path(change.target), content="minted probe\n")]
             try:
@@ -2088,11 +2090,11 @@ class TestRightsAtCommit:
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
             assert (await storage.mkdir(path=Path("/p/q"), authority=SYSTEM)).success is True
-            assert (await storage.posture(path=Path("/p/q"), posture=before)).success is True
+            assert (await storage.set_posture(path=Path("/p/q"), posture=before)).success is True
             assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
             assert (await storage.add_member(group="group:eng", member="dave", authority=SYSTEM)).success is True
             second = sibling(env_var, storage)
-            rival = partial(second.posture, path=Path("/p/q"), posture=after)
+            rival = partial(second.set_posture, path=Path("/p/q"), posture=after)
             handler, rivals = _self_clearing("transfer:after-postures", rival)
             pair = ResolvedPair(src=Path("/p/d"), dest=Path("/p/q/d"))
             try:
@@ -2116,7 +2118,7 @@ class TestRightsAtCommit:
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
             assert (await storage.delete(path=Path("/p/d/f.txt"), authority=SYSTEM)).success is True
-            assert (await storage.posture(path=Path("/p/d"), posture="none")).success is True
+            assert (await storage.set_posture(path=Path("/p/d"), posture="none")).success is True
             restored = await storage.restore(path=Path("/p/d/f.txt"), authority=SYSTEM)
             none = LEVEL_RANK["none"]
             assert await _minted_under_the_standing_posture(storage, restored, ("/p/d/f.txt",), "/p/d/f.txt", none)
@@ -2161,12 +2163,12 @@ class TestRightsAtCommit:
                 creates.append(asyncio.ensure_future(callers.delete(path=sibling_file, authority=BOB)))
                 returned.extend([await callers.read(path=existing, authority=r) for r in (None, BOB, CAROL, ANONYMOUS)])
                 still_waiting.append(not creates[-1].done())
-                return Result(ops=("posture",))
+                return Result(ops=("set_posture",))
 
             handler, _ = _self_clearing("posture:after-stamp", beside_the_open_posture_write)
             try:
                 with seams.installed("posture:after-stamp", handler):
-                    changed = await admin.posture(path=other.parent_dir, posture="read")
+                    changed = await admin.set_posture(path=other.parent_dir, posture="read")
                 *minted, deleted = await asyncio.gather(*creates)
             finally:
                 await admin.close()
@@ -2216,7 +2218,7 @@ class TestRightsAtCommit:
             async def admin() -> None:
                 for level in ("none", "read_write", "none"):
                     await asyncio.sleep(0)
-                    tally(await handles[writers].posture(path=Path("/p"), posture=level))
+                    tally(await handles[writers].set_posture(path=Path("/p"), posture=level))
 
             async def sweeper() -> None:
                 tally(await handles[writers + 1].sweep(path=Path("/.vfs/trash")))
@@ -2230,7 +2232,7 @@ class TestRightsAtCommit:
                     await handle.close()
             assert outcomes <= {(ErrorKind.conflict, True)}, outcomes
             # A posture call that lost a chunk leaves its mark for the next call; run what that call would.
-            assert (await storage._settled(Result(ops=("posture",)))).success is True
+            assert (await storage._settled(Result(ops=("set_posture",)))).success is True
             assert await _relabel_marks(storage) == 0
             entry = storage._host.tables.entry
             async with storage._host.session_factory() as session:
@@ -2265,8 +2267,8 @@ class TestRightsAtCommit:
         async with server_storage(env_var, posture="none") as storage:
             await dest_world(storage)
             assert (await storage.write(entries=[Entry(path=Path("/tmp/x"), kind="directory")], parents=True)).success
-            assert (await storage.posture(path=Path("/tmp"), posture="add")).success is True
-            assert (await storage.posture(path=Path("/dst/c/in/sub"), posture="none")).success is True
+            assert (await storage.set_posture(path=Path("/tmp"), posture="add")).success is True
+            assert (await storage.set_posture(path=Path("/dst/c/in/sub"), posture="none")).success is True
             second = sibling(env_var, storage)
             sessions = attempts(monkeypatch, storage)
             fired: list[int] = []

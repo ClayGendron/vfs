@@ -994,7 +994,7 @@ async def test_a_view_ancestor_root_leaks_nothing_under_either_posture_order(ver
     rows = [Entry(path=Path(f"/t/{name}"), content="needle") for name in ("a.py", "src/c.py")]
     assert (await fs.write(entries=rows, parents=True, authority=system)).success is True
     for path, level in postures.items():
-        assert (await fs.posture(path, level, authority=system)).success is True
+        assert (await fs.set_posture(path, level, authority=system)).success is True
     assert (await fs.delete(observations=[Observation(path=Path("/t"))], authority=system)).success is True
     composed = [composed_pattern(Path(_VIEW_ROOT), _VIEW_ARM)]
     judged = {address_of(path).stored for path in addressed_by(composed)}

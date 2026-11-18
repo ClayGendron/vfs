@@ -1663,7 +1663,7 @@ class AsyncVirtualFileSystem:
             return refusal
         return await self._route_grant("grants", path, authority=authority)
 
-    async def posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
+    async def set_posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
         """Set what everyone holds at *path* and below, named by the rung everyone holds.
 
         The posture words are the ladder's own: ``none`` gives everyone
@@ -1673,10 +1673,10 @@ class AsyncVirtualFileSystem:
         widen on top. The deepest posture covering a path decides it. A
         developer-plane verb: it reshapes a mount's policy.
         """
-        refusal = self._gate_params("posture", path=path, posture=posture, authority=authority)
+        refusal = self._gate_params("set_posture", path=path, posture=posture, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_grant("posture", path, posture=posture, authority=authority)
+        return await self._route_grant("set_posture", path, posture=posture, authority=authority)
 
     async def add_member(
         self,
@@ -2958,10 +2958,10 @@ class AsyncVirtualFileSystem:
                     if not isinstance(storage, SupportsGrants):
                         return self._backend_unsupported(op)
                     return await storage.grants(authority=authority, **kwargs)
-                case "posture":
+                case "set_posture":
                     if not isinstance(storage, SupportsGrants):
                         return self._backend_unsupported(op)
-                    return await storage.posture(authority=authority, **kwargs)
+                    return await storage.set_posture(authority=authority, **kwargs)
                 case "add_member":
                     if not isinstance(storage, SupportsGrants):
                         return self._backend_unsupported(op)

@@ -590,8 +590,8 @@ class VirtualFileSystem:
     def grants(self, path: str, *, authority: Authority | None = None) -> Result:
         return self._result("grants", self._fs.grants, path, authority=authority)
 
-    def posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
-        return self._result("posture", self._fs.posture, path, posture, authority=authority)
+    def set_posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
+        return self._result("set_posture", self._fs.set_posture, path, posture, authority=authority)
 
     def add_member(
         self,
@@ -1034,8 +1034,8 @@ class Session:
     def grants(self, path: str) -> Result:
         return self._result("grants", self._session.grants, path)
 
-    def posture(self, path: str, posture: Posture) -> Result:
-        return self._result("posture", self._session.posture, path, posture)
+    def set_posture(self, path: str, posture: Posture) -> Result:
+        return self._result("set_posture", self._session.set_posture, path, posture)
 
     def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
         return self._result("add_member", self._session.add_member, group, member, path=path)

@@ -578,8 +578,8 @@ class TestEndpointsAreJudged:
         await drop_world(storage)
         written = await storage.write(entries=[Entry(path=Path("/drop/h/pub/f.txt"), content="p")], parents=True)
         assert written.success is True
-        assert (await storage.posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
         if trashed:
             assert (await storage.delete(path=Path("/drop/h/pub"), authority=SYSTEM)).success is True
         sessions = attempts(monkeypatch, storage)

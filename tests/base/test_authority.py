@@ -49,7 +49,7 @@ CALLS: dict[Op, dict[str, Any]] = {
     "grant": {"path": "/d", "principal": "bob", "level": "read"},
     "revoke": {"path": "/d", "principal": "bob"},
     "grants": {"path": "/d"},
-    "posture": {"path": "/d", "posture": "read"},
+    "set_posture": {"path": "/d", "posture": "read"},
     "add_member": {"group": "group:eng", "member": "bob"},
     "remove_member": {"group": "group:eng", "member": "bob"},
 }

@@ -31,7 +31,7 @@ The table shows each call on a file that someone else created. "Yes" means the c
 | `write` over the file | Permission denied | Permission denied | Permission denied | Permission denied | Yes | Yes |
 | `edit` | Not found | Permission denied | Permission denied | Permission denied | Yes | Yes |
 | `delete`, `move`, `restore` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
-| `grant`, `revoke`, `posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
+| `grant`, `revoke`, `set_posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 | `sweep` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 
 `sweep` destroys a file for good, and `delete` moves it to the trash.
@@ -52,12 +52,12 @@ A level is given to a person, to a group, or to everyone.
 |---|---|---|
 | A person | `grant` | `fs.grant("/eng", "ada", "read")` |
 | A group | `grant` | `fs.grant("/eng", "group:eng", "read")` |
-| Everyone | `posture` | `fs.posture("/eng", "read")` |
+| Everyone | `set_posture` | `fs.set_posture("/eng", "read")` |
 
 Each of these calls also takes `authority=`, which names the caller making the change. [Who May Change Access](#who-may-change-access) says which callers are allowed.
 
 - **A group's name starts with `group:`.** `fs.add_member("group:eng", "ada", authority=Authority.system())` puts a person in a group, and `fs.remove_member` takes them out. A group may hold other groups, up to eight deep.
-- **`grant` accepts every level except `none`.** `posture` accepts all six.
+- **`grant` accepts every level except `none`.** `set_posture` accepts all six.
 - **`fs.grants(path)` lists the rows that decide access at a path.** Everyone appears in those rows as `*`.
 
 ## How a Caller's Level Is Decided
@@ -71,7 +71,7 @@ Each of these calls also takes `authority=`, which names the caller making the c
 
 | Call | Who may call it |
 |---|---|
-| `grant`, `revoke`, `posture` | A caller who holds `read_write` at the path and everything below it |
+| `grant`, `revoke`, `set_posture` | A caller who holds `read_write` at the path and everything below it |
 | `add_member`, `remove_member` | The system only |
 
 A caller with `Authority.system()` passes every check on this page. It stands for your own application code.

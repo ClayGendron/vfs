@@ -416,10 +416,10 @@ class AsyncSession:
             return refusal
         return await self._fs.grants(path, authority=self._authority)
 
-    async def posture(self, path: str, posture: Posture) -> Result:
-        if (refusal := self._refuse_closed("posture")) is not None:
+    async def set_posture(self, path: str, posture: Posture) -> Result:
+        if (refusal := self._refuse_closed("set_posture")) is not None:
             return refusal
-        return await self._fs.posture(path, posture, authority=self._authority)
+        return await self._fs.set_posture(path, posture, authority=self._authority)
 
     async def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
         if (refusal := self._refuse_closed("add_member")) is not None:

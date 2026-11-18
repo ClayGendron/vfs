@@ -380,7 +380,7 @@ class SupportsGrants(Protocol):
 
     A grant names a principal (a ``sub`` or a ``group:`` id), a path
     prefix, and a level — a rung of the ladder ``list < read < add <
-    contribute < read_write``; ``posture`` writes the everyone row that
+    contribute < read_write``; ``set_posture`` writes the everyone row that
     sets what a caller with no grant holds, named by the same rungs
     (``none`` included). Membership is mount-wide, so the
     membership verbs take no path. Answers ride as ``grants=`` and
@@ -412,7 +412,7 @@ class SupportsGrants(Protocol):
         authority: Authority | None = None,
     ) -> Result: ...
 
-    async def posture(
+    async def set_posture(
         self,
         *,
         path: Path,

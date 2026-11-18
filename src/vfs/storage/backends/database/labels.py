@@ -27,7 +27,7 @@ mark. While the mark stands, every reader compiles that posture row as a
 cover or a hole over the region (:func:`inflight_marks`,
 :func:`inflight_postures`), so the new posture is in force from the
 moment it is written and a relabel that dies leaves nothing wrong, only
-work for the next ``posture`` call to finish. The marks key every
+work for the next ``set_posture`` call to finish. The marks key every
 compile made while they stand: a mark carries the revision it was
 planted under, so clearing it retires those compiles and the ones made
 before it stand again — a settled relabel changed labels, not rights.

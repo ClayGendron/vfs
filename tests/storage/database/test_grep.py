@@ -1646,7 +1646,7 @@ class TestPushdownBindAccounting:
         folders = [f"/f{n:02}" for n in range(30)]
         docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
         assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
@@ -1710,7 +1710,7 @@ class TestPushdownBindAccounting:
         folders = [f"/f{n:03}" for n in range(400)]
         docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
         assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
@@ -1742,7 +1742,7 @@ class TestPushdownBindAccounting:
         folders = [f"/f{n:04}" for n in range(1_000)]
         docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
         assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors

@@ -374,7 +374,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", required=True, doc="list the grants on this path and its ancestors"),
         _AUTHORITY,
     ),
-    "posture": (
+    "set_posture": (
         ParamSpec("path", "path", required=True, doc="the prefix whose everyone row is set"),
         ParamSpec("posture", "str", required=True, choices=POSTURES, doc="what everyone holds there and below"),
         _AUTHORITY,

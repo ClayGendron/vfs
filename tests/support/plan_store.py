@@ -259,7 +259,7 @@ async def overlay_readings(storage: DatabaseStorage) -> OverlayPlans:
     so the scan tier runs for all three over exactly one row awaiting it.
     """
     system = Authority.system()
-    turned = await storage.posture(path=Path("/"), posture="none", authority=system)
+    turned = await storage.set_posture(path=Path("/"), posture="none", authority=system)
     assert turned.success is True, turned.errors
     readers = ((OVERLAY_READER, OVERLAY_ROOTS), (OVERLAY_HALF_READER, OVERLAY_HALF_ROOTS))
     for reader, roots in readers:

@@ -153,7 +153,7 @@ RIGHTS_FIELDS: Final[frozenset[str]] = frozenset({"owner_id", "everyone_level"})
 """The entry columns every row a view judges must carry beside its path."""
 
 RESERVED_PRINCIPALS: Final[frozenset[str]] = frozenset({EVERYONE_NAME, SYSTEM_NAME, ANONYMOUS_NAME})
-"""Ids no grant or membership may name: posture belongs to ``posture``,
+"""Ids no grant or membership may name: posture belongs to ``set_posture``,
 the system actor needs no grant, and anonymous holds only the posture."""
 
 # Pieces per owner-arm unit: each is at most two binds and one OR level deep.
@@ -1092,13 +1092,13 @@ async def set_posture(
     posture alone.
     """
     refusal = await _grant_refusal(
-        session, tables, profile, membership_budget, "posture", gate, path, None, "read_write", subtree=False
+        session, tables, profile, membership_budget, "set_posture", gate, path, None, "read_write", subtree=False
     )
     if refusal is not None:
-        return Result(ops=("posture",), errors=[refusal])
+        return Result(ops=("set_posture",), errors=[refusal])
     await open_relabel(session, tables, profile, str(path), revision)
     written = await _upsert_grant(session, tables, path, EVERYONE_NAME, posture, authority, revision)
-    return Result(ops=("posture",), grants=[written])
+    return Result(ops=("set_posture",), grants=[written])
 
 
 async def add_member_rows(

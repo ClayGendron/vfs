@@ -142,7 +142,7 @@ class DatabaseStorage:
     *posture* is what everyone holds at the root of a freshly provisioned
     mount — ``open``, ``shared`` or ``private``. It is planted once, at
     first touch: a mount that already exists keeps its stored posture,
-    and only the ``posture`` verb changes it.
+    and only the ``set_posture`` verb changes it.
     """
 
     def __init__(
@@ -1022,7 +1022,7 @@ class DatabaseStorage:
             ),
         )
 
-    async def posture(self, *, path: Path, posture: Posture, authority: Authority | None = None) -> Result:
+    async def set_posture(self, *, path: Path, posture: Posture, authority: Authority | None = None) -> Result:
         """Set what everyone holds at *path* and below, named by the rung: ``none`` up to ``read_write``.
 
         The posture row commits first and is in force from then on; the
@@ -1032,7 +1032,7 @@ class DatabaseStorage:
         rewritten, the statements and the transactions it took.
         """
         written = await self._grant_write(
-            "posture",
+            "set_posture",
             authority,
             lambda session, gate, who, revision: set_posture(
                 session,
@@ -1340,17 +1340,17 @@ class DatabaseStorage:
         async def chunk(session: AsyncSession) -> Result:
             nonlocal step
             step = await relabeller.step(session)
-            return Result(ops=("posture",))
+            return Result(ops=("set_posture",))
 
         while True:
-            outcome = await self._execute_maintenance("posture", chunk)
+            outcome = await self._execute_maintenance("set_posture", chunk)
             if not outcome.success:
-                return Result(ops=("posture",), grants=grants, errors=[*written.errors, *outcome.errors])
+                return Result(ops=("set_posture",), grants=grants, errors=[*written.errors, *outcome.errors])
             if step is None:
                 break
             done = done.plus(step)
             await seam("relabel:after-chunk")
-        return Result(ops=("posture",), grants=grants, errors=list(written.errors), relabel=done._asdict())
+        return Result(ops=("set_posture",), grants=grants, errors=list(written.errors), relabel=done._asdict())
 
     async def _execute(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
         """One op = one session under retry; failures come back classified.

@@ -267,7 +267,7 @@ def _pair(src: str, dest: str) -> list[ResolvedPair]:
 
 async def _postures(storage: DatabaseStorage, rows: list[tuple[str, Posture]]) -> None:
     for path, level in rows:
-        assert (await storage.posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
 
 
 async def _transfer(storage: DatabaseStorage, verb: str, pairs: list[ResolvedPair], who: Authority) -> Result:
@@ -389,7 +389,7 @@ class TestDestinationsAreJudged:
         for storage in stores:
             await dest_world(storage)
             if opening == "open":
-                assert (await storage.posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success
+                assert (await storage.set_posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success
             else:
                 granted = await storage.grant(path=Path("/dst/c/sub"), principal="eve", level="add", authority=SYSTEM)
                 assert granted.success is True
@@ -411,8 +411,8 @@ class TestDestinationsAreJudged:
         """
         storage = InMemoryStorage()
         await dest_world(storage)
-        assert (await storage.posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/dst/c/closed"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/dst/c/closed"), posture="none", authority=SYSTEM)).success is True
         sessions = attempts(monkeypatch, storage)
         seam_name = "transfer:post-snapshot" if verb == "copy" else "transfer:post-collect"
         act = clearing(seam_name, lambda: land(sessions[-1], storage._host.tables, "/src/closed", "eve", "read_write"))
@@ -426,8 +426,8 @@ class TestDestinationsAreJudged:
         storage = InMemoryStorage()
         await dest_world(storage)
         assert (await storage.write(entries=[Entry(path=Path("/tmp/x"), kind="directory")], parents=True)).success
-        assert (await storage.posture(path=Path("/tmp"), posture="add", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/dst/c/in/sub"), posture=sub, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/tmp"), posture="add", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/dst/c/in/sub"), posture=sub, authority=SYSTEM)).success is True
         return storage
 
     async def test_a_pair_whose_source_an_earlier_pair_grew_is_refused_in_place(self, monkeypatch) -> None:
@@ -454,7 +454,7 @@ class TestDestinationsAreJudged:
         it rewrote. Without them the second pair redrives into a conflict.
         """
         storage = await self._grown_world(sub="none")
-        assert (await storage.posture(path=Path("/tmp"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/tmp"), posture="read_write", authority=SYSTEM)).success is True
         sessions = attempts(monkeypatch, storage)
         result = await storage.move(operations=_GROWN, authority=EVE)
         assert len(sessions) == 1

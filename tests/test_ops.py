@@ -93,7 +93,7 @@ def test_expected_vocabulary() -> None:
                 "grant",
                 "revoke",
                 "grants",
-                "posture",
+                "set_posture",
                 "add_member",
                 "remove_member",
             },
@@ -211,7 +211,7 @@ def test_pruned_vocabularies_are_gone() -> None:
 
 
 def test_sweep_and_mount_policy_are_developer_plane_ops() -> None:
-    assert {"sweep", "posture", "add_member", "remove_member"} == DEVELOPER_OPS
+    assert {"sweep", "set_posture", "add_member", "remove_member"} == DEVELOPER_OPS
     assert DEVELOPER_OPS <= WRITE_GATED_OPS
     assert not DEVELOPER_OPS & READ_OPS
 

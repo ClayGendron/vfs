@@ -997,7 +997,7 @@ class TestPlannerStatistics:
         roots = [f"/d{index:05d}" for index in range(20)]
         reader = Authority.of(Principal("reader"))
         assert (await storage.rebuild()).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for root in roots:
             granted = await storage.grant(path=Path(root), principal="reader", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
@@ -1117,7 +1117,7 @@ class TestPlannerStatistics:
         await storage._host.settle_statistics()
         assert second["seen"] >= 1
         second["armed"] = False
-        postured = await storage.posture(path=Path("/p00000"), posture="read_write", authority=SYSTEM)
+        postured = await storage.set_posture(path=Path("/p00000"), posture="read_write", authority=SYSTEM)
         assert postured.success is True and len(_statistics_errors(postured)) == 1
         after_posture = await storage.write(entries=[Entry(path=Path("/two.txt"), content="x")])
         assert after_posture.success is True and _statistics_errors(after_posture) == []
