@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
     from vfs.authority import Authority
     from vfs.models import Edge, Entry, Observation
-    from vfs.ops import CaseMode, GrepOutputMode, Op
+    from vfs.ops import CaseMode, GrepOutputMode, Op, Rung
     from vfs.paths import ObjectKind, Path
     from vfs.pattern_matching import ScopeChannel
     from vfs.results import Result
@@ -433,6 +433,33 @@ class SupportsGrants(Protocol):
         *,
         group: str,
         member: str,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+
+HOLDS: Final = "holds"
+"""The name the rights question carries on its result. It is not a routed verb."""
+
+
+@runtime_checkable
+class SupportsHolds(Protocol):
+    """The rights question. A storage that keeps grants says whether a caller holds a level at a path.
+
+    ``holds`` reads and writes nothing. A successful result means the
+    caller holds *level* at *path*. A failed result says why it does not,
+    in the same words a verb would use. The path need not hold a row,
+    because a grant or a posture above it decides.
+
+    This is not a routed verb. A file system asks it before it changes a
+    :term:`mount`, so that a mount change needs ``read_write`` at the
+    mount point.
+    """
+
+    async def holds(
+        self,
+        *,
+        path: Path,
+        level: Rung,
         authority: Authority | None = None,
     ) -> Result: ...
 

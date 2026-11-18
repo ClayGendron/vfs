@@ -131,6 +131,9 @@ class RecorderStorage:
     async def set_posture(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("set_posture", kwargs, authority)
 
+    async def holds(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("holds", kwargs, authority)
+
     async def add_member(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("add_member", kwargs, authority)
 

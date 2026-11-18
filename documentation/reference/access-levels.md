@@ -73,6 +73,7 @@ Each of these calls also takes `authority=`, which names the caller making the c
 |---|---|
 | `grant`, `revoke`, `set_posture` | A caller who holds `read_write` at the path and everything below it |
 | `add_member`, `remove_member` | The system only |
+| `add_mount`, `remove_mount`, `update_mount` | A caller who holds `read_write` at the path of the mount |
 
 A caller with `Authority.system()` passes every check on this page. It stands for your own application code.
 

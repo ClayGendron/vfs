@@ -77,7 +77,6 @@ from vfs.storage.backends.database.rights import (
     add_member_rows,
     denied,
     grant_rows,
-    list_grants,
     posture_chain,
     posture_refusals,
     posture_wall_refusal,
@@ -87,13 +86,14 @@ from vfs.storage.backends.database.rights import (
     set_posture,
     unauthenticated_refusals,
 )
+from vfs.storage.backends.database.rights_reads import held, listed_grants
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.search import VectorLeg, search_rows
 from vfs.storage.backends.database.topology import transfer_rows
 from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
 from vfs.storage.backends.database.traverse import GraphRequest, Site, traverse_rows
 from vfs.storage.backends.database.writes import edit_rows, measured_entries, mkdir_rows, write_rows
-from vfs.storage.protocol import storage_ops, targets_of
+from vfs.storage.protocol import HOLDS, storage_ops, targets_of
 from vfs.storage.ranking import Ranker
 
 if TYPE_CHECKING:
@@ -1052,18 +1052,13 @@ class DatabaseStorage:
 
     async def grants(self, *, path: Path, authority: Authority | None = None) -> Result:
         """The grant rows on *path* and its ancestors this authority may see."""
-        host = self._host
         who = self._named(authority)
+        return await self._execute("grants", lambda session: listed_grants(session, self._host, self._gate, who, path))
 
-        async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, who, VERB_RUNGS["grants"])
-            if isinstance(gate, ResultError):
-                return Result(ops=("grants",), errors=[gate])
-            return await list_grants(
-                session, host.tables, host.profile, host.membership_budget, gate, path=path, authority=who
-            )
-
-        return await self._execute("grants", run)
+    async def holds(self, *, path: Path, level: Rung, authority: Authority | None = None) -> Result:
+        """Whether *authority* holds *level* at *path*. It writes nothing, and a failed result says why not."""
+        who = self._named(authority)
+        return await self._execute(HOLDS, lambda session: held(session, self._host, self._gate, who, path, level))
 
     async def add_member(self, *, group: str, member: str, authority: Authority | None = None) -> Result:
         """Make *member* a direct member of *group* — the system actor only."""

@@ -36,6 +36,7 @@ from vfs.storage import (
     StorageBackend,
     SupportsClose,
     SupportsGrants,
+    SupportsHolds,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
@@ -109,6 +110,7 @@ class GrantsBackend(
     SupportsRankedSearch,
     SupportsMutation,
     SupportsGrants,
+    SupportsHolds,
     SupportsClose,
     Protocol,
 ):
@@ -864,6 +866,25 @@ class GrantsContract:
         # ``none`` narrows only a posture row; storage refuses it on a principal's.
         level = await storage.grant(path=Path("/eng"), principal="bob", level="none", authority=SYSTEM)
         assert _kind(level) == ErrorKind.invalid
+
+    @needs("grant", "set_posture")
+    async def test_holds_says_whether_a_caller_holds_a_level_at_a_path(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        # carol holds read_write on /pub/deep, and a path with no row beneath it is judged by the same grant.
+        for path in ("/pub/deep", "/pub/deep/not-there-yet"):
+            assert (await storage.holds(path=Path(path), level="read_write", authority=CAROL)).success is True
+        assert (await storage.holds(path=Path("/anywhere"), level="read_write", authority=SYSTEM)).success is True
+        # bob reads /pub. He holds read there, is denied read_write, and cannot be told that /eng exists.
+        assert (await storage.holds(path=Path("/pub"), level="read", authority=BOB)).success is True
+        denied = await storage.holds(path=Path("/pub"), level="read_write", authority=BOB)
+        assert _kind(denied) == ErrorKind.permission_denied
+        assert denied.errors[0].path == Path("/pub")
+        assert _kind(await storage.holds(path=Path("/eng"), level="read_write", authority=BOB)) == ErrorKind.not_found
+        unnamed = await storage.holds(path=Path("/pub"), level="read", authority=ANON)
+        assert _kind(unnamed) == ErrorKind.unauthenticated
+        # Asking is a read: the grant rows are as the world left them.
+        listed = await storage.grants(path=Path("/pub/deep"), authority=SYSTEM)
+        assert {row["principal_id"] for row in _granted(listed)} == {"*", "ann", "bob", "carol"}
 
     @needs("grant", "revoke")
     async def test_revoking_a_missing_grant_is_a_warning(self, storage: GrantsBackend) -> None:

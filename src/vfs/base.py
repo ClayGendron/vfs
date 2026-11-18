@@ -58,9 +58,10 @@ from vfs.models import (
     measure_bytes,
     measure_text,
 )
-from vfs.mounts import Mount
+from vfs.mounts import EdgeLocation, Location, Mount
 from vfs.offload import call_offloaded, judge_rows, offload_pool, wall_truncation
 from vfs.ops import (
+    GRANT_OPS,
     MUTATING_OPS,
     READ_OPS,
     TRAVERSE_DEPTH_DEFAULT,
@@ -91,10 +92,12 @@ from vfs.results import ErrorKind, Result, ResultError, classified, validation_m
 from vfs.results.kinds import TRASHED_KEY, Severity, kind_family
 from vfs.session import AsyncSession
 from vfs.storage import (
+    HOLDS,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
     SupportsGrants,
+    SupportsHolds,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
@@ -137,43 +140,6 @@ _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 # A call that names nobody runs as the named nobody: it holds only what a
 # mount's posture gives everyone, and the audit still has an actor.
 _ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
-
-
-class Location(NamedTuple):
-    """One :meth:`AsyncVirtualFileSystem.locate` row — where a path lives, JSON-native.
-
-    A mount-table fact: the mount that owns *path* by longest prefix
-    and the path in that storage's own coordinates. The three trailing
-    fields are the optional storage probe: ``exists`` and ``kind`` are
-    ``None`` when the probe was not asked for, or when the storage could
-    not answer — ``note`` then carries its message. Nothing here says
-    whether a verb would accept the path.
-    """
-
-    path: str
-    mount: str
-    storage_name: str
-    storage_type: str
-    storage_path: str
-    exists: bool | None = None
-    kind: str | None = None
-    note: str | None = None
-
-
-class EdgeLocation(NamedTuple):
-    """One :meth:`AsyncVirtualFileSystem.locate_edge` row — two locations and the verdict.
-
-    ``same_storage`` is the test ``mkedge`` applies before it dispatches:
-    both endpoints on one mount. ``reason`` is a sentence for a person
-    naming the first blocker — the boundary, or with the probe an
-    endpoint that does not exist — never a classified error; ``None``
-    means nothing found stands in the edge's way.
-    """
-
-    source: Location
-    target: Location
-    same_storage: bool
-    reason: str | None
 
 
 class ResolvedTerminal(NamedTuple):
@@ -354,8 +320,14 @@ class AsyncVirtualFileSystem:
         deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
+        authority: Authority | None = None,
     ) -> None:
         """Attach *storage* at *path* as a :term:`mount`, making the mount-point directory when it is absent.
+
+        The caller must hold ``read_write`` at the mount point, and the
+        storage that holds the mount point says whether it does. *authority*
+        names the caller. With none, the caller is the file system's default
+        authority, or else the anonymous caller, as for any verb.
 
         The mount point is an **empty directory** in the storage owning
         the parent path.  It is created when absent (an ordinary gated
@@ -393,6 +365,7 @@ class AsyncVirtualFileSystem:
         mount_path = self._normalize_mount_path(mount_name)
         # Validated before the mkdir — a rejected mask must not mint the site.
         mask = self._validate_deny_ops(deny_ops)
+        await self._require_mount_rights("mount at", mount_path, authority)
 
         made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=_ADMIN_AUTHORITY)
         if not made.success and _is_tombstoned_site(made, mount_path):
@@ -405,8 +378,11 @@ class AsyncVirtualFileSystem:
             storage, str(mount_path), permissions=permissions, deny_ops=mask, no_overlay=no_overlay, owned=owned
         )
 
-    async def remove_mount(self, path: str) -> Mount:
+    async def remove_mount(self, path: str, *, authority: Authority | None = None) -> Mount:
         """Detach the :term:`mount` at *path*, remove its directory, and return the mount.
+
+        The caller must hold ``read_write`` at the mount point, as for
+        :meth:`add_mount`, and nothing changes when it does not.
 
         Removing a mount is a write at its mount point: it is refused,
         and the mount stays, where the mount above would refuse a
@@ -428,6 +404,8 @@ class AsyncVirtualFileSystem:
         caller can close the one it owns.
         """
         mount_path = self._normalize_mount_path(path)
+        self._require_mount(mount_path)
+        await self._require_mount_rights("unmount", mount_path, authority)
         mount = await self._detach_mount(str(mount_path))
         removed = await self.delete(path=str(mount_path), cascade=False, authority=_ADMIN_AUTHORITY)
         if not removed.success:
@@ -444,8 +422,12 @@ class AsyncVirtualFileSystem:
         deny_ops: Iterable[Op] | None = None,
         no_overlay: bool | None = None,
         refresh_caps: bool = False,
+        authority: Authority | None = None,
     ) -> None:
-        """Change the policy of the :term:`mount` at *path* in place — atomic, no I/O.
+        """Change the policy of the :term:`mount` at *path* in place.
+
+        The caller must hold ``read_write`` at the mount point, as for
+        :meth:`add_mount`. The storage of ``/`` judges for the root mount.
 
         ``None`` means "leave unchanged" everywhere — so ``deny_ops=()``
         (clear the mask) is distinct from ``deny_ops=None`` (keep it), and
@@ -474,24 +456,18 @@ class AsyncVirtualFileSystem:
         mount_path = self._normalize_mount_path(path, allow_root=True)
         mask = None if deny_ops is None else self._validate_deny_ops(deny_ops)
         new_map = None if permissions is None else coerce_permissions(permissions)
+        self._require_mount(mount_path)
+        await self._require_mount_rights("update the mount at", mount_path, authority)
 
-        # The one storage call, taken outside the lock (capabilities() is
-        # synchronous per protocol — "outside" means before acquiring).
+        # The one call to the mount's storage, taken before the lock is acquired.
         fresh_caps: frozenset[str] | None = None
         probed_storage: StorageBackend | None = None
         if refresh_caps:
-            probing = self._mounts.get(mount_path)
-            if probing is None:
-                msg = f"No mount at: {mount_path!r}"
-                raise ValueError(msg)
-            probed_storage = probing.storage
+            probed_storage = self._require_mount(mount_path).storage
             fresh_caps = frozenset(probed_storage.capabilities())
 
         async with self._mount_lock:
-            mount = self._mounts.get(mount_path)
-            if mount is None:
-                msg = f"No mount at: {mount_path!r}"
-                raise ValueError(msg)
+            mount = self._require_mount(mount_path)
             if probed_storage is not None and mount.storage is not probed_storage:
                 msg = f"Mount at {mount_path} changed while it was being updated — retry"
                 raise ValueError(msg)
@@ -730,10 +706,7 @@ class AsyncVirtualFileSystem:
         """
         mount_path = self._normalize_mount_path(path)
         async with self._mount_lock:
-            mount = self._mounts.get(mount_path)
-            if mount is None:
-                msg = f"No mount at: {mount_path!r}"
-                raise ValueError(msg)
+            mount = self._require_mount(mount_path)
             deeper = [p for p in self._sorted_mount_paths if p.startswith(mount_path + "/")]
             if deeper:
                 msg = f"Cannot unmount {mount_path}: deeper mounts exist at {', '.join(map(str, deeper))}"
@@ -2768,7 +2741,7 @@ class AsyncVirtualFileSystem:
         it, never its own site.  No storage I/O; the caller holds the
         mount lock and has refused a closed table.
         """
-        owner = next(self._mounts[p] for p in self._sorted_mount_paths if p == ROOT or mount_path.startswith(p + "/"))
+        owner = self._mount_point_owner(mount_path)
         if op not in owner.caps:
             return self._error(
                 ErrorKind.unsupported,
@@ -2778,6 +2751,47 @@ class AsyncVirtualFileSystem:
             )
         above = [layer for layer in self._permission_layers(mount_path) if layer.mount_prefix != mount_path]
         return check_writable_composed(above, op)
+
+    def _require_mount(self, mount_path: Path) -> Mount:
+        """The mount at *mount_path*, or a ``ValueError`` when there is none."""
+        mount = self._mounts.get(mount_path)
+        if mount is None:
+            msg = f"No mount at: {mount_path!r}"
+            raise ValueError(msg)
+        return mount
+
+    def _mount_point_owner(self, mount_path: Path) -> Mount:
+        """The mount whose storage holds the directory at *mount_path*. The root mount holds its own."""
+        return next(self._mounts[p] for p in self._sorted_mount_paths if p == ROOT or mount_path.startswith(p + "/"))
+
+    async def _require_mount_rights(self, change: str, mount_path: Path, authority: Authority | None) -> None:
+        """Raise unless the caller holds ``read_write`` at the mount point at *mount_path*.
+
+        The storage that holds the mount point judges. The system actor
+        holds every level, so no storage is asked for it. A storage that
+        declares no grant verb keeps no rights to go around, and one that
+        keeps grants and cannot answer refuses. This is storage I/O, so it
+        runs before the mount lock is taken and before anything changes.
+        """
+        who = self._admitted(authority)
+        if who.is_system or not self._mounts:
+            return
+        owner = self._mount_point_owner(mount_path)
+        storage, refusal = owner.storage, None
+        if isinstance(storage, SupportsHolds):
+            rel = mount_path.without_mount(owner.path)
+            try:
+                answer = await storage.holds(path=rel, level="read_write", authority=who)
+            except TransportError as exc:
+                detail = f"the transport failed: {exc}"
+                answer = self._error(ErrorKind.backend_unavailable, op=HOLDS, path=ROOT, detail=detail)
+            refusal = None if answer.success else answer.with_mount(owner.path)
+        elif owner.declared_caps & GRANT_OPS:
+            detail = "the storage that holds the mount point keeps grants and cannot say what the caller holds"
+            refusal = self._error(ErrorKind.unsupported, op=HOLDS, path=owner.path, detail=detail)
+        if refusal is not None:
+            msg = f"Cannot {change} {mount_path}: {refusal.error_message}"
+            raise MountError(msg, result=refusal)
 
     def _busy_guard(self, op: Op, full: Path, *, subtree: bool) -> Result | None:
         """Refuse a data-plane mutation that targets a live mount site.

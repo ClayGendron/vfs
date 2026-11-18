@@ -2,7 +2,7 @@ from importlib.metadata import version
 
 from vfs import embedding, permissions, rendering, rerank
 from vfs.authority import Authority, Narrowing, Principal, PrincipalKind, Provenance
-from vfs.base import AsyncVirtualFileSystem, EdgeLocation, Location
+from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import (
     MountError,
     NotFoundError,
@@ -12,7 +12,7 @@ from vfs.exceptions import (
     WriteConflictError,
 )
 from vfs.models import ContentHash, Edge, Entry, Match, Observation, RenderStatus, Source
-from vfs.mounts import Mount, MountPayload
+from vfs.mounts import EdgeLocation, Location, Mount, MountPayload
 from vfs.ops import CaseMode, GrepOutputMode, Op, Rung, TwoPathOperation
 from vfs.paths import ObjectKind, Path
 from vfs.pattern_matching import ScopeChannel

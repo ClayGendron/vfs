@@ -42,9 +42,8 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from vfs.authority import Authority
-    from vfs.base import EdgeLocation, Location
     from vfs.models import Edge, Entry, Observation
-    from vfs.mounts import Mount
+    from vfs.mounts import EdgeLocation, Location, Mount
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.permissions import Permission, PermissionMap
@@ -196,6 +195,7 @@ class VirtualFileSystem:
         deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
+        authority: Authority | None = None,
     ) -> None:
         return self._await(
             "add_mount",
@@ -207,10 +207,11 @@ class VirtualFileSystem:
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             owned=owned,
+            authority=authority,
         )
 
-    def remove_mount(self, path: str) -> Mount:
-        return self._await("remove_mount", self._fs.remove_mount, path)
+    def remove_mount(self, path: str, *, authority: Authority | None = None) -> Mount:
+        return self._await("remove_mount", self._fs.remove_mount, path, authority=authority)
 
     def update_mount(
         self,
@@ -220,6 +221,7 @@ class VirtualFileSystem:
         deny_ops: Iterable[Op] | None = None,
         no_overlay: bool | None = None,
         refresh_caps: bool = False,
+        authority: Authority | None = None,
     ) -> None:
         return self._await(
             "update_mount",
@@ -229,6 +231,7 @@ class VirtualFileSystem:
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             refresh_caps=refresh_caps,
+            authority=authority,
         )
 
     def mounts(self) -> tuple[Mount, ...]:

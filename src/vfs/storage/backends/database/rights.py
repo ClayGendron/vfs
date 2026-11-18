@@ -953,6 +953,49 @@ class WriteGate:
 # ---------------------------------------------------------------------------
 
 
+async def grant_refusal(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    op: str,
+    gate: WriteGate,
+    path: Path,
+    principal: str | None,
+    level: GrantLevel,
+    *,
+    subtree: bool,
+) -> ResultError | None:
+    """The shared gate of the grant verbs: a lawful principal and level, and the gate's rung on *path*.
+
+    *path* need not hold a row, so its everyone level comes from the
+    posture rows on its chain, as a creation's does; anonymous is judged
+    there too. With *subtree* (grant and revoke, whose row reaches every
+    path beneath), an everyone row beneath *path* narrower than the rung
+    refuses unless the caller's own spans cover it; a posture changes
+    labels only down to the next deeper everyone row, so it is judged at
+    *path* alone.
+    """
+    if principal is not None and not _lawful_principal(principal):
+        return classified(ErrorKind.invalid, detail=f"{op}: {principal!r} is not a grantable principal id")
+    if level not in GRANTABLE_LEVELS and principal is not None:
+        lawful = ", ".join(repr(rung) for rung in GRANTABLE_LEVELS)
+        return classified(ErrorKind.invalid, detail=f"{op}: level must be one of {lawful}")
+    postures = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(str(path)))
+    label = label_of(postures, str(path))
+    refusal = unauthenticated_at(gate.authority, postures, str(path), gate.needs.primary)
+    if refusal is not None:
+        return refusal
+    rights = gate.resolution.at(gate.needs.primary)
+    if rights.reaches(str(path), label):
+        if subtree and await _hole_beneath(session, tables, rights, path):
+            return denied(path)
+        return None
+    if gate.resolution.at("list").reaches(str(path), label):
+        return denied(path)
+    return classified(ErrorKind.not_found, path)
+
+
 async def grant_rows(
     session: AsyncSession,
     tables: VFSTables,
@@ -975,7 +1018,7 @@ async def grant_rows(
     what it holds is what the committed rows say now. The stamp retires
     every cached compile *principal* is a subject or a group of.
     """
-    refusal = await _grant_refusal(
+    refusal = await grant_refusal(
         session, tables, profile, membership_budget, "grant", gate, path, principal, level, subtree=True
     )
     if refusal is not None:
@@ -1004,7 +1047,7 @@ async def revoke_rows(
     parity: the gate already judged it.
     """
     del authority
-    refusal = await _grant_refusal(
+    refusal = await grant_refusal(
         session, tables, profile, membership_budget, "revoke", gate, path, principal, "read", subtree=True
     )
     if refusal is not None:
@@ -1091,7 +1134,7 @@ async def set_posture(
     everyone principal is stamped, for the caller that holds the
     posture alone.
     """
-    refusal = await _grant_refusal(
+    refusal = await grant_refusal(
         session, tables, profile, membership_budget, "set_posture", gate, path, None, "read_write", subtree=False
     )
     if refusal is not None:
@@ -1366,49 +1409,6 @@ async def _beneath(
             )
             hits.update((await session.execute(stmt)).scalars())
     return hits
-
-
-async def _grant_refusal(
-    session: AsyncSession,
-    tables: VFSTables,
-    profile: DialectProfile,
-    membership_budget: int,
-    op: str,
-    gate: WriteGate,
-    path: Path,
-    principal: str | None,
-    level: GrantLevel,
-    *,
-    subtree: bool,
-) -> ResultError | None:
-    """The shared gate of the grant verbs: a lawful principal and level, and ``read_write`` on *path*.
-
-    *path* need not hold a row, so its everyone level comes from the
-    posture rows on its chain, as a creation's does; anonymous is judged
-    there too. With *subtree* (grant and revoke, whose row reaches every
-    path beneath), an everyone row beneath *path* narrower than the rung
-    refuses unless the caller's own spans cover it; a posture changes
-    labels only down to the next deeper everyone row, so it is judged at
-    *path* alone.
-    """
-    if principal is not None and not _lawful_principal(principal):
-        return classified(ErrorKind.invalid, detail=f"{op}: {principal!r} is not a grantable principal id")
-    if level not in GRANTABLE_LEVELS and principal is not None:
-        lawful = ", ".join(repr(rung) for rung in GRANTABLE_LEVELS)
-        return classified(ErrorKind.invalid, detail=f"{op}: level must be one of {lawful}")
-    postures = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(str(path)))
-    label = label_of(postures, str(path))
-    refusal = unauthenticated_at(gate.authority, postures, str(path), gate.needs.primary)
-    if refusal is not None:
-        return refusal
-    rights = gate.resolution.at(gate.needs.primary)
-    if rights.reaches(str(path), label):
-        if subtree and await _hole_beneath(session, tables, rights, path):
-            return denied(path)
-        return None
-    if gate.resolution.at("list").reaches(str(path), label):
-        return denied(path)
-    return classified(ErrorKind.not_found, path)
 
 
 async def _hole_beneath(session: AsyncSession, tables: VFSTables, rights: Rights, path: Path) -> bool:

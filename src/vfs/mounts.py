@@ -12,7 +12,7 @@ attached at, the root included, and hands the same objects back from
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 if TYPE_CHECKING:
     from vfs.paths import Path
@@ -98,3 +98,45 @@ class Mount:
             no_overlay=self.no_overlay,
             owned=self.owned,
         )
+
+
+# ---------------------------------------------------------------------------
+# Where a path lives
+# ---------------------------------------------------------------------------
+
+
+class Location(NamedTuple):
+    """Where a path lives, as ``locate`` reports it. Every field is JSON-native.
+
+    *mount* is the path of the :term:`mount` that holds *path*, the
+    deepest one at or above it, and *storage_path* is the same path as
+    that storage sees it. The last three fields are filled only when the
+    storage was asked. ``exists`` and ``kind`` are ``None`` when it was
+    not asked or could not answer, and ``note`` then carries its message.
+    Nothing here says whether a verb would accept the path.
+    """
+
+    path: str
+    mount: str
+    storage_name: str
+    storage_type: str
+    storage_path: str
+    exists: bool | None = None
+    kind: str | None = None
+    note: str | None = None
+
+
+class EdgeLocation(NamedTuple):
+    """Where the two ends of an edge live, as ``locate_edge`` reports it.
+
+    ``same_storage`` is the test ``mkedge`` applies before it dispatches.
+    An edge never crosses from one :term:`mount` to another. ``reason`` is
+    a sentence for a person that names the first thing in the edge's way,
+    and it is never a classified error. ``None`` means nothing was found
+    in the way.
+    """
+
+    source: Location
+    target: Location
+    same_storage: bool
+    reason: str | None
