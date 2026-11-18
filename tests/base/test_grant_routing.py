@@ -48,7 +48,7 @@ async def fs() -> AsyncIterator[AsyncVirtualFileSystem]:
 async def test_a_grant_reaches_its_mount_with_the_storage_local_path() -> None:
     fs = RecorderFS(storage=BindableStorage())
     await fs.add_mount(RecorderStorage(name="child"), "/m")
-    child = fs._bindings[Path("/m")].storage
+    child = fs._mounts[Path("/m")].storage
     assert isinstance(child, RecorderStorage)
     await fs.grant("/m/eng", "bob", "read")
     assert child.calls[-1] == ("grant", {"path": "/eng", "principal": "bob", "level": "read"})
@@ -87,7 +87,7 @@ async def test_the_grant_takes_effect_for_the_next_routed_read(fs: AsyncVirtualF
 
 
 async def test_a_read_only_mount_refuses_grant_writes_but_lists(fs: AsyncVirtualFileSystem) -> None:
-    await fs.remount("/m", permissions="read")
+    await fs.update_mount("/m", permissions="read")
     for refused in (
         await fs.grant("/m/eng", "ann", "read"),
         await fs.revoke("/m/eng", "ann"),

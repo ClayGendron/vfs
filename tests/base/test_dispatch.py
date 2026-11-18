@@ -1367,8 +1367,8 @@ async def test_every_guarded_funnel_arm_backstops_a_missing_family(op: str) -> N
             return ALL_OPS
 
     fs = AsyncVirtualFileSystem(storage=OverclaimingStorage())
-    binding = fs._bindings[Path("/")]
-    result = await fs._call_storage(binding, op)  # ty: ignore[invalid-argument-type]
+    mount = fs._mounts[Path("/")]
+    result = await fs._call_storage(mount, op)  # ty: ignore[invalid-argument-type]
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.unsupported
     assert result.op == op
@@ -1385,9 +1385,9 @@ async def test_funnel_fails_loud_on_an_unknown_op() -> None:
     # A string outside the Op vocabulary is a router bug: assert_never
     # raises rather than guessing a dispatch.
     fs = AsyncVirtualFileSystem()
-    binding = fs._bindings[Path("/")]
+    mount = fs._mounts[Path("/")]
     with pytest.raises(AssertionError):
-        await fs._call_storage(binding, "bogus")  # ty: ignore[invalid-argument-type]
+        await fs._call_storage(mount, "bogus")  # ty: ignore[invalid-argument-type]
 
 
 async def test_route_single_requires_exactly_one_input() -> None:

@@ -6,7 +6,7 @@ funnel with ``authority=`` filled in, so a session-mediated call and the
 direct call with the same authority return the same result — there is no
 second dispatch path. The session is sugar; the funnel is the gate.
 
-    async with vfs.session(Authority.of(Principal("alice"))) as s:
+    async with vfs.open_session(Authority.of(Principal("alice"))) as s:
         result = await s.read("/reports/q2.md")      # no identity argument
 
 Closed is final: a verb on a closed session refuses with a structured

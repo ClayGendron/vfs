@@ -2,7 +2,7 @@ from importlib.metadata import version
 
 from vfs import permissions
 from vfs.authority import Authority, Principal
-from vfs.base import AsyncVirtualFileSystem, MountInfo
+from vfs.base import AsyncVirtualFileSystem, Mount, MountPayload
 from vfs.exceptions import (
     MountError,
     NotFoundError,
@@ -30,8 +30,9 @@ __all__ = [
     "DatabaseStorage",
     "Entry",
     "InMemoryStorage",
+    "Mount",
     "MountError",
-    "MountInfo",
+    "MountPayload",
     "NotFoundError",
     "Path",
     "PermissionMap",

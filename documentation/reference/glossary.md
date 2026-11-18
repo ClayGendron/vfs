@@ -36,4 +36,4 @@ The path a [mount](#mount) is attached at is an entry too. It is an empty direct
 
 A mount is a storage backend attached at a path in the file tree. **Every path belongs to exactly one mount, the deepest one at or above it.** With one mount at `/` and one at `/projects`, the path `/projects/app/main.py` belongs to the mount at `/projects`.
 
-A mount added with `fs.bind()` is attached at an [entry](#entry), an empty directory that must exist first. **The directory is stored. The mount is not.** The mount lasts only while the file system is open, and `fs.unbind()` leaves the directory in place.
+A mount is attached at an [entry](#entry), an empty directory. `fs.add_mount()` makes that directory when it is absent. **The directory is stored. The mount is not.** The mount lasts only while the file system is open. `fs.remove_mount()` removes the mount and then its directory.

@@ -35,7 +35,8 @@ Every name that `import vfs` makes public, grouped by what it is for. Each one l
 
 ## Mounts
 
-- [`MountInfo`](mounts.md#vfs.MountInfo): one row of what `mounts()` returns.
+- [`Mount`](mounts.md#vfs.Mount): one storage backend attached at one path.
+- [`MountPayload`](mounts.md#vfs.MountPayload): the JSON form of a `Mount`.
 
 ## Storage
 

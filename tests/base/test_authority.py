@@ -19,6 +19,7 @@ from vfs.ops import ALL_OPS, Op
 from vfs.results import ErrorKind, Result
 from vfs.session import AsyncSession
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.sync import Session
 
 ALICE = Authority.of(Principal("alice"))
 SYSTEM = Authority.system()
@@ -185,7 +186,7 @@ async def test_a_session_verb_is_the_direct_call_with_the_authority_filled_in(op
     direct = AsyncVirtualFileSystem(storage=direct_storage)
     routed = AsyncVirtualFileSystem(storage=session_storage)
     expected = await getattr(direct, op)(**CALLS[op], authority=ALICE)
-    async with routed.session(ALICE) as s:
+    async with routed.open_session(ALICE) as s:
         assert s.authority == ALICE and s.closed is False
         result = await getattr(s, op)(**CALLS[op])
     assert result == expected
@@ -210,7 +211,7 @@ def test_session_verbs_take_no_identity_argument(op: Op) -> None:
 async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
     storage = RecorderStorage()
     fs = AsyncVirtualFileSystem(storage=storage)
-    async with fs.session(ALICE) as s:
+    async with fs.open_session(ALICE) as s:
         pass
     assert s.closed is True
     result = await getattr(s, op)(**CALLS[op])
@@ -222,7 +223,7 @@ async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
 
 async def test_closed_is_final() -> None:
     fs = AsyncVirtualFileSystem(storage=RecorderStorage())
-    s = fs.session(ALICE)
+    s = fs.open_session(ALICE)
     await s.close()
     await s.close()  # idempotent
     with pytest.raises(ValueError, match="cannot reopen"):
@@ -230,10 +231,22 @@ async def test_closed_is_final() -> None:
             pass
 
 
+@pytest.mark.parametrize("face", [AsyncSession, Session])
+def test_a_session_cannot_reach_a_mount(face: type) -> None:
+    # A mount carries its storage, and reaching the storage would go around
+    # permissions: a session is the verbs and its own lifecycle, nothing else.
+    public = {name for name in dir(face) if not name.startswith("_")}
+    assert public == ALL_OPS | {"authority", "closed", "close"}
+    for name in sorted(public):
+        member = inspect.getattr_static(face, name)
+        returns = inspect.signature(member.fget if isinstance(member, property) else member).return_annotation
+        assert returns in {"Result", "Authority", "bool", "None"}, name
+
+
 async def test_a_session_needs_no_default_on_the_filesystem() -> None:
     storage = RecorderStorage()
     fs = AsyncVirtualFileSystem(storage=storage)
-    async with fs.session(ALICE) as s:
+    async with fs.open_session(ALICE) as s:
         assert (await s.ls("/")).success is True
     assert seen(storage) == [("ls", ALICE)]
 

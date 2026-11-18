@@ -1,14 +1,17 @@
-"""Mount administration: ``mounts()`` introspection, ``remount`` policy
-changes in place, and the ``deny_ops`` mount-flag family."""
+"""Mount administration: the ``Mount`` class, ``mounts()``, ``update_mount``
+policy changes in place, and the ``deny_ops`` mount-flag family."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import FrozenInstanceError, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+import vfs
+import vfs.base
 from tests.support.base_doubles import (
     BindableStorage,
     CapCountingStorage,
@@ -17,52 +20,71 @@ from tests.support.base_doubles import (
     RunnerStorage,
     SuspendingProbeStorage,
 )
-from vfs import InMemoryStorage
+from vfs import InMemoryStorage, Mount, VirtualFileSystem
 from vfs.authority import Authority
-from vfs.base import AsyncVirtualFileSystem, Location, MountMeta
+from vfs.base import AsyncVirtualFileSystem, Location
 from vfs.exceptions import MountError
-from vfs.permissions import PermissionMap, read_only, read_write, validate_permission
+from vfs.paths import Path
+from vfs.permissions import read_only, read_write
 from vfs.results import ErrorKind, Result, ResultError
 
 if TYPE_CHECKING:
     from vfs.ops import Op
-    from vfs.permissions import PermissionsPayload
 
 
-def payload_to_map(payload: PermissionsPayload) -> PermissionMap:
-    """Typed replay of a row's ``permissions`` payload into a map.
+def replay_ops(deny_ops: frozenset[str]) -> frozenset[Op]:
+    """Typed replay of a mount's ``deny_ops`` into an intake.
 
-    The payload's ``list[list[str]]`` is runtime-valid for the constructor
-    but not statically assignable to its declared overrides tuple type.
-    """
-    return PermissionMap(
-        default=payload["default"],
-        overrides=tuple((prefix, validate_permission(perm)) for prefix, perm in payload["overrides"]),
-    )
-
-
-def replay_ops(row_deny_ops: tuple[str, ...]) -> tuple[Op, ...]:
-    """Typed replay of a row's ``deny_ops`` — the intake mirror of
-    ``payload_to_map``.
-
-    The row's ``tuple[str, ...]`` is not statically assignable to the
+    The mount's ``frozenset[str]`` is not statically assignable to the
     intakes' ``Iterable[Op]``; the cast widens it back.  Stored masks
     replay fine at runtime regardless (unknown op names are deliberately
     maskable), so this is purely a ty-boundary conversion.
     """
-    return cast("tuple[Op, ...]", row_deny_ops)
+    return cast("frozenset[Op]", deny_ops)
 
 
 # ----------------------------------------------------------------------
-# MountMeta invariant
+# Mount — one public class
 # ----------------------------------------------------------------------
 
 
-def test_meta_caps_is_always_the_masked_intersection() -> None:
-    meta = MountMeta(declared_caps=frozenset({"read", "write", "run"}), deny_ops=frozenset({"run", "edit"}))
-    assert meta.caps == frozenset({"read", "write"})
-    assert meta.declared_caps == frozenset({"read", "write", "run"})
-    assert MountMeta().caps == frozenset()
+def test_a_mounts_caps_are_its_declared_caps_less_its_mask() -> None:
+    mount = Mount(
+        path=Path("/m"),
+        storage=InMemoryStorage(),
+        declared_caps=frozenset({"read", "write", "run"}),
+        deny_ops=frozenset({"run", "edit"}),
+    )
+    assert mount.caps == frozenset({"read", "write"})
+    assert mount.declared_caps == frozenset({"read", "write", "run"})
+    assert Mount(path=Path("/m"), storage=InMemoryStorage()).caps == frozenset()
+    # A changed mask is a new mount, and its caps are computed again.
+    assert replace(mount, deny_ops=frozenset()).caps == frozenset({"read", "write", "run"})
+
+
+def test_a_mount_is_frozen_and_its_caps_cannot_be_passed() -> None:
+    storage = InMemoryStorage()
+    mount = Mount(path=Path("/m"), storage=storage)
+    with pytest.raises(FrozenInstanceError):
+        mount.no_overlay = True  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError):
+        Mount(path=Path("/m"), storage=storage, caps=frozenset({"read"}))  # ty: ignore[unknown-argument]
+
+
+def test_mount_is_the_one_class_for_a_mount() -> None:
+    assert vfs.Mount is vfs.base.Mount
+    assert "Mount" in vfs.__all__
+    for gone in ("Binding", "MountMeta", "MountInfo"):
+        assert not hasattr(vfs, gone), gone
+        assert not hasattr(vfs.base, gone), gone
+
+
+@pytest.mark.parametrize("face", [AsyncVirtualFileSystem, VirtualFileSystem])
+def test_the_mount_methods_are_a_verb_then_the_noun(face: type) -> None:
+    for name in ("add_mount", "remove_mount", "update_mount", "mounts"):
+        assert callable(getattr(face, name)), name
+    for gone in ("bind", "unbind", "remount"):
+        assert not hasattr(face, gone), gone
 
 
 # ----------------------------------------------------------------------
@@ -70,32 +92,36 @@ def test_meta_caps_is_always_the_masked_intersection() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_fresh_router_has_one_root_row() -> None:
+def test_fresh_router_has_one_root_mount() -> None:
     fs = AsyncVirtualFileSystem()
-    rows = fs.mounts()
-    assert len(rows) == 1
-    row = rows[0]
-    assert row.path == "/"
-    assert row.caps == tuple(sorted(fs.capabilities()))
-    assert row.permissions == {"default": "read_write", "overrides": []}
-    assert row.deny_ops == ()
-    assert row.no_overlay is False
-    assert row.owned is True
-    assert row.storage_type == "InMemoryStorage"
+    mounts = fs.mounts()
+    assert len(mounts) == 1
+    mount = mounts[0]
+    assert isinstance(mount, Mount)
+    assert mount.path == "/"
+    assert mount.caps == fs.capabilities()
+    assert mount.permissions is not None
+    assert mount.permissions.to_payload() == {"default": "read_write", "overrides": []}
+    assert mount.deny_ops == frozenset()
+    assert mount.no_overlay is False
+    assert mount.owned is True
+    assert isinstance(mount.storage, InMemoryStorage)
 
 
-async def test_rows_track_the_table_lifecycle() -> None:
+async def test_mounts_track_the_table_lifecycle() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     child = RecorderStorage(name="child")
     await fs.add_mount(child, "/data", no_overlay=True, owned=False)
-    rows = {r.path: r for r in fs.mounts()}
+    rows = {str(r.path): r for r in fs.mounts()}
     assert set(rows) == {"/", "/data"}
-    assert rows["/data"].storage_name == "child"
+    assert rows["/data"].storage is child
     assert rows["/data"].no_overlay is True
     assert rows["/data"].owned is False
-    assert rows["/data"].caps == tuple(sorted(child.capabilities()))
+    assert rows["/data"].caps == child.capabilities()
 
-    await fs.remove_mount("/data")
+    removed = await fs.remove_mount("/data")
+    assert removed == rows["/data"]
+    assert removed.storage is child
     assert {r.path for r in fs.mounts()} == {"/"}
     await fs.close()
     assert fs.mounts() == ()
@@ -104,23 +130,38 @@ async def test_rows_track_the_table_lifecycle() -> None:
 async def test_rows_are_ordered_by_bind_path() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     for path in ("/zeta", "/alpha", "/alpha/inner", "/mid"):
-        await fs.bind(BindableStorage(name=path.strip("/")), path)
+        await fs._attach_mount(BindableStorage(name=path.strip("/")), path)
     assert [r.path for r in fs.mounts()] == ["/", "/alpha", "/alpha/inner", "/mid", "/zeta"]
 
 
-async def test_every_row_is_a_json_fixed_point() -> None:
+async def test_every_payload_is_a_json_fixed_point() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage(), permissions=read_write(read=["/frozen"]))
-    await fs.bind(RecorderStorage(name="masked"), "/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit"})
-    await fs.bind(RecorderStorage(name="bare"), "/n")
-    for row in fs.mounts():
-        dumped = json.dumps(row._asdict())
-        loaded = json.loads(dumped)
-        assert loaded["path"] == row.path
-        assert loaded["caps"] == list(row.caps)
-        assert loaded["deny_ops"] == list(row.deny_ops)
-        assert loaded["permissions"] == row.permissions
-        assert loaded["no_overlay"] == row.no_overlay
-        assert loaded["owned"] == row.owned
+    masked = RecorderStorage(name="masked")
+    await fs._attach_mount(masked, "/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit"})
+    await fs._attach_mount(RecorderStorage(name="bare"), "/n")
+    for mount in fs.mounts():
+        payload = mount.to_payload()
+        assert json.loads(json.dumps(payload)) == payload
+        assert payload["path"] == mount.path
+        assert payload["storage_name"] == mount.storage.name
+        assert payload["storage_type"] == type(mount.storage).__name__
+        assert payload["description"] == mount.storage.description
+        assert payload["caps"] == sorted(mount.caps)
+        assert payload["deny_ops"] == sorted(mount.deny_ops)
+        assert payload["permissions"] == (None if mount.permissions is None else mount.permissions.to_payload())
+        assert payload["no_overlay"] == mount.no_overlay
+        assert payload["owned"] == mount.owned
+    assert set(fs.mounts()[0].to_payload()) == {
+        "path",
+        "storage_name",
+        "storage_type",
+        "description",
+        "caps",
+        "deny_ops",
+        "permissions",
+        "no_overlay",
+        "owned",
+    }
 
 
 async def test_replay_round_trip_rebuilds_an_equal_table() -> None:
@@ -129,73 +170,71 @@ async def test_replay_round_trip_rebuilds_an_equal_table() -> None:
         permissions=read_write(read=["/frozen", "/frozen/deep"]),
         deny_ops={"mkedge"},
     )
-    await fs.bind(
+    await fs._attach_mount(
         BindableStorage(name="masked"), "/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit", "run"}
     )
-    await fs.bind(BindableStorage(name="plain"), "/p")
-    await fs.bind(BindableStorage(name="nested"), "/m/deep", owned=False, no_overlay=True)
-    rows = fs.mounts()
+    await fs._attach_mount(BindableStorage(name="plain"), "/p")
+    await fs._attach_mount(BindableStorage(name="nested"), "/m/deep", owned=False, no_overlay=True)
+    mounts = fs.mounts()
 
-    storages = {b.storage.name: b.storage for b in fs._bindings.values()}
-    root_row = rows[0]
-    assert root_row.path == "/"
-    assert root_row.permissions is not None
+    root = mounts[0]
+    assert root.path == "/"
+    assert root.permissions is not None
     rebuilt = AsyncVirtualFileSystem(
-        storage=storages[root_row.storage_name],
-        permissions=payload_to_map(root_row.permissions),
-        deny_ops=replay_ops(root_row.deny_ops),
-        no_overlay=root_row.no_overlay,
+        storage=root.storage,
+        permissions=root.permissions,
+        deny_ops=replay_ops(root.deny_ops),
+        no_overlay=root.no_overlay,
     )
-    for row in rows[1:]:
-        await rebuilt.bind(
-            storages[row.storage_name],
-            row.path,
-            permissions=None if row.permissions is None else payload_to_map(row.permissions),
-            deny_ops=replay_ops(row.deny_ops),
-            no_overlay=row.no_overlay,
-            owned=row.owned,
+    for mount in mounts[1:]:
+        await rebuilt._attach_mount(
+            mount.storage,
+            mount.path,
+            permissions=mount.permissions,
+            deny_ops=replay_ops(mount.deny_ops),
+            no_overlay=mount.no_overlay,
+            owned=mount.owned,
         )
-    assert rebuilt.mounts() == rows
+    assert rebuilt.mounts() == mounts
 
 
 async def test_replay_of_a_grandfathered_seal_goes_seal_last() -> None:
-    # A remount(no_overlay=True) over existing children produces rows no
-    # verbatim bind order can rebuild — the documented recipe seals last.
+    # An update_mount(no_overlay=True) over existing children produces mounts
+    # no verbatim order can rebuild — the documented recipe seals last.
     fs = AsyncVirtualFileSystem(storage=BindableStorage(name="rootstore"))
     parent = BindableStorage(name="parent")
     child = BindableStorage(name="child")
-    await fs.bind(parent, "/a")
-    await fs.bind(child, "/a/b")
-    await fs.remount("/a", no_overlay=True)
-    await fs.remount("/", no_overlay=True)
-    rows = fs.mounts()
+    await fs._attach_mount(parent, "/a")
+    await fs._attach_mount(child, "/a/b")
+    await fs.update_mount("/a", no_overlay=True)
+    await fs.update_mount("/", no_overlay=True)
+    mounts = fs.mounts()
 
-    storages = {b.storage.name: b.storage for b in fs._bindings.values()}
-    root_row = rows[0]
-    assert root_row.permissions is not None
+    root = mounts[0]
+    assert root.permissions is not None
     rebuilt = AsyncVirtualFileSystem(
-        storage=storages[root_row.storage_name],
-        permissions=payload_to_map(root_row.permissions),
-        deny_ops=replay_ops(root_row.deny_ops),
+        storage=root.storage,
+        permissions=root.permissions,
+        deny_ops=replay_ops(root.deny_ops),
     )
-    for row in rows[1:]:
-        await rebuilt.bind(
-            storages[row.storage_name],
-            row.path,
-            permissions=None if row.permissions is None else payload_to_map(row.permissions),
-            deny_ops=replay_ops(row.deny_ops),
-            owned=row.owned,
+    for mount in mounts[1:]:
+        await rebuilt._attach_mount(
+            mount.storage,
+            mount.path,
+            permissions=mount.permissions,
+            deny_ops=replay_ops(mount.deny_ops),
+            owned=mount.owned,
         )
-    for row in rows:
-        if row.no_overlay:
-            await rebuilt.remount(row.path, no_overlay=True)
-    assert rebuilt.mounts() == rows
+    for mount in mounts:
+        if mount.no_overlay:
+            await rebuilt.update_mount(mount.path, no_overlay=True)
+    assert rebuilt.mounts() == mounts
 
 
 async def test_child_bind_without_permissions_reports_none_and_root_never_does() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(RecorderStorage(name="child"), "/m")
-    rows = {r.path: r for r in fs.mounts()}
+    await fs._attach_mount(RecorderStorage(name="child"), "/m")
+    rows = {str(r.path): r for r in fs.mounts()}
     assert rows["/m"].permissions is None
     assert rows["/"].permissions is not None
 
@@ -220,11 +259,11 @@ async def test_mounts_does_no_storage_io() -> None:
 async def test_description_is_a_live_attribute_read() -> None:
     child = RecorderStorage(name="child", description="before")
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(child, "/m")
+    await fs._attach_mount(child, "/m")
     child.calls.clear()
     child.description = "after"
-    rows = {r.path: r for r in fs.mounts()}
-    assert rows["/m"].description == "after"
+    rows = {str(r.path): r for r in fs.mounts()}
+    assert rows["/m"].to_payload()["description"] == "after"
     assert child.calls == []
 
 
@@ -237,7 +276,7 @@ async def test_remount_read_makes_writes_classify_as_permission_denials() -> Non
     fs = RecorderFS()
     before = await fs.write(path="/f.md", content="x")
     assert before.success
-    await fs.remount("/", permissions="read")
+    await fs.update_mount("/", permissions="read")
     after = await fs.write(path="/f.md", content="x")
     assert not after.success
     assert after.errors[0].kind is ErrorKind.read_only
@@ -250,13 +289,13 @@ async def test_unbind_bind_has_a_gap_and_remount_does_not() -> None:
     parent = SuspendingProbeStorage(name="parent")
     child = RecorderStorage(name="child")
     fs = AsyncVirtualFileSystem(storage=parent)
-    await fs.bind(child, "/m")
+    await fs._attach_mount(child, "/m")
     parent.calls.clear()
     child.calls.clear()
 
     async def rebind() -> None:
-        await fs.unbind("/m")
-        await fs.bind(child, "/m")
+        await fs._detach_mount("/m")
+        await fs._attach_mount(child, "/m")
 
     await asyncio.gather(rebind(), fs.read(path="/m/f.md"))
     assert any(op == "read" and str(kw.get("path")) == "/m/f.md" for op, kw in parent.calls)
@@ -267,10 +306,10 @@ async def test_unbind_bind_has_a_gap_and_remount_does_not() -> None:
     parent2 = SuspendingProbeStorage(name="parent2")
     child2 = RecorderStorage(name="child2")
     fs2 = AsyncVirtualFileSystem(storage=parent2)
-    await fs2.bind(child2, "/m")
+    await fs2._attach_mount(child2, "/m")
     parent2.calls.clear()
     child2.calls.clear()
-    await asyncio.gather(fs2.remount("/m", permissions="read"), fs2.read(path="/m/f.md"))
+    await asyncio.gather(fs2.update_mount("/m", permissions="read"), fs2.read(path="/m/f.md"))
     assert all(op != "read" for op, _ in parent2.calls)
     assert [op for op, _ in child2.calls] == ["read"]
 
@@ -279,40 +318,40 @@ async def test_refresh_caps_picks_up_a_widened_declaration() -> None:
     narrow: frozenset[Op] = frozenset({"read", "stat", "ls"})
     child = RecorderStorage(name="child", caps=narrow)
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(child, "/m")
+    await fs._attach_mount(child, "/m")
     wider: frozenset[Op] = frozenset({"read", "stat", "ls", "write"})
     child._caps = wider
 
-    await fs.remount("/m")  # no refresh — snapshot stays
-    assert "write" not in {r.path: r for r in fs.mounts()}["/m"].caps
-    await fs.remount("/m", refresh_caps=True)
-    assert "write" in {r.path: r for r in fs.mounts()}["/m"].caps
+    await fs.update_mount("/m")  # no refresh — snapshot stays
+    assert "write" not in {str(r.path): r for r in fs.mounts()}["/m"].caps
+    await fs.update_mount("/m", refresh_caps=True)
+    assert "write" in {str(r.path): r for r in fs.mounts()}["/m"].caps
 
 
 async def test_remount_preserves_every_unchanged_field() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(
+    await fs._attach_mount(
         RecorderStorage(name="child"), "/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit"}, owned=False
     )
-    before = {r.path: r for r in fs.mounts()}["/m"]
-    await fs.remount("/m", no_overlay=True)
-    after = {r.path: r for r in fs.mounts()}["/m"]
+    before = {str(r.path): r for r in fs.mounts()}["/m"]
+    await fs.update_mount("/m", no_overlay=True)
+    after = {str(r.path): r for r in fs.mounts()}["/m"]
     assert after.no_overlay is True
-    assert after._replace(no_overlay=False) == before
+    assert replace(after, no_overlay=False) == before
 
-    await fs.remount("/m")  # the all-None no-op
-    assert {r.path: r for r in fs.mounts()}["/m"] == after
+    await fs.update_mount("/m")  # the all-None no-op
+    assert {str(r.path): r for r in fs.mounts()}["/m"] == after
 
 
 async def test_remount_unknown_path_and_closed_table_raise() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     with pytest.raises(ValueError, match="No mount at"):
-        await fs.remount("/nope", permissions="read")
+        await fs.update_mount("/nope", permissions="read")
     with pytest.raises(ValueError, match="No mount at"):
-        await fs.remount("/nope", refresh_caps=True)
+        await fs.update_mount("/nope", refresh_caps=True)
     await fs.close()
     with pytest.raises(ValueError, match="No mount at"):
-        await fs.remount("/", permissions="read")
+        await fs.update_mount("/", permissions="read")
 
 
 async def test_remount_refuses_when_the_probed_mount_is_rebound_mid_flight(monkeypatch) -> None:
@@ -320,46 +359,46 @@ async def test_remount_refuses_when_the_probed_mount_is_rebound_mid_flight(monke
     # rebinding the entry before the lock lands must refuse, not adopt.
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     child = RecorderStorage(name="child")
-    await fs.bind(child, "/m")
-    key = next(k for k in fs._bindings if str(k) == "/m")
+    await fs._attach_mount(child, "/m")
+    key = next(k for k in fs._mounts if str(k) == "/m")
     rival = RecorderStorage(name="rival")
     real = child.capabilities
 
-    def swap_binding() -> frozenset[Op]:
-        fs._bindings[key] = fs._bindings[key]._replace(storage=rival)
+    def swap_mount() -> frozenset[Op]:
+        fs._mounts[key] = replace(fs._mounts[key], storage=rival)
         return real()
 
-    monkeypatch.setattr(child, "capabilities", swap_binding)
-    with pytest.raises(ValueError, match="changed while remounting"):
-        await fs.remount("/m", refresh_caps=True)
+    monkeypatch.setattr(child, "capabilities", swap_mount)
+    with pytest.raises(ValueError, match="changed while it was being updated"):
+        await fs.update_mount("/m", refresh_caps=True)
 
 
 async def test_no_overlay_remount_grandfathers_children_and_ratchets() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     parent = BindableStorage(name="parent")
     child = RecorderStorage(name="child")
-    await fs.bind(parent, "/a")
-    await fs.bind(child, "/a/b")
+    await fs._attach_mount(parent, "/a")
+    await fs._attach_mount(child, "/a/b")
 
-    await fs.remount("/a", no_overlay=True)
+    await fs.update_mount("/a", no_overlay=True)
     answered = await fs.read(path="/a/b/f.md")
     assert answered.success  # the grandfathered child still dispatches
-    with pytest.raises(ValueError, match="does not allow binds beneath it"):
-        await fs.bind(RecorderStorage(name="late"), "/a/c")
+    with pytest.raises(ValueError, match="does not allow mounts beneath it"):
+        await fs._attach_mount(RecorderStorage(name="late"), "/a/c")
 
     # The ratchet: the sealed subtree can shrink but never grow back.
-    await fs.unbind("/a/b")
-    with pytest.raises(ValueError, match="does not allow binds beneath it"):
-        await fs.bind(child, "/a/b")
+    await fs._detach_mount("/a/b")
+    with pytest.raises(ValueError, match="does not allow mounts beneath it"):
+        await fs._attach_mount(child, "/a/b")
 
 
 async def test_no_overlay_remount_on_root_seals_the_namespace() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(RecorderStorage(name="child"), "/m")
-    await fs.remount("/", no_overlay=True)
+    await fs._attach_mount(RecorderStorage(name="child"), "/m")
+    await fs.update_mount("/", no_overlay=True)
     with pytest.raises(ValueError, match="does not allow child mounts"):
-        await fs.bind(RecorderStorage(name="late"), "/n")
-    rows = {r.path: r for r in fs.mounts()}
+        await fs._attach_mount(RecorderStorage(name="late"), "/n")
+    rows = {str(r.path): r for r in fs.mounts()}
     assert rows["/"].no_overlay is True
     assert "/m" in rows  # the sealed root still shows its child row
 
@@ -375,7 +414,7 @@ async def test_deny_run_is_noexec_for_a_tool_mount() -> None:
     # tests "no other entry declares it" honestly.
     runless: frozenset[Op] = frozenset({"read", "stat", "ls", "tree"})
     fs = AsyncVirtualFileSystem(storage=BindableStorage(caps=runless))
-    await fs.bind(runner, "/tools", deny_ops={"run"})
+    await fs._attach_mount(runner, "/tools", deny_ops={"run"})
 
     ran = await fs.run("/tools/x")
     assert not ran.success
@@ -388,9 +427,9 @@ async def test_deny_run_is_noexec_for_a_tool_mount() -> None:
 
 async def test_masks_never_alter_fanout() -> None:
     masked_fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await masked_fs.bind(BindableStorage(name="entry"), "/e", deny_ops={"run"})
+    await masked_fs._attach_mount(BindableStorage(name="entry"), "/e", deny_ops={"run"})
     plain_fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await plain_fs.bind(BindableStorage(name="entry"), "/e")
+    await plain_fs._attach_mount(BindableStorage(name="entry"), "/e")
 
     masked = await masked_fs.glob("*.py")
     plain = await plain_fs.glob("*.py")
@@ -406,7 +445,7 @@ async def test_read_family_masks_are_rejected_at_every_intake() -> None:
     root = BindableStorage(name="root")
     fs = AsyncVirtualFileSystem(storage=root)
     with pytest.raises(ValueError, match="read-family"):
-        await fs.bind(RecorderStorage(name="c1"), "/m", deny_ops={"ls"})
+        await fs._attach_mount(RecorderStorage(name="c1"), "/m", deny_ops={"ls"})
     assert {r.path for r in fs.mounts()} == {"/"}
 
     root.calls.clear()
@@ -415,10 +454,10 @@ async def test_read_family_masks_are_rejected_at_every_intake() -> None:
     assert {r.path for r in fs.mounts()} == {"/"}
     assert all(op != "mkdir" for op, _ in root.calls)  # rejected before the site mkdir
 
-    await fs.bind(RecorderStorage(name="c3"), "/m", deny_ops={"edit"})
+    await fs._attach_mount(RecorderStorage(name="c3"), "/m", deny_ops={"edit"})
     with pytest.raises(ValueError, match="read-family"):
-        await fs.remount("/m", deny_ops={"grep"})
-    assert {r.path: r for r in fs.mounts()}["/m"].deny_ops == ("edit",)
+        await fs.update_mount("/m", deny_ops={"grep"})
+    assert {str(r.path): r for r in fs.mounts()}["/m"].deny_ops == frozenset({"edit"})
 
 
 async def test_bare_string_deny_ops_is_rejected_not_char_splattered() -> None:
@@ -429,26 +468,26 @@ async def test_bare_string_deny_ops_is_rejected_not_char_splattered() -> None:
 
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     with pytest.raises(TypeError, match="bare string"):
-        await fs.bind(RecorderStorage(name="c1"), "/m", deny_ops="run")  # ty: ignore[invalid-argument-type]
+        await fs._attach_mount(RecorderStorage(name="c1"), "/m", deny_ops="run")  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="bare string"):
         await fs.add_mount(RecorderStorage(name="c2"), "/m", deny_ops="run")  # ty: ignore[invalid-argument-type]
 
-    await fs.bind(RecorderStorage(name="c3"), "/m", deny_ops={"run"})
+    await fs._attach_mount(RecorderStorage(name="c3"), "/m", deny_ops={"run"})
     with pytest.raises(TypeError, match="bare string"):
-        await fs.remount("/m", deny_ops="edit")  # ty: ignore[invalid-argument-type]
-    assert {r.path: r for r in fs.mounts()}["/m"].deny_ops == ("run",)  # the working mask survived
+        await fs.update_mount("/m", deny_ops="edit")  # ty: ignore[invalid-argument-type]
+    assert {str(r.path): r for r in fs.mounts()}["/m"].deny_ops == frozenset({"run"})  # the working mask survived
 
 
 async def test_read_family_mask_with_refresh_never_resnapshots() -> None:
     child = CapCountingStorage(name="child")
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(child, "/m")
-    before_caps = {r.path: r for r in fs.mounts()}["/m"].caps
+    await fs._attach_mount(child, "/m")
+    before_caps = {str(r.path): r for r in fs.mounts()}["/m"].caps
     count = child.capabilities_calls
     with pytest.raises(ValueError, match="read-family"):
-        await fs.remount("/m", deny_ops={"read"}, refresh_caps=True)
+        await fs.update_mount("/m", deny_ops={"read"}, refresh_caps=True)
     assert child.capabilities_calls == count
-    assert {r.path: r for r in fs.mounts()}["/m"].caps == before_caps
+    assert {str(r.path): r for r in fs.mounts()}["/m"].caps == before_caps
 
 
 async def test_parent_mkdir_mask_refuses_add_mount_but_not_bind() -> None:
@@ -456,7 +495,7 @@ async def test_parent_mkdir_mask_refuses_add_mount_but_not_bind() -> None:
     with pytest.raises(MountError):
         await fs.add_mount(RecorderStorage(name="c1"), "/m")
     # The probe is ungated (stat/ls only), so a direct bind still lands.
-    await fs.bind(RecorderStorage(name="c2"), "/n")
+    await fs._attach_mount(RecorderStorage(name="c2"), "/n")
     assert "/n" in {r.path for r in fs.mounts()}
 
 
@@ -464,16 +503,16 @@ async def test_inert_mask_is_stored_and_bites_after_refresh() -> None:
     narrow: frozenset[Op] = frozenset({"read", "stat", "ls"})
     child = BindableStorage(name="child", caps=narrow)
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(child, "/m", deny_ops={"run"})
+    await fs._attach_mount(child, "/m", deny_ops={"run"})
 
-    row = {r.path: r for r in fs.mounts()}["/m"]
-    assert row.caps == tuple(sorted(narrow))  # inert: caps unchanged
-    assert row.deny_ops == ("run",)  # but the mask is still echoed
+    row = {str(r.path): r for r in fs.mounts()}["/m"]
+    assert row.caps == narrow  # inert: caps unchanged
+    assert row.deny_ops == frozenset({"run"})  # but the mask is still echoed
 
     wider: frozenset[Op] = frozenset({"read", "stat", "ls", "run"})
     child._caps = wider
-    await fs.remount("/m", refresh_caps=True)
-    row = {r.path: r for r in fs.mounts()}["/m"]
+    await fs.update_mount("/m", refresh_caps=True)
+    row = {str(r.path): r for r in fs.mounts()}["/m"]
     assert "run" not in row.caps  # the stored mask started biting
 
 
@@ -483,23 +522,23 @@ async def test_constructor_deny_ops_masks_the_root_entry() -> None:
     assert not denied.success
     assert denied.errors[0].kind is ErrorKind.unsupported
     row = fs.mounts()[0]
-    assert row.deny_ops == ("write",)
+    assert row.deny_ops == frozenset({"write"})
     assert "write" not in row.caps
 
 
 async def test_mask_replace_and_clear_recompute_without_storage_io() -> None:
     child = CapCountingStorage(name="child")
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
-    await fs.bind(child, "/m", deny_ops={"edit"})
-    declared = tuple(sorted(child.capabilities()))
+    await fs._attach_mount(child, "/m", deny_ops={"edit"})
+    declared = child.capabilities()
     count = child.capabilities_calls
 
-    await fs.remount("/m", deny_ops={"run"})
-    row = {r.path: r for r in fs.mounts()}["/m"]
+    await fs.update_mount("/m", deny_ops={"run"})
+    row = {str(r.path): r for r in fs.mounts()}["/m"]
     assert "edit" in row.caps  # restored from the stored snapshot
     assert "run" not in row.caps
-    await fs.remount("/m", deny_ops=())
-    assert {r.path: r for r in fs.mounts()}["/m"].caps == declared
+    await fs.update_mount("/m", deny_ops=())
+    assert {str(r.path): r for r in fs.mounts()}["/m"].caps == declared
     assert child.capabilities_calls == count  # neither call re-snapshotted
 
 
@@ -514,7 +553,7 @@ async def test_locate_reports_the_root_binding_for_an_unmounted_path() -> None:
     assert row == Location(
         path="/docs/guide.md",
         mount="/",
-        storage_name=fs.mounts()[0].storage_name,
+        storage_name=fs.mounts()[0].storage.name,
         storage_type="InMemoryStorage",
         storage_path="/docs/guide.md",
     )

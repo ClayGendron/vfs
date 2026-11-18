@@ -21,7 +21,7 @@ from tests.support.base_doubles import (
     TransportFailStorage,
 )
 from vfs.authority import Authority
-from vfs.base import AsyncVirtualFileSystem, Binding, MountMeta
+from vfs.base import AsyncVirtualFileSystem, Mount
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
 from vfs.paths import Path
@@ -63,7 +63,7 @@ class GhostStorage(BindableStorage):
 
 def test_init_defaults_to_inmemory_storage_and_root_binding() -> None:
     fs = AsyncVirtualFileSystem()
-    assert isinstance(fs._bindings[Path("/")].storage, InMemoryStorage)
+    assert isinstance(fs._mounts[Path("/")].storage, InMemoryStorage)
     assert fs._sorted_mount_paths == [Path("/")]
     assert fs.name is None
     assert fs.title is None
@@ -74,7 +74,7 @@ def test_init_holds_the_given_backend() -> None:
     backend = RecorderStorage()
     fs = AsyncVirtualFileSystem(name="root", storage=backend)
     assert fs.name == "root"
-    assert fs._bindings[Path("/")].storage is backend
+    assert fs._mounts[Path("/")].storage is backend
 
 
 def test_init_rejects_backend_missing_the_read_family() -> None:
@@ -86,18 +86,18 @@ def test_init_rejects_backend_missing_the_read_family() -> None:
         AsyncVirtualFileSystem(storage=StatOnly())  # ty: ignore[invalid-argument-type]
 
 
-def test_init_root_permissions_and_no_overlay_wire_into_root_meta() -> None:
+def test_init_root_permissions_and_no_overlay_wire_into_the_root_mount() -> None:
     fs = AsyncVirtualFileSystem(permissions="read", no_overlay=True)
-    meta = fs._bindings[Path("/")].meta
-    assert meta.permission_map is not None
-    assert meta.permission_map.default == "read"
-    assert meta.no_overlay is True
-    assert meta.owned is True
+    root = fs._mounts[Path("/")]
+    assert root.permissions is not None
+    assert root.permissions.default == "read"
+    assert root.no_overlay is True
+    assert root.owned is True
 
 
 def test_init_root_capability_snapshot_matches_backend() -> None:
     fs = AsyncVirtualFileSystem(storage=ReadFamilyStorage())
-    assert fs._bindings[Path("/")].meta.caps == frozenset({"read", "stat", "ls", "tree"})
+    assert fs._mounts[Path("/")].caps == frozenset({"read", "stat", "ls", "tree"})
 
 
 # ----------------------------------------------------------------------
@@ -139,8 +139,8 @@ def test_normalize_mount_path_canonicalizes_stray_whitespace(raw: str) -> None:
 async def test_bind_succeeds_onto_an_existing_empty_directory() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
     child = RecorderStorage()
-    await root.bind(child, "/data")
-    assert root._bindings[Path("/data")].storage is child
+    await root._attach_mount(child, "/data")
+    assert root._mounts[Path("/data")].storage is child
 
 
 async def test_add_mount_mkdir_failure_raises_mount_error_with_evidence() -> None:
@@ -170,7 +170,7 @@ async def test_bind_beneath_a_dead_backend_reports_the_transport_failure() -> No
     root = AsyncVirtualFileSystem()
     await root.add_mount(TransportFailStorage(), "/dead")
     with pytest.raises(ValueError, match="unavailable") as exc:
-        await root.bind(InMemoryStorage(), "/dead/sub")
+        await root._attach_mount(InMemoryStorage(), "/dead/sub")
     assert "mkdir" not in str(exc.value)
 
 
@@ -190,7 +190,7 @@ async def test_bind_racing_close_refuses_cleanly() -> None:
 
     backend = GateStatStorage()
     root = AsyncVirtualFileSystem(storage=backend)
-    bind_task = asyncio.create_task(root.bind(InMemoryStorage(), "/site"))
+    bind_task = asyncio.create_task(root._attach_mount(InMemoryStorage(), "/site"))
     await backend.entered.wait()
     await root.close()
     backend.release.set()
@@ -201,61 +201,61 @@ async def test_bind_racing_close_refuses_cleanly() -> None:
 async def test_bind_rejects_non_storage_backend() -> None:
     root = AsyncVirtualFileSystem()
     with pytest.raises(TypeError, match="read family"):
-        await root.bind(object(), "/x")  # ty: ignore[invalid-argument-type]
+        await root._attach_mount(object(), "/x")  # ty: ignore[invalid-argument-type]
 
 
 async def test_bind_rejects_missing_site() -> None:
     root = AsyncVirtualFileSystem()
     with pytest.raises(ValueError, match="no directory stored"):
-        await root.bind(RecorderStorage(), "/nope")
+        await root._attach_mount(RecorderStorage(), "/nope")
 
 
 async def test_bind_rejects_a_file_at_the_site() -> None:
     root = AsyncVirtualFileSystem(storage=DictStorage({"/f": "file"}))
     with pytest.raises(ValueError, match="stored as 'file'"):
-        await root.bind(RecorderStorage(), "/f")
+        await root._attach_mount(RecorderStorage(), "/f")
 
 
 async def test_bind_rejects_a_non_empty_directory() -> None:
     root = AsyncVirtualFileSystem(storage=DictStorage({"/data": "directory", "/data/kept.txt": "file"}))
     with pytest.raises(ValueError, match="not empty"):
-        await root.bind(RecorderStorage(), "/data")
+        await root._attach_mount(RecorderStorage(), "/data")
 
 
 async def test_bind_rejects_duplicate_path() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
-    await root.bind(BindableStorage(), "/data")
+    await root._attach_mount(BindableStorage(), "/data")
     with pytest.raises(ValueError, match="already exists"):
-        await root.bind(RecorderStorage(), "/data")
+        await root._attach_mount(RecorderStorage(), "/data")
 
 
 async def test_bind_rejects_shallower_when_deeper_already_bound() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
-    await root.bind(BindableStorage(), "/a/b")
+    await root._attach_mount(BindableStorage(), "/a/b")
     with pytest.raises(ValueError, match="deeper mount already sits"):
-        await root.bind(RecorderStorage(), "/a")
+        await root._attach_mount(RecorderStorage(), "/a")
 
 
 async def test_bind_rejects_the_same_storage_object_twice() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
     shared = BindableStorage()
-    await root.bind(shared, "/a")
-    with pytest.raises(ValueError, match="already bound"):
-        await root.bind(shared, "/b")
-    assert set(root._bindings) == {Path("/"), Path("/a")}
+    await root._attach_mount(shared, "/a")
+    with pytest.raises(ValueError, match="already mounted"):
+        await root._attach_mount(shared, "/b")
+    assert set(root._mounts) == {Path("/"), Path("/a")}
 
 
 async def test_root_no_overlay_refuses_every_bind() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage(), no_overlay=True)
     with pytest.raises(ValueError, match="does not allow child mounts"):
-        await root.bind(RecorderStorage(), "/m")
+        await root._attach_mount(RecorderStorage(), "/m")
 
 
 async def test_per_entry_no_overlay_refuses_binds_beneath_it() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
-    await root.bind(BindableStorage(), "/locked", no_overlay=True)
-    with pytest.raises(ValueError, match="does not allow binds beneath"):
-        await root.bind(RecorderStorage(), "/locked/inner")
+    await root._attach_mount(BindableStorage(), "/locked", no_overlay=True)
+    with pytest.raises(ValueError, match="does not allow mounts beneath"):
+        await root._attach_mount(RecorderStorage(), "/locked/inner")
 
 
 # ----------------------------------------------------------------------
@@ -266,26 +266,26 @@ async def test_per_entry_no_overlay_refuses_binds_beneath_it() -> None:
 async def test_unbind_is_pure_table_surgery() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
     child = RecorderStorage()
-    await root.bind(child, "/data")
-    removed = await root.unbind("/data")
+    await root._attach_mount(child, "/data")
+    removed = await root._detach_mount("/data")
     assert removed.storage is child
-    assert Path("/data") not in root._bindings
+    assert Path("/data") not in root._mounts
     assert child.calls == []  # no storage I/O on unbind
 
 
 async def test_unbind_rejects_missing() -> None:
     root = AsyncVirtualFileSystem()
     with pytest.raises(ValueError, match="No mount at"):
-        await root.unbind("/nope")
+        await root._detach_mount("/nope")
 
 
-async def test_unbind_refuses_while_deeper_bindings_exist() -> None:
+async def test_unbind_refuses_while_deeper_mounts_exist() -> None:
     root = AsyncVirtualFileSystem(storage=BindableStorage())
-    await root.bind(BindableStorage(), "/a")
-    await root.bind(RecorderStorage(), "/a/b")
+    await root._attach_mount(BindableStorage(), "/a")
+    await root._attach_mount(RecorderStorage(), "/a/b")
     with pytest.raises(ValueError, match="deeper mounts exist"):
-        await root.unbind("/a")
-    assert Path("/a") in root._bindings
+        await root._detach_mount("/a")
+    assert Path("/a") in root._mounts
 
 
 # ----------------------------------------------------------------------
@@ -296,7 +296,7 @@ async def test_unbind_refuses_while_deeper_bindings_exist() -> None:
 async def test_add_mount_path_defaults_to_storage_name() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(InMemoryStorage(name="data"))
-    assert Path("/data") in root._bindings
+    assert Path("/data") in root._mounts
 
 
 async def test_add_mount_requires_path_or_named_storage() -> None:
@@ -308,21 +308,21 @@ async def test_add_mount_requires_path_or_named_storage() -> None:
 async def test_add_mount_creates_missing_parents_when_asked() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/a/b/c", parents=True)
-    assert Path("/a/b/c") in root._bindings
+    assert Path("/a/b/c") in root._mounts
 
 
 async def test_add_mount_without_parents_raises_on_missing_ancestor() -> None:
     root = AsyncVirtualFileSystem()
     with pytest.raises(ValueError):
         await root.add_mount(RecorderStorage(), "/a/b/c")
-    assert Path("/a/b/c") not in root._bindings
+    assert Path("/a/b/c") not in root._mounts
 
 
 async def test_add_mount_onto_preexisting_empty_dir_succeeds() -> None:
     root = AsyncVirtualFileSystem()
     await root.mkdir("/data")
     await root.add_mount(RecorderStorage(), "/data")
-    assert Path("/data") in root._bindings
+    assert Path("/data") in root._mounts
 
 
 async def test_add_mount_after_restart_rebinds_onto_existing_empty_dir() -> None:
@@ -334,7 +334,7 @@ async def test_add_mount_after_restart_rebinds_onto_existing_empty_dir() -> None
     await first.add_mount(InMemoryStorage(name="child"), "/data")
     second = AsyncVirtualFileSystem(storage=backend)
     await second.add_mount(InMemoryStorage(name="child2"), "/data")
-    assert Path("/data") in second._bindings
+    assert Path("/data") in second._mounts
 
 
 async def test_add_mount_failed_bind_leaves_the_directory() -> None:
@@ -342,7 +342,7 @@ async def test_add_mount_failed_bind_leaves_the_directory() -> None:
     root = AsyncVirtualFileSystem()
     shared = RecorderStorage()
     await root.add_mount(shared, "/first")
-    with pytest.raises(ValueError, match="already bound"):
+    with pytest.raises(ValueError, match="already mounted"):
         await root.add_mount(shared, "/second")  # aliasing fails the bind half
     stat = await root.stat("/second")
     assert stat.success is True
@@ -353,9 +353,9 @@ async def test_add_remove_readd_mount_cycle_is_clean() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/data")
     await root.remove_mount("/data")
-    assert Path("/data") not in root._bindings
+    assert Path("/data") not in root._mounts
     await root.add_mount(RecorderStorage(), "/data")
-    assert Path("/data") in root._bindings
+    assert Path("/data") in root._mounts
 
 
 # ----------------------------------------------------------------------
@@ -367,7 +367,7 @@ async def test_remove_mount_unbinds_and_rmdirs() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/data")
     await root.remove_mount("/data")
-    assert Path("/data") not in root._bindings
+    assert Path("/data") not in root._mounts
     stat = await root.stat("/data")
     assert stat.success is False
     assert stat.errors[0].kind is ErrorKind.not_found
@@ -457,7 +457,7 @@ async def test_remove_mount_refuses_while_deeper_mounts_exist() -> None:
     await root.add_mount(RecorderStorage(), "/a/b", parents=True)
     with pytest.raises(ValueError, match="deeper mounts exist"):
         await root.remove_mount("/a")
-    assert Path("/a") in root._bindings
+    assert Path("/a") in root._mounts
 
 
 async def test_remove_mount_of_a_non_empty_directory_fails_loud_and_leaves_it() -> None:
@@ -467,7 +467,7 @@ async def test_remove_mount_of_a_non_empty_directory_fails_loud_and_leaves_it() 
     await backend.write(entries=[Entry(path=Path("/m/foreign.txt"), content="secret")])  # bypasses the router entirely
     with pytest.raises(ValueError, match="removing its directory failed"):
         await root.remove_mount("/m")
-    assert Path("/m") not in root._bindings  # the unbind half stands
+    assert Path("/m") not in root._mounts  # the unbind half stands
     stat = await backend.stat(path=Path("/m"))
     assert stat.success is True
     assert stat.one().kind == "directory"
@@ -488,7 +488,7 @@ async def test_close_disposes_owned_backends_and_clears_the_table() -> None:
     await root.close()
     assert a.close_count == 1
     assert b.close_count == 1
-    assert root._bindings == {}
+    assert root._mounts == {}
     assert root._sorted_mount_paths == []
 
 
@@ -510,14 +510,12 @@ async def test_close_never_disposes_an_unowned_backend() -> None:
 
 
 async def test_close_dedupes_the_same_storage_bound_twice_via_direct_table_edit() -> None:
-    # bind() forbids aliasing; reach the malformed shape directly to prove
-    # close()'s identity-dedup holds even then.
+    # add_mount() forbids aliasing; reach the malformed shape directly to
+    # prove close()'s identity-dedup holds even then.
     shared = SpyCloseStorage()
     root = AsyncVirtualFileSystem(storage=shared)
-    root._bindings[Path("/x")] = Binding(
-        path=Path("/x"), storage=shared, meta=MountMeta(declared_caps=shared.capabilities())
-    )
-    root._sorted_mount_paths = sorted(root._bindings, reverse=True)
+    root._mounts[Path("/x")] = Mount(path=Path("/x"), storage=shared, declared_caps=shared.capabilities())
+    root._sorted_mount_paths = sorted(root._mounts, reverse=True)
     await root.close()
     assert shared.close_count == 1
 
@@ -530,7 +528,7 @@ async def test_close_collects_a_single_failure_and_raises_it_directly() -> None:
     with pytest.raises(RuntimeError, match="boom"):
         await root.close()
     assert good.close_count == 1  # the sibling was not stranded
-    assert root._bindings == {}
+    assert root._mounts == {}
 
 
 async def test_close_groups_multiple_failures() -> None:
@@ -539,7 +537,7 @@ async def test_close_groups_multiple_failures() -> None:
     await root.add_mount(BadCloseStorage(), "/b")
     with pytest.raises(ExceptionGroup):
         await root.close()
-    assert root._bindings == {}
+    assert root._mounts == {}
 
 
 async def test_close_disposes_concurrently_not_sequentially() -> None:
@@ -563,11 +561,11 @@ async def test_close_cancellation_parks_disposal_for_a_retry() -> None:
     await root.add_mount(storage, "/a")
     task = asyncio.ensure_future(root.close())
     await asyncio.sleep(0)  # let close() snapshot-clear and reach the gate
-    assert root._bindings == {}
+    assert root._mounts == {}
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert root._bindings == {}
+    assert root._mounts == {}
     assert storage.close_count == 0  # disposal parked, not lost
     gate.set()
     await root.close()  # the retry drains the parked snapshot
@@ -653,7 +651,7 @@ async def test_copy_from_a_subtree_containing_a_bind_is_not_busy() -> None:
 async def test_shadow_filter_drops_ls_rows_beneath_a_deeper_bind() -> None:
     ghost = GhostStorage(mount_path="/a", ghost_path="/a/ghost.txt")
     root = AsyncVirtualFileSystem(storage=ghost)
-    await root.bind(RecorderStorage(), "/a")
+    await root._attach_mount(RecorderStorage(), "/a")
     result = await root.ls("/")
     assert "/a/ghost.txt" not in result.paths
     assert "/a" in result.paths  # the bind row itself survives, decorated
@@ -662,7 +660,7 @@ async def test_shadow_filter_drops_ls_rows_beneath_a_deeper_bind() -> None:
 async def test_shadow_filter_drops_tree_rows_beneath_a_deeper_bind() -> None:
     ghost = GhostStorage(mount_path="/a", ghost_path="/a/deep/ghost.txt")
     root = AsyncVirtualFileSystem(storage=ghost)
-    await root.bind(RecorderStorage(), "/a")
+    await root._attach_mount(RecorderStorage(), "/a")
     result = await root.tree("/")
     assert "/a/deep/ghost.txt" not in result.paths
     assert "/a" in result.paths
@@ -703,7 +701,7 @@ async def test_readonly_root_makes_a_writable_mount_readonly() -> None:
     await backend.mkdir(path=Path("/scratch"))
     root = AsyncVirtualFileSystem(storage=backend, permissions="read")
     child = RecorderStorage()
-    await root.bind(child, "/scratch", permissions="read_write")
+    await root._attach_mount(child, "/scratch", permissions="read_write")
     result = await root.write(entries=[Entry(path="/scratch/f.txt", content="x")])
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.read_only
@@ -728,7 +726,7 @@ async def test_match_mount_longest_prefix() -> None:
 async def test_resolve_terminal_root_fallback() -> None:
     root = AsyncVirtualFileSystem()
     terminal = root._resolve_terminal(Path("/nope/file.txt"))
-    assert terminal.binding.path == "/"
+    assert terminal.mount.path == "/"
     assert terminal.rel == "/nope/file.txt"
 
 
@@ -737,7 +735,7 @@ async def test_resolve_terminal_at_bind_root() -> None:
     child = RecorderStorage()
     await root.add_mount(child, "/data", parents=True)
     terminal = root._resolve_terminal(Path("/data"))
-    assert terminal.binding.storage is child
+    assert terminal.mount.storage is child
     assert terminal.rel == "/"
 
 
@@ -814,7 +812,7 @@ async def test_tree_dead_descent_demotes_beside_live_rows() -> None:
 # ----------------------------------------------------------------------
 
 
-async def test_scoped_fanout_expands_into_bindings_beneath_the_scope() -> None:
+async def test_scoped_fanout_expands_into_mounts_beneath_the_scope() -> None:
     root = AsyncVirtualFileSystem(storage=DictStorage({"/data": "directory"}))
     inside = ScopeSpyStorage(echo_path="/inside.txt")
     await root.add_mount(inside, "/data/a")
@@ -870,7 +868,7 @@ async def test_bind_on_a_closed_filesystem_is_refused() -> None:
     fs = AsyncVirtualFileSystem()
     await fs.close()
     with pytest.raises(ValueError, match="filesystem is closed"):
-        await fs.bind(RecorderStorage(), "/m")
+        await fs._attach_mount(RecorderStorage(), "/m")
 
 
 async def test_match_mount_is_none_only_when_closed() -> None:
@@ -883,7 +881,7 @@ async def test_bind_advises_mkdir_when_stat_answers_without_the_row() -> None:
     # A stat that succeeds but omits the site row reads as "nothing stored".
     root = AsyncVirtualFileSystem(storage=CannedStorage({"stat": Result(ops=("stat",), observations=[])}))
     with pytest.raises(ValueError, match="no directory stored"):
-        await root.bind(RecorderStorage(), "/m")
+        await root._attach_mount(RecorderStorage(), "/m")
 
 
 async def test_bind_surfaces_a_failed_mount_point_listing() -> None:
@@ -893,7 +891,7 @@ async def test_bind_surfaces_a_failed_mount_point_listing() -> None:
     }
     root = AsyncVirtualFileSystem(storage=CannedStorage(answers))
     with pytest.raises(ValueError, match="listing broke"):
-        await root.bind(RecorderStorage(), "/m")
+        await root._attach_mount(RecorderStorage(), "/m")
 
 
 async def test_close_reraises_cancellation_from_a_storage_close() -> None:

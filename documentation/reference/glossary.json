@@ -12,6 +12,6 @@
   {
     "term": "Mount",
     "summary": "A storage backend attached at a path in the file tree.",
-    "types": ["MountInfo", "base.Binding"]
+    "types": ["Mount"]
   }
 ]

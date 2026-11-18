@@ -153,7 +153,7 @@ async def test_capabilities_union_across_bindings() -> None:
     # snapshot, self included.
     root = AsyncVirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree"})))
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree"})
-    await root.bind(BindableStorage(caps=frozenset({"search"})), "/m")
+    await root._attach_mount(BindableStorage(caps=frozenset({"search"})), "/m")
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "search"})
 
 
@@ -364,7 +364,7 @@ async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> Non
     # be gated read_only against a read-only root.
     root = AsyncVirtualFileSystem(storage=BindableStorage(), permissions="read")
     child = RecorderStorage()
-    await root.bind(child, "/scratch", permissions="read_write")
+    await root._attach_mount(child, "/scratch", permissions="read_write")
     result = await root.write(path="/scratch/f.txt", content="c")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.read_only

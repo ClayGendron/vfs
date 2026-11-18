@@ -254,7 +254,7 @@ def test_the_constructors_and_the_context_managers_are_twins() -> None:
     assert len(SESSION_COROUTINES) == len(ALL_OPS) + 1
     _assert_twins(AsyncVirtualFileSystem.__init__, VirtualFileSystem.__init__)
     _assert_twins(AsyncSession.__init__, Session.__init__)
-    _assert_twins(AsyncVirtualFileSystem.session, VirtualFileSystem.session)
+    _assert_twins(AsyncVirtualFileSystem.open_session, VirtualFileSystem.open_session)
     _assert_twins(AsyncVirtualFileSystem.mounts, VirtualFileSystem.mounts)
     _assert_twins(AsyncVirtualFileSystem.capabilities, VirtualFileSystem.capabilities)
     _assert_twins(AsyncSession.__aexit__, Session.__exit__)
@@ -530,17 +530,17 @@ def test_the_management_twins_drive_the_mount_tree() -> None:
         split = fs.locate_edge("/a/x.md", "/m/y.md")
         assert split.same_storage is False
         assert (split.source.mount, split.target.mount) == ("/", "/m")
-        fs.remount("/m", permissions="read")
+        fs.update_mount("/m", permissions="read")
         assert fs.write(path="/m/x.md", content="x").errors[0].kind is ErrorKind.read_only
-        binding = fs.unbind("/m")
-        assert binding.storage is child
+        mount = fs.remove_mount("/m")
+        assert mount.storage is child
         assert [info.path for info in fs.mounts()] == ["/"]
-        fs.bind(child, "/m")
+        fs.add_mount(child, "/m")
         assert [info.path for info in fs.mounts()] == ["/", "/m"]
         fs.remove_mount("/m")
         assert [info.path for info in fs.mounts()] == ["/"]
         with pytest.raises(ValueError, match="No mount"):
-            fs.unbind("/m")
+            fs.remove_mount("/m")
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +628,7 @@ def test_a_sync_session_verb_is_the_facade_call_with_the_authority_filled_in(op:
         VirtualFileSystem(storage=session_storage) as routed,
     ):
         expected = getattr(direct, op)(**CALLS[op], authority=ALICE)
-        with routed.session(ALICE) as s:
+        with routed.open_session(ALICE) as s:
             assert isinstance(s, Session)
             assert s.authority == ALICE and s.closed is False
             result = getattr(s, op)(**CALLS[op])
@@ -642,7 +642,7 @@ def test_a_closed_sync_session_refuses_and_dispatches_nothing(op: Op) -> None:
     """One closed fact, held by the wrapped session and read through the twin."""
     storage = RecorderStorage()
     with VirtualFileSystem(storage=storage) as fs:
-        with fs.session(ALICE) as s:
+        with fs.open_session(ALICE) as s:
             pass
         assert s.closed is True
         assert s._session.closed is True
@@ -654,7 +654,7 @@ def test_a_closed_sync_session_refuses_and_dispatches_nothing(op: Op) -> None:
 
     async def the_async_refusal() -> Result:
         router = AsyncVirtualFileSystem(storage=RecorderStorage())
-        closed = router.session(ALICE)
+        closed = router.open_session(ALICE)
         await closed.close()
         return await getattr(closed, op)(**CALLS[op])
 
@@ -663,7 +663,7 @@ def test_a_closed_sync_session_refuses_and_dispatches_nothing(op: Op) -> None:
 
 def test_sync_closed_is_final() -> None:
     with VirtualFileSystem(storage=RecorderStorage()) as fs:
-        s = fs.session(ALICE)
+        s = fs.open_session(ALICE)
         s.close()
         s.close()
         with pytest.raises(ValueError, match="cannot reopen"), s:
@@ -676,7 +676,7 @@ def test_sync_closed_is_final() -> None:
 
 
 def test_the_management_allowlist_is_owned_by_ops() -> None:
-    expected = {"add_mount", "remove_mount", "bind", "unbind", "remount", "close", "locate", "locate_edge"}
+    expected = {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
     assert frozenset(expected) == MANAGEMENT_METHODS
     assert "MANAGEMENT_METHODS = " not in (REPO / "tests" / "test_ops.py").read_text()
 
@@ -750,7 +750,7 @@ async def test_a_sync_verb_on_a_foreign_running_loop_warns_once_and_serves() -> 
         with warnings.catch_warnings(record=True) as rest:
             warnings.simplefilter("always")
             assert fs.read("/a.txt").success is True
-            assert fs.session(ALICE).read("/a.txt").success is True
+            assert fs.open_session(ALICE).read("/a.txt").success is True
             fs.locate("/a.txt")
     assert [w.category for w in first] == [RuntimeWarning]
     assert "VirtualFileSystem.write" in str(first[0].message) and "AsyncVirtualFileSystem" in str(first[0].message)
@@ -758,7 +758,7 @@ async def test_a_sync_verb_on_a_foreign_running_loop_warns_once_and_serves() -> 
     assert rest == []
     with VirtualFileSystem(storage=InMemoryStorage()) as other, warnings.catch_warnings(record=True) as again:
         warnings.simplefilter("always")
-        assert other.session(ALICE).ls("/").success is True
+        assert other.open_session(ALICE).ls("/").success is True
     assert [w.category for w in again] == [RuntimeWarning]
     assert "VirtualFileSystem.ls" in str(again[0].message)
     assert again[0].filename == __file__

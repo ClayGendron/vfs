@@ -228,8 +228,8 @@ describe("the real pages", () => {
     for (const id of ids) expect(article).toContain(`class="docs-anchor" href="#${id}"`);
     // An API name and each of its members link to themselves too.
     const api = page(real, "reference/python-api/mounts").replace(/<!--.*?-->/g, "");
-    expect(api).toContain('class="docs-anchor" href="#vfs.MountInfo"');
-    expect(api).toContain('class="docs-anchor" href="#vfs.MountInfo.path"');
+    expect(api).toContain('class="docs-anchor" href="#vfs.Mount"');
+    expect(api).toContain('class="docs-anchor" href="#vfs.Mount.path"');
   });
 
   test("a local diagram is inline", () => {
