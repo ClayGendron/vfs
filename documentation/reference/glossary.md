@@ -34,7 +34,7 @@ The path a [mount](#mount) is attached at is an entry too. It is an empty direct
 
 ## Kernel
 
-The kernel is the object that holds the file tree and answers every call on it. For each call it finds the [mount](#mount) that holds the path, checks that the caller may make the call, and sends the call to the storage backend of that mount. **Every call passes through the kernel, so permissions are checked in one place.**
+The kernel is the object that holds the file tree and answers every call on it. For each call it finds the [mount](#mount) that holds the path, checks the call against the permissions of that mount, and sends the call to the storage backend of that mount with the name of the caller. The storage backend decides what that caller may see or change. **Every call passes through the kernel, so no call reaches a storage backend unchecked.**
 
 In code the kernel is `AsyncVirtualFileSystem`, with calls you `await`. `VirtualFileSystem` is the same kernel with plain calls. One kernel is one file tree. A kernel never holds another kernel, and two file trees are joined only through a storage backend.
 

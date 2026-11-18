@@ -163,8 +163,11 @@ describe("the real pages", () => {
   test("a module's page shows its attributes, and the fields of a class no page pulls in by name", () => {
     const html = page(real, "reference/python-api/permissions").replace(/<!--.*?-->/g, "");
     expect(html).toContain('id="vfs.permissions.Permission"');
-    for (const field of ["permission_map", "rel", "mount_prefix"]) {
-      expect(html).toContain(`<h4 id="vfs.permissions.PermissionLayer.${field}"`);
+    // The module lists what it offers. A helper of the gate is not on its page.
+    expect(html).not.toContain("PermissionLayer");
+    const ranking = page(real, "reference/python-api/ranking").replace(/<!--.*?-->/g, "");
+    for (const field of ["source", "mount", "rank"]) {
+      expect(ranking).toContain(`<h4 id="vfs.rerank.Candidate.${field}"`);
     }
   });
 

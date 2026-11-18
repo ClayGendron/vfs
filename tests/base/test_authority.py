@@ -149,16 +149,14 @@ async def test_the_authority_is_threaded_not_cached() -> None:
     assert seen(storage) == [("read", ALICE), ("read", bob)]
 
 
-async def test_the_control_plane_runs_as_the_system_actor() -> None:
-    # Mount administration is the router's own work: the bind-site
-    # probes and the mount-point mkdir and rmdir run as the system
-    # actor, whatever default or caller is configured.
+async def test_a_mount_change_makes_its_directory_as_the_caller_and_does_its_own_work_as_the_system_actor() -> None:
+    # The caller makes the mount-point directory, as their own mkdir would. The check of the mount
+    # point and the delete of its directory are the kernel's own work, whoever the caller is.
     storage = RecordingMemory()
     fs = AsyncVirtualFileSystem(storage=storage, default_authority=ALICE)
     await fs.add_mount(RecorderStorage(name="child"), "/m", parents=True)
     await fs.remove_mount("/m")
-    assert storage.seen and all(authority == SYSTEM for _op, authority in storage.seen)
-    assert {op for op, _ in storage.seen} == {"mkdir", "stat", "ls", "delete"}
+    assert set(storage.seen) == {("mkdir", ALICE), ("stat", SYSTEM), ("ls", SYSTEM), ("delete", SYSTEM)}
     await fs.close()
 
 

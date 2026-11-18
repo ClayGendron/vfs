@@ -14,8 +14,8 @@ await fs.write(path="/data/a.txt", content="hello")
 
 The shape of the file tree is stored and never made up. A mount point is an ordinary empty directory,
 stored by whichever storage holds the path above it. The mount itself lives only in the table. One kernel
-joins another through storage. An adapter presents a kernel as a ``StorageBackend``, and an MCP client is
-a storage backend that speaks over a wire.
+joins another only through storage, as a storage backend that wraps a kernel or reaches one over a wire.
+This package ships no such backend yet.
 
 Every public verb takes the same steps.
 
@@ -68,12 +68,18 @@ from vfs.models import (
     measure_bytes,
     measure_text,
 )
-from vfs.mounts import EdgeLocation, Location, Mount
+from vfs.mounts import (
+    EdgeLocation,
+    Location,
+    Mount,
+    normalize_mount_path,
+    require_storage,
+    rights_refusal,
+    validate_deny_ops,
+)
 from vfs.offload import call_offloaded, judge_rows, offload_pool, wall_truncation
 from vfs.ops import (
-    GRANT_OPS,
     MUTATING_OPS,
-    READ_OPS,
     TRAVERSE_DEPTH_DEFAULT,
     TRAVERSE_LIMIT_DEFAULT,
     CaseMode,
@@ -82,7 +88,6 @@ from vfs.ops import (
 )
 from vfs.params import param_violation
 from vfs.paths import (
-    METADATA_ROOT,
     ROOT,
     Path,
     check_reserved_path,
@@ -102,12 +107,10 @@ from vfs.results import ErrorKind, Result, ResultError, classified, validation_m
 from vfs.results.kinds import TRASHED_KEY, Severity, kind_family
 from vfs.session import AsyncSession
 from vfs.storage import (
-    HOLDS,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
     SupportsGrants,
-    SupportsHolds,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
@@ -127,16 +130,16 @@ if TYPE_CHECKING:
     from vfs.pattern_matching import GlobGates
     from vfs.storage.grants import GrantLevel, Posture
 
-# Router-traversal depth budget for the current request: decremented once
-# per router entered (adapters and wire hops re-enter), never per mount.
+# How many more kernels the current request may enter. One is spent per
+# kernel entered and never per mount.
 _hop_budget: ContextVar[int | None] = ContextVar("vfs_hop_budget", default=None)
 
 # Single-path mutations whose addressed site the EBUSY guard protects:
 # delete removes it, restore lands on it, sweep destroys beneath it.
 _BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore", "sweep"})
 
-# The router's own control-plane storage calls (mount-site probes, the
-# mount-point mkdir and rmdir) run as the system actor, not as any caller.
+# The kernel's own storage calls for a mount change (the mount-point check
+# and the delete of its directory) run as the system actor, not as any caller.
 _ADMIN_AUTHORITY: Final = Authority.system()
 
 # The truncation advice of a fan-out's glob stages: its root probe and
@@ -180,7 +183,7 @@ class _HopGrant(NamedTuple):
 
 
 class _Ranked(NamedTuple):
-    """What ``search`` needs to merge several mounts. The query, the caller's limit, and how deep to ask each mount."""
+    """What ``search`` needs to merge several mounts. It holds the query, the caller's limit, and how deep to ask."""
 
     query: str
     limit: int
@@ -224,7 +227,7 @@ class _PathFilters(NamedTuple):
 class _Dispatches(NamedTuple):
     """The calls built for one ``glob`` or ``grep`` over several mounts.
 
-    The probes of the roots, one call for each mount, and the records of the mounts that were skipped.
+    It holds the probes of the roots, one call for each mount, and the records of the mounts that were skipped.
     """
 
     probes: list[Coroutine[Any, Any, Result]]
@@ -295,11 +298,11 @@ class AsyncVirtualFileSystem:
     - ``unauthenticated`` means the mount gives an unnamed caller nothing there, so the call needs an
       authority.
     - ``not_found`` means the path holds nothing, or nothing the caller may see.
+    - ``permission_denied`` means the caller is known and may see the path, and may not do this to it.
     - ``backend_unavailable`` means the storage could not be reached, or the kernel is closed.
 
     A verb that changes something can also be refused with ``read_only``, when a permission map forbids
-    the change whoever the caller is, and with ``permission_denied``, when the caller is known and may
-    not make the change.
+    the change whoever the caller is.
     """
 
     def __init__(
@@ -319,9 +322,7 @@ class AsyncVirtualFileSystem:
     ) -> None:
         if storage is None:
             storage = InMemoryStorage()
-        if not isinstance(storage, StorageBackend):
-            msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
-            raise TypeError(msg)
+        require_storage(storage)
         self._rerankers = tuple(rerankers)
         for stage in self._rerankers:
             if not isinstance(stage, Reranker):
@@ -339,7 +340,7 @@ class AsyncVirtualFileSystem:
             path=ROOT,
             storage=storage,
             permissions=coerce_permissions(permissions),
-            deny_ops=self._validate_deny_ops(deny_ops),
+            deny_ops=validate_deny_ops(deny_ops),
             no_overlay=no_overlay,
             owned=True,
             declared_caps=frozenset(storage.capabilities()),
@@ -367,10 +368,10 @@ class AsyncVirtualFileSystem:
         """Attach ``storage`` at ``path`` as a :term:`mount`.
 
         The mount point is an empty directory in the storage that holds the path above it. If it is
-        absent, it is made with an ordinary ``mkdir``. Its parents must exist unless ``parents`` is true.
-        If it exists and is empty, it is used as it is, which is how a mount is added again after a
-        restart. If a removed mount deleted it, it is restored. The mount itself lives only in the
-        kernel's table while the kernel is open, and nothing about it is stored.
+        absent, it is made by the caller's own ``mkdir``, so a caller who may not make the directory may
+        not mount there. Its parents must exist unless ``parents`` is true. If it exists and is empty, it
+        is used as it is, which is how a mount is added again after a restart. If a removed mount deleted
+        it, it is restored. The mount itself lives only in the kernel's table, and nothing about it is stored.
 
         If ``path`` is omitted, the storage's ``name`` names the mount point, so
         ``add_mount(InMemoryStorage(name="data"))`` mounts at ``/data``. ``permissions`` sets rules
@@ -393,27 +394,35 @@ class AsyncVirtualFileSystem:
         It raises ``ValueError`` when the directory is not empty, when the path already has a mount,
         when it lies beneath a ``no_overlay`` mount, when it would lie above a deeper mount, and when
         ``storage`` is already mounted somewhere else in this table. One storage object has one path.
-        It raises ``TypeError`` when ``storage`` cannot be read. If the call fails after the directory
-        was made, the directory stays. A plain empty directory is a valid mount point for later.
+        It raises ``TypeError`` when ``storage`` cannot be read, before anything is made. If the call fails
+        after the directory was made, the directory stays. A plain empty directory is a valid mount point
+        for later.
         """
+        require_storage(storage)
         mount_name = path or storage.name
         if not mount_name:
             msg = "add_mount needs a path or a named storage"
             raise ValueError(msg)
-        mount_path = self._normalize_mount_path(mount_name)
-        # Validated before the mkdir — a rejected mask must not mint the site.
-        mask = self._validate_deny_ops(deny_ops)
-        await self._require_mount_rights("mount at", mount_path, authority)
+        mount_path = normalize_mount_path(mount_name)
+        # Validated before the mkdir, so a rejected mask leaves no directory behind.
+        mask = validate_deny_ops(deny_ops)
+        judge = await self._require_mount_rights("mount at", mount_path, authority)
 
-        made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=_ADMIN_AUTHORITY)
+        made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=authority)
         if not made.success and _is_tombstoned_site(made, mount_path):
-            made = await self.restore(str(mount_path), authority=_ADMIN_AUTHORITY)
+            made = await self.restore(str(mount_path), authority=authority)
         if not made.success:
             detail = made.error_message or "storage refused the mount-point directory"
             msg = f"Cannot mount at {mount_path}: {detail}"
             raise MountError(msg, result=made)
         await self._attach_mount(
-            storage, str(mount_path), permissions=permissions, deny_ops=mask, no_overlay=no_overlay, owned=owned
+            storage,
+            str(mount_path),
+            permissions=permissions,
+            deny_ops=mask,
+            no_overlay=no_overlay,
+            owned=owned,
+            judged_by=judge,
         )
 
     async def remove_mount(self, path: str, *, authority: Authority | None = None) -> Mount:
@@ -438,7 +447,7 @@ class AsyncVirtualFileSystem:
         or persistent storage, and removing a mount must not destroy them. The file tree keeps a plain
         directory, which is easy to see and to recover from.
         """
-        mount_path = self._normalize_mount_path(path)
+        mount_path = normalize_mount_path(path)
         self._require_mount(mount_path)
         await self._require_mount_rights("unmount", mount_path, authority)
         mount = await self._detach_mount(str(mount_path))
@@ -475,19 +484,21 @@ class AsyncVirtualFileSystem:
         ``no_overlay`` is true, the mount is sealed for the future only. The deeper mounts that exist
         stay and keep working, and only new mounts beneath this one are refused. Removing a mount never
         reads the flag, so a sealed subtree can lose mounts and never gain one. If ``refresh_caps`` is
-        true, ``storage.capabilities()`` is read again. It is the remedy for a wire backend that
-        reconnected with a changed set of tools, and it is the only call made to the mount's storage.
+        true, ``storage.capabilities()`` is read again, for a storage whose set changed after it was
+        mounted. Apart from the check of the caller's rights, it is the only call made to a storage.
 
         ``authority`` names the caller, as for :meth:`add_mount`. The caller must hold ``read_write``
-        at the mount point. The storage of ``/`` judges for the root mount.
+        at the mount point. The storage of ``/`` judges for the root mount. The change does what removing
+        the mount and adding it again would do, so the gate must allow a ``delete`` and a ``mkdir`` at
+        the mount point. The root has no mount above it, and the gate is not asked for it.
 
         The call returns nothing. It raises :class:`MountError`, which carries the refusal, when the
-        caller lacks ``read_write``. It raises ``ValueError`` when ``path`` has no mount, when
+        caller lacks ``read_write`` or the gate refuses. It raises ``ValueError`` when ``path`` has no mount, when
         ``deny_ops`` masks a read operation, and when the mount was replaced while ``refresh_caps`` was
         reading. Nothing has changed in any of these cases.
         """
-        mount_path = self._normalize_mount_path(path, allow_root=True)
-        mask = None if deny_ops is None else self._validate_deny_ops(deny_ops)
+        mount_path = normalize_mount_path(path, allow_root=True)
+        mask = None if deny_ops is None else validate_deny_ops(deny_ops)
         new_map = None if permissions is None else coerce_permissions(permissions)
         self._require_mount(mount_path)
         await self._require_mount_rights("update the mount at", mount_path, authority)
@@ -504,6 +515,9 @@ class AsyncVirtualFileSystem:
             if probed_storage is not None and mount.storage is not probed_storage:
                 msg = f"Mount at {mount_path} changed while it was being updated — retry"
                 raise ValueError(msg)
+            # The root has no mount above it, so nothing above can refuse a change to it.
+            if mount_path != ROOT:
+                self._gate_mount_change("update the mount at", mount_path, "delete", "mkdir")
             self._mounts[mount_path] = replace(
                 mount,
                 permissions=mount.permissions if new_map is None else new_map,
@@ -518,8 +532,8 @@ class AsyncVirtualFileSystem:
         The mount table is emptied first, so every later verb is refused as closed. Each storage that a
         :term:`mount` owns and that has a ``close`` is then closed once, however many mounts hold the
         same object. The storages are closed at the same time, each within ``close_timeout`` seconds.
-        Closing may end this client's own sessions with a remote kernel, which is a message over the
-        wire. It never changes the mount table of a remote kernel.
+        A storage that speaks to a remote kernel may end its own sessions there, which is a message
+        over the wire. Closing never changes the mount table of a remote kernel.
 
         The call returns nothing. If one storage fails to close, the others are still closed and the
         error is raised at the end. Several errors are raised together as a group. A storage that was
@@ -639,8 +653,8 @@ class AsyncVirtualFileSystem:
         """Return the operations this kernel can answer, which is every capability of every :term:`mount`.
 
         The set of a mount is what its storage declared when it was mounted, less the operations its
-        mounter masked. Nothing is worked out from the methods a storage happens to have. An adapter
-        passes on the set of the kernel it wraps, and a wire backend passes on the tools of the far side.
+        mounter masked. Nothing is worked out from the methods a storage happens to have. A storage that
+        wraps a kernel, in this process or over a wire, declares the set of the kernel it wraps.
         """
         caps: set[str] = set()
         for mount in self._mounts.values():
@@ -656,6 +670,7 @@ class AsyncVirtualFileSystem:
         deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
+        judged_by: StorageBackend | None = None,
     ) -> None:
         """Commit a :term:`mount` of ``storage`` at ``path``, on a directory that already exists.
 
@@ -667,13 +682,13 @@ class AsyncVirtualFileSystem:
         The gate is asked here and not left to the caller's ``mkdir``, so no way to a mount goes around
         it. The check of the mount point is storage I/O and runs before the mount lock is taken. Under
         the lock the table is checked again, the gate is asked and the mount is committed, with no
-        await in between.
+        await in between. ``judged_by`` is the storage that said the caller holds ``read_write`` here.
+        If a mount added since then put the mount point in another storage, the call raises
+        ``ValueError`` and the caller retries.
         """
-        if not isinstance(storage, StorageBackend):
-            msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
-            raise TypeError(msg)
-        mount_path = self._normalize_mount_path(path)
-        mask = self._validate_deny_ops(deny_ops)
+        require_storage(storage)
+        mount_path = normalize_mount_path(path)
+        mask = validate_deny_ops(deny_ops)
 
         probed = await self._probe_mount_site(mount_path)
         if probed is not None:
@@ -695,10 +710,10 @@ class AsyncVirtualFileSystem:
             if not self._mounts:
                 msg = f"Cannot mount at {mount_path}: filesystem is closed"
                 raise ValueError(msg)
-            refusal = self._gate_mount_site("mkdir", mount_path)
-            if refusal is not None:
-                msg = f"Cannot mount at {mount_path}: {refusal.error_message}"
-                raise MountError(msg, result=refusal)
+            if judged_by is not None and self._mount_point_owner(mount_path).storage is not judged_by:
+                msg = f"Cannot mount at {mount_path}: a mount was added above it while rights were checked, so retry"
+                raise ValueError(msg)
+            self._gate_mount_change("mount at", mount_path, "mkdir")
             if mount_path in self._mounts:
                 msg = f"Mount already exists at: {mount_path}"
                 raise ValueError(msg)
@@ -726,17 +741,14 @@ class AsyncVirtualFileSystem:
         beneath it. It raises :class:`MountError` when the gate would refuse a ``delete`` of the
         mount-point directory.
         """
-        mount_path = self._normalize_mount_path(path)
+        mount_path = normalize_mount_path(path)
         async with self._mount_lock:
             mount = self._require_mount(mount_path)
             deeper = [p for p in self._sorted_mount_paths if p.startswith(mount_path + "/")]
             if deeper:
                 msg = f"Cannot unmount {mount_path}: deeper mounts exist at {', '.join(map(str, deeper))}"
                 raise ValueError(msg)
-            refusal = self._gate_mount_site("delete", mount_path)
-            if refusal is not None:
-                msg = f"Cannot unmount {mount_path}: {refusal.error_message}"
-                raise MountError(msg, result=refusal)
+            self._gate_mount_change("unmount", mount_path, "delete")
             del self._mounts[mount_path]
             self._rebuild_sorted_mounts()
             return mount
@@ -773,46 +785,6 @@ class AsyncVirtualFileSystem:
             return f"the mount-point directory is not empty: {mount_path}"
         return None
 
-    @staticmethod
-    def _normalize_mount_path(path: str, *, allow_root: bool = False) -> Path:
-        """Return ``path`` as a checked :class:`Path` that may hold a :term:`mount`.
-
-        :class:`Path` does the general work. It makes the path absolute, drops ``.`` and ``..``, strips
-        the white space around each segment, and refuses control characters and segments that are too
-        long. Spaces inside a segment are kept, as in ``"/My Documents"``. A mount path has two more
-        rules. It is never the root unless ``allow_root`` is true, which ``update_mount`` passes
-        because the root is an ordinary mount. It never uses the reserved segment ``.vfs``. The call
-        raises ``ValueError`` for a path that breaks a rule.
-        """
-        mount_path = Path(path)
-        if mount_path == ROOT and not allow_root:
-            msg = "Mount path must not be empty or root"
-            raise ValueError(msg)
-        meta_segment = METADATA_ROOT.strip("/")
-        if meta_segment in mount_path.split("/")[1:]:
-            msg = f"Mount path may not use the reserved metadata segment {meta_segment!r}: {path!r}"
-            raise ValueError(msg)
-        return mount_path
-
-    @staticmethod
-    def _validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
-        """Return ``deny_ops`` as a frozen set, after checking that it masks no read operation.
-
-        A mask applies to every caller alike. Refusing a read is the job of the storage's rights, which
-        know who the caller is. Only the known read operations are refused here, so a name the kernel
-        does not know can still be masked. The call raises ``ValueError`` that names the read
-        operations. It raises ``TypeError`` for a bare string, which would be read as a set of letters.
-        """
-        if isinstance(deny_ops, (str, bytes)):
-            msg = f"deny_ops must be an iterable of op names, not a bare string: {deny_ops!r}"
-            raise TypeError(msg)
-        mask = frozenset(deny_ops)
-        blocked = mask & READ_OPS
-        if blocked:
-            msg = f"deny_ops may not mask read-family ops: {', '.join(sorted(blocked))}"
-            raise ValueError(msg)
-        return mask
-
     def _rebuild_sorted_mounts(self) -> None:
         """Sort the mount paths again, so that a deeper path comes before a path above it.
 
@@ -841,8 +813,8 @@ class AsyncVirtualFileSystem:
         same time. ``columns`` names the fields of an observation to return. With none, the verb's
         usual fields are returned.
 
-        The call returns a :class:`Result` with an observation for each file that was read. A path that
-        holds nothing, or nothing the caller may see, is refused with ``not_found``.
+        The call returns a :class:`Result` with an observation for each file that was read. A path that holds
+        nothing, or nothing the caller may see, is refused with ``not_found``. A directory is ``wrong_kind``.
         """
         refusal = self._gate_params("read", path=path, observations=observations, columns=columns, authority=authority)
         if refusal is not None:
@@ -1039,7 +1011,7 @@ class AsyncVirtualFileSystem:
         own path. :meth:`restore` brings it back. A ``write`` at its path revives it and keeps the body
         it replaced as a version. If ``cascade`` is true, a directory is deleted with everything
         beneath it, and all of it comes back when the directory is restored. Only :meth:`sweep`
-        destroys, and an agent is never given it.
+        destroys, and it is a developer's verb.
 
         The call returns a :class:`Result` whose observations each report ``deleted_at``. A path that
         is a mount point, or that holds one, is refused with ``busy``, and the :term:`mount` must be
@@ -1090,7 +1062,7 @@ class AsyncVirtualFileSystem:
     ) -> Result:
         """Destroy what is at ``path``. A sweep cannot be undone.
 
-        Only a developer calls ``sweep``. An agent is never given it and can only :meth:`delete`. If
+        ``sweep`` is a developer's verb, meant to be left off the tools an agent is given. If
         ``path`` is a trash view, the call runs retention. Every row deleted longer ago than the
         mount's ``trash_days`` is destroyed, with everything that was deleted alongside it. If ``path``
         is anything else, that whole subtree is destroyed at once, whatever its age. The default path
@@ -1486,7 +1458,8 @@ class AsyncVirtualFileSystem:
         which can be vectors, words and links, and joins them as it sees fit. ``limit`` is the most
         rows returned. ``globs``, ``globs_not``, ``ext`` and ``ext_not`` choose the files as they do
         for :meth:`grep`, and ``paths`` are the roots to search beneath, checked as :meth:`glob` checks
-        them. ``observations`` limits the search to the rows of an earlier result.
+        them. ``observations`` limits the search to the rows of an earlier result. The four file filters
+        are not yet applied to those rows.
 
         If one :term:`mount` answers, its order and its scores are the answer, cut to ``limit``. If
         more than one can answer, each is asked for ``min(3 * limit, 256)`` rows and the kernel merges
@@ -2591,9 +2564,9 @@ class AsyncVirtualFileSystem:
         """Take one hop from the call's budget, or refuse when none is left.
 
         The budget belongs to one call and is shared by every :term:`kernel` the call passes through.
-        An adapter enters the next kernel in the same context, and a wire carries the budget across
-        processes. A storage is opaque, so a loop of mounts cannot be found. The budget makes a call
-        that could go round for ever end with ``budget_exhausted``, where it would otherwise hang.
+        A storage that wraps a kernel enters it in the same context, and one that speaks over a wire
+        carries the budget across. A storage is opaque, so a loop of mounts cannot be found. The budget
+        makes a call that could go round for ever end with ``budget_exhausted``, where it would hang.
         """
         budget = _hop_budget.get()
         if budget is None:
@@ -2768,27 +2741,27 @@ class AsyncVirtualFileSystem:
             )
         return layers
 
-    def _gate_mount_site(self, op: Op, mount_path: Path) -> Result | None:
-        """Ask the gate about a mount change, as the write it is at its mount point.
+    def _gate_mount_change(self, change: str, mount_path: Path, *ops: Op) -> None:
+        """Raise :class:`MountError` when the gate refuses a mount change, as the write it is at its mount point.
 
-        ``op`` is ``mkdir`` to attach a :term:`mount` and ``delete`` to detach one. The call returns
-        the refusal, or ``None``. The mount-point directory is stored by the mount above
-        ``mount_path``, so that mount's capabilities and every permission map above the mount point
-        decide. A mount above that is read-only there, or that masks ``op``, keeps its mount table as
-        it is. The mount at ``mount_path`` itself has no say. Its map governs what is beneath it and
-        never its own mount point. No storage is asked. The caller holds the mount lock and has
-        already refused a closed kernel.
+        ``ops`` are the writes the change stands for. Attaching a :term:`mount` is a ``mkdir``, detaching
+        one is a ``delete``, and changing one in place is both. ``change`` is the words the error uses.
+        The mount-point directory is stored by the mount above ``mount_path``, so that mount's
+        capabilities and every permission map above the mount point decide. A mount above that is
+        read-only there, or that masks one of ``ops``, keeps its mount table as it is. The mount at
+        ``mount_path`` itself has no say. Its map governs what is beneath it and never its own mount
+        point. No storage is asked. The caller holds the mount lock and has already refused a closed kernel.
         """
         owner = self._mount_point_owner(mount_path)
-        if op not in owner.caps:
-            return self._error(
-                ErrorKind.unsupported,
-                op=op,
-                path=owner.path,
-                detail=f"operation {op!r} is not declared by the storage that holds the mount point",
-            )
         above = [layer for layer in self._permission_layers(mount_path) if layer.mount_prefix != mount_path]
-        return check_writable_composed(above, op)
+        for op in ops:
+            refusal = check_writable_composed(above, op)
+            if op not in owner.caps:
+                detail = f"operation {op!r} is not declared by the storage that holds the mount point"
+                refusal = self._error(ErrorKind.unsupported, op=op, path=owner.path, detail=detail)
+            if refusal is not None:
+                msg = f"Cannot {change} {mount_path}: {refusal.error_message}"
+                raise MountError(msg, result=refusal)
 
     def _require_mount(self, mount_path: Path) -> Mount:
         """Return the :term:`mount` at ``mount_path``. Raise ``ValueError`` when there is none."""
@@ -2802,34 +2775,26 @@ class AsyncVirtualFileSystem:
         """Return the :term:`mount` that stores the directory at ``mount_path``. The root mount stores its own."""
         return next(self._mounts[p] for p in self._sorted_mount_paths if p == ROOT or mount_path.startswith(p + "/"))
 
-    async def _require_mount_rights(self, change: str, mount_path: Path, authority: Authority | None) -> None:
+    async def _require_mount_rights(
+        self, change: str, mount_path: Path, authority: Authority | None
+    ) -> StorageBackend | None:
         """Raise :class:`MountError` unless the caller holds ``read_write`` at the mount point ``mount_path``.
 
         The storage that holds the mount point judges, through ``holds``. The system actor holds every
         level, so no storage is asked for it. A storage that declares no grant verb keeps no rights to
         go around. A storage that keeps grants and cannot answer refuses. ``change`` is the words the
         error uses for the change. This is storage I/O, so it runs before the mount lock is taken and
-        before anything changes.
+        before anything changes. The call returns the storage that judged, or ``None`` for the system actor.
         """
         who = self._admitted(authority)
         if who.is_system or not self._mounts:
-            return
+            return None
         owner = self._mount_point_owner(mount_path)
-        storage, refusal = owner.storage, None
-        if isinstance(storage, SupportsHolds):
-            rel = mount_path.without_mount(owner.path)
-            try:
-                answer = await storage.holds(path=rel, level="read_write", authority=who)
-            except TransportError as exc:
-                detail = f"the transport failed: {exc}"
-                answer = self._error(ErrorKind.backend_unavailable, op=HOLDS, path=ROOT, detail=detail)
-            refusal = None if answer.success else answer.with_mount(owner.path)
-        elif owner.declared_caps & GRANT_OPS:
-            detail = "the storage that holds the mount point keeps grants and cannot say what the caller holds"
-            refusal = self._error(ErrorKind.unsupported, op=HOLDS, path=owner.path, detail=detail)
+        refusal = await rights_refusal(owner, mount_path, who)
         if refusal is not None:
             msg = f"Cannot {change} {mount_path}: {refusal.error_message}"
             raise MountError(msg, result=refusal)
+        return owner.storage
 
     def _busy_guard(self, op: Op, full: Path, *, subtree: bool) -> Result | None:
         """Return a ``busy`` refusal when ``full`` is a mount point, or ``None``.

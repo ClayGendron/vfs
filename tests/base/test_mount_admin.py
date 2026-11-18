@@ -167,17 +167,19 @@ async def test_every_payload_is_a_json_fixed_point() -> None:
 
 
 async def replay(mounts: tuple[Mount, ...]) -> AsyncVirtualFileSystem:
-    """The documented recipe: every mount added bare, then each one's policy applied, last.
+    """The documented recipe: every mount added bare, then each one's policy applied, deepest first.
 
     A mount that is read-only, masks ``mkdir`` or is sealed with
     ``no_overlay`` refuses the new mounts beneath it, so no order of
     ``add_mount`` calls that carry their policy rebuilds every table.
+    A read-only mount also refuses a change to the mounts beneath it,
+    so the policy of the deepest mount goes on first and the root's last.
     """
     root = mounts[0]
     rebuilt = AsyncVirtualFileSystem(storage=root.storage)
     for mount in mounts[1:]:
         await rebuilt.add_mount(mount.storage, mount.path, owned=mount.owned)
-    for mount in mounts:
+    for mount in reversed(mounts):
         await rebuilt.update_mount(
             mount.path, permissions=mount.permissions, deny_ops=replay_ops(mount.deny_ops), no_overlay=mount.no_overlay
         )

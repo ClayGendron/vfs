@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 async def listed_grants(
     session: AsyncSession, host: EngineHost, gate_for: GateFor, who: Authority, path: Path
 ) -> Result:
-    """The grant rows on *path* and its ancestors that *who* may see."""
+    """Return the grant rows on ``path`` and its ancestors that ``who`` may see."""
     gate = await gate_for(session, who, VERB_RUNGS["grants"])
     if isinstance(gate, ResultError):
         return Result(ops=("grants",), errors=[gate])
@@ -45,7 +45,7 @@ async def listed_grants(
 async def held(
     session: AsyncSession, host: EngineHost, gate_for: GateFor, who: Authority, path: Path, level: Rung
 ) -> Result:
-    """Whether *who* holds *level* at *path*. A failed result carries the reason, as a verb's refusal would."""
+    """Say whether ``who`` holds ``level`` at ``path``. A failed result carries the reason, as a refusal would."""
     gate = await gate_for(session, who, Needs(level))
     if isinstance(gate, ResultError):
         return Result(ops=(HOLDS,), errors=[gate])

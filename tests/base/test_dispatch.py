@@ -271,7 +271,7 @@ async def test_two_path_capability_gate_blocks() -> None:
 
 
 # ----------------------------------------------------------------------
-# the busy guard — bind sites are EBUSY to the data plane
+# the busy guard: a verb may not change a live mount point
 # ----------------------------------------------------------------------
 
 
@@ -311,7 +311,7 @@ async def test_sweep_addressing_a_bind_site_is_busy() -> None:
 
 async def test_sweep_region_containing_bind_site_is_busy() -> None:
     # The purge arm takes arbitrary addresses, so the subtree form of
-    # the guard matters: a bind site inside the target refuses busy.
+    # the guard matters: a mount point inside the target refuses busy.
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/data/a", parents=True)
@@ -382,7 +382,7 @@ async def test_move_region_containing_bind_site_is_busy() -> None:
 
 
 async def test_copy_from_bind_site_is_not_busy() -> None:
-    # Copy never disturbs its source, so copying *from* a bind path is fine;
+    # Copy never disturbs its source, so copying *from* a mount point is fine;
     # only the destination is guarded — move guards both endpoints.
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
@@ -589,7 +589,7 @@ async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None
     assert result.paths == ("/a/hit.md",)
     assert b.calls == []
     # search also skips the root entry (memory declares no search) — every
-    # skip is an info-severity unsupported record anchored at its bind path.
+    # skip is an info-severity unsupported record anchored at its mount's path.
     assert all(e.kind is ErrorKind.unsupported and e.severity is Severity.info for e in result.errors)
     skip = next(e for e in result.errors if e.path == "/b")
     assert skip.source == "/b"

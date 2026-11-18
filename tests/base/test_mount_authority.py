@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from vfs.authority import Authority, Principal
 from vfs.exceptions import MountError
 from vfs.ops import GRANT_OPS
 from vfs.results import ErrorKind, Result
+from vfs.storage import TransportError
 
 if TYPE_CHECKING:
     from vfs.ops import Op
@@ -68,6 +70,8 @@ async def test_a_closed_posture_refuses_a_mount_change_that_names_nobody() -> No
 
 async def test_a_caller_needs_read_write_at_the_mount_point() -> None:
     fs = await closed()
+    # The directory is there already, so what is tested is the level and not who may make it.
+    assert (await fs.mkdir("/data", authority=SYSTEM)).success is True
     assert (await fs.grant("/data", "ada", "contribute", authority=SYSTEM)).success is True
     with pytest.raises(MountError, match="Cannot mount at /data") as exc:
         await fs.add_mount(InMemoryStorage(), "/data", authority=ADA)
@@ -93,6 +97,50 @@ async def test_a_caller_needs_read_write_at_the_mount_point() -> None:
     await fs.update_mount("/data", no_overlay=True, authority=ADA)
     assert fs.mounts()[1].no_overlay is True
     assert (await fs.remove_mount("/data", authority=ADA)).storage is child
+
+
+async def test_add_mount_makes_its_directories_as_the_caller_would() -> None:
+    fs = await closed()
+    assert (await fs.grant("/a/b/c", "ada", "read_write", authority=SYSTEM)).success is True
+    # ada holds nothing above /a/b/c, so her own mkdir may not make /a, and her add_mount may not either.
+    own = await fs.mkdir("/a/b/c", parents=True, authority=ADA)
+    assert own.success is False
+    with pytest.raises(MountError, match="Cannot mount at /a/b/c") as exc:
+        await fs.add_mount(InMemoryStorage(), "/a/b/c", parents=True, authority=ADA)
+    assert (exc.value.errors[0].kind, str(exc.value.errors[0].path)) == (own.errors[0].kind, str(own.errors[0].path))
+    assert paths(fs) == ["/"]
+    assert (await fs.stat("/a", authority=SYSTEM)).errors[0].kind is ErrorKind.not_found
+
+    # Once the directories above exist and she may list them, her mkdir passes and so does her add_mount.
+    assert (await fs.mkdir("/a/b", parents=True, authority=SYSTEM)).success is True
+    assert (await fs.grant("/", "ada", "list", authority=SYSTEM)).success is True
+    await fs.add_mount(InMemoryStorage(), "/a/b/c", authority=ADA)
+    assert paths(fs) == ["/", "/a/b/c"]
+
+
+async def test_update_mount_is_refused_where_removing_and_adding_the_mount_would_be() -> None:
+    fs = AsyncVirtualFileSystem()
+    await fs.add_mount(InMemoryStorage(), "/data", deny_ops={"sweep"})
+    await fs.update_mount("/", permissions="read")
+    # The root is read-only at /data, so the mount there can be neither removed nor added, nor changed in place.
+    with pytest.raises(MountError, match="Cannot update the mount at /data") as exc:
+        await fs.update_mount("/data", deny_ops=())
+    assert exc.value.errors[0].kind is ErrorKind.read_only
+    assert fs.mounts()[1].deny_ops == frozenset({"sweep"})
+    # The root mount has no mount above it, so its own policy can always be changed back.
+    await fs.update_mount("/", permissions="read_write")
+    await fs.update_mount("/data", deny_ops=())
+    assert fs.mounts()[1].deny_ops == frozenset()
+
+
+async def test_update_mount_needs_a_storage_above_that_can_make_and_delete_a_directory() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage(name="root"))
+    await fs.add_mount(RecorderStorage(name="child"), "/m")
+    await fs.update_mount("/", deny_ops={"delete"})
+    with pytest.raises(MountError, match="Cannot update the mount at /m") as exc:
+        await fs.update_mount("/m", no_overlay=True)
+    assert exc.value.errors[0].kind is ErrorKind.unsupported
+    assert fs.mounts()[1].no_overlay is False
 
 
 async def test_the_system_actor_and_a_default_authority_may_change_a_mount() -> None:
@@ -135,6 +183,48 @@ async def test_a_mount_change_asks_one_question_and_the_system_actor_asks_none()
     await fs.update_mount("/m", no_overlay=True, authority=SYSTEM)
     await fs.remove_mount("/m", authority=SYSTEM)
     assert all(op != "holds" for op, _ in root.calls)
+
+
+class UnreachableRights(BindableStorage):
+    """A storage whose peer is gone when it is asked what a caller holds."""
+
+    async def holds(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        raise TransportError("the peer hung up")
+
+
+async def test_a_storage_that_cannot_be_reached_refuses_the_mount_change() -> None:
+    fs = AsyncVirtualFileSystem(storage=UnreachableRights(name="root"))
+    with pytest.raises(MountError, match=r"Cannot mount at /m: .*the peer hung up") as exc:
+        await fs.add_mount(RecorderStorage(), "/m", authority=ADA)
+    assert exc.value.errors[0].kind is ErrorKind.backend_unavailable
+    assert paths(fs) == ["/"]
+
+
+class SlowRights(BindableStorage):
+    """A storage that says what a caller holds only when the test lets it."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.asked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def holds(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self.asked.set()
+        await self.release.wait()
+        return Result(ops=("holds",))
+
+
+async def test_a_mount_added_above_while_rights_were_judged_refuses_the_change() -> None:
+    # The root judged ada for /x/y. By the time she commits, /x is a mount and its storage never judged her.
+    root = SlowRights(name="root")
+    fs = AsyncVirtualFileSystem(storage=root)
+    pending = asyncio.create_task(fs.add_mount(RecorderStorage(name="child"), "/x/y", authority=ADA))
+    await root.asked.wait()
+    await fs.add_mount(BindableStorage(name="above"), "/x", authority=SYSTEM)
+    root.release.set()
+    with pytest.raises(ValueError, match="retry"):
+        await pending
+    assert paths(fs) == ["/", "/x"]
 
 
 class GrantsWithoutTheQuestion(ReadFamilyStorage):

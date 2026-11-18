@@ -500,6 +500,7 @@ GATED_CALLS = {
     ),
     "grants": lambda s, who: s.grants(path=Path("/d"), authority=who),
     "grant": lambda s, who: s.grant(path=Path("/d"), principal="bob", level="read", authority=who),
+    "holds": lambda s, who: s.holds(path=Path("/d"), level="read_write", authority=who),
     "stat": lambda s, who: s.stat(path=Path("/d/f.md"), authority=who),
 }
 

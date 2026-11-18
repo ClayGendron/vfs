@@ -25,7 +25,7 @@ from vfs.authority import Authority
 from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
-from vfs.mounts import Mount
+from vfs.mounts import Mount, normalize_mount_path
 from vfs.paths import Path
 from vfs.permissions import read_only
 from vfs.results import ErrorKind, Result, ResultError, Severity
@@ -104,7 +104,7 @@ def test_init_root_capability_snapshot_matches_backend() -> None:
 
 
 # ----------------------------------------------------------------------
-# _normalize_mount_path
+# normalize_mount_path
 # ----------------------------------------------------------------------
 
 
@@ -113,25 +113,25 @@ def test_init_root_capability_snapshot_matches_backend() -> None:
     [("data", "/data"), ("/data", "/data"), ("/data/", "/data"), ("data/archive", "/data/archive")],
 )
 def test_normalize_mount_path_valid(raw: str, expected: str) -> None:
-    assert AsyncVirtualFileSystem._normalize_mount_path(raw) == expected
+    assert normalize_mount_path(raw) == expected
 
 
 @pytest.mark.parametrize("raw", ["", "/", "//"])
 def test_normalize_mount_path_rejects_empty_or_root(raw: str) -> None:
     with pytest.raises(ValueError):
-        AsyncVirtualFileSystem._normalize_mount_path(raw)
+        normalize_mount_path(raw)
 
 
 @pytest.mark.parametrize("raw", [".vfs", "/.vfs", "/.vfs/"])
 def test_normalize_mount_path_rejects_reserved_metadata_root(raw: str) -> None:
     with pytest.raises(ValueError, match="reserved"):
-        AsyncVirtualFileSystem._normalize_mount_path(raw)
+        normalize_mount_path(raw)
 
 
 @pytest.mark.parametrize("raw", [" /data", "/data/ ", "/x /y"])
 def test_normalize_mount_path_canonicalizes_stray_whitespace(raw: str) -> None:
     # Leading/trailing per-segment whitespace is canonicalized, not rejected.
-    AsyncVirtualFileSystem._normalize_mount_path(raw)
+    normalize_mount_path(raw)
 
 
 # ----------------------------------------------------------------------
@@ -225,6 +225,8 @@ async def test_add_mount_rejects_non_storage_backend() -> None:
     root = AsyncVirtualFileSystem()
     with pytest.raises(TypeError, match="read family"):
         await root.add_mount(object(), "/x")  # ty: ignore[invalid-argument-type]
+    # Refused before anything changed: no directory was made for the mount.
+    assert (await root.stat("/x")).errors[0].kind is ErrorKind.not_found
 
 
 async def test_add_mount_rejects_a_non_empty_directory() -> None:

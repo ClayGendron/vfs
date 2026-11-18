@@ -1056,7 +1056,7 @@ class DatabaseStorage:
         return await self._execute("grants", lambda session: listed_grants(session, self._host, self._gate, who, path))
 
     async def holds(self, *, path: Path, level: Rung, authority: Authority | None = None) -> Result:
-        """Whether *authority* holds *level* at *path*. It writes nothing, and a failed result says why not."""
+        """Say whether ``authority`` holds ``level`` at ``path``. Nothing is written. A failed result says why not."""
         who = self._named(authority)
         return await self._execute(HOLDS, lambda session: held(session, self._host, self._gate, who, path, level))
 

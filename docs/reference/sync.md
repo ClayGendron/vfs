@@ -50,9 +50,9 @@ assert not any(t.name == "vfs-sync-loop" for t in threading.enumerate())
 
 ## Verbs
 
-Every verb of `AsyncVirtualFileSystem`, with the same parameters: `read`, `stat`, `ls`, `tree`, `write`, `edit`, `delete`, `restore`, `sweep`, `mkdir`, `mkedge`, `rmedge`, `move`, `copy`, `glob`, `grep`, `search`, `traverse`, `run`, `grant`, `revoke`, `grants`, `posture`, `add_member`, `remove_member`. Each returns a `Result`.
+Every verb of `AsyncVirtualFileSystem`, with the same parameters: `read`, `stat`, `ls`, `tree`, `write`, `edit`, `delete`, `restore`, `sweep`, `mkdir`, `mkedge`, `rmedge`, `move`, `copy`, `glob`, `grep`, `search`, `traverse`, `run`, `grant`, `revoke`, `grants`, `set_posture`, `add_member`, `remove_member`. Each returns a `Result`.
 
-Every management method, with the same parameters: `bind`, `unbind`, `add_mount`, `remove_mount`, `remount`, `locate`, `locate_edge`. Each returns what the kernel's returns and raises what the kernel's raises. `mounts()` and `capabilities()` answer without a hop. `session(authority)` returns a `Session`.
+Every management method, with the same parameters: `add_mount`, `remove_mount`, `update_mount`, `locate`, `locate_edge`. Each returns what the kernel's returns and raises what the kernel's raises. `mounts()` and `capabilities()` answer without a hop. `open_session(authority)` returns a `Session`.
 
 ## Refusals
 
@@ -86,11 +86,11 @@ assert refused.errors[0].kind is ErrorKind.backend_unavailable
 
 ## Session
 
-`VirtualFileSystem.session(authority: Authority) -> Session`. The twin wraps an `AsyncSession` over the facade's kernel; `authority` and `closed` are the wrapped session's.
+`VirtualFileSystem.open_session(authority: Authority) -> Session`. The twin wraps an `AsyncSession` over the facade's kernel; `authority` and `closed` are the wrapped session's.
 
 | Call | Behavior |
 |---|---|
-| `with fs.session(a) as s` | enters; `close()` runs on exit |
+| `with fs.open_session(a) as s` | enters; `close()` runs on exit |
 | `s.close()` | marks the session closed; idempotent; no hop |
 | `with s` after close | raises `ValueError("the session is closed and cannot reopen; open a new one")` |
 
@@ -100,7 +100,7 @@ Every session verb, with `AsyncSession`'s parameters. A verb on a closed session
 from vfs import Authority, Principal
 
 with VirtualFileSystem(storage=InMemoryStorage()) as owner_fs:
-    with owner_fs.session(Authority.of(Principal("alice"))) as s:
+    with owner_fs.open_session(Authority.of(Principal("alice"))) as s:
         assert s.write(path="/a.txt", content="x").success is True
         assert s.read("/a.txt").one().content == "x"
     assert s.closed is True
