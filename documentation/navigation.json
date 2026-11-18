@@ -66,7 +66,7 @@
     },
     {
       "title": "Maintainers",
-      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work", "/maintainers/how-we-name", "/maintainers/how-we-document"] }]
+      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work", "/maintainers/how-we-name", "/maintainers/how-we-document", "/maintainers/mounts"] }]
     }
   ]
 }

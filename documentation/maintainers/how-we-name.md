@@ -33,25 +33,8 @@ A method that acts on a noun takes its verb from this list, so a name can be gue
 | `update` | A thing is changed in place and stays the same thing | `update_mount()` |
 | `open`, `close` | The thing has a lifetime and must be closed | `open_session()`, `close()` |
 
-"Get" is not on the list. A plural noun already returns what exists, and a method that makes something new each time it is called is `open`, not `get`.
-
 ## Public and private
 
 - **A type that a public signature names is public.** A caller who reads `storage: StorageBackend` on a reference page can write `from vfs import StorageBackend` and open its page. The docs export refuses to build when a public signature names a type that no exported name reaches.
 - **A family of types for one specialist job is a public module.** `ranking`, `rerank`, `rendering` and `embedding` are imported as modules, as `permissions` is, so a name such as `Linear` or `Unit` is not a top-level name of `vfs`. A public module lists what it offers in its own `__all__`.
 - **A private object is documented on a Maintainers page,** never beside the public API. It carries no compatibility promise.
-- **"Bind" is kept free.** In Plan 9 and in Linux, to bind is to make something already in the file tree appear at a second path. VFS does not do that today, and the word is reserved for it.
-
-## Why "mount" and not "binding"
-
-Plan 9 and Linux each keep a private live record of a mount and publish a separate description of it. Every layer is named for the mount: Plan 9's kernel record is `Mount` whether the `bind` call or the `mount` call made it, and Linux has `mount`, `vfsmount`, `statmount` and `mountinfo`. Neither uses "binding" as a noun. VFS follows them with one class, `Mount`.
-
-## How `Mount` is built
-
-- **`Mount` is a frozen dataclass with slots, not a `NamedTuple`.** Its `caps` field is computed once, when the mount is built, as `declared_caps - deny_ops`. Every permission check reads it. A `NamedTuple` cannot compute a field when it is built.
-- **Its fields are `path`, `storage`, `permissions`, `deny_ops`, `no_overlay`, `owned`, `declared_caps` and the computed `caps`.** There is no second class for the policy and no third for the public view.
-- **`Mount.to_payload()` returns the JSON-native form, a `MountPayload`.** A `Mount` holds a live storage object, so `json.dumps` cannot take it whole. `PermissionMap.to_payload()` uses the same name for the same job.
-- **`add_mount()` and `remove_mount()` follow a pair that exists.** `add_member()` and `remove_member()` use the same two verbs. `remove_mount()` returns the `Mount` it removed, so the caller can close the storage.
-- **No mount change goes around permissions.** The old public `bind()` attached a mount without asking the gate, so it could mount under a read-only parent. Attaching now needs what `mkdir` at the mount point needs, and detaching needs what `delete` there needs. The two private methods `_attach_mount()` and `_detach_mount()` ask the gate themselves.
-- **A mount change needs `read_write` at the mount point.** `add_mount()`, `remove_mount()` and `update_mount()` take an `authority`, and a call that names none is treated as any verb is. The storage that holds the mount point answers through `holds()`, a question that reads and writes nothing. It is not a verb, so a session cannot ask it.
-- **A session has no way to reach a `Mount`.** A `Mount` carries the storage object, and a session is what an agent holds. Reaching the storage would go around permissions. Only the file-system object has mount methods, and a test keeps it so.

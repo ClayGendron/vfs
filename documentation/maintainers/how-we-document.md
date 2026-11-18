@@ -1,6 +1,17 @@
 # How we document
 
-This page holds the rules for the documentation of VFS. Today it covers the [glossary](../reference/glossary.md). The rules exist so that a word has one meaning, and a meaning has one word, on every page and in every docstring.
+This page holds the rules for the documentation of VFS. It covers docstrings and the [glossary](../reference/glossary.md). The rules exist so that a word has one meaning, and a meaning has one word, on every page and in every docstring.
+
+## Docstrings
+
+A docstring is a page's content. The reference pages are built from the docstrings, so a reader meets them as prose.
+
+- **A docstring is plain language.** Short sentences, one idea in each, and words a new reader knows.
+- **A docstring has no colon and no dash between clauses, unless one is truly needed.** A sentence that wants one is two sentences. A colon inside code, or inside a role such as `:term:`, is not a colon in the prose.
+- **A docstring links a glossary term where it uses one.** The `:term:` marker does it, as [Using a term](#using-a-term) says.
+- **A code example sits inside a fence,** with its language named. The site does not draw indented code.
+
+These rules were set on 2026-11-17. The docstrings written before then do not follow them yet.
 
 ## What belongs in the glossary
 
