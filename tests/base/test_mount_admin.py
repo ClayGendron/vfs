@@ -12,6 +12,7 @@ import pytest
 
 import vfs
 import vfs.base
+import vfs.mounts
 from tests.support.base_doubles import (
     BindableStorage,
     CapCountingStorage,
@@ -72,8 +73,9 @@ def test_a_mount_is_frozen_and_its_caps_cannot_be_passed() -> None:
 
 
 def test_mount_is_the_one_class_for_a_mount() -> None:
-    assert vfs.Mount is vfs.base.Mount
-    assert "Mount" in vfs.__all__
+    assert vfs.Mount is vfs.mounts.Mount
+    assert vfs.MountPayload is vfs.mounts.MountPayload
+    assert {"Mount", "MountPayload"} <= set(vfs.__all__)
     for gone in ("Binding", "MountMeta", "MountInfo"):
         assert not hasattr(vfs, gone), gone
         assert not hasattr(vfs.base, gone), gone
@@ -164,71 +166,48 @@ async def test_every_payload_is_a_json_fixed_point() -> None:
     }
 
 
+async def replay(mounts: tuple[Mount, ...]) -> AsyncVirtualFileSystem:
+    """The documented recipe: every mount added bare, then each one's policy applied, last.
+
+    A mount that is read-only, masks ``mkdir`` or is sealed with
+    ``no_overlay`` refuses the new mounts beneath it, so no order of
+    ``add_mount`` calls that carry their policy rebuilds every table.
+    """
+    root = mounts[0]
+    rebuilt = AsyncVirtualFileSystem(storage=root.storage)
+    for mount in mounts[1:]:
+        await rebuilt.add_mount(mount.storage, mount.path, owned=mount.owned)
+    for mount in mounts:
+        await rebuilt.update_mount(
+            mount.path, permissions=mount.permissions, deny_ops=replay_ops(mount.deny_ops), no_overlay=mount.no_overlay
+        )
+    return rebuilt
+
+
 async def test_replay_round_trip_rebuilds_an_equal_table() -> None:
-    fs = AsyncVirtualFileSystem(
-        storage=BindableStorage(name="rootstore"),
-        permissions=read_write(read=["/frozen", "/frozen/deep"]),
-        deny_ops={"mkedge"},
-    )
-    await fs._attach_mount(
-        BindableStorage(name="masked"), "/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit", "run"}
-    )
-    await fs._attach_mount(BindableStorage(name="plain"), "/p")
-    await fs._attach_mount(BindableStorage(name="nested"), "/m/deep", owned=False, no_overlay=True)
+    fs = AsyncVirtualFileSystem(storage=BindableStorage(name="rootstore"))
+    await fs.add_mount(BindableStorage(name="masked"), "/m")
+    await fs.add_mount(BindableStorage(name="plain"), "/p")
+    await fs.add_mount(BindableStorage(name="nested"), "/m/deep", owned=False, no_overlay=True)
+    await fs.update_mount("/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit", "run", "mkdir"})
+    await fs.update_mount("/", permissions=read_write(read=["/frozen", "/frozen/deep"]), deny_ops={"mkedge"})
     mounts = fs.mounts()
 
-    root = mounts[0]
-    assert root.path == "/"
-    assert root.permissions is not None
-    rebuilt = AsyncVirtualFileSystem(
-        storage=root.storage,
-        permissions=root.permissions,
-        deny_ops=replay_ops(root.deny_ops),
-        no_overlay=root.no_overlay,
-    )
-    for mount in mounts[1:]:
-        await rebuilt._attach_mount(
-            mount.storage,
-            mount.path,
-            permissions=mount.permissions,
-            deny_ops=replay_ops(mount.deny_ops),
-            no_overlay=mount.no_overlay,
-            owned=mount.owned,
-        )
-    assert rebuilt.mounts() == mounts
+    assert mounts[0].path == "/"
+    assert (await replay(mounts)).mounts() == mounts
 
 
-async def test_replay_of_a_grandfathered_seal_goes_seal_last() -> None:
+async def test_replay_of_a_sealed_table_applies_the_seal_last() -> None:
     # An update_mount(no_overlay=True) over existing children produces mounts
-    # no verbatim order can rebuild — the documented recipe seals last.
+    # no order of add_mount calls that carry the flag can rebuild.
     fs = AsyncVirtualFileSystem(storage=BindableStorage(name="rootstore"))
-    parent = BindableStorage(name="parent")
-    child = BindableStorage(name="child")
-    await fs._attach_mount(parent, "/a")
-    await fs._attach_mount(child, "/a/b")
+    await fs.add_mount(BindableStorage(name="parent"), "/a")
+    await fs.add_mount(BindableStorage(name="child"), "/a/b")
     await fs.update_mount("/a", no_overlay=True)
     await fs.update_mount("/", no_overlay=True)
     mounts = fs.mounts()
 
-    root = mounts[0]
-    assert root.permissions is not None
-    rebuilt = AsyncVirtualFileSystem(
-        storage=root.storage,
-        permissions=root.permissions,
-        deny_ops=replay_ops(root.deny_ops),
-    )
-    for mount in mounts[1:]:
-        await rebuilt._attach_mount(
-            mount.storage,
-            mount.path,
-            permissions=mount.permissions,
-            deny_ops=replay_ops(mount.deny_ops),
-            owned=mount.owned,
-        )
-    for mount in mounts:
-        if mount.no_overlay:
-            await rebuilt.update_mount(mount.path, no_overlay=True)
-    assert rebuilt.mounts() == mounts
+    assert (await replay(mounts)).mounts() == mounts
 
 
 async def test_child_bind_without_permissions_reports_none_and_root_never_does() -> None:
@@ -411,8 +390,8 @@ async def test_no_overlay_remount_on_root_seals_the_namespace() -> None:
 async def test_deny_run_is_noexec_for_a_tool_mount() -> None:
     runner = RunnerStorage()
     # A run-less root, so the namespace-level capabilities assertion below
-    # tests "no other entry declares it" honestly.
-    runless: frozenset[Op] = frozenset({"read", "stat", "ls", "tree"})
+    # tests "no other entry declares it" honestly. It declares mkdir, which a mount needs.
+    runless: frozenset[Op] = frozenset({"read", "stat", "ls", "tree", "mkdir"})
     fs = AsyncVirtualFileSystem(storage=BindableStorage(caps=runless))
     await fs._attach_mount(runner, "/tools", deny_ops={"run"})
 
@@ -490,13 +469,11 @@ async def test_read_family_mask_with_refresh_never_resnapshots() -> None:
     assert {str(r.path): r for r in fs.mounts()}["/m"].caps == before_caps
 
 
-async def test_parent_mkdir_mask_refuses_add_mount_but_not_bind() -> None:
+async def test_parent_mkdir_mask_refuses_add_mount() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage(), deny_ops={"mkdir"})
     with pytest.raises(MountError):
         await fs.add_mount(RecorderStorage(name="c1"), "/m")
-    # The probe is ungated (stat/ls only), so a direct bind still lands.
-    await fs._attach_mount(RecorderStorage(name="c2"), "/n")
-    assert "/n" in {r.path for r in fs.mounts()}
+    assert {r.path for r in fs.mounts()} == {"/"}
 
 
 async def test_inert_mask_is_stored_and_bites_after_refresh() -> None:

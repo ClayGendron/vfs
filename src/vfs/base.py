@@ -18,7 +18,9 @@ exportfs move), and MCP clients are wire-speaking backends.
 
 The admin surface — ``add_mount``/``remove_mount``/``update_mount``/
 ``close`` — is control-plane state on this router and is not part of the
-storage protocol: no dispatched verb can mutate a mount table.
+storage protocol: no dispatched verb can mutate a mount table.  Adding or
+removing a mount still passes the gate, as the write it is at its mount
+point.
 
 Public methods are routers: resolve the entry, gate it (capability from the
 entry's declared snapshot, then permission maps composed from ``/`` down —
@@ -36,9 +38,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypedDict, assert_never, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never, cast
 
 from pydantic import ValidationError
 
@@ -56,6 +58,7 @@ from vfs.models import (
     measure_bytes,
     measure_text,
 )
+from vfs.mounts import Mount
 from vfs.offload import call_offloaded, judge_rows, offload_pool, wall_truncation
 from vfs.ops import (
     MUTATING_OPS,
@@ -109,7 +112,6 @@ if TYPE_CHECKING:
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
     from vfs.pattern_matching import GlobGates
-    from vfs.permissions import PermissionsPayload
     from vfs.storage.grants import GrantLevel, Posture
 
 # Router-traversal depth budget for the current request: decremented once
@@ -135,82 +137,6 @@ _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 # A call that names nobody runs as the named nobody: it holds only what a
 # mount's posture gives everyone, and the audit still has an actor.
 _ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
-
-
-class MountPayload(TypedDict):
-    """JSON-native form of a :class:`Mount` — what :meth:`Mount.to_payload` emits.
-
-    Every value is a JSON fixed point (str, bool, None, or lists and dicts
-    of these), so the payload survives ``json.dumps``/``loads`` unchanged.
-    The storage is named, never carried: *storage_name*, *storage_type*
-    and *description* stand in for the live object.  *caps* and *deny_ops*
-    are sorted lists; *permissions* is the map's own payload, or ``None``
-    when the mount has no rules of its own.
-    """
-
-    path: str
-    storage_name: str
-    storage_type: str
-    description: str
-    caps: list[str]
-    deny_ops: list[str]
-    permissions: PermissionsPayload | None
-    no_overlay: bool
-    owned: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Mount:
-    """One :term:`mount`: *storage* attached at *path*, with the policy its mounter set.
-
-    Every path resolves to exactly one mount, the deepest one at or above
-    it.  The file system's own storage at ``/`` is an ordinary mount, and
-    it is the fallback when no deeper one matches.
-
-    Policy lives on the mount, state lives on the storage: *permissions*
-    holds mount-relative rules (``None`` — no rules of its own),
-    *deny_ops* is the mounter's op mask, *no_overlay* refuses **new**
-    mounts beneath this one (the ones already there keep dispatching, so
-    a sealed subtree can shrink but never grow), *owned* says ``close()``
-    disposes the storage, and *declared_caps* is the unmasked capability
-    snapshot taken from ``storage.capabilities()`` when the mount was
-    added.  *caps* — what every gate reads — is computed once, when the
-    mount is built, as ``declared_caps - deny_ops``; a mount is frozen and
-    is always replaced whole, so the three cannot drift.
-
-    A mount holds the live storage object, so it is not JSON-native;
-    :meth:`to_payload` is the form that is.
-    """
-
-    path: Path
-    storage: StorageBackend
-    permissions: PermissionMap | None = None
-    deny_ops: frozenset[str] = frozenset()
-    no_overlay: bool = False
-    owned: bool = True
-    declared_caps: frozenset[str] = frozenset()
-    caps: frozenset[str] = field(init=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "caps", self.declared_caps - self.deny_ops)
-
-    def to_payload(self) -> MountPayload:
-        """Serialize to a :class:`MountPayload`, with the storage named in place of the object.
-
-        The one live read is ``description`` (attribute access, not a
-        call); everything else is the mount's own fields.  No storage I/O.
-        """
-        return MountPayload(
-            path=str(self.path),
-            storage_name=self.storage.name,
-            storage_type=type(self.storage).__name__,
-            description=self.storage.description,
-            caps=sorted(self.caps),
-            deny_ops=sorted(self.deny_ops),
-            permissions=None if self.permissions is None else self.permissions.to_payload(),
-            no_overlay=self.no_overlay,
-            owned=self.owned,
-        )
 
 
 class Location(NamedTuple):
@@ -443,7 +369,12 @@ class AsyncVirtualFileSystem:
         to roll back.  The mount itself is runtime-only table state;
         nothing about it is stored.
 
-        Rejected when the path already has a mount, sits beneath a
+        A mount is a write at its mount point, and the gate treats it as
+        one: it is refused where the mount above would refuse a ``mkdir``
+        there — a read-only parent, or one whose storage or mask does not
+        allow ``mkdir`` — even when the directory already exists.
+
+        Rejected too when the path already has a mount, sits beneath a
         ``no_overlay`` mount, would sit above an existing deeper mount, or
         when *storage* is already mounted elsewhere in this table
         (aliasing — one object, one path).  *permissions* installs
@@ -477,7 +408,11 @@ class AsyncVirtualFileSystem:
     async def remove_mount(self, path: str) -> Mount:
         """Detach the :term:`mount` at *path*, remove its directory, and return the mount.
 
-        The mount is dropped first (table surgery under the lock), then
+        Removing a mount is a write at its mount point: it is refused,
+        and the mount stays, where the mount above would refuse a
+        ``delete`` there.  The mount's own permissions have no say in
+        that.  Past the gate the mount is dropped (table surgery under
+        the lock), then
         the mount-point directory is removed with a strict, non-recursive
         delete against whichever storage owns the parent path — the empty
         directory row parks in trash like any deleted row, and retention
@@ -622,14 +557,14 @@ class AsyncVirtualFileSystem:
 
         Each mount carries the policy its mounter set — ``permissions``,
         ``deny_ops``, ``no_overlay``, ``owned`` — and its storage, so the
-        tuple is enough to rebuild the namespace: replay the root mount
-        through the constructor and every other one through
-        :meth:`add_mount`, applying ``no_overlay=True`` **seal-last** via
-        :meth:`update_mount` — a sealed mount refuses new mounts beneath
-        it, so a subtree that was already there when
-        ``update_mount(no_overlay=True)`` sealed it cannot replay with the
-        flag passed to ``add_mount``.  :meth:`Mount.to_payload` gives each
-        one's JSON-native form.
+        tuple is enough to rebuild the namespace: give the root mount's
+        storage to the constructor, add every other mount bare through
+        :meth:`add_mount`, then apply each mount's policy **last** through
+        :meth:`update_mount`.  A mount that is read-only, masks ``mkdir``
+        or is sealed with ``no_overlay`` refuses new mounts beneath it, so
+        a table tightened after its mounts were added cannot replay with
+        the policy passed to ``add_mount``.  :meth:`Mount.to_payload`
+        gives each one's JSON-native form.
         """
         return tuple(self._mounts[mount_path] for mount_path in sorted(self._mounts))
 
@@ -731,7 +666,9 @@ class AsyncVirtualFileSystem:
         of poison.  :meth:`add_mount` states what is rejected.
 
         The site probe is storage I/O and runs outside the mount lock; the
-        table is re-checked and committed under it with no await between.
+        table is re-checked, gated and committed under it with no await
+        between.  The gate is asked here, not left to the caller's mkdir,
+        so no path to a mount goes around it.
         """
         if not isinstance(storage, StorageBackend):
             msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
@@ -759,6 +696,10 @@ class AsyncVirtualFileSystem:
             if not self._mounts:
                 msg = f"Cannot mount at {mount_path}: filesystem is closed"
                 raise ValueError(msg)
+            refusal = self._gate_mount_site("mkdir", mount_path)
+            if refusal is not None:
+                msg = f"Cannot mount at {mount_path}: {refusal.error_message}"
+                raise MountError(msg, result=refusal)
             if mount_path in self._mounts:
                 msg = f"Mount already exists at: {mount_path}"
                 raise ValueError(msg)
@@ -784,7 +725,8 @@ class AsyncVirtualFileSystem:
         Pure table surgery under the lock, no storage I/O, so it succeeds
         even against a dead or wedged backend.  Returns the removed mount
         so the caller can dispose the storage it owns.  Rejected while
-        deeper mounts still sit beneath *path*.
+        deeper mounts still sit beneath *path*, and where the gate would
+        refuse a ``delete`` of the mount-point directory.
         """
         mount_path = self._normalize_mount_path(path)
         async with self._mount_lock:
@@ -796,6 +738,10 @@ class AsyncVirtualFileSystem:
             if deeper:
                 msg = f"Cannot unmount {mount_path}: deeper mounts exist at {', '.join(map(str, deeper))}"
                 raise ValueError(msg)
+            refusal = self._gate_mount_site("delete", mount_path)
+            if refusal is not None:
+                msg = f"Cannot unmount {mount_path}: {refusal.error_message}"
+                raise MountError(msg, result=refusal)
             del self._mounts[mount_path]
             self._rebuild_sorted_mounts()
             return mount
@@ -2810,6 +2756,28 @@ class AsyncVirtualFileSystem:
                 )
             )
         return layers
+
+    def _gate_mount_site(self, op: Op, mount_path: Path) -> Result | None:
+        """Gate a mount change as the write it is at its mount point: ``mkdir`` to attach, ``delete`` to detach.
+
+        The mount-point directory is stored by the mount above
+        *mount_path*, so that mount's capabilities and every permission
+        map above the site decide: a parent that is read-only there, or
+        that masks the op, keeps its mount table as it is.  The mount at
+        *mount_path* itself has no say — its map governs what is beneath
+        it, never its own site.  No storage I/O; the caller holds the
+        mount lock and has refused a closed table.
+        """
+        owner = next(self._mounts[p] for p in self._sorted_mount_paths if p == ROOT or mount_path.startswith(p + "/"))
+        if op not in owner.caps:
+            return self._error(
+                ErrorKind.unsupported,
+                op=op,
+                path=owner.path,
+                detail=f"operation {op!r} is not declared by the storage that holds the mount point",
+            )
+        above = [layer for layer in self._permission_layers(mount_path) if layer.mount_prefix != mount_path]
+        return check_writable_composed(above, op)
 
     def _busy_guard(self, op: Op, full: Path, *, subtree: bool) -> Result | None:
         """Refuse a data-plane mutation that targets a live mount site.

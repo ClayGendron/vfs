@@ -21,10 +21,12 @@ from tests.support.base_doubles import (
     TransportFailStorage,
 )
 from vfs.authority import Authority
-from vfs.base import AsyncVirtualFileSystem, Mount
+from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
+from vfs.mounts import Mount
 from vfs.paths import Path
+from vfs.permissions import read_only
 from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -476,6 +478,64 @@ async def test_remove_mount_of_a_non_empty_directory_fails_loud_and_leaves_it() 
 
 
 # ----------------------------------------------------------------------
+# the gate — a mount change is a write at its mount point
+# ----------------------------------------------------------------------
+
+
+async def test_a_read_only_parent_refuses_a_new_mount_even_onto_an_existing_directory() -> None:
+    # The directory is already there, so nothing would be written: the mount
+    # itself is the change, and the map above its mount point decides it.
+    backend = InMemoryStorage()
+    await backend.mkdir(path=Path("/data"))
+    root = AsyncVirtualFileSystem(storage=backend, permissions="read")
+    for attach in (root.add_mount, root._attach_mount):
+        with pytest.raises(MountError, match="Cannot mount at /data") as exc:
+            await attach(InMemoryStorage(), "/data")
+        assert exc.value.errors[0].kind is ErrorKind.read_only
+    assert set(root._mounts) == {Path("/")}
+
+
+async def test_a_read_only_parent_refuses_to_lose_a_mount_and_keeps_it() -> None:
+    root = AsyncVirtualFileSystem()
+    child = InMemoryStorage()
+    await root.add_mount(child, "/data")
+    await root.update_mount("/", permissions="read")
+    for detach in (root.remove_mount, root._detach_mount):
+        with pytest.raises(MountError, match="Cannot unmount /data") as exc:
+            await detach("/data")
+        assert exc.value.errors[0].kind is ErrorKind.read_only
+    assert root._mounts[Path("/data")].storage is child  # refused before the mount was dropped
+    await root.update_mount("/", permissions="read_write")
+    assert (await root.remove_mount("/data")).storage is child
+
+
+async def test_a_parent_that_masks_the_write_refuses_the_mount_change() -> None:
+    no_mkdir = AsyncVirtualFileSystem(storage=BindableStorage(), deny_ops={"mkdir"})
+    with pytest.raises(MountError, match="Cannot mount at /n") as exc:
+        await no_mkdir._attach_mount(RecorderStorage(), "/n")
+    assert exc.value.errors[0].kind is ErrorKind.unsupported
+    assert set(no_mkdir._mounts) == {Path("/")}
+
+    no_delete = AsyncVirtualFileSystem(storage=BindableStorage(), deny_ops={"delete"})
+    await no_delete.add_mount(RecorderStorage(), "/n")
+    with pytest.raises(MountError, match="Cannot unmount /n") as exc:
+        await no_delete.remove_mount("/n")
+    assert exc.value.errors[0].kind is ErrorKind.unsupported
+    assert Path("/n") in no_delete._mounts
+
+
+async def test_every_map_above_a_mount_point_gates_it_and_the_mounts_own_map_does_not() -> None:
+    root = AsyncVirtualFileSystem()
+    await root.add_mount(InMemoryStorage(), "/a", permissions=read_only(write=["/inbox"]))
+    with pytest.raises(MountError, match="Cannot mount at /a/b"):
+        await root.add_mount(InMemoryStorage(), "/a/b")
+    await root.add_mount(InMemoryStorage(), "/a/inbox", permissions="read")
+    # The mount at /a/inbox is read-only beneath itself; its own site is /a's to judge.
+    await root.remove_mount("/a/inbox")
+    assert set(root._mounts) == {Path("/"), Path("/a")}
+
+
+# ----------------------------------------------------------------------
 # close — snapshot-and-clear under the lock, dispose outside it
 # ----------------------------------------------------------------------
 
@@ -697,11 +757,10 @@ async def test_capability_snapshot_is_taken_at_bind_not_live() -> None:
 
 
 async def test_readonly_root_makes_a_writable_mount_readonly() -> None:
-    backend = InMemoryStorage()
-    await backend.mkdir(path=Path("/scratch"))
-    root = AsyncVirtualFileSystem(storage=backend, permissions="read")
+    root = AsyncVirtualFileSystem(storage=InMemoryStorage())
     child = RecorderStorage()
-    await root._attach_mount(child, "/scratch", permissions="read_write")
+    await root.add_mount(child, "/scratch", permissions="read_write")
+    await root.update_mount("/", permissions="read")
     result = await root.write(entries=[Entry(path="/scratch/f.txt", content="x")])
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.read_only

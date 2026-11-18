@@ -2,7 +2,7 @@ from importlib.metadata import version
 
 from vfs import permissions
 from vfs.authority import Authority, Principal
-from vfs.base import AsyncVirtualFileSystem, Mount, MountPayload
+from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import (
     MountError,
     NotFoundError,
@@ -12,6 +12,7 @@ from vfs.exceptions import (
     WriteConflictError,
 )
 from vfs.models import Entry
+from vfs.mounts import Mount, MountPayload
 from vfs.paths import Path
 from vfs.permissions import PermissionMap, PermissionsPayload
 from vfs.results import Result, ResultError

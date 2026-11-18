@@ -42,8 +42,9 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from vfs.authority import Authority
-    from vfs.base import EdgeLocation, Location, Mount
+    from vfs.base import EdgeLocation, Location
     from vfs.models import Edge, Entry, Observation
+    from vfs.mounts import Mount
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.permissions import Permission, PermissionMap

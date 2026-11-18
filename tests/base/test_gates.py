@@ -151,10 +151,11 @@ async def test_default_capabilities_derive_from_the_backend() -> None:
 async def test_capabilities_union_across_bindings() -> None:
     # The router's capabilities() is the union of every entry's declared
     # snapshot, self included.
-    root = AsyncVirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree"})))
-    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree"})
+    # The root declares mkdir: a mount is a write at its mount point.
+    root = AsyncVirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree", "mkdir"})))
+    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "mkdir"})
     await root._attach_mount(BindableStorage(caps=frozenset({"search"})), "/m")
-    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "search"})
+    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "mkdir", "search"})
 
 
 async def test_capability_snapshot_is_pinned_at_bind_not_live() -> None:
@@ -359,12 +360,12 @@ async def test_gate_order_busy_outranks_capability_and_permission() -> None:
 
 async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> None:
     # Decision 3's recorded behavior change: ancestor restriction composes —
-    # the most restrictive layer from / to the terminal wins. Add via bind()
-    # (the control-plane primitive), since add_mount's own mkdir would itself
-    # be gated read_only against a read-only root.
-    root = AsyncVirtualFileSystem(storage=BindableStorage(), permissions="read")
+    # the most restrictive layer from / to the terminal wins. The root is made
+    # read-only after the mount is added: a read-only root takes no new mount.
+    root = AsyncVirtualFileSystem(storage=BindableStorage())
     child = RecorderStorage()
-    await root._attach_mount(child, "/scratch", permissions="read_write")
+    await root.add_mount(child, "/scratch", permissions="read_write")
+    await root.update_mount("/", permissions="read")
     result = await root.write(path="/scratch/f.txt", content="c")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.read_only
