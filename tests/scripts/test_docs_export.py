@@ -828,9 +828,10 @@ def test_a_private_docstring_that_marks_an_unknown_term_refuses_the_export(tmp_p
 
 def test_the_real_glossary_exports(real_export: dict[str, Any]) -> None:
     """A real term whose summary or type did not survive the export shows an empty entry on the site."""
-    assert list(real_export["glossary"]) == ["Arm", "Entry", "Mount"]
+    assert list(real_export["glossary"]) == ["Arm", "Entry", "Kernel", "Mount"]
     assert all(term["summary"] for term in real_export["glossary"].values())
     assert real_export["glossary"]["Entry"]["related"] == ["Arm", "Mount"]
+    assert real_export["glossary"]["Mount"]["related"] == ["Entry", "Kernel"]
     assert [cited["name"] for cited in real_export["glossary"]["Entry"]["types"]] == ["Entry"]
 
 

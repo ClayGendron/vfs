@@ -1,36 +1,30 @@
-"""AsyncVirtualFileSystem — async router over one mount table of storage backends.
+"""AsyncVirtualFileSystem is the :term:`kernel` of VFS. It sends each call to the storage that holds the path.
 
-A mount attaches a **storage instance**, never another router: the table maps
-``path -> Mount(path, storage, ...)``, the node's own backend is the
-identity entry at ``/``, and longest-prefix matching resolves every path to
-exactly one entry.  One ``AsyncVirtualFileSystem`` = one namespace = one policy
-layer — the Linux shape, where a mount entry names a superblock and the VFS
-layer exists once.
+The kernel is the file system that a caller holds. It keeps one table of mounts. A :term:`mount` attaches
+a storage backend at a path, and never another kernel. The kernel's own storage is the mount at ``/``.
+Every path belongs to exactly one mount, the deepest one at or above it. One kernel is one file tree and
+one layer of policy. Linux has the same shape, where a mount names a superblock and the VFS layer exists
+once.
 
-Namespace shape is *stored*, never synthesized: a mount-point directory is
-an ordinary stored row in whichever storage owns the parent path, while the
-mount lives only in this table.  A mount is attached onto an existing
-empty directory (the ``graft_tree`` rule); ``add_mount`` makes that
-directory when it is absent and then attaches; ``remove_mount`` detaches
-and strictly rmdirs.  Composition with other routers happens through
-storage too: an adapter presents a router as a ``StorageBackend`` (the
-exportfs move), and MCP clients are wire-speaking backends.
+The shape of the file tree is stored and never made up. A mount point is an ordinary empty directory,
+stored by whichever storage holds the path above it. The mount itself lives only in the table.
+``add_mount`` makes that directory when it is absent and then attaches the storage. ``remove_mount``
+detaches the storage and then deletes the directory, which must be empty. One file system joins another
+through storage too. An adapter presents a file system as a ``StorageBackend``, and an MCP client is a
+storage backend that speaks over a wire.
 
-The admin surface — ``add_mount``/``remove_mount``/``update_mount``/
-``close`` — is control-plane state on this router and is not part of the
-storage protocol: no dispatched verb can mutate a mount table.  Adding or
-removing a mount still passes the gate, as the write it is at its mount
-point.
+``add_mount``, ``remove_mount``, ``update_mount`` and ``close`` manage the table. They are not part of the
+storage protocol, so no verb that a storage runs can change a mount table. A mount change still passes
+the gate, as the write it is at its mount point.
 
-Public methods are routers: resolve the entry, gate it (capability from the
-entry's declared snapshot, then permission maps composed from ``/`` down —
-most restrictive wins), dispatch through the one storage funnel, then
-rebase, shadow-filter, and decorate on the way out.
+Every public verb takes the same steps. It finds the mount that holds the path. It asks the gate, which
+is the mount's capabilities and then every permission map from ``/`` down, where the most restrictive
+one wins. It calls the storage through one method. On the way out it puts the mount's path back in front
+of each path and drops the rows that a deeper mount hides.
 
-Paths cross the public boundary as plain ``str``; the resolve gate mints
-:class:`~vfs.paths.Path` once, and everything below it — routing, gating,
-storage dispatch — carries the branded type.  Any path a storage method
-receives is already proven.
+A path enters a public method as a plain ``str``. It is checked once and becomes a
+:class:`~vfs.paths.Path`, and everything below carries that type. Any path that a storage method receives
+has already been checked.
 """
 
 from __future__ import annotations
@@ -143,10 +137,10 @@ _ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
 
 
 class ResolvedTerminal(NamedTuple):
-    """Where a routed path landed — a mount plus the residual path.
+    """Where a path landed, as the :term:`mount` that holds it and the path inside that mount.
 
-    ``mount`` names the entry that owns the path; ``rel`` is the path in
-    that entry's own coordinates (``without_mount(mount.path)``).
+    ``mount`` is the mount that holds the path. ``rel`` is the same path as that mount's storage sees
+    it, which is ``without_mount(mount.path)``.
     """
 
     mount: Mount
@@ -154,15 +148,15 @@ class ResolvedTerminal(NamedTuple):
 
     @property
     def full(self) -> Path:
-        """The router-coordinate path this terminal resolved from."""
+        """The path as the file system sees it, with the mount's path in front."""
         return self.rel.with_mount(self.mount.path)
 
 
 class _HopGrant(NamedTuple):
-    """One hop-budget admission: exactly one of *token* / *refusal* is set.
+    """Whether one more hop is allowed. Exactly one of *token* and *refusal* is set.
 
-    ``token`` restores the caller's budget on exit (``_exit_hop``);
-    ``refusal`` is the classified ``budget_exhausted`` result.
+    ``token`` gives the caller its budget back on exit, through ``_exit_hop``. ``refusal`` is the
+    ``budget_exhausted`` result.
     """
 
     token: Token[int | None] | None
@@ -170,7 +164,7 @@ class _HopGrant(NamedTuple):
 
 
 class _Ranked(NamedTuple):
-    """The ranked verb's fan-out policy: the query the merge rescores, the caller's bound, the per-mount depth."""
+    """What ``search`` needs to merge several mounts. The query, the caller's limit, and how deep to ask each mount."""
 
     query: str
     limit: int
@@ -178,14 +172,13 @@ class _Ranked(NamedTuple):
 
 
 class _FanoutPlan(NamedTuple):
-    """One fan-out's classified inputs — an output-only plan.
+    """The plan of one call that reaches several mounts. It is built once and only read.
 
-    ``scoped`` maps mount path to the entry and its caller-named rels;
-    ``unscoped`` holds the entries dispatched whole; ``skips`` are the
-    incapable-entry coverage records, appended only after the merge so
-    they never feed branch demotion.  ``refusal`` is the sole failure
-    carrier: when set, the collections are empty and the caller returns
-    it.  The plan never grows input fields — inputs stay arguments.
+    ``scoped`` maps a mount's path to the :term:`mount` and the paths the caller named inside it.
+    ``unscoped`` holds the mounts that are asked whole. ``skips`` records each mount that cannot answer
+    the verb. They are added after the merge, so a skipped mount never lowers another mount's answer.
+    ``refusal`` is the only way a failure travels. When it is set, the collections are empty and the
+    caller returns it. The plan holds results only, and the inputs stay arguments.
     """
 
     scoped: dict[Path, tuple[Mount, list[Path]]]
@@ -195,16 +188,15 @@ class _FanoutPlan(NamedTuple):
 
 
 class _PathFilters(NamedTuple):
-    """The caller's structural path filters — the four-channel law of :class:`~vfs.pattern_matching.GlobGates`.
+    """The caller's path filters, in the four channels of :class:`~vfs.pattern_matching.GlobGates`.
 
-    The one fan-out argument the pattern-search verbs hand the router
-    apart from the forwarded keywords. The two glob channels are
-    rewritten per entry before they cross the seam — sent uncomposed
-    beside the roots beneath the entry, composed and residuated into
-    entry coordinates for the few roots that compose: ``admissions`` is
-    glob's pattern (its brace-expanded arms) or grep's ``globs``,
-    ``exclusions`` is ``globs_not`` on both verbs. The two ext channels
-    cross verbatim and are read here only by the root probe's gate.
+    Apart from the keywords that are passed straight on, this is the one argument that ``glob`` and
+    ``grep`` hand the file system for a call that reaches several mounts. ``admissions`` is glob's
+    pattern, as its :term:`arms <arm>`, or grep's ``globs``. ``exclusions`` is ``globs_not`` on both
+    verbs. These two are rewritten for each mount before they reach its storage. They are sent as
+    written beside the roots that lie beneath the mount. For the few roots that lie above it, they are
+    joined to the root and cut down to the part inside the mount. The two ``ext`` channels reach the
+    storage unchanged, and only the root probe's gate reads them here.
     """
 
     admissions: tuple[str, ...]
@@ -214,7 +206,10 @@ class _PathFilters(NamedTuple):
 
 
 class _Dispatches(NamedTuple):
-    """A pattern-search fan-out's built calls: the root probes, the entry branches, the coverage records."""
+    """The calls built for one ``glob`` or ``grep`` over several mounts.
+
+    The probes of the roots, one call for each mount, and the records of the mounts that were skipped.
+    """
 
     probes: list[Coroutine[Any, Any, Result]]
     branches: list[tuple[Path, Coroutine[Any, Any, Result]]]
@@ -222,13 +217,12 @@ class _Dispatches(NamedTuple):
 
 
 async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
-    """The entry a path write authors; a body past the offload threshold is measured off the loop.
+    """The :term:`entry` that a write to one path makes. A large body is measured off the event loop.
 
-    The hash of a small body costs less than a thread hop, so it is taken
-    inline by the model's own validator. A large body is measured on the
-    process pool first and handed to the validator through its
-    measured-body door, so one caller's 16 MB write never stalls every
-    other coroutine on the host for the length of a sha256.
+    The hash of a small body costs less than a hop to another thread, so the model's own validator takes
+    it in place. A large body is measured on the process pool first and handed to the validator already
+    measured. One caller's 16 MB write then never stalls every other coroutine for the length of a
+    SHA-256.
     """
     body: str | bytes | None = data if data is not None else content
     if body is None or len(body) < MEASURE_OFFLOAD_BYTES:
@@ -241,10 +235,10 @@ async def _authored_entry(path: Path, content: str | None, data: bytes | None) -
 
 
 def _rebase_grant_rows(result: Result, mount: Path) -> Result:
-    """*result* with each ``grants=`` row's prefix re-rooted from storage to router coordinates.
+    """*result* with the mount's path put in front of the prefix of each ``grants=`` row.
 
-    Grant rows ride as an extra, which the funnel's rebase does not
-    reach. A prefix that is not a lawful path is left as the peer sent it.
+    Grant rows travel as an extra field, which the usual step that restores paths does not reach. A
+    prefix that is not a valid path is left as the storage sent it.
     """
     rows = (result.model_extra or {}).get("grants")
     if mount == ROOT or not isinstance(rows, list):
@@ -258,7 +252,10 @@ def _rebase_grant_rows(result: Result, mount: Path) -> Result:
 
 
 class AsyncVirtualFileSystem:
-    """The asynchronous kernel; ``VirtualFileSystem`` is its synchronous face."""
+    """The :term:`kernel` of VFS, with calls you ``await``.
+
+    ``VirtualFileSystem`` is the same kernel with plain calls.
+    """
 
     def __init__(
         self,
@@ -322,41 +319,36 @@ class AsyncVirtualFileSystem:
         owned: bool = True,
         authority: Authority | None = None,
     ) -> None:
-        """Attach *storage* at *path* as a :term:`mount`, making the mount-point directory when it is absent.
+        """Attach *storage* at *path* as a :term:`mount`. The mount-point directory is made when it is absent.
 
-        The caller must hold ``read_write`` at the mount point, and the
-        storage that holds the mount point says whether it does. *authority*
-        names the caller. With none, the caller is the file system's default
-        authority, or else the anonymous caller, as for any verb.
+        The caller must hold ``read_write`` at the mount point, and the storage that holds the mount
+        point says whether it does. *authority* names the caller. With none, the caller is the file
+        system's default authority, or else the anonymous caller, as for any verb.
 
-        The mount point is an **empty directory** in the storage owning
-        the parent path.  It is created when absent (an ordinary gated
-        mkdir against the owning mount — parents must exist unless
-        ``parents=True``), then the mount commits over it.  An existing
-        directory is fine when empty (the mount-again-after-restart
-        shape), and a directory a removed mount deleted is restored; an
-        occupied site or a file classifies through the mkdir or the site
-        check and raises.  A failed attach leaves the directory behind —
-        a plain empty directory is a valid future mount site, not damage
-        to roll back.  The mount itself is runtime-only table state;
-        nothing about it is stored.
+        The mount point is an empty directory in the storage that holds the path above it. When it is
+        absent it is made with an ordinary ``mkdir`` that passes the gate. Its parents must exist unless
+        ``parents=True``. Then the mount is committed over it. A directory that already exists is fine
+        when it is empty, which is how a mount is added again after a restart. A directory that a
+        removed mount deleted is restored. A mount point that holds something, or that is a file, is
+        refused by the ``mkdir`` or by the check of the mount point, and the call raises. A mount that
+        fails after the directory was made leaves the directory behind. A plain empty directory is a
+        valid mount point for later, so there is nothing to undo. The mount itself lives only in the
+        table while the file system is open, and nothing about it is stored.
 
-        A mount is a write at its mount point, and the gate treats it as
-        one: it is refused where the mount above would refuse a ``mkdir``
-        there — a read-only parent, or one whose storage or mask does not
-        allow ``mkdir`` — even when the directory already exists.
+        A mount is a write at its mount point, and the gate treats it as one. It is refused where the
+        mount above would refuse a ``mkdir`` there, even when the directory already exists. That is a
+        mount that is read-only there, or one whose storage or mask does not allow ``mkdir``.
 
-        Rejected too when the path already has a mount, sits beneath a
-        ``no_overlay`` mount, would sit above an existing deeper mount, or
-        when *storage* is already mounted elsewhere in this table
-        (aliasing — one object, one path).  *permissions* installs
-        mount-relative rules; *deny_ops* masks mutating/exec ops out of
-        the mount's effective capabilities (read-family ops cannot be
-        masked); *owned* says ``close()`` disposes this storage.
+        The call is also refused when the path already has a mount, when it lies beneath a
+        ``no_overlay`` mount, when it would lie above a deeper mount, and when *storage* is already
+        mounted somewhere else in this table. One storage object has one path.
 
-        *path* is optional: when omitted, the storage's ``name`` names the
-        mount point (``add_mount(InMemoryStorage(name="data"))`` lands at
-        ``/data``).
+        *permissions* sets rules written relative to the mount. *deny_ops* masks operations out of the
+        mount's capabilities. An operation that changes or runs something can be masked, and a read
+        operation cannot. *owned* says that ``close()`` disposes this storage.
+
+        *path* is optional. When it is omitted, the storage's ``name`` names the mount point, so
+        ``add_mount(InMemoryStorage(name="data"))`` mounts at ``/data``.
         """
         mount_name = path or storage.name
         if not mount_name:
@@ -379,28 +371,25 @@ class AsyncVirtualFileSystem:
         )
 
     async def remove_mount(self, path: str, *, authority: Authority | None = None) -> Mount:
-        """Detach the :term:`mount` at *path*, remove its directory, and return the mount.
+        """Detach the :term:`mount` at *path*, delete its directory, and return the mount.
 
-        The caller must hold ``read_write`` at the mount point, as for
-        :meth:`add_mount`, and nothing changes when it does not.
+        The caller must hold ``read_write`` at the mount point, as for :meth:`add_mount`, and nothing
+        changes when it does not.
 
-        Removing a mount is a write at its mount point: it is refused,
-        and the mount stays, where the mount above would refuse a
-        ``delete`` there.  The mount's own permissions have no say in
-        that.  Past the gate the mount is dropped (table surgery under
-        the lock), then
-        the mount-point directory is removed with a strict, non-recursive
-        delete against whichever storage owns the parent path — the empty
-        directory row parks in trash like any deleted row, and retention
-        reclaims it.  Never a cascade: on shared or persistent storage the
-        directory may have gained rows this router never saw, and removing
-        a mount must not destroy them.  A failed rmdir leaves the mount
-        removed and raises — the namespace keeps a plain directory, loud
-        and recoverable.  Rejected while deeper mounts still sit beneath
-        *path* — remove depth-first, as ``umount`` does.
+        Removing a mount is a write at its mount point. Where the mount above would refuse a ``delete``
+        there, the call is refused and the mount stays. The mount's own permissions have no say in that.
 
-        Storage lifecycle is untouched: removing a mount never disposes an
-        engine or session.  The returned mount carries the storage, so the
+        Past the gate the mount is dropped from the table under the lock. Then the mount-point directory
+        is deleted in the storage that holds the path above it. The delete is strict and never cascades.
+        The empty directory goes to the trash like any deleted row, and retention reclaims it. On shared
+        or persistent storage the directory may have gained rows this file system never saw, and
+        removing a mount must not destroy them. When the delete fails, the mount stays removed and the
+        call raises. The file tree keeps a plain directory, which is easy to see and to recover from.
+
+        The call is refused while deeper mounts still lie beneath *path*. Remove the deepest first, as
+        ``umount`` does.
+
+        Removing a mount does not close its storage. The returned mount carries the storage, so the
         caller can close the one it owns.
         """
         mount_path = self._normalize_mount_path(path)
@@ -426,32 +415,29 @@ class AsyncVirtualFileSystem:
     ) -> None:
         """Change the policy of the :term:`mount` at *path* in place.
 
-        The caller must hold ``read_write`` at the mount point, as for
-        :meth:`add_mount`. The storage of ``/`` judges for the root mount.
+        The caller must hold ``read_write`` at the mount point, as for :meth:`add_mount`. The storage of
+        ``/`` judges for the root mount.
 
-        ``None`` means "leave unchanged" everywhere — so ``deny_ops=()``
-        (clear the mask) is distinct from ``deny_ops=None`` (keep it), and
-        passing no changes at all is a no-op, not an error.  The mount is
-        replaced under the mount lock with a new one; no moment exists
-        where the path has no mount, and no storage I/O runs — the one
-        storage call is ``refresh_caps=True`` re-snapshotting
-        ``storage.capabilities()`` (taken before the lock, committed under
-        it): the remedy for a reconnected wire backend whose tool set
-        changed.  A replaced or cleared mask recomputes effective caps from
-        the stored unmasked snapshot, so previously masked ops come back
-        without asking the storage.
+        ``None`` means "leave unchanged" for every argument. So ``deny_ops=()`` clears the mask and
+        ``deny_ops=None`` keeps it. A call that changes nothing does nothing and is not an error.
 
-        Root is an ordinary mount: ``update_mount("/")`` is how you tighten
-        the whole namespace.  Loosening is permitted, as on Linux — a parent
-        layer's map still gates every path beneath (most restrictive wins),
-        so ``update_mount`` can never grant more than the chain above allows.
+        The mount is replaced with a new one under the mount lock, so at no moment does the path have no
+        mount. Nothing is written to the mount's storage. ``refresh_caps=True`` makes the one call to
+        it, which reads ``storage.capabilities()`` again. The read is taken before the lock and
+        committed under it. It is the remedy for a wire backend that reconnected with a changed set of
+        tools. A mask that is replaced or cleared recomputes the capabilities from the stored unmasked
+        set, so operations that were masked come back without asking the storage.
 
-        ``no_overlay=True`` seals with **future-only** effect: existing
-        deeper mounts stay and keep dispatching; only *new* mounts beneath
-        this one are refused.  Because removing a mount never consults
-        the flag, the sealed subtree is a one-way ratchet — it can shrink
-        but never grow.  Unknown path raises :class:`ValueError`, as
-        ``remove_mount`` does.
+        The root is an ordinary mount, and ``update_mount("/")`` is how the whole file tree is
+        tightened. Loosening is allowed, as on Linux. The map of a mount above still gates every path
+        beneath it and the most restrictive one wins, so ``update_mount`` can never allow more than the
+        mounts above allow.
+
+        ``no_overlay=True`` seals for the future only. The deeper mounts that exist stay and keep
+        working, and only new mounts beneath this one are refused. Removing a mount never reads the
+        flag, so a sealed subtree can lose mounts and never gain one.
+
+        A path with no mount raises :class:`ValueError`, as ``remove_mount`` does.
         """
         mount_path = self._normalize_mount_path(path, allow_root=True)
         mask = None if deny_ops is None else self._validate_deny_ops(deny_ops)
@@ -480,20 +466,18 @@ class AsyncVirtualFileSystem:
             )
 
     async def close(self) -> None:
-        """Release every resource this process holds for the namespace.
+        """Release every resource this process holds for the file tree.
 
-        Snapshot-and-clear the table under the lock (synchronously — a
-        cancelled close never leaves a closed storage reachable), then
-        dispose outside it: each distinct ``owned`` storage that exposes
-        ``close`` is closed once (identity-deduped — the same object can
-        never be double-closed), concurrently, each under the per-backend
-        timeout.  Closing may end this client's own sessions — that is a
-        wire message — but never mutates a remote router's table.
+        The table is copied and cleared under the lock with no await in between, so a cancelled close
+        never leaves a closed storage reachable. The storages are then closed outside the lock. Each
+        ``owned`` storage that has a ``close`` is closed once, however many mounts hold the same object.
+        They are closed at the same time, each under the per-backend timeout. Closing may end this
+        client's own sessions with a remote file system, which is a message over the wire. It never
+        changes the mount table of a remote file system.
 
-        Failures are collected so one bad disposal cannot strand a
-        sibling's engine; undisposed storages are parked on the router and
-        ``SupportsClose`` is idempotent by contract, so a second ``close()``
-        after cancellation finishes the job.
+        Failures are collected, so one storage that fails to close cannot keep another from closing. A
+        storage that was not closed is kept on the file system, and ``SupportsClose`` promises that
+        closing twice is safe. A second ``close()`` after a cancelled one therefore finishes the job.
         """
         async with self._mount_lock:
             mounts = list(self._mounts.values())
@@ -523,43 +507,35 @@ class AsyncVirtualFileSystem:
         raise_lone_or_group(errors, "errors while closing storages")
 
     def mounts(self) -> tuple[Mount, ...]:
-        """Every :term:`mount` in the table, in path order — replayable.
+        """Every :term:`mount` in the table, in path order.
 
-        The mount at ``/`` comes first (it is an ordinary mount); a closed
-        filesystem returns ``()``.  No storage I/O, and no lock: this reads
-        one dict snapshot synchronously, and the table can change the
-        instant a lock would drop anyway.  A mount is frozen, so what is
-        returned is what the gates read, not a copy to keep in step.
+        The mount at ``/`` comes first, and it is an ordinary mount. A closed file system returns
+        ``()``. No storage I/O runs and no lock is taken. The call reads one snapshot of the table, and
+        the table could change the moment a lock was released anyway. A mount is frozen, so what is
+        returned is what the gates read, and there is no copy to keep in step.
 
-        Each mount carries the policy its mounter set — ``permissions``,
-        ``deny_ops``, ``no_overlay``, ``owned`` — and its storage, so the
-        tuple is enough to rebuild the namespace: give the root mount's
-        storage to the constructor, add every other mount bare through
-        :meth:`add_mount`, then apply each mount's policy **last** through
-        :meth:`update_mount`.  A mount that is read-only, masks ``mkdir``
-        or is sealed with ``no_overlay`` refuses new mounts beneath it, so
-        a table tightened after its mounts were added cannot replay with
-        the policy passed to ``add_mount``.  :meth:`Mount.to_payload`
-        gives each one's JSON-native form.
+        The tuple is enough to build the same table again. Each mount carries its storage and the policy
+        its mounter set, which is ``permissions``, ``deny_ops``, ``no_overlay`` and ``owned``. Give the
+        root mount's storage to the constructor. Add every other mount bare through :meth:`add_mount`.
+        Then set each mount's policy last, through :meth:`update_mount`. A mount that is read-only,
+        that masks ``mkdir`` or that is sealed with ``no_overlay`` refuses new mounts beneath it. A
+        table that was tightened after its mounts were added therefore cannot be rebuilt with the
+        policy passed to ``add_mount``. :meth:`Mount.to_payload` gives the JSON-native form of a mount.
         """
         return tuple(self._mounts[mount_path] for mount_path in sorted(self._mounts))
 
     async def locate(self, path: str, *, exists: bool = False, authority: Authority | None = None) -> Location:
-        """Where *path* lives: the mount that owns it and its storage-local path.
+        """Where *path* lives, as the :term:`mount` that holds it and the path inside that mount's storage.
 
-        The router's own resolution — longest prefix, the deepest mount
-        under a nested mount, the root entry as the fallback — read from
-        one table snapshot with no lock. With *exists* off no storage is
-        asked anything; permissions and capabilities are never consulted,
-        so the answer does not depend on a user. With *exists* on the
-        owning storage is asked to stat the storage-local path directly
-        (no router gate) under *authority* — the same one a ``stat``
-        would run as — so a row the caller cannot see reads as absent,
-        never as a leaked fact. The row carries ``exists`` and ``kind``,
-        or ``note`` when the storage could not answer. A non-canonical
-        path is canonicalised; a structurally invalid one raises
-        ``ValueError`` as :class:`Path` does, and so does a closed
-        filesystem, whose table is empty.
+        This is the file system's own answer. The deepest mount at or above the path holds it, and the
+        root mount holds a path that no deeper mount does. It is read from one snapshot of the table
+        with no lock. With *exists* off, no storage is asked anything. Permissions and capabilities are
+        never read, so the answer does not depend on who asks. With *exists* on, the storage that holds
+        the path is asked to ``stat`` it directly, past the gate, as *authority*. That is the authority
+        a ``stat`` would run as, so a row the caller cannot see reads as absent and nothing leaks. The
+        answer then carries ``exists`` and ``kind``, or ``note`` when the storage could not answer. A
+        path that is not in its normal form is put into it. A path that is not valid raises
+        ``ValueError`` as :class:`Path` does, and so does a closed file system, whose table is empty.
         """
         terminal = self._locate_terminal(path)
         mount = terminal.mount
@@ -575,13 +551,12 @@ class AsyncVirtualFileSystem:
     async def locate_edge(
         self, source: str, target: str, *, exists: bool = False, authority: Authority | None = None
     ) -> EdgeLocation:
-        """Where an edge's two endpoints live, and whether one storage holds both.
+        """Where the two ends of an edge live, and whether one storage holds both.
 
-        :meth:`locate` twice plus the verdict ``mkedge`` would reach: an
-        edge never crosses a mount boundary, so ``same_storage`` is the
-        two mounts being one. ``reason`` names the first blocker — the
-        boundary, or with *exists* an endpoint the storage does not hold;
-        the row is an answer, not a refusal.
+        This is :meth:`locate` for each end, and the answer ``mkedge`` would reach. An edge never
+        crosses from one :term:`mount` to another, so ``same_storage`` says whether the two mounts are
+        one. ``reason`` names the first thing in the way. That is the two mounts being different, or
+        with *exists* an end that the storage does not hold. The result is an answer and never a refusal.
         """
         src = await self.locate(source, exists=exists, authority=authority)
         tgt = await self.locate(target, exists=exists, authority=authority)

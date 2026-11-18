@@ -32,6 +32,14 @@ An entry is one file or one directory in the file tree. A file is an entry with 
 
 The path a [mount](#mount) is attached at is an entry too. It is an empty directory, stored in the mount above it. The directory is the entry. The storage backend attached there is the mount.
 
+## Kernel
+
+The kernel is the object that holds the file tree and answers every call on it. For each call it finds the [mount](#mount) that holds the path, checks that the caller may make the call, and sends the call to the storage backend of that mount. **Every call passes through the kernel, so permissions are checked in one place.**
+
+In code the kernel is `AsyncVirtualFileSystem`, with calls you `await`. `VirtualFileSystem` is the same kernel with plain calls. One kernel is one file tree. A kernel never holds another kernel, and two file trees are joined only through a storage backend.
+
+The name follows the kernel of an operating system, which every call on a file passes through.
+
 ## Mount
 
 A mount is a storage backend attached at a path in the file tree. **Every path belongs to exactly one mount, the deepest one at or above it.** With one mount at `/` and one at `/projects`, the path `/projects/app/main.py` belongs to the mount at `/projects`.

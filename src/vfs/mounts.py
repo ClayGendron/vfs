@@ -1,12 +1,13 @@
-"""Mount — one storage backend attached at one path, and its JSON-native form.
+"""A :term:`mount` is one storage backend attached at one path. This module holds the mount and where a path lives.
 
-The file system keeps one :class:`Mount` for each path a storage is
-attached at, the root included, and hands the same objects back from
-``mounts()``:
+The file system keeps one :class:`Mount` for each path that a storage is attached at, the root included.
+``mounts()`` hands the same objects back.
 
-    for mount in fs.mounts():
-        print(mount.path, sorted(mount.caps))
-        json.dumps(mount.to_payload())
+```python
+for mount in fs.mounts():
+    print(mount.path, sorted(mount.caps))
+    json.dumps(mount.to_payload())
+```
 """
 
 from __future__ import annotations
@@ -25,14 +26,13 @@ if TYPE_CHECKING:
 
 
 class MountPayload(TypedDict):
-    """JSON-native form of a :class:`Mount` — what :meth:`Mount.to_payload` emits.
+    """The JSON form of a :class:`Mount`, which is what :meth:`Mount.to_payload` returns.
 
-    Every value is a JSON fixed point (str, bool, None, or lists and dicts
-    of these), so the payload survives ``json.dumps``/``loads`` unchanged.
-    The storage is named, never carried: *storage_name*, *storage_type*
-    and *description* stand in for the live object.  *caps* and *deny_ops*
-    are sorted lists; *permissions* is the map's own payload, or ``None``
-    when the mount has no rules of its own.
+    Every value is a string, a boolean, ``None``, or a list or dict of these, so the payload comes back
+    unchanged from ``json.dumps`` and ``json.loads``. The storage is named and never carried.
+    *storage_name*, *storage_type* and *description* stand in for the live object. *caps* and *deny_ops*
+    are sorted lists. *permissions* is the payload of the mount's own permission map, or ``None`` when
+    the mount has no rules of its own.
     """
 
     path: str
@@ -48,25 +48,25 @@ class MountPayload(TypedDict):
 
 @dataclass(frozen=True, slots=True)
 class Mount:
-    """One :term:`mount`: *storage* attached at *path*, with the policy its mounter set.
+    """One :term:`mount`, a storage backend attached at a path with the policy its mounter set.
 
-    Every path resolves to exactly one mount, the deepest one at or above
-    it.  The file system's own storage at ``/`` is an ordinary mount, and
-    it is the fallback when no deeper one matches.
+    Every path belongs to exactly one mount, the deepest one at or above it. The file system's own
+    storage at ``/`` is an ordinary mount, and it answers when no deeper mount matches.
 
-    Policy lives on the mount, state lives on the storage: *permissions*
-    holds mount-relative rules (``None`` — no rules of its own),
-    *deny_ops* is the mounter's op mask, *no_overlay* refuses **new**
-    mounts beneath this one (the ones already there keep dispatching, so
-    a sealed subtree can shrink but never grow), *owned* says ``close()``
-    disposes the storage, and *declared_caps* is the unmasked capability
-    snapshot taken from ``storage.capabilities()`` when the mount was
-    added.  *caps* — what every gate reads — is computed once, when the
-    mount is built, as ``declared_caps - deny_ops``; a mount is frozen and
-    is always replaced whole, so the three cannot drift.
+    Policy lives on the mount and state lives on the storage.
 
-    A mount holds the live storage object, so it is not JSON-native;
-    :meth:`to_payload` is the form that is.
+    - *permissions* holds rules written relative to the mount. ``None`` means it has no rules of its own.
+    - *deny_ops* is the set of operations the mounter masked.
+    - *no_overlay* refuses new mounts beneath this one. The mounts already there keep working, so a
+      sealed subtree can lose mounts and never gain one.
+    - *owned* says that ``close()`` disposes the storage.
+    - *declared_caps* is what ``storage.capabilities()`` returned when the mount was added, before the mask.
+    - *caps* is what every gate reads. It is computed once, when the mount is built, as
+      ``declared_caps - deny_ops``.
+
+    A mount is frozen and is always replaced whole, so *caps* cannot drift from the two it is computed from.
+
+    A mount holds the live storage object, so it is not JSON-native. :meth:`to_payload` gives the form that is.
     """
 
     path: Path
@@ -82,10 +82,10 @@ class Mount:
         object.__setattr__(self, "caps", self.declared_caps - self.deny_ops)
 
     def to_payload(self) -> MountPayload:
-        """Serialize to a :class:`MountPayload`, with the storage named in place of the object.
+        """Return this mount as a :class:`MountPayload`, with the storage named in place of the object.
 
-        The one live read is ``description`` (attribute access, not a
-        call); everything else is the mount's own fields.  No storage I/O.
+        The only value read from the storage is ``description``, which is an attribute and not a call.
+        No storage I/O runs.
         """
         return MountPayload(
             path=str(self.path),
@@ -108,12 +108,10 @@ class Mount:
 class Location(NamedTuple):
     """Where a path lives, as ``locate`` reports it. Every field is JSON-native.
 
-    *mount* is the path of the :term:`mount` that holds *path*, the
-    deepest one at or above it, and *storage_path* is the same path as
-    that storage sees it. The last three fields are filled only when the
-    storage was asked. ``exists`` and ``kind`` are ``None`` when it was
-    not asked or could not answer, and ``note`` then carries its message.
-    Nothing here says whether a verb would accept the path.
+    *mount* is the path of the :term:`mount` that holds *path*, the deepest one at or above it.
+    *storage_path* is the same path as that storage sees it. The last three fields are filled only when
+    the storage was asked. ``exists`` and ``kind`` are ``None`` when it was not asked or could not
+    answer, and ``note`` then carries its message. Nothing here says whether a verb would accept the path.
     """
 
     path: str
@@ -129,11 +127,9 @@ class Location(NamedTuple):
 class EdgeLocation(NamedTuple):
     """Where the two ends of an edge live, as ``locate_edge`` reports it.
 
-    ``same_storage`` is the test ``mkedge`` applies before it dispatches.
-    An edge never crosses from one :term:`mount` to another. ``reason`` is
-    a sentence for a person that names the first thing in the edge's way,
-    and it is never a classified error. ``None`` means nothing was found
-    in the way.
+    ``same_storage`` is the test ``mkedge`` applies before it dispatches. An edge never crosses from one
+    :term:`mount` to another. ``reason`` is a sentence for a person that names the first thing in the
+    edge's way, and it is never a classified error. ``None`` means nothing was found in the way.
     """
 
     source: Location
