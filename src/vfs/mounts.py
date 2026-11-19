@@ -429,11 +429,10 @@ class MountListing:
         mount point is answered by the storage alone. A call with no such target is one storage call,
         as it is with no mounts. ``stat`` is one storage call for the whole batch. A directory above a
         mount point is there, so a bare row stands in for a ``not_found`` of it and for nothing else.
-        When the answer holds any other failure, it is returned as the storage gave it.
-        ``ls`` answers each such directory on its own, once however often the
-        batch names it. Its rows come after the rows of the other targets, once for each time the
-        batch names it, and its errors are kept once. One path is answered with the storage's own
-        envelope.
+        Each target is judged on its own errors, as :func:`_with_roads` says. ``ls`` answers each such
+        directory on its own, once however often the batch names it. Its rows come after the rows of
+        the other targets, once for each time the batch names it, and its errors are kept once. One
+        path is answered with the storage's own envelope.
         """
         if op == "tree":
             assert path is not None
@@ -444,10 +443,8 @@ class MountListing:
         target: dict[str, Any] = {"path": path} if path is not None else {"observations": observations}
         if op == "stat" or not special:
             answer = await self.called(ask, mount, op, columns=columns, authority=authority, **target)
-            if path is not None and special:
-                return _with_road(answer, held[path])
             roads = [held[rel] for rel in targets if rel in special]
-            return _with_roads(answer, roads) if roads else answer
+            return _with_roads(answer, roads, mount.path, len(set(targets)) == 1) if roads else answer
         if path is not None:
             return await self._directory(ask, mount, path, held[path], columns, authority)
         plain = [row for row in observations or () if row.path not in special]
@@ -483,8 +480,9 @@ class MountListing:
         other answers are dropped. Its rows are kept, apart from the directory beneath a mount, which
         no answer ever shows. A mount that fails while others answer becomes a warning, and the
         failure of its ``stat`` is then not reported as well. A failure that names no path is set at
-        the mount's path. A directory between a mount and the
-        target is listed among the rows of the mount that stores it.
+        the mount's path. A directory between a mount and the target is listed among the rows of the
+        mount that stores it. Each answer is judged as the target's is before any directory it holds
+        is added, so a mount that failed adds no directory and no mount point beneath it.
         """
         full = rel.with_mount(mount.path)
         reached: list[tuple[Mount, int | None]] = []
@@ -510,17 +508,21 @@ class MountListing:
                 return self._uncovered(own, mount)
             own = kept
         answers = {mount.path: own}
-        answers |= {
-            deeper.path: _at_mount(answer, deeper) for (deeper, _left), answer in zip(asked, trees, strict=True)
-        }
+        for (deeper, _left), answer in zip(asked, trees, strict=True):
+            kept = _recovered(answer) if deeper.path in self.above and not answer.success else None
+            answers[deeper.path] = _at_mount(answer, deeper) if kept is None else kept
         failed = {path for path, answer in answers.items() if not answer.success}
-        head = {row.path: [row] for row in heads.observations}
+        hidden = {deeper.path for deeper, _left in reached if self._owner(_parent(deeper.path)) in failed}
+        head = {row.path: [row] for row in heads.observations if row.path not in hidden}
         roads: dict[Path, list[Observation]] = {}
         between = {above for deeper, _left in reached for above in _between(deeper.path, full)} - self.mounts.keys()
         for node in sorted(between):
-            roads.setdefault(self._owner(node), []).append(bare_directory(node))
+            if (owner := self._owner(node)) not in failed:
+                roads.setdefault(owner, []).append(bare_directory(node))
         records = [
-            record for record in heads.errors if record.source is None or self._owner(record.source) not in failed
+            record
+            for record in heads.errors
+            if record.source is None or self._owner(record.source) not in failed | hidden
         ]
         branches = [Result(errors=records)]
         for owner in (mount, *(deeper for deeper, _left in reached)):
@@ -617,7 +619,7 @@ class MountListing:
         full = rel.with_mount(mount.path)
         stat = await self.called(ask, mount, "stat", path=rel, authority=authority)
         if full in self.above:
-            stat = _with_road(stat, full)
+            stat = _with_roads(stat, [full], mount.path, True)
         refusal = _refusal(stat)
         if refusal is not None:
             return row._replace(note=refusal.message or f"could not stat {row.path}")
@@ -824,14 +826,19 @@ def _between(path: Path, directory: Path) -> list[Path]:
     return found
 
 
-def _refusal(answer: Result) -> ResultError | None:
-    """Return the first failure of ``answer`` that is not a ``not_found``, or ``None`` when there is none.
+def _refuses(error: ResultError) -> bool:
+    """Return whether ``error`` is a failure that is not a ``not_found``.
 
     Such a failure says the storage refused the caller or could not answer, so it stands. A
     ``not_found`` says only that a path is missing. For a directory that lies above a mount point,
     which is there by construction, it says only that the caller holds nothing on it.
     """
-    return next((failure for failure in answer.failures if kind_family(failure.kind) is not ErrorKind.not_found), None)
+    return error.is_fatal and kind_family(error.kind) is not ErrorKind.not_found
+
+
+def _refusal(answer: Result) -> ResultError | None:
+    """Return the first error of ``answer`` that :func:`_refuses` finds, or ``None`` when there is none."""
+    return next((error for error in answer.errors if _refuses(error)), None)
 
 
 def _recovered(answer: Result) -> Result | None:
@@ -845,33 +852,30 @@ def _recovered(answer: Result) -> Result | None:
     return answer.model_copy(update={"errors": [error for error in answer.errors if not error.is_fatal]})
 
 
-def _with_road(answer: Result, road: Path) -> Result:
-    """Return the ``stat`` answer of the one path ``road``, which lies above a mount point.
+def _with_roads(answer: Result, roads: Sequence[Path], root: Path, alone: bool) -> Result:
+    """Return a ``stat`` answer with a bare row in place of each miss of one of ``roads``.
 
-    The road is there whenever :func:`_recovered` keeps the answer. It then shows the storage's own
-    row, or a bare row when the storage gave none. Any other answer is returned as it came.
+    Each of ``roads`` lies above a mount point, so it is there, and each target is judged on its own
+    errors. A failure is raised for ``data["vfs.target"]`` when the storage set it, and for its own
+    path when not. When the call has one target, ``alone`` is true and every failure is raised for
+    it, so one path and a batch of that path give the same answer. A failure at no path, or at the
+    storage's own ``root`` with no target, as a transport failure is, is raised for the whole answer.
+    A failure that is not a ``not_found`` withholds the bare row of the target it was raised for,
+    or of every target when it was raised for the whole answer. A ``not_found`` raised for a road
+    that is not withheld is dropped, and the road gets one bare row for each time the call names it
+    beyond the rows the storage gave for it. Every other failure stands. A batch costs its length.
     """
-    kept = _recovered(answer)
-    if kept is None or any(row.path == road for row in kept.observations):
-        return answer if kept is None else kept
-    return kept.model_copy(update={"observations": [*kept.observations, bare_directory(road)]})
-
-
-def _with_roads(answer: Result, roads: Sequence[Path]) -> Result:
-    """Return the ``stat`` answer of a batch, with a bare row in place of each miss of one of ``roads``.
-
-    Each of ``roads`` lies above a mount point, so it is there. An answer that :func:`_refusal`
-    finds a failure in is returned as it came. Otherwise each failure is matched to the path it was
-    raised for, which is ``data["vfs.target"]`` when the storage set it and its own path when not.
-    A ``not_found`` raised for a road is dropped. A road gets one bare row for each time the batch
-    names it beyond the rows the storage gave for it. A ``not_found`` raised for any other path, or
-    for no path, stands. The failures are matched in one pass, so a batch costs its length.
-    """
-    if _refusal(answer) is not None:
+    raised = {
+        index: roads[0] if alone else _raised_for(error, root)
+        for index, error in enumerate(answer.errors)
+        if error.is_fatal
+    }
+    withheld = {target for index, target in raised.items() if _refuses(answer.errors[index])}
+    if None in withheld:
         return answer
-    named = set(roads)
-    errors = [error for error in answer.errors if not (error.is_fatal and _target(error) in named)]
-    short = Counter(roads)
+    named = set(roads) - withheld
+    errors = [error for index, error in enumerate(answer.errors) if index not in raised or raised[index] not in named]
+    short = Counter(road for road in roads if road in named)
     short.subtract(row.path for row in answer.observations)
     rows = list(answer.observations)
     for road in roads:
@@ -895,6 +899,16 @@ def _at_mount(answer: Result, mount: Mount) -> Result:
 def _parent(path: str) -> str:
     """Return the directory that holds ``path``, as plain text. The root is its own parent."""
     return path[: path.rfind("/")] or ROOT
+
+
+def _raised_for(error: ResultError, root: Path) -> Path | None:
+    """Return the target of a batch that ``error`` was raised for, or ``None`` when it can name none.
+
+    That is :func:`_target`, unless the storage set no target and the error names no path or its
+    own ``root``. Such an error is a failure of the whole answer.
+    """
+    target = _target(error)
+    return None if target == root and "vfs.target" not in (error.data or {}) else target
 
 
 def _target(error: ResultError) -> Path | None:
