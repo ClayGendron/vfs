@@ -157,7 +157,8 @@ async def test_attach_mount_step_beneath_a_dead_backend_reports_the_transport_fa
     assert "mkdir" not in str(exc.value)
 
 
-async def test_attach_mount_step_racing_close_refuses_cleanly() -> None:
+@pytest.mark.parametrize("held", ["stat", "ls"])
+async def test_attach_mount_step_racing_close_refuses_cleanly(held: str) -> None:
     # close() may empty the table while the private attach step's site probe is
     # suspended; the step must refuse as "closed", never escape a KeyError.
     class GateStatStorage(BindableStorage):
@@ -166,10 +167,18 @@ async def test_attach_mount_step_racing_close_refuses_cleanly() -> None:
             self.entered = asyncio.Event()
             self.release = asyncio.Event()
 
+        async def _gate(self, op: str) -> None:
+            if op == held:
+                self.entered.set()
+                await self.release.wait()
+
         async def stat(self, **kwargs: Any) -> Result:
-            self.entered.set()
-            await self.release.wait()
+            await self._gate("stat")
             return await super().stat(**kwargs)
+
+        async def ls(self, **kwargs: Any) -> Result:
+            await self._gate("ls")
+            return await super().ls(**kwargs)
 
     backend = GateStatStorage()
     root = AsyncVirtualFileSystem(storage=backend)
