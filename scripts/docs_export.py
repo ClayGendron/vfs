@@ -96,8 +96,10 @@ INSTANCE_ATTRIBUTE = "instance-attribute"
 
 # The most members a refusal names for one type that is not exported; the rest are counted.
 SHOWN_HOLDERS = 3
-# How the source assigns a type variable, which is a name in a signature and not a type to import.
-TYPE_VARIABLES = ("TypeVar(", "ParamSpec(", "TypeVarTuple(")
+# The calls that make a type variable, which is a name in a signature and not a type to import.
+TYPE_VARIABLE_MODULES = ("typing", "typing_extensions")
+TYPE_VARIABLE_KINDS = ("TypeVar", "ParamSpec", "TypeVarTuple")
+TYPE_VARIABLES = frozenset(f"{module}.{kind}" for module in TYPE_VARIABLE_MODULES for kind in TYPE_VARIABLE_KINDS)
 
 
 class ExportError(Exception):
@@ -591,8 +593,13 @@ def _package_types(annotation: str | griffe.Expr, book: _Book) -> Iterator[griff
         except (KeyError, griffe.AliasResolutionError, griffe.CyclicAliasError):
             continue
         # A type variable stands for the caller's own type, so there is nothing to import.
-        if not (isinstance(named, griffe.Attribute) and str(named.value).startswith(TYPE_VARIABLES)):
+        if not (isinstance(named, griffe.Attribute) and _is_type_variable(named.value)):
             yield named
+
+
+def _is_type_variable(value: str | griffe.Expr | None) -> bool:
+    """Whether an attribute's value is a call that makes a type variable, however the call is spelled."""
+    return isinstance(value, griffe.ExprCall) and value.function.canonical_path in TYPE_VARIABLES
 
 
 def _resolved(loaded: griffe.Object | griffe.Alias, name: str, package: str) -> griffe.Object:

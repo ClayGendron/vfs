@@ -277,12 +277,14 @@ def test_a_class_only_a_module_lists_carries_its_own_members(tmp_path: Path) -> 
     assert len(exported_too["Thing"]["members"]) == 5
 
 
+TYPE_VARIABLE = 'from typing import TypeVar\n\nT = TypeVar("T")'
+
 GEARS = '''
 """A module of gears."""
 
-from typing import Literal, TypeVar
+from typing import Literal
 
-T = TypeVar("T")
+{type_variable}
 
 Size = Literal["small", "large"]
 """How big a gear is."""
@@ -329,8 +331,8 @@ class Thing:
 '''
 
 
-def _fitted_export(root: Path, *, names: tuple[str, ...]) -> dict[str, Any]:
-    """The export of a package whose ``Thing`` names two types of ``pkg.gears`` in its signatures."""
+def _fitted_export(root: Path, *, names: tuple[str, ...], type_variable: str = TYPE_VARIABLE) -> dict[str, Any]:
+    """The export of a package whose ``Thing`` names two types of ``pkg.gears`` and ``T`` in its signatures."""
     package = root / "src" / "pkg"
     package.mkdir(parents=True)
     modules = [name for name in names if name == "gears"]
@@ -340,7 +342,7 @@ def _fitted_export(root: Path, *, names: tuple[str, ...]) -> dict[str, Any]:
     imports += f"from pkg.gears import {', '.join(gears)}\n" if gears else ""
     (package / "__init__.py").write_text(f"{imports}\n__all__ = {list(names)!r}\n")
     (package / "things.py").write_text(FITTED)
-    (package / "gears.py").write_text(GEARS)
+    (package / "gears.py").write_text(GEARS.format(type_variable=type_variable))
     blocks = "".join(f"\n::: pkg.{name}\n" for name in names)
     documentation = _pages(root, {"things.md": f"# Things\n{blocks}"})
     return docs_export.export(root / "src", documentation, package="pkg")
@@ -364,11 +366,26 @@ def test_a_type_a_public_signature_names_is_exported(tmp_path: Path) -> None:
     }
 
 
-def test_a_type_variable_is_not_a_type_to_export(tmp_path: Path) -> None:
-    """A type variable stands for the caller's own type, so a signature that names one names nothing to import."""
+@pytest.mark.parametrize(
+    ("type_variable", "also_named"),
+    [
+        (TYPE_VARIABLE, []),
+        ('import typing\n\nT = typing.TypeVar("T")', []),
+        ('from typing import ParamSpec\n\nT = ParamSpec("T")', []),
+        ('import typing_extensions\n\nT = typing_extensions.TypeVarTuple("T")', []),
+        ('from typing import ParamSpec\n\nT = ParamSpec("P").args', ["pkg.gears.T"]),
+    ],
+    ids=["TypeVar", "typing.TypeVar", "ParamSpec", "TypeVarTuple", "built-from-a-ParamSpec"],
+)
+def test_a_type_variable_is_not_a_type_to_export(tmp_path: Path, type_variable: str, also_named: list[str]) -> None:
+    """A type variable stands for the caller's own type, so a signature that names one names nothing to import.
+
+    What the value is decides, however the call is spelled, and not how its text begins.
+    """
     with pytest.raises(docs_export.ExportError) as refusal:
-        _fitted_export(tmp_path, names=("Thing",))
-    assert re.findall(r"(pkg\.gears\.\w+), named by", str(refusal.value)) == ["pkg.gears.Gear", "pkg.gears.Size"]
+        _fitted_export(tmp_path, names=("Thing",), type_variable=type_variable)
+    named = re.findall(r"(pkg\.gears\.\w+), named by", str(refusal.value))
+    assert sorted(named) == ["pkg.gears.Gear", "pkg.gears.Size", *also_named]
 
 
 def test_an_exported_type_alias_names_what_its_value_names(tmp_path: Path) -> None:

@@ -79,9 +79,9 @@ A caller with `Authority.system()` passes every check on this page. It stands fo
 
 The right to change a mount is kept by the storage above the mount, on the directory the mount is attached at. Three things follow.
 
-- **To add a mount, a caller must also be able to make its directory.** `add_mount` makes the directory with the caller's own `mkdir`. If the directory is already there, `read_write` at it is enough.
+- **To add a mount, a caller must also be able to make its directory.** `add_mount` makes the directory with the caller's own `mkdir`. If the directory is already there, `read_write` at it is enough for a named caller. A caller with no name is still refused when a directory above the mount point gives everyone `none`, because its `mkdir` must first find the directories above.
 - **Give the right before you add the mount, or on a directory above it.** Once a mount is at `/data`, `grant("/data", ...)` reaches the mounted storage. It no longer changes who may change the mount.
-- **Whoever may change a mount may replace what is at its path.** They can remove the mount and add another storage there. They can also change the mount's permissions in place.
+- **Whoever may change a mount may remove it, and may change its policy in place.** `remove_mount` asks the gate for a `delete` at the mount point. `update_mount` asks for a `delete` and a `mkdir` there, and for nothing more.
 
 ## Mounts
 
