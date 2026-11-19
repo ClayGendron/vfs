@@ -11,10 +11,12 @@ from tests.support.base_doubles import BindableStorage, RecorderStorage, Transpo
 from vfs import AsyncVirtualFileSystem, InMemoryStorage
 from vfs import base as base_module
 from vfs import mounts as mounts_module
+from vfs import paths as paths_module
 from vfs.authority import Authority, Principal
 from vfs.models import Observation
+from vfs.mounts import Mount
 from vfs.paths import Path
-from vfs.results import ErrorKind, Result, classified
+from vfs.results import ErrorKind, Result, ResultError, classified
 from vfs.results.kinds import Severity
 from vfs.storage import TransportError
 
@@ -557,19 +559,19 @@ async def test_the_misses_of_a_batch_are_matched_to_directories_above_mounts_in_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checks = 0
-    original = mounts_module._lies_in
+    original = mounts_module._target
 
-    def counted(path: Path, directory: Path) -> bool:
+    def counted(error: ResultError) -> Path | None:
         nonlocal checks
         checks += 1
-        return original(path, directory)
+        return original(error)
 
     fs = AsyncVirtualFileSystem(storage=Missing())
     roads = [f"/r{index:02}" for index in range(40)]
     for road in roads:
         await fs.add_mount(BindableStorage(), f"{road}/m", parents=True)
     names = [*roads, *(f"/f{index}" for index in range(1_000))]
-    monkeypatch.setattr(mounts_module, "_lies_in", counted)
+    monkeypatch.setattr(mounts_module, "_target", counted)
     stat = await fs.stat(observations=batch_of(*names))
     assert stat.paths == tuple(roads)
     assert len(stat.errors) == 1_000
@@ -633,6 +635,42 @@ async def test_glob_under_a_limit_asks_no_more_mounted_roots_than_the_limit_can_
         child.calls.clear()
     assert len(ok(await fs.glob("/*", max_count=1)).observations) == 1
     assert sum(len(child.calls) for child in children) == 1
+
+
+async def test_glob_under_a_limit_passes_the_callers_columns_to_the_mounted_storage() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    child = BindableStorage()
+    await fs.add_mount(child, "/m")
+    child.calls.clear()
+    wanted = frozenset({"version"})
+    ok(await fs.glob("/*", max_count=1, columns=wanted))
+    assert child.calls == [("stat", {"path": "/", "columns": wanted})]
+
+
+def deep_path() -> Path:
+    """A legal path of 1,024 bytes, the longest a path may be."""
+    return Path("/x" * 512)
+
+
+@pytest.mark.parametrize("mounted", [(), ("/y",), ("/x/x", "/x/x/x/x", "/y")], ids=["root", "beside", "above"])
+def test_finding_the_mount_that_holds_a_path_checks_no_path_again(
+    mounted: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deep = deep_path()
+    table = {Path(path): Mount(Path(path), BindableStorage()) for path in ("/", *mounted)}
+    listing = mounts_module.MountListing(table)
+    checked: list[str] = []
+    original = paths_module.validate_path
+
+    def counted(path: str) -> tuple[bool, str]:
+        checked.append(path)
+        return original(path)
+
+    monkeypatch.setattr(paths_module, "validate_path", counted)
+    holder = listing.holder(deep)
+    assert holder is not None
+    assert holder.path == max((path for path in table if path == "/" or deep.startswith(path + "/")), key=len)
+    assert checked == []
 
 
 # ----------------------------------------------------------------------
@@ -934,27 +972,72 @@ async def test_a_directory_above_a_mount_that_its_storage_misses_keeps_the_other
     assert set(ok(await fs.tree("/road")).paths) == {"/road/kept.md", "/road/m"}
 
 
-async def test_a_miss_beneath_a_directory_above_a_mount_is_returned_as_the_storage_gave_it() -> None:
+async def test_a_miss_beneath_a_directory_above_a_mount_is_a_miss_like_any_other() -> None:
     fs = await answered([KEPT], [classified(ErrorKind.not_found, Path("/road/gone.md"))])
     for listing, paths in (
-        (fs.ls("/road"), ("/road/kept.md",)),
-        (fs.tree("/road"), ("/road/kept.md",)),
-        (fs.stat("/road"), ()),
+        (fs.ls("/road"), ("/road/kept.md", "/road/m")),
+        (fs.tree("/road"), ("/road/kept.md", "/road/m")),
+        (fs.stat("/road"), ("/road",)),
     ):
-        refused = await listing
-        assert refused.paths == paths
-        assert [(error.kind, error.path) for error in refused.errors] == [(ErrorKind.not_found, "/road/gone.md")]
+        listed = ok(await listing)
+        assert set(listed.paths) == set(paths)
+        assert listed.errors == []
     located = await fs.locate("/road", exists=True)
-    assert (located.exists, located.kind) == (False, None)
+    assert (located.exists, located.kind, located.note) == (True, "directory", None)
 
 
 async def test_a_failed_listing_never_returns_the_directory_beneath_a_mount() -> None:
     covered = Observation(path="/road/m", kind="directory", version=77)
-    fs = await answered([covered, KEPT], [classified(ErrorKind.not_found, Path("/road/gone.md"))])
+    fs = await answered([covered, KEPT], [classified(ErrorKind.backend_unavailable, Path("/road/gone.md"))])
     for listing in (fs.ls("/road"), fs.tree("/road"), fs.ls(observations=batch_of("/road", "/road"))):
         refused = await listing
         assert set(refused.paths) == {"/road/kept.md"}
-        assert {(error.kind, error.path) for error in refused.errors} == {(ErrorKind.not_found, "/road/gone.md")}
+        assert {(error.kind, error.path) for error in refused.errors} == {
+            (ErrorKind.backend_unavailable, "/road/gone.md")
+        }
+
+
+class FarRoad(BindableStorage):
+    """A parent whose ``stat`` of ``/road`` gives no row and the one error in ``error``."""
+
+    error: Any = None
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if self.error is None or path != "/road":
+            return await super().stat(path=path, authority=authority, **kwargs)
+        return Result(ops=("stat",), errors=[self.error])
+
+
+# A miss so deep that, with the mount's path in front, it is longer than a path may be.
+TOO_DEEP = Path("/road" + ("/" + "d" * 247) * 4)
+
+
+@pytest.mark.parametrize(
+    ("error", "shown"),
+    [
+        (classified(ErrorKind.not_found, Path("/road/gone"), target=Path("/road")), True),
+        (classified(ErrorKind.not_found, TOO_DEEP, target=Path("/road")), True),
+        (classified(ErrorKind.permission_denied, Path("/road"), detail="the road is closed"), False),
+    ],
+    ids=["a miss beneath it", "a miss too deep to name", "a refusal"],
+)
+async def test_locate_and_stat_agree_on_a_directory_above_a_mount(error: Any, shown: bool) -> None:
+    parent = FarRoad()
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    site = "/" + "z" * 80
+    await fs.add_mount(parent, site)
+    await fs.add_mount(BindableStorage(), f"{site}/road/m", parents=True)
+    parent.error = error
+    stat = await fs.stat(f"{site}/road")
+    located = await fs.locate(f"{site}/road", exists=True)
+    assert stat.success is shown
+    if shown:
+        assert [(row.path, row.populated) for row in stat.observations] == [(f"{site}/road", BARE)]
+        assert (located.exists, located.kind, located.note) == (True, "directory", None)
+    else:
+        assert stat.observations == []
+        [refusal] = stat.errors
+        assert (located.exists, located.kind, located.note) == (None, None, refusal.message)
 
 
 async def test_a_directory_above_a_mount_that_its_storage_answers_with_nothing_is_there() -> None:
@@ -962,6 +1045,100 @@ async def test_a_directory_above_a_mount_that_its_storage_answers_with_nothing_i
     assert [(row.path, row.populated) for row in ok(await fs.stat("/road")).observations] == [("/road", BARE)]
     located = await fs.locate("/road", exists=True)
     assert (located.exists, located.kind) == (True, "directory")
+
+
+class Unreachable(BindableStorage):
+    """A storage whose ``stat``, ``ls`` and ``tree`` fail on the wire once ``down`` is set."""
+
+    down = False
+
+    def _wire(self) -> None:
+        if self.down:
+            msg = "offline"
+            raise TransportError(msg)
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self._wire()
+        return await super().stat(path=path, authority=authority, **kwargs)
+
+    async def ls(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self._wire()
+        return await super().ls(path=path, authority=authority, **kwargs)
+
+    async def tree(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self._wire()
+        return await super().tree(authority=authority, **kwargs)
+
+
+async def test_a_storage_that_cannot_answer_gets_no_row_made_up_for_a_directory_above_a_mount() -> None:
+    parent = Unreachable()
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    await fs.add_mount(parent, "/box")
+    await fs.add_mount(BindableStorage(), "/box/road/m", parents=True)
+    parent.down = True
+    for answer in (
+        fs.stat("/box/road"),
+        fs.stat(observations=batch_of("/box/road", "/box/road")),
+        fs.ls("/box/road"),
+        fs.tree("/box/road"),
+        fs.glob("road", paths=("/box/road",)),
+    ):
+        failed = await answer
+        assert failed.observations == []
+        assert [error.kind for error in failed.errors] == [ErrorKind.backend_unavailable]
+
+
+class Halved(BindableStorage):
+    """A parent whose ``stat`` of a batch gives one row for ``/road`` and one ``not_found`` for it."""
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if path is not None:
+            return await super().stat(path=path, authority=authority, **kwargs)
+        road = Path("/road")
+        row = Observation(path=road, kind="directory", version=MARK)
+        return Result(ops=("stat",), observations=[row], errors=[classified(ErrorKind.not_found, road)])
+
+
+async def test_a_batch_fills_only_the_rows_its_storage_did_not_give_for_a_directory_above_a_mount() -> None:
+    fs = AsyncVirtualFileSystem(storage=Halved())
+    await fs.add_mount(BindableStorage(), "/road/m", parents=True)
+    twice = ok(await fs.stat(observations=batch_of("/road", "/road")))
+    assert [(row.path, row.version) for row in twice.observations] == [("/road", MARK), ("/road", None)]
+    assert twice.errors == []
+    once = ok(await fs.stat(observations=batch_of("/road")))
+    assert [(row.path, row.version) for row in once.observations] == [("/road", MARK)]
+    assert once.errors == []
+
+
+class BadRoad(BindableStorage):
+    """A parent whose ``stat`` of a batch fails at ``/road``, or whose ``glob`` fails there, as ``fails`` says."""
+
+    fails = ""
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if path is not None or self.fails != "stat":
+            return await super().stat(path=path, authority=authority, **kwargs)
+        return Result(ops=("stat",), errors=[classified(ErrorKind.backend_unavailable, Path("/road"))])
+
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        failed = [classified(ErrorKind.backend_unavailable, Path("/road"))] if self.fails == "glob" else []
+        return Result(ops=("glob",), errors=failed)
+
+
+async def test_a_failed_probe_of_a_root_hides_only_what_lies_strictly_beneath_it() -> None:
+    parent = BadRoad()
+    fs = AsyncVirtualFileSystem(storage=parent)
+    await fs.add_mount(BindableStorage(), "/road/m", parents=True)
+    assert ok(await fs.glob("*", paths=("/",))).paths == ("/road", "/road/m")
+    parent.fails = "stat"
+    probed = await fs.glob("*", paths=("/", "/road"))
+    assert probed.paths == ("/road",)
+    assert [(error.kind, error.path) for error in probed.errors] == [(ErrorKind.backend_unavailable, "/road")]
+    # A failed glob names a region whose own top is in it.
+    parent.fails = "glob"
+    listed = await fs.glob("*", paths=("/",))
+    assert listed.paths == ()
+    assert [(error.kind, error.path) for error in listed.errors] == [(ErrorKind.backend_unavailable, "/road")]
 
 
 async def test_the_answer_for_a_directory_above_a_mount_keeps_its_storage_envelope() -> None:
@@ -1026,6 +1203,38 @@ async def test_closing_the_kernel_while_a_listing_waits_leaves_that_listing_as_i
     parent.release.set()
     listed = ok(await asyncio.wait_for(pending, 5))
     assert {(row.path, row.version) for row in listed.observations} == {("/anchor", 3), ("/site", 17)}
+
+
+class HeldGlob(BindableStorage):
+    """A parent whose ``glob`` waits until it is released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started, self.release = asyncio.Event(), asyncio.Event()
+
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self.started.set()
+        await self.release.wait()
+        return Result(ops=("glob",))
+
+
+@pytest.mark.parametrize("roots", [(), ("/",)], ids=["whole", "named"])
+@pytest.mark.parametrize("cap", [None, 1], ids=["no limit", "a limit"])
+async def test_a_glob_that_finds_the_kernel_closed_asks_no_storage_and_is_refused(
+    cap: int | None, roots: tuple[str, ...]
+) -> None:
+    parent, child = HeldGlob(), BindableStorage()
+    fs = AsyncVirtualFileSystem(storage=parent)
+    await fs.add_mount(child, "/m")
+    pending = asyncio.create_task(fs.glob("m", paths=roots, max_count=cap))
+    await asyncio.wait_for(parent.started.wait(), 5)
+    await fs.close()
+    child.calls.clear()
+    parent.release.set()
+    refused = await asyncio.wait_for(pending, 5)
+    assert [error.kind for error in refused.errors] == [ErrorKind.backend_unavailable]
+    assert refused.observations == []
+    assert child.calls == []
 
 
 class HeldRoot(RootedStorage):

@@ -1,6 +1,6 @@
 # A mount is listed as a directory is
 
-This spec is built, on the branch `a-mount-is-listed-as-a-directory-is`, which sits on top of the branch `public-names-follow-the-naming-rules`. It is the third draft. The second was reviewed twice on 2026-11-18 and found not sound, and this draft answers those reviews. The third draft was built without a review of its own. Decisions 4, 6, 7 and 8 were changed while it was built, decision 11 was added, and each now says what the code does. Three reviews of the built code then found eleven defects, and the fixes changed the words of decisions 2 to 8 and 11, the cost and the scope to match. A review of those fixes found nine more, and their fixes changed the words of decisions 2, 3, 4, 6, 8 and 11 and the cost again. What is left is in `agents/tasks.md`.
+This spec is built, on the branch `a-mount-is-listed-as-a-directory-is`, which sits on top of the branch `public-names-follow-the-naming-rules`. It is the third draft. The second was reviewed twice on 2026-11-18 and found not sound, and this draft answers those reviews. The third draft was built without a review of its own. Decisions 4, 6, 7 and 8 were changed while it was built, decision 11 was added, and each now says what the code does. Three reviews of the built code then found eleven defects, and the fixes changed the words of decisions 2 to 8 and 11, the cost and the scope to match. A review of those fixes found nine more, and their fixes changed the words of decisions 2, 3, 4, 6, 8 and 11 and the cost again. A third review found seven more. Their fixes put a rule in place of each special case and changed the words of decisions 2, 4, 5, 6, 8 and 11 and the cost. What is left is in `agents/tasks.md`.
 
 ## The outcome wanted
 
@@ -76,7 +76,7 @@ Reason: Plan 9 does this on every directory read. A reader then sees one entry a
 
 A mount's name shows in every listing of its parent that succeeds. No rights question is asked of the child. The child decides only how much of the row a caller sees.
 
-`glob` asks every storage at once and merges what answers, so it decides for each mount point on its own whether the listing of its parent succeeded. The parent is the deepest mount whose path lies strictly above the mount point. A failure removes only the mount points in the region it describes, in the parent that holds them, and each is left out with the record of its `stat`. A failure of the parent's `glob` is the region at the path it was raised for, which is its `data["vfs.target"]` or its own path. A failure of a root's probe is the region beneath that root, in the mount that was probed. A failure that cannot be tied to a path, or a probe failure that names none of the roots it probed, is the whole of the mount that failed. A warning removes nothing. A parent that was not asked refused nothing, and its mount points are kept. A directory above a mount point is judged the same way.
+`glob` asks every storage at once and merges what answers, so it decides for each mount point on its own whether the listing of its parent succeeded. The parent is the deepest mount whose path lies strictly above the mount point. A failure removes only the mount points in the region it describes, in the parent that holds them, and each is left out with the record of its `stat`. A failure of the parent's `glob` is the region at the path it was raised for, which is its `data["vfs.target"]` or its own path, and that path is in the region. A failure of a root's probe is the region strictly beneath that root, in the mount that was probed. The root's own row is not beneath itself, so it is kept. A failure that cannot be tied to a path, or a probe failure that names none of the roots it probed, is the whole of the mount that failed. A warning removes nothing. A parent that was not asked refused nothing, and its mount points are kept. A directory above a mount point is judged the same way.
 
 Reason: on Plan 9 and on Linux the mounted root's permissions never hide the name. It also makes the listing agree with `stat` and `locate`, which show every mount to every named caller today.
 
@@ -94,7 +94,7 @@ Reason: the covered directory is unreachable while mounted on both systems, and 
 
 A directory in the parent that lies above a mount point is listed as a bare row in its own parent. `ls`, `stat`, `tree`, `glob` and `locate` of it answer as they do for a road directory, even where the parent's storage answered `not_found`. The kernel knows these directories from its mount table, which it keeps as a set in memory.
 
-Only a `not_found` is replaced, and only one at the directory, at a directory above it, or at no path. A refusal of any other kind stands, and so does a `not_found` at a path beneath the directory. The storage's other rows and records are kept. Where the storage returns its own row for the directory, that row is shown and no bare row is added. Where it returns no row and no error, the directory shows bare, and `locate` says it exists. `locate` calls the function `stat` calls, so it says the directory exists exactly when `stat` shows it.
+The rule is that a bare row stands in for a `not_found`, and for nothing else. When the storage's answer holds any failure that is not a `not_found`, such as a refusal or a transport failure, the answer is returned as the storage gave it, less the covered directory, and no bare row is added for any target. Otherwise each `not_found` of the directory is dropped, whatever part of the path it names, and the storage's other rows and records are kept. Where the storage returns its own row for the directory, that row is shown and no bare row is added. Where it returns no row, the directory shows bare. `locate` says the directory exists and is a directory, unless the storage refused with something other than `not_found`, and then it reports that refusal in `note`. One function decides this for `stat` and for `locate`, and both read the error with the mount's path put back.
 
 The directory shows to every caller whose listing succeeds, the caller who holds nothing in the mount included. Decision 2 already shows that caller the mount's full path.
 
@@ -110,7 +110,7 @@ This is the one place where the precedent cannot be copied as it is. VFS applies
 
 When the parent refuses `ls` or `tree` of the addressed directory with anything other than `not_found`, the call is refused as it is today. The anonymous caller on a closed root is refused with `unauthenticated` and learns no mount names. `glob` keeps the rules it has today for a region where one branch fails and others answer. A mount point whose parent failed the `glob` is left out, as decision 2 says, so the anonymous caller on a closed root learns no mount name from `glob` either.
 
-The parent and the children are asked at the same time. When the parent refuses, the children's answers are discarded.
+In `ls` and `tree`, the parent and the children are asked at the same time. When the parent refuses, the children's answers are discarded. A `glob` asks the children after the storages answer, and only for the mount points it keeps, as decision 11 says.
 
 Reason: on both systems a caller who may not read a directory gets no listing of it.
 
@@ -125,6 +125,8 @@ A mount shows a bare row when its storage gives none that is a directory. There 
 | Answers and returns no row for its root | Bare | The child's own records, if it gave any |
 | Answers with a row for its root that is not a directory | Bare | The child's own records, if it gave any |
 | Fails in any other way, such as a transport error, with or without a row | Bare | One of severity `warning` for each failure, which names the mount at its mount path, also when the failure names no path |
+
+This table is for the child. A parent that fails is decision 4's case: its failure stands, and no bare row is made up for a directory above a mount.
 
 In `tree`, a mount whose own `tree` fails is reported once, by the warning of that `tree`, and the failure of its `stat` is not reported as well. A child whose `stat` raises an ordinary exception, and not a transport error, has a fault. The exception is raised out of the listing, as the kernel raises a fault in a storage out of any verb.
 
@@ -145,7 +147,7 @@ No time budget is added. A listing waits for each child, as `tree` and a search 
 ### 8. The rule covers every route to a listing
 
 - An explicit root of `glob` that is a mount point already answers from the child, and stays so. A root that is a directory above a mount point is no longer an error for a caller who holds nothing on it.
-- `stat` with `observations` is one storage call for the whole batch, as before. Each failure counts against the path it was raised for, which is its `data["vfs.target"]`, or its own path when the storage set no target. A `not_found` names the first part of the path that is missing, so two targets can name the same directory, and the target is what tells them apart. A directory above a mount point that comes back with no row gets a bare row each time the batch names it, and every `not_found` raised for it, at it or above it, is dropped. Any other failure raised for it stands, and it then gets no row. A failure raised for any other target stands, whatever part of the path it names. A failure that names no path cannot be matched, so it stands and recovers nothing. The failures are indexed by target once, so a batch costs its length.
+- `stat` with `observations` is one storage call for the whole batch, as before. It follows decision 4's rule. An answer that holds any failure that is not a `not_found` is returned as the storage gave it, and no target gets a bare row. Otherwise each failure counts against the path it was raised for, which is its `data["vfs.target"]`, or its own path when the storage set no target. A `not_found` names the first part of the path that is missing, so two targets can name the same directory, and the target is what tells them apart. Every `not_found` raised for a directory above a mount point is dropped. That directory gets one bare row for each time the batch names it beyond the rows the storage gave for it, so a directory named twice gives two rows. A `not_found` raised for any other target, or for none, stands. The failures are matched in one pass, so a batch costs its length.
 - `ls` with `observations` answers each directory that holds or leads to a mount point on its own, once however often the batch names it. The other rows go to the storage in one call, as before. `ls` returns the listing of such a directory once for each time the batch names it, after the rows of the other targets of the same mount. A batch that spans several mounts returns each mount's rows together, so the order holds within one mount only. An error is recorded once for a directory, however often the batch names it.
 - `glob` over rows in hand returns the rows it was given, unchanged.
 - A trash view lists the deleted rows of the storage it addresses, unchanged.
@@ -166,7 +168,7 @@ A decision taken for that draft, that `remove_mount` deletes the rights rows on 
 
 No storage returns the row at a mount point. The parent holds the covered directory, which is never shown, and the child's own `glob` leaves its root out. So the kernel tests each mount point, and each directory above one, against the call. A path is kept when it lies beneath a root and an arm matches it. It is dropped when an exclusion, an extension filter or `kind` rules it out.
 
-The test is run by the matcher a storage uses on its own rows, in one hop to the thread pool, within the time budget each matching stage has. A stage that reaches the budget leaves those rows out and adds one `truncated` warning. A call whose roots hold no mount point beneath them makes no hop. Under `max_count`, no more mounted roots are asked for their `stat` than `max_count` rows can use. They are asked after the storages answer, for the first `max_count` mount points that decision 2 keeps, so the limit is never spent on a mount point that is then left out. With no limit, they are asked at the same time as the storages.
+The test is run by the matcher a storage uses on its own rows, in one hop to the thread pool, within the time budget each matching stage has. A stage that reaches the budget leaves those rows out and adds one `truncated` warning. A call whose roots hold no mount point beneath them makes no hop. The mounted roots are asked for their `stat` after the storages answer, and only for the mount points that decision 2 keeps, or for the first `max_count` of them. So no mounted root is asked for a path the caller does not get, and a limit is never spent on a mount point that is then left out. No storage is called once the kernel has seen that it is closed. A `glob` that finds the mount table empty before it asks the mounted roots is refused with `backend_unavailable`, as every verb is after `close()`.
 
 Reason: the same matcher gives the same answer a plain directory at that path would get. A pattern that ends in `**` does not match the directory it names, for example, and a second matcher could disagree on that.
 
@@ -190,13 +192,13 @@ Every call is a read. Nothing is written and no lock is taken. The cost grows wi
 
 At the reference deployment a listing is one of about 150,000 verb calls a day. With 20 mounts at the root, one `ls("/")` adds 20 calls and about 60 statements. The number of mounts in a deployment is an assumption. No measurement exists.
 
-The risk that is not priced is latency. A listing is as slow as its slowest child, and decision 6 adds no time budget.
+The risk that is not priced is latency. A listing is as slow as its slowest child, and decision 6 adds no time budget. A `glob` that matches mount points waits for the storages and then for the mounted roots, which is one round trip more than asking them at the same time.
 
-`ls` and `stat` of a path first look the path up in the set of directories above a mount, which the kernel works out when the mount table changes. A kernel with one mount has an empty set. A batch of 10,000 rows costs one set lookup for each row. The directories each mount stores, and the mounts in each directory, are worked out at the same time. The filter that drops a row beneath a deeper mount walks up the row's own path against the set of mount paths, so a row costs the depth of its path and never the number of mounts.
+`ls` and `stat` of a path first look the path up in the set of directories above a mount, which the kernel works out when the mount table changes. A kernel with one mount has an empty set. A batch of 10,000 rows costs one set lookup for each row. The directories each mount stores, and the mounts in each directory, are worked out at the same time. The filter that drops a row beneath a deeper mount looks up the prefixes of the row's own path in the set of mount paths, so a row costs the depth of its path and never the number of mounts.
 
 `ls`, `stat` and `tree` take one hop of the call's budget, as the searches do. A listing of a parent asks each mount in it for the row of its root, so a storage that wraps the kernel it is mounted in would loop. With the hop, the loop ends in `budget_exhausted`, and the mount shows bare with that warning. `read` and the verbs that change something take no hop. Only a verb's own entry into the kernel takes a hop. The probe of a search's roots runs inside the hop the search holds and takes none, so a budget of one serves a search with roots.
 
-Each listing reads one copy of the mount table, made when the table changes. A mount added or removed while a listing waits on a storage changes the next listing and never that one. `glob`, `grep` and `search` take the copy when they start, and it serves the plan, the resolution of each root, the probes, the calls on the storages, the filter and the merge. The kernel finds the mount of any path with the same function, which walks up the path against the table, so a batch of 10,000 rows costs the depth of each row's path and not the number of mounts. The permission maps of each row are still found by a scan of the table.
+Each listing reads one copy of the mount table, made when the table changes. A mount added or removed while a listing waits on a storage changes the next listing and never that one. `glob`, `grep` and `search` take the copy when they start, and it serves the plan, the resolution of each root, the probes, the calls on the storages, the filter and the merge. The kernel finds the mount of any path with the same function. It cuts the path at each `/` and looks each prefix up in the table as plain text, because a prefix of a checked path is never checked again. A table that holds only the root answers at once. Finding the mount of a 1,024-byte path makes no call to the path check, and a batch of 10,000 rows costs the depth of each row's path and not the number of mounts. The permission maps of each row are still found by a scan of the table.
 
 ## Left as it is
 
@@ -223,6 +225,7 @@ Each fixture states what was shared: the grants, the owner, the posture, which r
 - `tree` shows the directories above a mount it reaches, and none above a mount deeper than `max_depth`.
 - A directory above a mount that the caller may see keeps its own stored row.
 - A batch of `stat` or `ls` answers for a directory above a mount and keeps the `not_found` of a missing path.
+- A `not_found` beneath a directory above a mount is a miss like any other: `ls`, `tree` and `stat` of the directory answer for it.
 - A `glob` beneath a directory above a mount does not fail on that directory.
 - The anonymous caller on a closed root is refused `ls("/")` and `tree("/")` with `unauthenticated`, and gets no rows.
 - A mount that refuses the caller shows bare with no record. A mount that returns no row for its root shows bare. A mount that cannot `stat` shows bare and is not asked.
@@ -242,7 +245,13 @@ Each fixture states what was shared: the grants, the owner, the posture, which r
 - Under `max_count`, a mount point that is left out costs no `stat` and no place.
 - `glob`, `grep` and `search` with roots pass on a budget of one hop. A hop is given back when the storage raises and when the call is cancelled.
 - A row that comes with a failure is not shown at a mount point.
-- `locate` says a directory above a mount does not exist when `stat` of it fails on a miss beneath it.
+- `locate` says a directory above a mount exists, and `stat` shows it, when its storage answers with a miss beneath it or one too deep to name. Both report a refusal of any other kind.
+- A storage that cannot answer gets no row made up for a directory above a mount, in `stat` of a path, `stat` of a batch, `ls`, `tree` and the probe of a `glob` root.
+- A batch that names a directory above a mount twice, where the storage gave one row and one miss for it, returns two rows and no error.
+- A failed probe of a root keeps the root's own row and hides what lies beneath it, and a failed `glob` at the same path hides the path too.
+- A `glob` that finds the kernel closed after its storages answer asks no storage and is refused, with a limit and without.
+- A `glob` under a limit passes the caller's `columns` to the mounted storage.
+- Finding the mount that holds a 1,024-byte path makes no call to the path check.
 - A mount replaced while `glob`, `grep` or `search` plans its scope leaves that call as it began, and the new storage is not asked.
 
 ## Scope
