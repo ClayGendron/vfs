@@ -48,4 +48,4 @@ A mount is attached at an [entry](#entry), an empty directory. `fs.add_mount()` 
 
 While a mount is attached, its path shows the top of the mounted storage and never the directory beneath it. `fs.ls("/")` and `fs.stat("/projects")` return the same row for `/projects`. The name of a mount is never hidden from a caller who can list the directory it is in.
 
-Adding or removing a mount is a write at its path. A read-only mount takes no new mount beneath it and loses none. The caller must also hold `read_write` at that path, as for a change to who can access it. `fs.add_mount(..., posture=...)` sets the level that everyone holds in the mounted storage, before the mount can be reached.
+Adding or removing a mount is a write at its path. A read-only mount takes no new mount beneath it and loses none. The caller must also hold `read_write` at that path, as for a change to who can access it. `fs.add_mount(..., posture=...)` sets the level that everyone holds at the root of the mounted storage, before the mount can be reached. A posture set deeper in that storage stays.

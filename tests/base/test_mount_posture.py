@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
+from collections import UserString
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +20,7 @@ from tests.support.base_doubles import (
 from vfs import AsyncVirtualFileSystem, DatabaseStorage, InMemoryStorage, VirtualFileSystem
 from vfs.authority import Authority, Principal
 from vfs.exceptions import MountError
-from vfs.mounts import Mount, MountPayload, everyone_holds, validate_posture
+from vfs.mounts import Mount, MountPayload, everyone_holds, mount_table_refusal, validate_posture
 from vfs.ops import GRANT_OPS, RUNGS
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError
@@ -38,8 +39,8 @@ ADA = Authority.of(Principal("ada"))
 # The two faces of the kernel, with calls to await and with plain calls.
 Face = type[AsyncVirtualFileSystem] | type[VirtualFileSystem]
 
-# The deadline for a call that must return. A mount lock held across a posture write would hang it.
-RETURNS_WITHIN = 10.0
+# The deadline for every wait here, so a wrong build fails a test and does not hang the suite.
+RETURNS_WITHIN = 5.0
 
 
 async def closed() -> AsyncVirtualFileSystem:
@@ -87,6 +88,58 @@ class WaitingPostureStorage(RecorderStorage):
         self.entered.set()
         await self.release.wait()
         return self._answer("set_posture", kwargs, authority)
+
+
+class WaitingGrantsStorage(RecorderStorage):
+    """A child whose ``grants`` read says it has started and waits to be released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def grants(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self.entered.set()
+        await self.release.wait()
+        return self._answer("grants", kwargs, authority)
+
+
+class HoldsListStorage(RecorderStorage):
+    """A child whose ``grants`` read says that everyone already holds ``list`` at its root."""
+
+    async def grants(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self._answer("grants", kwargs, authority)
+        return granted({"principal_id": "*", "path_prefix": "/", "level": "list"})
+
+
+class WaitingLsStorage(InMemoryStorage):
+    """An in-memory root whose ``ls`` of ``/work`` says it has answered and waits to be released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def ls(self, **kwargs: Any) -> Result:
+        answer = await super().ls(**kwargs)
+        if kwargs.get("path") == "/work":
+            self.entered.set()
+            await self.release.wait()
+        return answer
+
+
+class SlowProbeStorage(BindableStorage):
+    """A root whose ``ls`` says it has started and waits to be released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def ls(self, **kwargs: Any) -> Result:
+        self.entered.set()
+        await self.release.wait()
+        return await super().ls(**kwargs)
 
 
 class RootCopyingStorage(RecorderStorage):
@@ -148,6 +201,20 @@ class CountingMemoryStorage(InMemoryStorage):
     async def set_posture(self, **kwargs: Any) -> Result:
         self.posture_writes += 1
         return await super().set_posture(**kwargs)
+
+
+class WaitingGrantsMemoryStorage(CountingMemoryStorage):
+    """A new in-memory storage whose ``grants`` read says it has started and waits to be released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def grants(self, **kwargs: Any) -> Result:
+        self.entered.set()
+        await self.release.wait()
+        return await super().grants(**kwargs)
 
 
 class CountingDatabaseStorage(DatabaseStorage):
@@ -236,6 +303,25 @@ async def test_a_posture_is_set_at_the_root_as_the_caller() -> None:
     assert child.authorities == [ADA, ADA]
 
 
+async def test_a_call_with_no_authority_sets_the_posture_as_the_kernel_s_default() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage(), default_authority=ADA)
+    child = RecorderStorage()
+    await fs.add_mount(child, "/m", posture="list")
+    assert child.authorities == [ADA, ADA]
+
+
+async def test_a_posture_checks_the_mount_point_again_whether_or_not_it_is_written() -> None:
+    root = BindableStorage()
+    fs = AsyncVirtualFileSystem(storage=root)
+    await fs.add_mount(RecorderStorage(), "/m", posture="list", authority=SYSTEM)
+    assert [op for op, _ in root.calls] == ["mkdir", "stat", "ls", "stat", "ls"]
+    root.calls.clear()
+    held = HoldsListStorage()
+    await fs.add_mount(held, "/n", posture="list", authority=SYSTEM)
+    assert [op for op, _ in held.calls] == ["grants"]
+    assert [op for op, _ in root.calls] == ["mkdir", "stat", "ls", "stat", "ls"]
+
+
 async def test_a_storage_that_does_not_declare_grants_is_written_without_a_read() -> None:
     child = RecorderStorage(caps=RecorderStorage().capabilities() - {"grants"})
     fs = AsyncVirtualFileSystem()
@@ -247,10 +333,10 @@ async def test_the_posture_is_set_before_the_mount_is_in_the_table() -> None:
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage(fs)
     task = asyncio.create_task(fs.add_mount(child, "/data", posture="none"))
-    await child.entered.wait()
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
     assert paths(fs) == ["/"]
     child.release.set()
-    await task
+    await asyncio.wait_for(task, RETURNS_WITHIN)
     assert paths(fs) == ["/", "/data"]
     assert child.seen == [["/"]]
 
@@ -323,6 +409,29 @@ async def test_a_storage_that_declares_the_grant_verbs_and_lacks_them_refuses_a_
     with pytest.raises(MountError) as exc:
         await fs.add_mount(ClaimsGrantsStorage(), "/m", posture="none")
     assert exc.value.errors[0].kind is ErrorKind.unsupported
+    assert paths(fs) == ["/"]
+    assert (await fs.stat("/m", authority=SYSTEM)).errors[0].kind is ErrorKind.not_found
+
+
+async def test_a_storage_that_keeps_no_posture_is_refused_before_the_rights_are_checked() -> None:
+    fs = await closed()
+    with pytest.raises(MountError, match="keeps no posture") as exc:
+        await fs.add_mount(ReadFamilyStorage(), "/m", posture="none", authority=ADA)
+    assert exc.value.errors[0].kind is ErrorKind.unsupported
+
+
+async def test_a_gate_tightened_while_the_mount_point_is_checked_changes_no_posture() -> None:
+    root = SlowProbeStorage()
+    fs = AsyncVirtualFileSystem(storage=root)
+    child = RecorderStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/m", posture="none", authority=SYSTEM))
+    await asyncio.wait_for(root.entered.wait(), RETURNS_WITHIN)
+    await fs.update_mount("/", permissions="read", authority=SYSTEM)
+    root.release.set()
+    with pytest.raises(MountError) as exc:
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert exc.value.errors[0].kind is ErrorKind.read_only
+    assert child.calls == []
 
 
 async def test_an_unknown_posture_is_refused_before_anything_is_made() -> None:
@@ -375,6 +484,15 @@ async def test_a_storage_that_already_holds_the_posture_is_not_written() -> None
     assert await posture_at(fs, "/data") == "read"
 
 
+async def test_a_named_caller_s_grant_at_the_root_does_not_stand_for_everyone() -> None:
+    child = InMemoryStorage()
+    assert (await child.grant(path=Path("/"), principal="ada", level="read", authority=SYSTEM)).success is True
+    fs = AsyncVirtualFileSystem()
+    await fs.add_mount(child, "/data", posture="read", authority=SYSTEM)
+    assert await posture_at(fs, "/data") == "read"
+    assert (await fs.write(path="/data/x.md", content="anon")).success is False
+
+
 async def test_a_posture_replaces_a_stored_one_and_keeps_the_deeper_ones(tmp_path: pathlib.Path) -> None:
     url = f"sqlite+aiosqlite:///{tmp_path}/stored.sqlite"
     first = AsyncVirtualFileSystem()
@@ -423,13 +541,13 @@ async def test_no_second_call_mounts_a_storage_while_its_posture_is_being_set() 
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     first = asyncio.create_task(fs.add_mount(child, "/a", posture="none"))
-    await child.entered.wait()
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
     with pytest.raises(ValueError, match="another call is mounting"):
         await fs.add_mount(child, "/b")
     with pytest.raises(ValueError, match="another call is mounting"):
         await fs.add_mount(child, "/b", posture="read")
     child.release.set()
-    await first
+    await asyncio.wait_for(first, RETURNS_WITHIN)
     assert paths(fs) == ["/", "/a"]
     assert [op for op, _ in child.calls].count("set_posture") == 1
 
@@ -447,12 +565,12 @@ async def test_the_posture_stays_when_the_table_refuses_the_mount_after_it_was_s
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     child = WaitingPostureStorage()
     first = asyncio.create_task(fs.add_mount(child, "/data", posture="none"))
-    await child.entered.wait()
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
     # A mount lock held across the posture write would keep this call from returning.
     await asyncio.wait_for(asyncio.create_task(fs.add_mount(RecorderStorage(), "/data")), RETURNS_WITHIN)
     child.release.set()
     with pytest.raises(ValueError, match="Mount already exists"):
-        await first
+        await asyncio.wait_for(first, RETURNS_WITHIN)
     ops = [op for op, _ in child.calls]
     assert ops.count("set_posture") == 1
     assert ops[-1] == "set_posture"
@@ -462,10 +580,10 @@ async def test_a_cancelled_posture_write_frees_the_storage() -> None:
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     task = asyncio.create_task(fs.add_mount(child, "/a", posture="none"))
-    await child.entered.wait()
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, RETURNS_WITHIN)
     await fs.add_mount(child, "/a")
     assert paths(fs) == ["/", "/a"]
 
@@ -477,6 +595,129 @@ async def test_a_storage_that_raises_in_set_posture_is_freed() -> None:
         await fs.add_mount(child, "/m", posture="none")
     await fs.add_mount(child, "/m")
     assert paths(fs) == ["/", "/m"]
+
+
+# ---------------------------------------------------------------------------
+# What changes while the posture is read or written
+# ---------------------------------------------------------------------------
+
+
+async def test_a_mount_point_that_gains_a_row_during_the_posture_write_is_not_covered() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingPostureStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/inbox", posture="read", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    assert (await fs.write(path="/inbox/note.txt", content="hello", authority=SYSTEM)).success is True
+    child.release.set()
+    with pytest.raises(ValueError, match="not empty"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert paths(fs) == ["/"]
+    assert (await fs.read("/inbox/note.txt", authority=SYSTEM)).success is True
+    assert [op for op, _ in child.calls] == ["grants", "set_posture"]
+
+
+async def test_a_mount_point_that_gains_a_row_while_a_held_posture_is_read_is_not_covered() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingGrantsMemoryStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/inbox", posture="read_write", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    assert (await fs.write(path="/inbox/note.txt", content="hello", authority=SYSTEM)).success is True
+    child.release.set()
+    with pytest.raises(ValueError, match="not empty"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert paths(fs) == ["/"]
+    assert (await fs.read("/inbox/note.txt", authority=SYSTEM)).success is True
+    assert child.posture_writes == 0
+
+
+async def test_a_mount_point_removed_during_the_posture_write_is_not_mounted() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingPostureStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/gone", posture="read", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    assert (await fs.delete("/gone", authority=SYSTEM)).success is True
+    child.release.set()
+    with pytest.raises(ValueError, match="no directory stored at the mount point"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert paths(fs) == ["/"]
+
+
+async def test_a_mount_point_whose_holder_changed_during_the_posture_write_is_not_mounted() -> None:
+    root = WaitingLsStorage()
+    fs = AsyncVirtualFileSystem(storage=root)
+    parent = asyncio.create_task(fs.add_mount(InMemoryStorage(), "/work", authority=SYSTEM))
+    await asyncio.wait_for(root.entered.wait(), RETURNS_WITHIN)
+    child = WaitingPostureStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/work/sub", posture="read", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    root.release.set()
+    await asyncio.wait_for(parent, RETURNS_WITHIN)
+    child.release.set()
+    with pytest.raises(ValueError, match="no directory stored at the mount point"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert paths(fs) == ["/", "/work"]
+
+
+async def test_a_mount_point_whose_holder_was_removed_while_the_posture_is_read_is_not_mounted() -> None:
+    fs = AsyncVirtualFileSystem()
+    await fs.add_mount(InMemoryStorage(), "/work", authority=SYSTEM)
+    child = WaitingGrantsStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/work/sub", posture="none", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await fs.remove_mount("/work", authority=SYSTEM)
+    child.release.set()
+    with pytest.raises(ValueError, match="no directory stored at the mount point"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert paths(fs) == ["/"]
+
+
+async def test_a_kernel_closed_during_the_posture_write_adds_no_mount() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingPostureStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/data", posture="none", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await fs.close()
+    child.release.set()
+    with pytest.raises(ValueError, match="filesystem is closed"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert paths(fs) == []
+
+
+async def test_a_kernel_closed_while_the_posture_is_read_writes_no_posture() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingGrantsStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/data", posture="read", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await fs.close()
+    child.release.set()
+    with pytest.raises(ValueError, match="filesystem is closed"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert [op for op, _ in child.calls] == ["grants"]
+
+
+async def test_a_gate_tightened_while_the_posture_is_read_writes_no_posture() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingGrantsStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/data", posture="read", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await fs.update_mount("/", permissions="read", authority=SYSTEM)
+    child.release.set()
+    with pytest.raises(MountError) as exc:
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert exc.value.errors[0].kind is ErrorKind.read_only
+    assert [op for op, _ in child.calls] == ["grants"]
+
+
+async def test_a_mount_point_taken_while_the_posture_is_read_writes_no_posture() -> None:
+    fs = AsyncVirtualFileSystem()
+    child = WaitingGrantsStorage()
+    task = asyncio.create_task(fs.add_mount(child, "/data", posture="read", authority=SYSTEM))
+    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await fs.add_mount(RecorderStorage(), "/data", authority=SYSTEM)
+    child.release.set()
+    with pytest.raises(ValueError, match="Mount already exists"):
+        await asyncio.wait_for(task, RETURNS_WITHIN)
+    assert [op for op, _ in child.calls] == ["grants"]
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +788,14 @@ async def test_the_attach_step_sets_the_posture_itself() -> None:
     with pytest.raises(MountError) as exc:
         await fs._attach_mount(ReadFamilyStorage(), "/data", posture="none")
     assert exc.value.errors[0].kind is ErrorKind.unsupported
+    undeclared = RecorderStorage(caps=RecorderStorage().capabilities() - {"set_posture"})
+    with pytest.raises(MountError) as exc:
+        await fs._attach_mount(undeclared, "/data", posture="none")
+    assert exc.value.errors[0].kind is ErrorKind.unsupported
+    assert undeclared.calls == []
+    with pytest.raises(ValueError, match="posture must be one of") as wrong:
+        await fs._attach_mount(InMemoryStorage(), "/data", posture="open")  # ty: ignore[invalid-argument-type]
+    assert type(wrong.value) is ValueError
     child = RecorderStorage()
     await fs._attach_mount(child, "/data", posture="none")
     assert "set_posture" in [op for op, _ in child.calls]
@@ -562,12 +811,24 @@ def test_validate_posture_and_everyone_holds() -> None:
     assert validate_posture(None) is None
     for level in RUNGS:
         assert validate_posture(level) == level
-    for wrong in ("open", 3):
-        with pytest.raises(ValueError, match="posture must be one of"):
+    with pytest.raises(ValueError, match="posture must be one of"):
+        validate_posture("open")
+    for wrong, kind in ((3, "int"), (UserString("read"), "UserString")):
+        with pytest.raises(ValueError, match=f"^posture must be a string, got {kind}$"):
             validate_posture(wrong)
     row = {"principal_id": "*", "path_prefix": "/", "level": "list"}
     assert everyone_holds(refused(ErrorKind.not_found, "gone"), "list") is False
     assert everyone_holds(Result(ops=("grants",)), "list") is False
+    assert everyone_holds(granted({**row, "principal_id": "ada"}), "list") is False
     assert everyone_holds(granted({**row, "path_prefix": "/pub"}), "list") is False
     assert everyone_holds(granted({**row, "level": "read"}), "list") is False
     assert everyone_holds(granted(row), "list") is True
+
+
+def test_the_table_checks_follow_the_order_the_kernel_keeps() -> None:
+    mounts = {Path(p): Mount(path=Path(p), storage=RecorderStorage()) for p in ("/", "/m/a", "/m/b")}
+    mount = Mount(path=Path("/m"), storage=RecorderStorage())
+    for first, second in (("/m/a", "/m/b"), ("/m/b", "/m/a")):
+        order = [Path(first), Path(second), Path("/")]
+        refusal = mount_table_refusal(mounts, order, mount, set(), "Kernel")
+        assert refusal == f"Cannot mount at /m: a deeper mount already sits at {first}"

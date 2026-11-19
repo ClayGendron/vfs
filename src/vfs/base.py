@@ -59,6 +59,7 @@ from vfs.chain import admit_rows_in_hand, glob_rows_in_hand, grep_rows_in_hand, 
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
+from vfs.listing import MountListing, PathFilters, gather_settled, skip_record
 from vfs.models import (
     MEASURE_OFFLOAD_BYTES,
     MEASURED_BODY,
@@ -73,21 +74,17 @@ from vfs.mounts import (
     Location,
     Mount,
     MountJudgement,
-    MountListing,
-    PathFilters,
-    gather_settled,
     is_tombstoned_site,
     mount_point_owner,
-    mount_site_refusal,
     mount_table_refusal,
     normalize_mount_path,
-    posture_refusal,
     require_gate_allows,
     require_judgement_stands,
+    require_mount_site,
+    require_posture_kept,
     require_storage,
     rights_refusal,
     set_mount_posture,
-    skip_record,
     validate_deny_ops,
     validate_posture,
 )
@@ -385,9 +382,11 @@ class AsyncVirtualFileSystem:
         posture it holds, and a new storage gives everyone ``read_write``. If ``posture`` is given, it is in
         force before the mount can be reached, so no caller meets the mount under another posture. The
         kernel sets it as the caller, who must hold ``read_write`` at the root of the storage, as everyone
-        does in a new storage. It writes only when the storage holds another posture at its root. The
-        postures set deeper in the storage are kept, and so are its grants. The mask in ``deny_ops`` and
-        the mount's own ``permissions`` do not stop it. The caller gets no grant in the storage.
+        does in a new storage. It first reads the grants at the root, and writes nothing when everyone
+        holds ``posture`` there. It writes when the storage holds another level, when it does not declare
+        ``grants``, and when the read fails. The postures set deeper in the storage are kept, and so are
+        its grants. The mask in ``deny_ops`` and the mount's own ``permissions`` do not stop it. The
+        caller gets no grant in the storage. After the storage is asked the mount point is checked again.
 
         ``authority`` names the caller. With none, the caller is the kernel's default authority, or
         else the anonymous caller. The caller must hold ``read_write`` at the mount point, and the
@@ -399,7 +398,8 @@ class AsyncVirtualFileSystem:
         - The caller does not hold ``read_write`` at the mount point.
         - The mount above is read-only there, or its storage or mask does not allow ``mkdir``.
         - The directory cannot be made, or the path holds a file.
-        - ``posture`` is given and ``storage`` declares no ``set_posture``. Nothing has been made.
+        - ``posture`` is given and ``storage`` declares no ``set_posture`` or lacks the grant methods.
+          Nothing has been made.
         - The storage refuses the posture, or cannot be reached. The directory stays and the mount is not added.
 
         It raises ``ValueError`` when ``posture`` is not a level, when the directory is not empty, when
@@ -421,10 +421,8 @@ class AsyncVirtualFileSystem:
         # Validated before the mkdir, so a rejected mask or posture leaves no directory behind.
         mask = validate_deny_ops(deny_ops)
         posture = validate_posture(posture)
-        kept = None if posture is None else posture_refusal(storage, frozenset(storage.capabilities()), mount_path)
-        if kept is not None:
-            msg = f"Cannot mount at {mount_path}: {kept.error_message}"
-            raise MountError(msg, result=kept)
+        if posture is not None:
+            require_posture_kept(storage, frozenset(storage.capabilities()), mount_path)
         judge = await self._require_mount_rights("mount at", mount_path, authority)
 
         made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=authority)
@@ -710,18 +708,16 @@ class AsyncVirtualFileSystem:
         ``ValueError`` and the caller retries.
 
         If ``posture`` is given, it is set as ``authority`` after the check of the mount point and before
-        the lock is taken. The table is then checked twice, once before the write and once under the
-        lock, and no other call may mount ``storage`` while the write runs.
+        the lock is taken. The table is checked before the grants are read, just before the write, and
+        under the lock, and no other call may mount ``storage`` while the write runs. A read or a write
+        can take as long as a relabel, so after them the table and the mount point are checked again,
+        written or not. The window before the commit is then as narrow as it is with no posture.
         """
         require_storage(storage)
         mount_path = normalize_mount_path(path)
         mask = validate_deny_ops(deny_ops)
         posture = validate_posture(posture)
-
-        probed = await mount_site_refusal(self._call_storage, self._match_mount(mount_path), mount_path)
-        if probed is not None:
-            msg = f"Cannot mount at {mount_path}: {probed}"
-            raise ValueError(msg)
+        await require_mount_site(self._call_storage, self._match_mount(mount_path), mount_path)
 
         mount = Mount(
             path=mount_path,
@@ -733,20 +729,18 @@ class AsyncVirtualFileSystem:
             declared_caps=frozenset(storage.capabilities()),
         )
         if posture is not None:
-            kept = posture_refusal(storage, mount.declared_caps, mount_path)
-            if kept is not None:
-                msg = f"Cannot mount at {mount_path}: {kept.error_message}"
-                raise MountError(msg, result=kept)
+            require_posture_kept(storage, mount.declared_caps, mount_path)
             # Checked and reserved with no await between, so no other call mounts the storage during the write.
             self._check_mount_table(mount, judged)
             self._posture_writes.add(id(storage))
         try:
             if posture is not None:
-                await set_mount_posture(self._call_storage, mount, posture, authority)
+                recheck = partial(self._check_mount_table, mount, judged, reserved_here=True)
+                await set_mount_posture(self._call_storage, mount, posture, authority, recheck)
+                recheck()
+                await require_mount_site(self._call_storage, self._match_mount(mount_path), mount_path)
             async with self._mount_lock:
-                if posture is not None:
-                    self._posture_writes.discard(id(storage))
-                self._check_mount_table(mount, judged)
+                self._check_mount_table(mount, judged, reserved_here=posture is not None)
                 self._mounts[mount_path] = mount
                 self._rebuild_sorted_mounts()
         finally:
@@ -774,19 +768,22 @@ class AsyncVirtualFileSystem:
             self._rebuild_sorted_mounts()
             return mount
 
-    def _check_mount_table(self, mount: Mount, judged: MountJudgement | None) -> None:
+    def _check_mount_table(self, mount: Mount, judged: MountJudgement | None, *, reserved_here: bool = False) -> None:
         """Raise unless the table can take ``mount`` now. No storage is asked.
 
         The call raises ``ValueError`` for a closed kernel, and then for a judgement in ``judged`` that no
         longer stands. It then asks the gate, which raises :class:`MountError`. Last, it raises
         ``ValueError`` when the table cannot take the mount. A call that breaks two rules meets the first.
+        ``reserved_here`` says that this call holds the reservation of the storage object, which then
+        does not count against it.
         """
         if not self._mounts:
             msg = f"Cannot mount at {mount.path}: filesystem is closed"
             raise ValueError(msg)
         require_judgement_stands(judged, "mount at", mount.path, self._mounts)
         require_gate_allows(self._mounts, self._permission_layers(mount.path), "mount at", mount.path, "mkdir")
-        refusal = mount_table_refusal(self._mounts, mount, self._posture_writes, self._class_name)
+        held = self._posture_writes - {id(mount.storage)} if reserved_here else self._posture_writes
+        refusal = mount_table_refusal(self._mounts, self._sorted_mount_paths, mount, held, self._class_name)
         if refusal is not None:
             raise ValueError(refusal)
 
@@ -2059,7 +2056,7 @@ class AsyncVirtualFileSystem:
         needs one more segment than the root has. It applies every filter, so a root's row is never
         returned past a filter the caller gave.
 
-        :meth:`MountListing.matched <vfs.mounts.MountListing.matched>` judges the mount points at the
+        :meth:`MountListing.matched <vfs.listing.MountListing.matched>` judges the mount points at the
         same time, and ``settle`` drops those whose own directory a storage refused to list. The whole
         call reads ``listing``, the one copy of the mount table that :meth:`_route_fanout` took.
 
@@ -2212,7 +2209,7 @@ class AsyncVirtualFileSystem:
         """Build one probe for each :term:`mount` that holds roots the caller named.
 
         The call returns the probes, and a warning for each root that cannot be checked, as
-        :meth:`MountListing.probed <vfs.mounts.MountListing.probed>` groups them. ``gates`` judge the
+        :meth:`MountListing.probed <vfs.listing.MountListing.probed>` groups them. ``gates`` judge the
         roots' own rows, on the process pool. With ``None``, no row is returned. The probes read
         ``listing``, the copy of the mount table the rest of the call reads.
         """
@@ -2595,7 +2592,7 @@ class AsyncVirtualFileSystem:
     async def _probe_location(self, terminal: ResolvedTerminal, row: Location, authority: Authority) -> Location:
         """Return ``row`` with the storage's answer about the path.
 
-        :meth:`MountListing.located <vfs.mounts.MountListing.located>` asks the storage, by the rule
+        :meth:`MountListing.located <vfs.listing.MountListing.located>` asks the storage, by the rule
         ``stat`` applies, so ``locate`` and ``stat`` agree on a directory that lies above a mount point.
         """
         return await self._listing.located(self._call_storage, terminal.mount, terminal.rel, row, authority)
@@ -2617,7 +2614,7 @@ class AsyncVirtualFileSystem:
     def _mounts_beneath(self, path: Path) -> list[Mount]:
         """Return the mounts that lie strictly beneath ``path`` in the table as it is now.
 
-        :meth:`MountListing.beneath <vfs.mounts.MountListing.beneath>` answers. The ``busy`` check reads it.
+        :meth:`MountListing.beneath <vfs.listing.MountListing.beneath>` answers. The ``busy`` check reads it.
         """
         return self._listing.beneath(path)
 

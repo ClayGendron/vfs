@@ -113,4 +113,4 @@ Review checks them. The build checks three things only.
 - A docstring with indented code, or with anything else the site cannot draw, stops it too.
 - A docstring that cites a spec or a decision record by number fails a lint test.
 
-The docstrings written before 2026-11-17 do not all follow these rules yet. `src/vfs/base.py` and `src/vfs/mounts.py` do.
+The docstrings written before 2026-11-17 do not all follow these rules yet. `src/vfs/base.py`, `src/vfs/mounts.py` and `src/vfs/listing.py` do.

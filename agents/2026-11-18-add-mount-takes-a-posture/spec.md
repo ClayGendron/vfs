@@ -1,6 +1,6 @@
 # `add_mount` takes a posture
 
-This spec is built, on the branch `add-mount-takes-a-posture`, and the build is not yet committed or reviewed. Five things differ from the text below. The code had moved since the line counts were taken, so the build fits the spec to the code as it now stands. `_gate_mount_change` moved to `mounts.py` as the function `require_gate_allows`, the named fallback, because the three named moves left `base.py` 11 lines over its entry. `base.py` went from 3073 lines to 3065 and `sync.py` from 1078 to 1075, and their entries are set to those counts. `mount_table_refusal` takes a fourth argument, the name of the kernel's class, because the refusal for a sealed root names it, and it returns the words of the refusal for `_check_mount_table` to raise. `mount_site_refusal` takes the mount that holds the path, as `_match_mount` gives it, or `None` for a closed kernel, so that the check for a closed kernel moved with it. Test 12 makes `/data` before it writes the file there, because a write does not make missing parents. The spec as first written follows. It was drafted on 2026-11-18 against commit `0d05c606` on the branch `a-mount-is-listed-as-a-directory-is`. Every statement about today's behaviour was executed on the in-memory storage, and the design was run once as a throwaway subclass of the kernel before it was written down. A fresh reader reviewed it the same day and found two things that stopped it. The first draft set the posture as the system actor, which let a caller open a stored storage they hold no rights in. Decision 4 now sets it as the caller. The draft also named nothing it builds on, and "Builds on" now does. The smaller findings are answered in the text, and the reader signed it fit to build after two more rounds. Three of its decisions could reasonably go the other way, and they are listed under "Choices to confirm".
+This spec is built, on the branch `add-mount-takes-a-posture`, in commit `4b01c9eb`. Two reviews of that build found five things, and each is fixed. The text below is brought in line with the fixes, in decisions 3, 7, 8, 9 and 10, the cost, the tests and the docs. First, a file written into the mount-point directory while the posture was written was hidden by the mount when it committed, and a mount could be committed where its mount-point directory no longer existed. When a posture is given, the table and the mount point are now checked again once the storage has been asked, whether or not anything was written, because a slow read of a posture already held opened the same gap. Second, a posture write could start after `close()` had returned, because the table was not checked between the read of the grants and the write. It is now checked just before the write. Third, `mount_table_refusal` sorted the mount paths on every call, under the mount lock, and it now reads them in the order the kernel keeps. Fourth, `validate_posture` accepted a value that compared equal to a level and was not a `str`, and it now refuses one with a message that names its type. Fifth, the docstring of `add_mount`, `documentation/maintainers/mounts.md` and the glossary said more than the code does, about when the storage is written, which refusals leave the posture alone and where the posture is set. The reviews also found seven changes to the code that no test caught, and each now has a test. The fixes add two functions to `mounts.py`, `require_mount_site` and `require_posture_kept`, which raise what `mount_site_refusal` and `posture_refusal` return, so that `base.py` stays within its entry. Last, `src/vfs/mounts.py` was over the ceiling of 1,000 lines, at 1,109 lines before the fixes and 1,137 after them, so it is split in two with no change in behaviour. `vfs.mounts` keeps the mount, its payload, the checks a mount change passes, `AskStorage` and where a path lives, in 485 lines. A new module, `vfs.listing`, of 693 lines, takes `MountListing`, `PathFilters`, `gather_settled`, `skip_record`, `bare_directory` and the helpers only they use. It sits on a rung of its own in `LAYERS`, between `vfs.mounts` and `vfs.base`, and `vfs.mounts` does not import it. `base.py` ends at 3040 lines and `sync.py` at 1075, and their entries are set to those counts. The whole suite passed the same tests before the split and after it. The first build differed from the text below in five things. The code had moved since the line counts were taken, so the build fits the spec to the code as it now stands. `_gate_mount_change` moved to `mounts.py` as the function `require_gate_allows`, the named fallback, because the three named moves left `base.py` 11 lines over its entry. `base.py` went from 3073 lines to 3065 and `sync.py` from 1078 to 1075, and their entries are set to those counts. `mount_table_refusal` takes a fourth argument, the name of the kernel's class, because the refusal for a sealed root names it, and it returns the words of the refusal for `_check_mount_table` to raise. `mount_site_refusal` takes the mount that holds the path, as `_match_mount` gives it, or `None` for a closed kernel, so that the check for a closed kernel moved with it. Test 12 makes `/data` before it writes the file there, because a write does not make missing parents. The spec as first written follows. It was drafted on 2026-11-18 against commit `0d05c606` on the branch `a-mount-is-listed-as-a-directory-is`. Every statement about today's behaviour was executed on the in-memory storage, and the design was run once as a throwaway subclass of the kernel before it was written down. A fresh reader reviewed it the same day and found two things that stopped it. The first draft set the posture as the system actor, which let a caller open a stored storage they hold no rights in. Decision 4 now sets it as the caller. The draft also named nothing it builds on, and "Builds on" now does. The smaller findings are answered in the text, and the reader signed it fit to build after two more rounds. Three of its decisions could reasonably go the other way, and they are listed under "Choices to confirm".
 
 ## The outcome wanted
 
@@ -105,7 +105,7 @@ async def add_mount(
 ) -> None:
 ```
 
-The value is one of the six levels, as `set_posture` takes. A value that is not a level and not `None` raises `ValueError` with the message `posture must be one of none, list, read, add, contribute, read_write, or None, got <repr>`. It is raised beside the check of `deny_ops`, before the rights check and before any storage is asked.
+The value is one of the six levels, as `set_posture` takes. A `str` that is not a level raises `ValueError` with the message `posture must be one of none, list, read, add, contribute, read_write, or None, got <repr>`. A value that is not a `str` and not `None` raises `ValueError` with the message `posture must be a string, got <type name>`, as `set_posture` words its own refusal, even when the value compares equal to a level. It is raised beside the check of `deny_ops`, before the rights check and before any storage is asked.
 
 The mount methods are not in the argument table of `vfs.params`, which holds the verbs only. So the check is a new function, `validate_posture(posture: object) -> Posture | None`, in `vfs/mounts.py` beside `validate_deny_ops`. It reads the levels from `vfs.ops.RUNGS`.
 
@@ -123,7 +123,7 @@ Reason: a default that is not `None` is a write that happens because an argument
 
 ### 3. A posture that is given is in force before the mount is in the table
 
-`add_mount` runs these steps in this order. Steps 4, 5, 9 and 10 are new. The rest are today's, in today's order.
+`add_mount` runs these steps in this order. Steps 4, 5, 9, 10 and 11 are new. The rest are today's, in today's order.
 
 1. `require_storage`. `TypeError` for a storage that cannot be read.
 2. The mount path is worked out and checked.
@@ -134,16 +134,19 @@ Reason: a default that is not `None` is a write that happens because an argument
 7. The caller's own `mkdir` of the mount point, or `restore` of a deleted one.
 8. `_attach_mount` checks that the mount point is an empty directory, as the system actor, and builds the `Mount`.
 9. If a posture is given, `_attach_mount` checks the child again as decision 8 says, runs the table checks once with no lock, and reserves the storage object, as decision 10 says.
-10. If a posture is given, `_attach_mount` sets it on the child, as decisions 4, 6 and 7 say. This is storage I/O, and the mount lock is not held.
-11. The mount lock is taken. The table checks run again. The mount is put in the table. No `await` lies between the re-check and the commit.
+10. If a posture is given, `_attach_mount` sets it on the child, as decisions 4, 6 and 7 say. This is storage I/O, and the mount lock is not held. The read of the grants is an `await`, so the table checks run again after it and before the write, with no `await` between them and the write. They do not count this call's own reservation against it. A refusal there is raised as at step 9, and the child is not written.
+11. If a posture is given, once the child has been asked, whether it was read, written or both, the table checks run again, and then the mount point is checked again with the same check as at step 8, `mount_site_refusal`. A refusal is raised as at step 9 or step 8. A posture write can take as long as a relabel, and a slow read opens the same gap. While either runs, the mount-point directory can gain a row, be deleted, or come to be held by another mount. Without this step the mount would commit over a directory that is no longer empty, and hide its rows, or where no directory is. With it, the window between the check of the mount point and the commit is what it is with no posture. The step runs whether or not anything was written. A call with no posture asks the child nothing and makes no second check.
+12. The mount lock is taken. The table checks run again. The mount is put in the table. No `await` lies between the re-check and the commit.
 
 The posture is set inside `_attach_mount`, so `_attach_mount` takes `posture: Posture | None = None` as a keyword after `permissions`, and `add_mount` passes it through. `_attach_mount` also takes `authority: Authority | None = None` as its last keyword, and `add_mount` passes its own, because decision 4 sets the posture as the caller. `_attach_mount` runs `validate_posture` itself, as it runs `validate_deny_ops` itself.
 
-The table checks are the ones `_attach_mount` runs under the lock today, the check of what the caller's rights were judged for among them. They move, unchanged and in the same order, to one private method of the kernel, `_check_mount_table(self, mount: Mount, judged: MountJudgement | None) -> None`. It raises what the checks raise today. The method runs the check for a closed kernel and the check of what was judged, and then asks the gate. It then calls a function in `vfs/mounts.py`, `mount_table_refusal`, which holds the checks that follow the gate today and takes the mount table and the storage objects reserved under decision 10. So the order is today's, and a call that breaks two rules gets the error it gets today. Step 9 and step 11 both call the method. With `posture=None` step 11 is the only call, as today.
+The table checks are the ones `_attach_mount` runs under the lock today, the check of what the caller's rights were judged for among them. They move, unchanged and in the same order, to one private method of the kernel, `_check_mount_table(self, mount: Mount, judged: MountJudgement | None, *, reserved_here: bool = False) -> None`. It raises what the checks raise today. The method runs the check for a closed kernel and the check of what was judged, and then asks the gate. It then calls a function in `vfs/mounts.py`, `mount_table_refusal`, which holds the checks that follow the gate today. It takes the mount table, the mount paths in the order the kernel keeps them, deepest first, and the storage objects reserved under decision 10. It reads the paths in that order and does not sort them again. `reserved_here` says that this call holds the reservation of the storage object, which then does not count against it. So the order is today's, and a call that breaks two rules gets the error it gets today. Steps 9, 10, 11 and 12 all call the method. With `posture=None` step 12 is the only call, as today.
+
+The checks of step 8 and of step 11 raise through `require_mount_site` in `vfs/mounts.py`, which raises `ValueError` with the reason `mount_site_refusal` gives. The checks of decision 8 raise through `require_posture_kept`, which raises `MountError` with the refusal `posture_refusal` gives. Each replaces a block of four lines that `base.py` held twice.
 
 There is no window. The child is in no table entry while its posture is written, so no call through the kernel reaches it. It enters the table only after the write has returned a success. `DatabaseStorage.set_posture` returns only after the posture row is committed and the relabel has finished.
 
-The posture is set last before the lock for a reason. Every refusal that needs no write to the child has had its turn by then, so a refused call leaves the child's posture untouched. The one exception is a table that changes during the write, which decision 9 covers.
+The posture is set last before the lock for a reason. Every refusal that needs no write to the child has had its turn by then, so a refusal before the write leaves the child's posture untouched. The exceptions are the refusals after the write, at step 11 and step 12, when the table or the mount point changed during the write. Decision 9 covers them.
 
 Holding the mount lock across the write was rejected. A posture write on a large stored storage is a relabel, and `close()` and every other mount change would wait for it.
 
@@ -185,19 +188,19 @@ A process that passes the same posture on every start is stating configuration. 
 
 Reason: the argument then means one thing on a new storage and on a stored one, which is the level everyone holds at the mount's root when the call returns. A rule that applied only to a new storage would need the kernel to tell a new storage from a stored one, and the storage protocol has no such question.
 
-### 7. The child is written only when it holds a different root posture
+### 7. The child is written unless a read shows that everyone already holds the posture at its root
 
-Before it writes, the kernel asks the child for `grants` at its root, as the caller. If the answer succeeds and holds a row whose `principal_id` is `*`, whose `path_prefix` is `/` and whose `level` equals the posture asked for, nothing is written. In every other case the kernel calls `set_posture` at the root. That covers a failed read, an answer with no such row, and a row with another level.
+Before it writes, the kernel asks the child for `grants` at its root, as the caller. If the answer succeeds and holds a row whose `principal_id` is `*`, whose `path_prefix` is `/` and whose `level` equals the posture asked for, nothing is written. In every other case the kernel calls `set_posture` at the root. That covers a failed read, an answer with no such row, a row with another level, and a row with that level for a principal that is not `*`.
 
-The read is made only when the child declares `grants`. A child that declares `set_posture` and not `grants` is written without a read.
+The read is made only when the child declares `grants`. A child that declares `set_posture` and not `grants` is written without a read. So the child is written in three cases: it holds another level at its root, it does not declare `grants`, or the read failed.
 
-The test of the answer is a new function in `vfs/mounts.py`, `everyone_holds(answer: Result, posture: Posture) -> bool`. The read and the write are one new function in `vfs/mounts.py`, `set_mount_posture(ask, mount: Mount, posture: Posture, authority: Authority | None) -> None`, which raises `MountError` as decision 9 says. `ask` is the kernel's `_call_storage`, which gives a call with no authority the kernel's default or the anonymous caller. It makes both calls through `ask`, with the `Mount` that step 8 built and that is in no table yet.
+The test of the answer is a new function in `vfs/mounts.py`, `everyone_holds(answer: Result, posture: Posture) -> bool`. The read and the write are one new function in `vfs/mounts.py`, `set_mount_posture(ask, mount: Mount, posture: Posture, authority: Authority | None, check: Callable[[], None]) -> None`, which raises `MountError` as decision 9 says. `ask` is the kernel's `_call_storage`, which gives a call with no authority the kernel's default or the anonymous caller. It makes both calls through `ask`, with the `Mount` that step 8 built and that is in no table yet. `check` is the table checks of step 10, and it is called with no `await` before the write.
 
 Reason: a posture write is never free. Measured, a `set_posture` to the level already held rewrote all 511 rows of a 500-file storage. A process that names its posture at every start would relabel the whole storage at every start, in every worker. At ten million files that is a pass over the corpus for each process start. One read avoids it.
 
 ### 8. A child that keeps no posture refuses the argument before anything is made
 
-A posture can be set on a child only when its declared capabilities hold `set_posture` and it has the grant methods, which is `isinstance(storage, SupportsGrants)`. Otherwise `add_mount` raises `MountError`. The error carries one `unsupported` refusal at the mount path, with the detail `the storage keeps no posture, so add_mount cannot set one`. The message is `Cannot mount at <path>: <the refusal's message>`.
+A posture can be set on a child only when its declared capabilities hold `set_posture` and it has the grant methods, which is `isinstance(storage, SupportsGrants)`. Otherwise `add_mount` raises `MountError`. That covers a child that declares no `set_posture` and one that declares it and lacks the methods. The error carries one `unsupported` refusal at the mount path, with the detail `the storage keeps no posture, so add_mount cannot set one`. The message is `Cannot mount at <path>: <the refusal's message>`.
 
 It is raised at step 5, before the rights check and before the directory is made. `_attach_mount` checks it again from the `Mount` it builds, because it is the method that writes. The check is a new function in `vfs/mounts.py`, `posture_refusal(storage: StorageBackend, declared_caps: frozenset[str], mount_path: Path) -> Result | None`, beside `rights_refusal`. With a posture, `storage.capabilities()` is therefore read twice.
 
@@ -214,10 +217,12 @@ Reason: a storage that keeps no grants serves every row to every caller. Ignorin
 | `posture` is not a level | `ValueError` | Not made | Not asked | None |
 | The child keeps no posture | `MountError`, `unsupported` | Not made | Not asked | None |
 | Rights, the gate, or the `mkdir` | As today | As today | Not asked | None |
-| The mount point is not an empty directory, or the table refuses at step 9 | `ValueError`, or `MountError` when the gate refuses, as at step 11 | Stays | Not asked | None |
+| The mount point is not an empty directory, or the table refuses at step 9 | `ValueError`, or `MountError` when the gate refuses, as at step 12 | Stays | Not asked | None |
+| The table refuses at step 10, after the read and before the write | As at step 9 | Stays | Read, not written | None |
 | The child refuses `set_posture` | `MountError` that carries the child's refusal | Stays | Whatever the child did | None |
 | The child cannot be reached | `MountError`, `backend_unavailable` | Stays | Unknown | None |
-| The table refuses at step 11 | `ValueError` or `MountError`, as today | Stays | The posture asked for | None |
+| The table or the mount point refuses at step 11, after the child was asked | As at step 9, or `ValueError` as at step 8 | Stays | The posture asked for, written or already held | None |
+| The table refuses at step 12 | `ValueError` or `MountError`, as today | Stays | The posture asked for | None |
 
 A refusal from the child is carried with the mount's path in front of its paths, which `Result.with_mount` does. The message is `Cannot mount at <path>: <the refusal's message>`, and a refusal with no message reads `the storage refused the posture`. A `TransportError` becomes `backend_unavailable` in `_call_storage`, as for any verb. Any other exception is a fault in the storage and is raised as it is.
 
@@ -235,9 +240,8 @@ Step 9 also reserves the object. The kernel keeps `self._posture_writes: set[int
 
 - `_check_mount_table` gains one check, after the others. A storage whose `id` is in the set raises `ValueError` with the message `Cannot mount at <path>: another call is mounting that storage object, so retry`.
 - At step 9 the call runs `_check_mount_table` and then adds the `id`, with no `await` between the two.
-- At step 11, under the lock, the call removes its own `id`, runs `_check_mount_table` and commits, with no `await` between the three.
-- A `finally` around steps 10 and 11 removes the `id` when the call fails, is cancelled, or meets a fault raised by the storage.
-- Both removals use `set.discard`, so the `finally` after a refusal at step 11 raises nothing of its own.
+- At steps 10 and 11, and at step 12 under the lock, the call runs `_check_mount_table` with `reserved_here=True`, which leaves its own `id` out of the set the checks read. At step 12 it then commits, with no `await` between the check and the commit. With `posture=None` step 12 passes `reserved_here=False`, so a call with no posture is refused while another call holds the reservation.
+- A `finally` around steps 10 to 12 removes the `id` with `set.discard`, whether the call commits, fails, is cancelled, or meets a fault raised by the storage.
 
 A second call for the same object is refused whether or not it names a posture. So a posture is written only to a storage that is in no table entry and that no other call can put in one.
 
@@ -271,15 +275,17 @@ The kernel uses `grants` and `set_posture`, which `SupportsGrants` already has. 
 
 ## Cost
 
-Storage calls made by one `add_mount`. The parent's calls are today's.
+Storage calls made by one `add_mount`. The parent's calls are today's, and a posture that is given adds two more, the `stat` and the `ls` of step 11, whether or not the child is written.
 
 | Case | Calls on the parent | Calls on the child |
 |---|---|---|
 | No posture, system actor | `mkdir`, `stat`, `ls` | None |
 | No posture, named caller | `holds`, `mkdir`, `stat`, `ls` | None |
-| Posture the child already holds | As above | `grants` |
-| Posture the child does not hold | As above | `grants`, `set_posture` |
-| Posture, and the child does not declare `grants` | As above | `set_posture` |
+| Posture the child already holds | As above, then `stat`, `ls` | `grants` |
+| Posture the child does not hold | As above, then `stat`, `ls` | `grants`, `set_posture` |
+| Posture, and the child does not declare `grants` | As above, then `stat`, `ls` | `set_posture` |
+
+The table checks of steps 10 and 11 read the table in memory and ask no storage. `mount_table_refusal` reads the mount paths in the order the kernel keeps, so no check sorts the table.
 
 Counted on SQLite, on a storage that had been touched once. The table leaves out SQLite's `SAVEPOINT`, `RELEASE`, `PRAGMA` and `ANALYZE` statements.
 
@@ -292,7 +298,8 @@ Counted on SQLite, on a storage that had been touched once. The table leaves out
 Against the reference deployment.
 
 - **A mount change is a rights change.** It is made a few times a day, and once for each mount at each process start. It rides on no per-call, per-write or per-index multiplier.
-- **A process start that names the posture its storage holds costs one `SELECT` for each mount.** Nothing is written and no lock is taken.
+- **A process start that names the posture its storage holds costs one `SELECT` for each mount.** Nothing is written and no lock is taken. The mount point is checked again, with the two parent calls below.
+- **A posture that is given costs two more calls on the parent, written or not.** They are the `stat` and the `ls` of the mount point, each a bounded read of one directory, and they ride on no multiplier but the mount change itself.
 - **A posture that differs costs what `set_posture` costs today.** The relabel visits every row beneath the root, down to the next deeper posture row, in bounded chunks. At ten million files and a million directories that is about 220 transactions of at most 50,000 rows each, the storage's `RELABEL_ROWS`, and `add_mount` returns after the last. The count is worked out and was not run. The storage's own rule applies: a call that creates a row waits for each posture transaction, so a stored posture is changed outside the ingest window. This is the cost of the two-call sequence used today, moved to before the mount is live.
 - **No read waits.** No verb takes the mount lock. The mount lock is not held during any storage call, so `close()` and other mount changes do not wait for a relabel.
 
@@ -322,7 +329,7 @@ Where a test names no root, the file system is `AsyncVirtualFileSystem()`, whose
 12. `test_a_mount_point_that_cannot_hold_a_mount_changes_no_posture`. The root holds a file at `/data/x.md`. `add_mount(RecorderStorage(), "/data", posture="none")` raises `ValueError` that matches `not empty`, and the child's `calls == []`.
 13. `test_a_storage_that_is_already_mounted_keeps_its_posture`. One `InMemoryStorage` is mounted at `/a`. `add_mount` of the same object at `/b` with `posture="none"` raises `ValueError` that matches `already mounted`, and `posture_at(fs, "/a")` is still `"read_write"`.
 14. `test_a_storage_that_keeps_no_posture_refuses_one_before_anything_is_made`, parametrised over `ReadFamilyStorage()` and `RecorderStorage(caps=frozenset({"read", "stat", "ls", "tree"}))`. `add_mount(child, "/m", posture="none")` raises `MountError` that matches `keeps no posture`. `errors[0].kind` is `unsupported` and its path is `/m`. `paths(fs) == ["/"]`, and `stat("/m")` as `SYSTEM` is `not_found`. The same child then mounts at `/m` with no posture.
-15. `test_a_storage_that_declares_the_grant_verbs_and_lacks_them_refuses_a_posture`. The child is a `ReadFamilyStorage` subclass whose `capabilities()` adds `GRANT_OPS`. `add_mount(child, "/m", posture="none")` raises `MountError` with `unsupported`.
+15. `test_a_storage_that_declares_the_grant_verbs_and_lacks_them_refuses_a_posture`. The child is a `ReadFamilyStorage` subclass whose `capabilities()` adds `GRANT_OPS`. `add_mount(child, "/m", posture="none")` raises `MountError` with `unsupported`. Nothing was made: `paths(fs) == ["/"]`, and `stat("/m")` as `SYSTEM` is `not_found`.
 16. `test_an_unknown_posture_is_refused_before_anything_is_made`. On `closed()`, `add_mount(InMemoryStorage(), "/m", posture="open", authority=ADA)`, where ada holds nothing, raises an exception whose type is exactly `ValueError` and that matches `posture must be one of`. So the check comes before the rights check. `paths(fs) == ["/"]`, and `stat("/m")` as `SYSTEM` is `not_found`.
 17. `test_a_storage_that_refuses_the_posture_is_not_mounted`. The child is a `RecorderStorage` subclass whose `set_posture` returns a failed `Result` with one `permission_denied` error at `Path("/")`. `add_mount(child, "/m", posture="none")` raises `MountError` that matches `Cannot mount at /m`. `errors[0].kind` is `permission_denied` and its path is `/m`. `paths(fs) == ["/"]`, and `stat("/m")` as `SYSTEM` succeeds, so the directory stays. A second child whose `set_posture` returns a failed `Result` with one error that has an empty message raises `MountError` that matches `the storage refused the posture`.
 18. `test_a_storage_that_cannot_be_reached_is_not_mounted`. Child `TransportFailStorage`. `add_mount(child, "/m", posture="none")` raises `MountError` whose `errors[0].kind` is `backend_unavailable` and whose path is `/m`. `paths(fs) == ["/"]`.
@@ -333,15 +340,33 @@ Where a test names no root, the file system is `AsyncVirtualFileSystem()`, whose
 23. `test_a_failed_posture_write_frees_the_storage_for_the_next_call`. The child's `set_posture` fails on its first call and succeeds on its second. The first `add_mount(child, "/m", posture="none")` raises `MountError`. The second returns, and `paths(fs) == ["/", "/m"]`.
 24. `test_the_posture_stays_when_the_table_refuses_the_mount_after_it_was_set`. Root `BindableStorage`. The child waits in `set_posture` during `add_mount(child, "/data", posture="none")`. While it waits, a second `RecorderStorage` is mounted at `/data`, by an `add_mount` that is started as a task and awaited before the first is released. A mount lock held across the posture write would make that await never return. After the release the first call raises `ValueError` that matches `Mount already exists`. The first child recorded exactly one `set_posture` and no call after it.
 25. `test_a_named_caller_who_adds_a_closed_mount_holds_nothing_in_it`. On `closed()`, `/data` is made as `SYSTEM` and ada is granted `read_write` there. `add_mount(InMemoryStorage(), "/data", posture="none", authority=ADA)` returns. Ada's `write` of `/data/a.md` is `permission_denied`, and `grants("/data", authority=SYSTEM)` holds one row, whose `principal_id` is `*` and whose `granted_by` is `ada`.
-26. `test_the_attach_step_sets_the_posture_itself`. The root is an `InMemoryStorage` with an empty directory at `/data`. `_attach_mount(ReadFamilyStorage(), "/data", posture="none")` raises `MountError` with `unsupported`. `_attach_mount(RecorderStorage(), "/data", posture="none")` records `set_posture` on the child.
+26. `test_the_attach_step_sets_the_posture_itself`. The root is an `InMemoryStorage` with an empty directory at `/data`. `_attach_mount(ReadFamilyStorage(), "/data", posture="none")` raises `MountError` with `unsupported`. So does `_attach_mount` of a `RecorderStorage` whose capabilities leave out `set_posture`, which has the grant methods, and that child records no call. `_attach_mount(InMemoryStorage(), "/data", posture="open")` raises an exception whose type is exactly `ValueError`. `_attach_mount(RecorderStorage(), "/data", posture="none")` records `set_posture` on the child.
 27. `test_the_plain_face_passes_the_posture_on`. In `with VirtualFileSystem() as fs`, after `fs.add_mount(InMemoryStorage(), "/data", posture="none")`, `fs.read("/data/a.md")` with no authority is `unauthenticated`.
-28. `test_validate_posture_and_everyone_holds`. `validate_posture` returns `None` and each level unchanged and raises `ValueError` for `"open"` and for `3`. `everyone_holds` is false for a failed `Result`, for a `Result` with no `grants`, for a `*` row at `/pub` and for a `*` row at `/` with another level, and true for a `*` row at `/` with the same level.
+28. `test_validate_posture_and_everyone_holds`. `validate_posture` returns `None` and each level unchanged and raises `ValueError` for `"open"`, which matches `posture must be one of`, and for `3` and `UserString("read")`, which read `posture must be a string, got int` and `posture must be a string, got UserString`. `everyone_holds` is false for a failed `Result`, for a `Result` with no `grants`, for a row for `ada` at `/` with the same level, for a `*` row at `/pub` and for a `*` row at `/` with another level, and true for a `*` row at `/` with the same level.
 29. `test_a_named_caller_cannot_widen_a_stored_posture`. With `tmp_path`, a `DatabaseStorage` on a SQLite file is closed at its root as `SYSTEM`, with `set_posture(path=Path("/"), posture="none", authority=SYSTEM)` on the storage. On `closed()`, `/data` is made as `SYSTEM` and ada is granted `read_write` there. `add_mount(storage, "/data", posture="read_write", authority=ADA)` raises `MountError` whose `errors[0].kind` is `not_found`. `paths(fs) == ["/"]`. A second `DatabaseStorage` on the same file still shows `none` for the `*` row at its root.
 30. `test_a_named_caller_cannot_add_a_stored_closed_storage_with_the_posture_it_holds`. The same setup. `add_mount(storage, "/data", posture="none", authority=ADA)` raises `MountError` with `not_found`. `add_mount(storage, "/data", authority=ADA)` then returns, and `posture_at(fs, "/data")` is `"none"`.
 31. `test_a_cancelled_posture_write_frees_the_storage`. The child waits in `set_posture` as in test 9. The task that runs `add_mount(child, "/a", posture="none")` is cancelled while it waits, and awaiting it raises `CancelledError`. Then `add_mount(child, "/a")` returns and `paths(fs) == ["/", "/a"]`.
 32. `test_a_storage_that_raises_in_set_posture_is_freed`. The child's `set_posture` raises `RuntimeError`. `add_mount(child, "/m", posture="none")` raises `RuntimeError`. Then `add_mount(child, "/m")` returns.
 33. `test_the_mount_s_own_permissions_do_not_stop_its_posture`. After `add_mount(InMemoryStorage(), "/ro", permissions="read", posture="none")`, `posture_at(fs, "/ro")` is `"none"`, and `set_posture("/ro", "read", authority=SYSTEM)` fails with `read_only`.
 34. `test_a_caller_who_can_read_the_stored_posture_and_asks_for_it_is_not_refused`. With `tmp_path`, a `DatabaseStorage` on a SQLite file is closed with `none` at its root and grants ada `read` at its root, both as `SYSTEM` on the storage. The storage object mounted is a subclass that counts its `set_posture` calls from then on. On a file system where ada holds `read_write` at `/data`, `add_mount(storage, "/data", posture="none", authority=ADA)` returns, and the count is 0.
+
+The tests below were added after the reviews of the build. Each was seen failing, before its fix or under the change to the code that no earlier test caught. Every wait in the file, on an event or on a task, is bounded by one constant, `RETURNS_WITHIN`, of five seconds, so a wrong build fails a test and does not hang the suite. Tests 9, 22, 24 and 31 had awaited with no deadline. Nothing asserts on elapsed time.
+
+35. `test_a_call_with_no_authority_sets_the_posture_as_the_kernel_s_default`. On a kernel built with `default_authority=ADA`, `add_mount(child, "/m", posture="list")` with no authority leaves `child.authorities == [ADA, ADA]`.
+36. `test_a_posture_checks_the_mount_point_again_whether_or_not_it_is_written`. Root `BindableStorage`. A posture that is written leaves the root's ops at `["mkdir", "stat", "ls", "stat", "ls"]`. A child whose `grants` shows `list` already held, given `posture="list"`, records only `grants`, and the root's ops are the same five.
+37. `test_a_storage_that_keeps_no_posture_is_refused_before_the_rights_are_checked`. On `closed()`, ada, who holds nothing, adds a `ReadFamilyStorage` with `posture="none"` and gets `MountError` with `unsupported`, not a rights refusal.
+38. `test_a_gate_tightened_while_the_mount_point_is_checked_changes_no_posture`. The root's `ls` waits during the check of the mount point, and the root is made read-only meanwhile. The call raises `MountError` with `read_only`, and the child records no call.
+39. `test_a_mount_point_that_gains_a_row_during_the_posture_write_is_not_covered`. While the child waits in `set_posture`, a file is written into the mount-point directory. The call raises `ValueError` that matches `not empty`, no mount is added, the file is still read, and the child recorded `grants` and `set_posture`.
+40. `test_a_mount_point_removed_during_the_posture_write_is_not_mounted`. While the child waits in `set_posture`, the mount-point directory is deleted. The call raises `ValueError` that matches `no directory stored at the mount point`.
+41. `test_a_mount_point_whose_holder_changed_during_the_posture_write_is_not_mounted`. A mount at `/work` waits in the root's `ls` of `/work` while `add_mount(child, "/work/sub", posture="read")` starts and waits in `set_posture`. The mount at `/work` then commits. The second call raises `ValueError` that matches `no directory stored at the mount point`, and the table is `["/", "/work"]`.
+42. `test_a_mount_point_whose_holder_was_removed_while_the_posture_is_read_is_not_mounted`. While the child waits in `grants` for `/work/sub`, the mount at `/work` is removed. The call raises `ValueError` that matches `no directory stored at the mount point`.
+43. `test_a_kernel_closed_during_the_posture_write_adds_no_mount`. While the child waits in `set_posture`, the kernel is closed. The call raises `ValueError` that matches `filesystem is closed`.
+44. `test_a_kernel_closed_while_the_posture_is_read_writes_no_posture`. While the child waits in `grants`, the kernel is closed. The call raises `ValueError` that matches `filesystem is closed`, and the child recorded only `grants`.
+45. `test_a_gate_tightened_while_the_posture_is_read_writes_no_posture`. While the child waits in `grants`, the root is made read-only. The call raises `MountError` with `read_only`, and the child recorded only `grants`.
+46. `test_a_mount_point_taken_while_the_posture_is_read_writes_no_posture`. While the child waits in `grants`, another storage is mounted at the same path. The call raises `ValueError` that matches `Mount already exists`, and the child recorded only `grants`.
+47. `test_a_named_caller_s_grant_at_the_root_does_not_stand_for_everyone`. A new `InMemoryStorage` grants ada `read` at its root. After `add_mount(child, "/data", posture="read", authority=SYSTEM)`, `posture_at(fs, "/data")` is `"read"` and a write with no authority fails.
+48. `test_the_table_checks_follow_the_order_the_kernel_keeps`. `mount_table_refusal` given mounts at `/m/a` and `/m/b`, for a mount at `/m`, names whichever of the two comes first in the order it is given.
+49. `test_a_mount_point_that_gains_a_row_while_a_held_posture_is_read_is_not_covered`. A new `InMemoryStorage` subclass waits in `grants`, and `posture="read_write"` is the posture it holds. While it waits, a file is written into the mount-point directory. The call raises `ValueError` that matches `not empty`, no mount is added, the file is still read, and `set_posture` was never called.
 
 No test is added for the line counts. `tests/lint/test_code_shape.py` already fails when `base.py` or `sync.py` grows.
 
@@ -350,7 +375,7 @@ No test is added for the line counts. `tests/lint/test_code_shape.py` already fa
 In:
 
 - `AsyncVirtualFileSystem.add_mount` and `_attach_mount`, the new private method `_check_mount_table`, and the set `_posture_writes`, in `src/vfs/base.py`.
-- `validate_posture`, `posture_refusal`, `everyone_holds`, `set_mount_posture`, `mount_table_refusal` and `mount_site_refusal` in `src/vfs/mounts.py`, under the banner of the checks a mount change passes. The last is `_probe_mount_site` moved.
+- `validate_posture`, `posture_refusal`, `require_posture_kept`, `everyone_holds`, `set_mount_posture`, `mount_table_refusal`, `mount_site_refusal` and `require_mount_site` in `src/vfs/mounts.py`, under the banner of the checks a mount change passes. `mount_site_refusal` is `_probe_mount_site` moved.
 - `VirtualFileSystem.add_mount` in `src/vfs/sync.py`, and the signature of `sweep` there written on one line.
 - The entries of `base.py` and `sync.py` in `tests/lint/allowlist.py`, lowered if the files end shorter.
 - The tests above, and the docs below.
@@ -367,7 +392,7 @@ Out:
 
 ## What the docs must say
 
-- `add_mount` takes `posture`, the level everyone holds in the mounted storage. With it, the mount is never live under another posture.
+- `add_mount` takes `posture`, the level everyone holds at the root of the mounted storage. With it, the mount is never live under another posture.
 - With no posture the storage keeps what it holds, and a new storage gives everyone `read_write`. Under a closed root, a mount added with no posture is open to everyone.
 - A posture that is given replaces the posture stored at the storage's root. Deeper postures and grants stay.
 - The kernel sets it as the caller, who must hold `read_write` at the root of the storage. On a new storage everyone does. The caller gets no grant in the mounted storage.
@@ -379,11 +404,11 @@ Out:
 Pages and docstrings.
 
 - `documentation/reference/access-levels.md`. In "Mounts", the bullet "A level does not cross a mount" ends by naming the argument, in the form `fs.add_mount(storage, "/data", posture="none")`, in place of the sentence that says a new mount is open until `set_posture` is called. In "Who Holds a Level", the table gains a row for everyone at a new mount. In "Who May Change Access", the row for `add_mount` says that a posture is set under the mounted storage's own rule for `set_posture`.
-- `documentation/maintainers/mounts.md`. A new section, "The posture of a new mount", after "Who may change a mount". It holds one bullet for each of decisions 3, 4, 7, 8, 9, 10 and 12, with its reason.
-- `documentation/reference/glossary.md`, the Mount term. One sentence that `fs.add_mount(..., posture=...)` sets what everyone holds in the mounted storage.
+- `documentation/maintainers/mounts.md`. A new section, "The posture of a new mount", after "Who may change a mount". It holds one bullet for each of decisions 3, 4, 7, 8, 9, 10 and 12, with its reason, and two more from decision 3: which refusals leave the posture alone, and why the table is checked again before the write and the mount point after it.
+- `documentation/reference/glossary.md`, the Mount term. One sentence that `fs.add_mount(..., posture=...)` sets what everyone holds at the root of the mounted storage, and one that a posture set deeper in it stays.
 - `README.md`, "Known limits". The bullet on a fresh storage's posture gains one sentence that names the argument. No fenced example is added, because the gate runs the fences of `README.md`.
 - The docstring of `add_mount`. One paragraph after the paragraph on `permissions` and `deny_ops`, and two lines in the failure list. The draft is below.
-- The docstring of `_attach_mount`. It says the posture is set after the check of the mount point and before the lock, and that the table checks run twice.
+- The docstring of `_attach_mount`. It says the posture is set after the check of the mount point and before the lock, that the table checks run before the read, just before the write and under the lock, and that once the storage has been asked, written or not, the table and the mount point are checked again.
 - The docstring of `_gate_mount_change`. "The caller holds the mount lock" becomes a sentence that is true for both calls: the caller holds the mount lock, or runs no `await` between this check and the reservation of the storage object.
 - The docstring of `set_posture`. The sentence "A fresh mount starts at `read_write`" gains "unless `add_mount` set another".
 - The docstring of `Mount`. After "Policy lives on the mount and state lives on the storage", one sentence that a posture is state and is not a field.
@@ -399,15 +424,18 @@ The draft for `add_mount`:
 posture it holds, and a new storage gives everyone ``read_write``. If ``posture`` is given, it is in
 force before the mount can be reached, so no caller meets the mount under another posture. The
 kernel sets it as the caller, who must hold ``read_write`` at the root of the storage, as everyone
-does in a new storage. It writes only when the storage holds another posture at its root. The
-postures set deeper in the storage are kept, and so are its grants. The mask in ``deny_ops`` and
-the mount's own ``permissions`` do not stop it. The caller gets no grant in the storage.
+does in a new storage. It first reads the grants at the root, and writes nothing when everyone
+holds ``posture`` there. It writes when the storage holds another level, when it does not declare
+``grants``, and when the read fails. The postures set deeper in the storage are kept, and so are
+its grants. The mask in ``deny_ops`` and the mount's own ``permissions`` do not stop it. The
+caller gets no grant in the storage. After the storage is asked the mount point is checked again.
 ```
 
 The two lines for the list of `MountError` cases:
 
 ```
-- ``posture`` is given and ``storage`` declares no ``set_posture``. Nothing has been made.
+- ``posture`` is given and ``storage`` declares no ``set_posture`` or lacks the grant methods.
+  Nothing has been made.
 - The storage refuses the posture, or cannot be reached. The directory stays and the mount is not added.
 ```
 
