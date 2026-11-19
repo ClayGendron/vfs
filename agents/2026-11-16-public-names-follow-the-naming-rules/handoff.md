@@ -38,7 +38,7 @@ The goal grew during the work to cover three more things: every mount change pas
 - **The code written after the review has not been reviewed.** It is commit `31adfbd2` and what follows it: the gate on `update_mount`, the directory made as the caller, the retry refusal, and the move of the mount checks to `vfs.mounts`.
 - **The docstrings of 16 other source files do not follow the rules.** About 265 of 311 break a rule, and about 170 public members have none. The largest are `rights.py`, `paths.py`, `backend.py`, `labels.py`, `ranking.py` and `sync.py`. The words "router", "bind path" and "bind site" remain in those files.
 - **`holds` has run on SQLite only.** The server engine legs have not been run on this branch.
-- **The grant verbs cannot reach the rights of a mount point.** The spec is `agents/2026-11-18-a-grant-can-be-aimed-at-a-mount-point/spec.md`. It is built on its own branch.
+- **A mount shared with a caller does not show in the listing of its parent.** The spec is `agents/2026-11-18-a-mount-is-listed-as-a-directory-is/spec.md`. It is built on its own branch. Aiming the grant verbs at a mount point is deferred there.
 - **`search` ignores its file filters when it is given `observations`.** The placeholder spec is `agents/2026-11-17-search-applies-its-file-filters-to-rows-in-hand/spec.md`.
 - **`remove_mount` deletes the mount-point directory as the system actor.** `add_mount` now makes it as the caller. Whether the two should match was not decided.
 - **A new mount starts open even under a closed root.** Each storage starts at posture `read_write`. This is existing behaviour and was not changed.
