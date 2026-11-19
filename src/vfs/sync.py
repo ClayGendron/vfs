@@ -192,6 +192,7 @@ class VirtualFileSystem:
         *,
         parents: bool = False,
         permissions: Permission | PermissionMap | None = None,
+        posture: Posture | None = None,
         deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
@@ -204,6 +205,7 @@ class VirtualFileSystem:
             path,
             parents=parents,
             permissions=permissions,
+            posture=posture,
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             owned=owned,
@@ -357,12 +359,7 @@ class VirtualFileSystem:
     ) -> Result:
         return self._result("restore", self._fs.restore, path, observations, authority=authority)
 
-    def sweep(
-        self,
-        path: str = "/.vfs/trash",
-        *,
-        authority: Authority | None = None,
-    ) -> Result:
+    def sweep(self, path: str = "/.vfs/trash", *, authority: Authority | None = None) -> Result:
         return self._result("sweep", self._fs.sweep, path, authority=authority)
 
     def mkdir(

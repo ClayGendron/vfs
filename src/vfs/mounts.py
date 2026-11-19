@@ -18,24 +18,29 @@ import heapq
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, TypedDict
 
+from vfs.authority import EVERYONE_NAME, Authority
 from vfs.chain import judge_in_hand
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
-from vfs.exceptions import raise_lone_or_group
+from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import Observation
 from vfs.offload import wall_truncation
-from vfs.ops import GRANT_OPS, READ_OPS
+from vfs.ops import GRANT_OPS, READ_OPS, RUNGS
 from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.pattern_matching import ScopeChannel, compile_gates
+from vfs.permissions import check_writable_composed
 from vfs.results import ErrorKind, Result, ResultError, classified
 from vfs.results.kinds import TRASHED_KEY, Severity, kind_family
-from vfs.storage import HOLDS, StorageBackend, SupportsHolds, TransportError
+from vfs.storage import HOLDS, StorageBackend, SupportsGrants, SupportsHolds, TransportError
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable, Mapping, Sequence
+    from collections.abc import Coroutine, Iterable, Mapping, Sequence, Set
 
-    from vfs.authority import Authority
     from vfs.ops import Op
-    from vfs.permissions import PermissionMap, PermissionsPayload
+    from vfs.permissions import PermissionLayer, PermissionMap, PermissionsPayload
+    from vfs.storage.grants import Posture
+
+# The check of a mount point runs as the system actor, not as any caller.
+_SYSTEM_AUTHORITY: Final = Authority.system()
 
 # ---------------------------------------------------------------------------
 # The mount and its payload
@@ -70,7 +75,8 @@ class Mount:
     Every path belongs to exactly one mount, the deepest one at or above it. The file system's own
     storage at ``/`` is an ordinary mount, and it answers when no deeper mount matches.
 
-    Policy lives on the mount and state lives on the storage.
+    Policy lives on the mount and state lives on the storage. A posture, the level everyone holds, is
+    state, so it is not a field here. It is read with ``grants`` at the mount's path.
 
     - ``permissions`` holds rules written relative to the mount. ``None`` means it has no rules of its own.
     - ``deny_ops`` is the set of operations the mounter masked.
@@ -171,6 +177,21 @@ def validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
     return mask
 
 
+def validate_posture(posture: object) -> Posture | None:
+    """Return ``posture`` when it is ``None`` or one of the six levels, and raise ``ValueError`` when it is not.
+
+    A posture is the level that everyone holds at a path and below. The levels run from ``none`` to
+    ``read_write``, in the order of ``vfs.ops.RUNGS``.
+    """
+    if posture is None:
+        return None
+    for level in RUNGS:
+        if posture == level:
+            return level
+    msg = f"posture must be one of {', '.join(RUNGS)}, or None, got {posture!r}"
+    raise ValueError(msg)
+
+
 def mount_point_owner(mounts: Mapping[Path, Mount], mount_path: Path) -> Mount:
     """Return the :term:`mount` in ``mounts`` that stores the directory at ``mount_path``.
 
@@ -220,6 +241,33 @@ def require_judgement_stands(
         raise ValueError(msg)
 
 
+def require_gate_allows(
+    mounts: Mapping[Path, Mount], layers: Sequence[PermissionLayer], change: str, mount_path: Path, *ops: Op
+) -> None:
+    """Raise :class:`MountError` when the gate refuses a mount change, as the write it is at its mount point.
+
+    ``ops`` are the writes the change stands for. Attaching a :term:`mount` is a ``mkdir``, detaching
+    one is a ``delete``, and changing one in place is both. ``change`` is the words the error uses.
+    ``layers`` are the permission maps that govern ``mount_path`` in the table ``mounts``, with the map
+    of ``/`` first. The mount-point directory is stored by the mount above ``mount_path``, so that
+    mount's capabilities and every permission map above the mount point decide. A mount above that is
+    read-only there, or that masks one of ``ops``, keeps its mount table as it is. The mount at
+    ``mount_path`` itself has no say. Its map governs what is beneath it and never its own mount
+    point. No storage is asked. The caller has already refused a closed kernel. It holds the mount
+    lock, or runs no ``await`` between this check and the reservation of the storage object.
+    """
+    owner = mount_point_owner(mounts, mount_path)
+    above = [layer for layer in layers if layer.mount_prefix != mount_path]
+    for op in ops:
+        refusal = check_writable_composed(above, op)
+        if op not in owner.caps:
+            detail = f"operation {op!r} is not declared by the storage that holds the mount point"
+            refusal = Result(ops=(op,), errors=[classified(ErrorKind.unsupported, owner.path, detail=detail)])
+        if refusal is not None:
+            msg = f"Cannot {change} {mount_path}: {refusal.error_message}"
+            raise MountError(msg, result=refusal)
+
+
 async def rights_refusal(owner: Mount, mount_path: Path, who: Authority) -> Result | None:
     """Return why ``who`` may not change the :term:`mount` at ``mount_path``, or ``None`` when they may.
 
@@ -250,6 +298,115 @@ def is_tombstoned_site(result: Result, path: Path) -> bool:
     """
     error = result.errors[0]
     return error.kind is ErrorKind.not_found and error.path == path and bool((error.data or {}).get(TRASHED_KEY))
+
+
+def posture_refusal(storage: StorageBackend, declared_caps: frozenset[str], mount_path: Path) -> Result | None:
+    """Return why no posture can be set on ``storage`` mounted at ``mount_path``, or ``None`` when one can.
+
+    A storage keeps a posture when ``declared_caps`` holds ``set_posture`` and it has the grant methods.
+    The capabilities it declared decide, and the mask of the mount does not. A storage that keeps no
+    grants serves every row to every caller, so a closed posture there would look closed and be open.
+    """
+    if "set_posture" in declared_caps and isinstance(storage, SupportsGrants):
+        return None
+    detail = "the storage keeps no posture, so add_mount cannot set one"
+    return Result(ops=("set_posture",), errors=[classified(ErrorKind.unsupported, mount_path, detail=detail)])
+
+
+async def mount_site_refusal(ask: AskStorage, owner: Mount | None, mount_path: Path) -> str | None:
+    """Return why ``mount_path`` cannot hold a :term:`mount`, or ``None`` when it is an empty directory.
+
+    ``owner`` is the mount that holds the path, or ``None`` when the kernel is closed. Its storage is
+    asked to ``stat`` and then to ``ls`` the path, through ``ask`` and as the system actor. This is
+    storage I/O, and it runs before the mount lock is taken. On shared storage the answer can change
+    before the mount is committed, and the mount then succeeds or fails in the ordinary ways. Only a
+    ``not_found`` earns the advice to make the directory. Any other failure is reported as the storage
+    gave it, so a dead storage is reported as dead and is not answered with advice that cannot help.
+    """
+    if owner is None:
+        return "filesystem is closed"
+    rel = mount_path.without_mount(owner.path)
+    advice = f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
+    stat = await ask(owner, "stat", path=rel, authority=_SYSTEM_AUTHORITY)
+    if not stat.success:
+        blocker = next((f for f in stat.failures if kind_family(f.kind) is not ErrorKind.not_found), None)
+        if blocker is None:
+            return advice
+        return blocker.message or f"could not stat the mount point: {mount_path}"
+    row = next((o for o in stat.observations if o.path == rel), None)
+    if row is None:
+        return advice
+    if row.kind != "directory":
+        return f"the mount point is stored as {row.kind!r}, not a directory: {mount_path}"
+    listed = await ask(owner, "ls", path=rel, authority=_SYSTEM_AUTHORITY)
+    if not listed.success:
+        return listed.error_message or f"could not list the mount point: {mount_path}"
+    if any(o.path != rel for o in listed.observations):
+        return f"the mount-point directory is not empty: {mount_path}"
+    return None
+
+
+def mount_table_refusal(mounts: Mapping[Path, Mount], mount: Mount, reserved: Set[int], kernel: str) -> str | None:
+    """Return why the table ``mounts`` cannot take ``mount``, or ``None`` when it can.
+
+    The path must hold no mount and lie above none. No mount above it, the root included, may be sealed
+    with ``no_overlay``. The storage object must be in no other mount, and its ``id`` not in
+    ``reserved``, which holds the storages whose posture a call in flight is writing. ``kernel`` is the
+    name of the kernel's class, which a sealed root's refusal names. No storage is asked.
+    """
+    mount_path = mount.path
+    if mount_path in mounts:
+        return f"Mount already exists at: {mount_path}"
+    for existing in sorted(mounts, reverse=True):
+        if existing.startswith(mount_path + "/"):
+            return f"Cannot mount at {mount_path}: a deeper mount already sits at {existing}"
+        if existing != ROOT and mount_path.startswith(existing + "/") and mounts[existing].no_overlay:
+            return f"Cannot mount at {mount_path}: the mount at {existing} does not allow mounts beneath it"
+    if mounts[ROOT].no_overlay:
+        return f"{kernel} does not allow child mounts"
+    if any(m.storage is mount.storage for m in mounts.values()):
+        return f"Cannot mount at {mount_path}: that storage object is already mounted in this table"
+    if id(mount.storage) in reserved:
+        return f"Cannot mount at {mount_path}: another call is mounting that storage object, so retry"
+    return None
+
+
+def everyone_holds(answer: Result, posture: Posture) -> bool:
+    """Return whether ``answer``, a read of the grants at a storage's root, gives everyone ``posture`` there.
+
+    That needs a row for ``*`` at ``/`` whose level is ``posture``. A failed read never does.
+    """
+    rows = (answer.model_extra or {}).get("grants") if answer.success else None
+    return isinstance(rows, list) and any(
+        row.get("principal_id") == EVERYONE_NAME and row.get("path_prefix") == ROOT and row.get("level") == posture
+        for row in rows
+        if isinstance(row, dict)
+    )
+
+
+async def set_mount_posture(ask: AskStorage, mount: Mount, posture: Posture, authority: Authority | None) -> None:
+    """Set ``posture`` at the root of the storage of ``mount``, as ``authority``, unless it is there already.
+
+    ``mount`` is in no table yet. ``ask`` calls its storage, and gives a call with no authority the
+    kernel's default, or else the anonymous caller. If the storage declares ``grants``, the grants at
+    its root are read first, and nothing is written when everyone already holds ``posture``. Both calls
+    run as the caller, so the storage judges the write as it judges ``set_posture``. The read is never
+    made as the system actor, which would tell a caller who holds nothing whether a guess matched.
+
+    The call raises :class:`MountError` that carries the storage's refusal, with the mount's path in
+    front of its paths. A storage that cannot be reached is refused with ``backend_unavailable``. Any
+    other exception is a fault in the storage and is raised as it is.
+    """
+    if "grants" in mount.declared_caps:
+        held = await ask(mount, "grants", path=ROOT, authority=authority)
+        if everyone_holds(held, posture):
+            return
+    answer = await ask(mount, "set_posture", path=ROOT, posture=posture, authority=authority)
+    if answer.success:
+        return
+    refusal = answer.with_mount(mount.path)
+    msg = f"Cannot mount at {mount.path}: {refusal.error_message or 'the storage refused the posture'}"
+    raise MountError(msg, result=refusal)
 
 
 # ---------------------------------------------------------------------------
