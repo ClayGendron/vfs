@@ -31,7 +31,7 @@ from vfs.results.kinds import Severity, kind_family
 from vfs.storage import HOLDS, StorageBackend, SupportsHolds, TransportError
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable, Mapping, Sequence
+    from collections.abc import Container, Coroutine, Iterable, Mapping, Sequence
 
     from vfs.authority import Authority
     from vfs.ops import Op
@@ -325,7 +325,8 @@ class MountListing:
 
     A listing is built from one copy of the kernel's table, and every step of one call reads that
     copy. A mount added or removed while a call waits on a storage changes the calls after it and
-    never the call in flight. ``mounts`` is that copy. The rest is worked out once from it, when the
+    never the call in flight. :meth:`holder` and :meth:`beneath` say where a path lives, for every
+    verb of the kernel. ``mounts`` is that copy. The rest is worked out once from it, when the
     table changes. ``above`` is every directory that lies above a mount point, the root among them.
     ``held`` gives, for each mount, the directories above a mount point that it stores, by their
     path inside the mount. ``inside`` gives the mount points in each directory, and ``roads`` the
@@ -368,6 +369,21 @@ class MountListing:
         object.__setattr__(self, "roads", {path: tuple(found) for path, found in roads.items()})
         object.__setattr__(self, "points", points)
 
+    def holder(self, path: Path) -> Mount | None:
+        """Return the :term:`mount` that holds ``path``, the deepest one at or above it, or ``None`` for an empty table.
+
+        The call walks up the path against the table, so it costs the depth of the path and never
+        the number of mounts.
+        """
+        return self.mounts.get(self._owner(path))
+
+    def beneath(self, path: Path) -> list[Mount]:
+        """Return the mounts that lie strictly beneath ``path``, in table order.
+
+        This says where calls are sent, and not what a caller may see.
+        """
+        return [mount for key, mount in self.mounts.items() if key != path and _lies_in(key, path)]
+
     async def called(
         self, ask: AskStorage, mount: Mount, op: Op, *, authority: Authority | None = None, **kwargs: Any
     ) -> Result:
@@ -402,7 +418,9 @@ class MountListing:
         mount point is answered by the storage alone. A call with no such target is one storage call,
         as it is with no mounts. ``stat`` is one storage call for the whole batch. A directory above a
         mount point that the storage gives no row for, and refuses with nothing but ``not_found``,
-        then gets a bare row. ``ls`` answers each such directory on its own, once however often the
+        then gets a bare row each time the batch names it. A failure counts against the path it was
+        raised for, and never against another target that shares the missing part of its path.
+        ``ls`` answers each such directory on its own, once however often the
         batch names it. Its rows come after the rows of the other targets, once for each time the
         batch names it, and its errors are kept once. One path is answered with the storage's own
         envelope.
@@ -416,8 +434,10 @@ class MountListing:
         target: dict[str, Any] = {"path": path} if path is not None else {"observations": observations}
         if op == "stat" or not special:
             answer = await self.called(ask, mount, op, columns=columns, authority=authority, **target)
-            roads = [held[rel] for rel in special]
-            return _with_roads(answer, roads, alone=path is not None) if roads else answer
+            if path is not None and special:
+                return _with_road(answer, held[path])
+            roads = [held[rel] for rel in targets if rel in special]
+            return _with_roads(answer, roads) if roads else answer
         if path is not None:
             return await self._directory(ask, mount, path, held[path], columns, authority)
         plain = [row for row in observations or () if row.path not in special]
@@ -450,18 +470,18 @@ class MountListing:
         it and the target. A mount with depth left beneath it is asked for its own subtree, and one
         that cannot answer ``tree`` is skipped with a record of severity ``info``. All of them are
         asked at the same time as the target. If the target is refused, the refusal is returned and the
-        other answers are dropped. A mount that fails while others answer becomes a warning, and the
+        other answers are dropped. Its rows are kept, apart from the directory beneath a mount, which
+        no answer ever shows. A mount that fails while others answer becomes a warning, and the
         failure of its ``stat`` is then not reported as well. A failure that names no path is set at
         the mount's path. A directory between a mount and the
         target is listed among the rows of the mount that stores it.
         """
         full = rel.with_mount(mount.path)
         reached: list[tuple[Mount, int | None]] = []
-        for deeper in self.mounts.values():
-            if deeper.path != full and _lies_in(deeper.path, full):
-                left = None if max_depth is None else max_depth - deeper.path.without_mount(full).depth
-                if left is None or left >= 0:
-                    reached.append((deeper, left))
+        for deeper in self.beneath(full):
+            left = None if max_depth is None else max_depth - deeper.path.without_mount(full).depth
+            if left is None or left >= 0:
+                reached.append((deeper, left))
         entered = [(deeper, left) for deeper, left in reached if left is None or left > 0]
         asked = [(deeper, left) for deeper, left in entered if "tree" in deeper.caps]
         own, heads, *trees = await gather_settled(
@@ -477,7 +497,7 @@ class MountListing:
         if not own.success:
             kept = _recovered(own, full) if full in self.above else None
             if kept is None:
-                return own
+                return self._uncovered(own, mount)
             own = kept
         answers = {mount.path: own}
         answers |= {
@@ -522,9 +542,11 @@ class MountListing:
         A mount point that is kept shows the root of its storage. A directory above one shows bare,
         and the merge fills it in when its own storage returned the row too.
 
-        The rows come in path order. No path is judged when none lies beneath a root. With
-        ``max_count``, only the first ``max_count`` paths are kept, and only their mounted roots are
-        asked. :meth:`shown` then leaves out the paths whose own directory a storage refused to list.
+        The rows come in path order. No path is judged when none lies beneath a root. With no
+        ``max_count``, the mounted roots are asked here, at the same time as the storages. With
+        ``max_count``, they are not asked here. :meth:`shown` first leaves out the paths whose own
+        directory a storage refused to list, and then asks only the mounted roots of the first
+        ``max_count`` paths it keeps.
         """
         if not self.points or kind not in (None, "directory"):
             return Result()
@@ -537,42 +559,105 @@ class MountListing:
         scope = ScopeChannel(roots=beneath, arms=arms, arms_not=exclusions) if beneath else None
         gates = compile_gates(arms if whole else (), exclusions if whole else (), ext=ext, ext_not=ext_not, scope=scope)
         kept, completed = await judge_in_hand(gates, points, Deadline.after(WALL_TIME_BUDGET))
-        kept = kept[:max_count]
-        heads = await self._heads(
-            ask, [self.mounts[row.path] for row in kept if row.path in self.mounts], columns, authority
-        )
-        head = {row.path: row for row in heads.observations}
-        rows = [head.get(row.path, row) for row in kept]
-        records = [] if completed else [wall_truncation(_POINTS_REFINE_GUIDANCE)]
-        return Result(observations=rows, errors=[*heads.errors, *records])
+        found = Result(observations=kept, errors=[] if completed else [wall_truncation(_POINTS_REFINE_GUIDANCE)])
+        return found if max_count is not None else await self._headed(ask, found, columns, authority)
 
-    def shown(self, roots: tuple[Path, ...], named: list[Result], branches: list[tuple[Path, Result]]) -> list[Result]:
+    async def shown(
+        self,
+        ask: AskStorage,
+        roots: tuple[Path, ...],
+        columns: frozenset[str] | None,
+        max_count: int | None,
+        authority: Authority | None,
+        named: list[Result],
+        branches: list[tuple[Path, Result]],
+    ) -> list[Result]:
         """Return ``named`` without the paths of :meth:`matched` whose own directory a storage refused to list.
 
-        ``named`` holds the answers of the root probes of one ``glob``, and last the answer of
-        :meth:`matched`. ``branches`` holds the answer of each mount that the ``glob`` asked, by its
-        path. A name shows only in a listing of its parent that succeeds. So a path is left out, with
-        the records of its ``stat``, when the mount that stores its directory failed this ``glob``.
-        That mount is the deepest one strictly above the path. A path is left out too when it lies
-        beneath one of ``roots`` whose probe failed. A mount that was not asked refused nothing, and
-        the paths it stores are kept. A mount whose own ``glob`` failed is reported once, by that
-        failure, and the records of its ``stat`` are left out.
+        ``named`` holds the answers of the root probes of one ``glob``, in the order of
+        :meth:`probed`, and last the answer of :meth:`matched`. ``branches`` holds the answer of
+        each mount that the ``glob`` asked, by its path. A name shows only in a listing of its parent
+        that succeeds. A failure says that one region of one mount could not be listed, and only the
+        paths that mount holds in that region are left out, with the records of their ``stat``.
+        With ``max_count``, the first ``max_count`` paths that are kept are then given the rows of
+        their mounted roots, so the limit is spent only on paths the caller gets.
+
+        A path is held by the deepest mount strictly above it. A failure of a mount's ``glob`` is the
+        region at the path it was raised for, which is ``data["vfs.target"]`` or its own path. A
+        failure of a probe is the region of the root it was raised for. A failure that cannot be
+        tied to a path, or a probe failure that names none of the roots it probed, is the whole
+        mount. A warning removes nothing. A mount that was not asked refused nothing, and the paths
+        it holds are kept. A mount whose own ``glob`` failed is reported once, by that failure, and
+        the records of its ``stat`` are left out.
         """
         *probes, found = named
-        refused = {path for path, answer in branches if not answer.success}
-        failures = [failure for probe in probes for failure in probe.failures]
-        barred = {root for root in roots for failure in failures if _names(failure, root)}
-        hidden = {
-            row.path
-            for row in found.observations
-            if self._owner(row.path.parent_dir) in refused or self._beneath(row.path, barred)
-        }
-        gone = hidden | refused
-        rows = [row for row in found.observations if row.path not in hidden]
+        regions: dict[Path, set[Path | None]] = {}
+        for (key, (_mount, rels)), probe in zip(self.probed(roots)[0].items(), probes, strict=True):
+            asked = {rel.with_mount(key) for rel in rels}
+            for failure in probe.failures:
+                target = _target(failure)
+                regions.setdefault(key, set()).add(target if target in asked else None)
+        for key, answer in branches:
+            regions.setdefault(key, set()).update(_target(failure) for failure in answer.failures)
+        hidden = {row.path for row in found.observations if self._barred(row.path, regions)}
+        found = found.model_copy(update={"observations": [row for row in found.observations if row.path not in hidden]})
+        if max_count is not None:
+            capped = found.model_copy(update={"observations": found.observations[:max_count]})
+            found = await self._headed(ask, capped, columns, authority)
+        gone = hidden | {key for key, answer in branches if not answer.success}
         records = [record for record in found.errors if record.source is None or self._owner(record.source) not in gone]
-        if len(rows) == len(found.observations) and len(records) == len(found.errors):
-            return named
-        return [*probes, found.model_copy(update={"observations": rows, "errors": records})]
+        return [*probes, found.model_copy(update={"errors": records})]
+
+    async def located(self, ask: AskStorage, mount: Mount, rel: Path, row: Location, authority: Authority) -> Location:
+        """Return ``row``, which ``locate`` built for ``rel`` in ``mount``, with what the storage says of it.
+
+        The storage is asked to ``stat`` the path directly, past the gate, as ``authority``. A
+        directory that lies above a mount point is judged by the rule ``stat`` of it applies, so
+        ``locate`` says it exists exactly when ``stat`` would show it.
+        """
+        stat = await ask(mount, "stat", path=rel, authority=authority)
+        if rel.with_mount(mount.path) in self.above:
+            stat = _with_road(stat, rel)
+        blocker = next((f for f in stat.failures if kind_family(f.kind) is not ErrorKind.not_found), None)
+        if blocker is not None:
+            return row._replace(note=blocker.message or f"could not stat {row.path}")
+        found = next((o for o in stat.observations if o.path == rel), None)
+        return row._replace(exists=False) if found is None else row._replace(exists=True, kind=found.kind)
+
+    async def _headed(
+        self, ask: AskStorage, found: Result, columns: frozenset[str] | None, authority: Authority | None
+    ) -> Result:
+        """Return ``found`` with the row at each mount point in it taken from the mounted root, by :meth:`_heads`."""
+        mounted = [self.mounts[row.path] for row in found.observations if row.path in self.mounts]
+        heads = await self._heads(ask, mounted, columns, authority)
+        head = {row.path: row for row in heads.observations}
+        rows = [head.get(row.path, row) for row in found.observations]
+        return found.model_copy(update={"observations": rows, "errors": [*heads.errors, *found.errors]})
+
+    def probed(self, roots: tuple[Path, ...]) -> tuple[dict[Path, tuple[Mount, list[Path]]], list[ResultError]]:
+        """Group the roots a caller named by the :term:`mount` that holds each, for the probe of a search.
+
+        The call returns, for each mount in the order its first root came, the mount and its roots
+        as its storage sees them. It returns a warning for each root that cannot be checked. The root
+        of the file tree is left out, because it is the tree itself and never a row. A mount that
+        cannot answer ``stat`` cannot say whether its roots are there, so each such root gets a
+        warning. It is never treated as absent, and it never passes in silence.
+        """
+        grouped: dict[Path, tuple[Mount, list[Path]]] = {}
+        unverifiable: list[ResultError] = []
+        detail = "the root is unverifiable: the storage mounted here does not support stat"
+        for root in roots:
+            if root == ROOT:
+                continue
+            mount = self.mounts[self._owner(root)]
+            if "stat" not in mount.caps:
+                warning = classified(
+                    ErrorKind.unsupported, root, severity=Severity.warning, source=mount.path, detail=detail
+                )
+                unverifiable.append(warning)
+                continue
+            grouped.setdefault(mount.path, (mount, []))[1].append(root.without_mount(mount.path))
+        return grouped, unverifiable
 
     async def _heads(
         self,
@@ -587,9 +672,11 @@ class MountListing:
         answer ``stat`` is not asked. Each of the others costs one storage call, and all are asked
         at the same time. A mount shows bare when it gives no row that is a directory. That is a
         mount that refuses the caller, one that cannot answer ``stat``, one that fails, and one whose
-        root is not a directory. A refusal adds no record. Any other failure adds a record of
-        severity ``warning``, at the mount's path when the failure names none. The storage's own
-        records on a ``stat`` that succeeds are kept. The ``source`` of each record names the mount.
+        root is not a directory. A row that comes with a failure is not trusted, so a mount that
+        fails shows bare even when it gave a row. A refusal adds no record. Any other failure adds a
+        record of severity ``warning``, at the mount's path when the failure names none. The
+        storage's own records on a ``stat`` that succeeds are kept. The ``source`` of each record
+        names the mount.
         """
         asked = [mount for mount in mounts if "stat" in mount.caps]
         stats = await gather_settled(
@@ -601,7 +688,8 @@ class MountListing:
         for mount in mounts:
             answer = answers.get(mount.path, Result())
             row = next((found for found in answer.observations if found.path == mount.path), None)
-            rows.append(row if row is not None and row.kind == "directory" else bare_directory(mount.path))
+            trusted = row is not None and row.kind == "directory" and answer.success
+            rows.append(row if row is not None and trusted else bare_directory(mount.path))
             records += answer.errors if answer.success else []
             records += [
                 failure.model_copy(update={"severity": Severity.warning, "path": failure.path or mount.path})
@@ -624,9 +712,11 @@ class MountListing:
         The directory is there because a mount lies beneath it. So a ``not_found`` at its path, or
         at a directory above it, only says the caller holds nothing on it. The listing then shows
         what the mount table knows, beside the storage's other rows and records. Any other refusal
-        stands, and so does a ``not_found`` at any other path. The listing adds the row of each mount
-        point in the directory, and a bare row for each directory in it that leads to a mount, in
-        path order among the storage's own rows. The answer keeps the storage's own envelope.
+        stands, and so does a ``not_found`` at any other path. The answer is then returned with its
+        rows and records, less the directory beneath each mount. Otherwise the listing adds the row
+        of each mount point in the directory, and a bare row for each directory in it that leads to
+        a mount, in path order among the storage's own rows. The answer keeps the storage's own
+        envelope.
         """
         own, heads = await gather_settled(
             [
@@ -634,10 +724,10 @@ class MountListing:
                 self._heads(ask, self.inside.get(full, ()), columns, authority),
             ]
         )
+        own = self._uncovered(own, mount)
         kept = _recovered(own, full)
         if kept is None:
             return own
-        kept = self._uncovered(kept, mount)
         rows = _in_path_order(kept.observations, [*heads.observations, *self.roads.get(full, ())])
         return kept.model_copy(update={"observations": rows, "errors": [*kept.errors, *heads.errors]})
 
@@ -677,8 +767,19 @@ class MountListing:
             node = node.parent_dir
         return node
 
+    def _barred(self, path: Path, regions: Mapping[Path, set[Path | None]]) -> bool:
+        """Return whether ``path`` lies in a region that the mount holding it failed to list.
+
+        ``None`` in a mount's regions stands for the whole mount. The test walks up the path, so it
+        costs the depth of the path and never the number of failures.
+        """
+        region = regions.get(self._owner(path.parent_dir))
+        if not region:
+            return False
+        return None in region or path in region or self._beneath(path, region)
+
     @staticmethod
-    def _beneath(path: Path, roots: set[Path]) -> bool:
+    def _beneath(path: Path, roots: Container[Path | None]) -> bool:
         """Return whether ``path`` lies strictly beneath one of ``roots``."""
         node = path
         while node != ROOT:
@@ -720,35 +821,50 @@ def _recovered(answer: Result, full: Path) -> Result | None:
     ``not_found`` at ``full``, at a directory above it, or at no path, and it only says the caller
     holds nothing on ``full``. The answer keeps its rows and its other records.
     """
-    failures = answer.failures
-    if any(kind_family(f.kind) is not ErrorKind.not_found or not _names(f, full) for f in failures):
+    if not all(_misses(failure, full) for failure in answer.failures):
         return None
     return answer.model_copy(update={"errors": [error for error in answer.errors if not error.is_fatal]})
 
 
-def _with_roads(answer: Result, roads: Sequence[Path], *, alone: bool) -> Result:
-    """Return the ``stat`` answer ``answer`` with a bare row for each of ``roads`` that it gives no row for.
+def _with_road(answer: Result, road: Path) -> Result:
+    """Return the ``stat`` answer of the one path ``road``, which lies above a mount point.
 
-    Each of ``roads`` lies above a mount point, so it is there. A ``not_found`` at its path, at a
-    directory above it, or at no path only says the caller holds nothing on it. A ``not_found``
-    names the first part of a path that is missing, so several targets can share one. One such
-    error is dropped for each bare row, the one at the road's own path first. Any other refusal at
-    those paths stands, and the road then gets no row. If ``alone`` is true, the answer is for one
-    road only, and a refusal at any other path stands as well.
+    The road is there whenever :func:`_recovered` keeps the answer. It then shows the storage's own
+    row, or a bare row when the storage gave none. Any other answer is returned as it came.
     """
-    if alone and any(not _names(failure, roads[0]) for failure in answer.failures):
-        return answer
-    have = {row.path for row in answer.observations}
-    rows, errors = list(answer.observations), list(answer.errors)
-    for road in roads:
-        if road in have:
+    kept = _recovered(answer, road)
+    if kept is None or any(row.path == road for row in kept.observations):
+        return answer if kept is None else kept
+    return kept.model_copy(update={"observations": [*kept.observations, bare_directory(road)]})
+
+
+def _with_roads(answer: Result, roads: Sequence[Path]) -> Result:
+    """Return the ``stat`` answer of a batch with a bare row for each of ``roads`` it gives no row for.
+
+    Each of ``roads`` lies above a mount point, so it is there. Each failure is matched to the path
+    it was raised for, which is ``data["vfs.target"]`` when the storage set it and its own path when
+    not. A ``not_found`` raised for a road, at the road or above it, only says the caller holds
+    nothing on it. It is dropped, and the road gets a bare row once for each time the batch names
+    it. Any other failure raised for a road stands, and the road then gets no row. A failure raised
+    for any other path stands, whatever part of the path it names. A failure that names no path
+    cannot be matched, so it stands and recovers nothing. When it is not a ``not_found``, no road
+    gets a row. The failures are matched in one pass, so a batch costs its length and no more.
+    """
+    wanted = set(roads) - {row.path for row in answer.observations}
+    raised: dict[Path, list[int]] = {}
+    for index, error in enumerate(answer.errors):
+        if not error.is_fatal:
             continue
-        misses = [error for error in errors if error.is_fatal and _names(error, road)]
-        if any(kind_family(miss.kind) is not ErrorKind.not_found for miss in misses):
-            continue
-        if misses:
-            errors.remove(min(misses, key=lambda miss: miss.path != road))
-        rows.append(bare_directory(road))
+        target = _target(error)
+        if target is None and kind_family(error.kind) is not ErrorKind.not_found:
+            return answer
+        if target in wanted:
+            raised.setdefault(target, []).append(index)
+    blocked = {road for road, found in raised.items() if not all(_misses(answer.errors[i], road) for i in found)}
+    dropped = {index for road, found in raised.items() if road not in blocked for index in found}
+    shown = wanted - blocked
+    rows = [*answer.observations, *(bare_directory(road) for road in roads if road in shown)]
+    errors = [error for index, error in enumerate(answer.errors) if index not in dropped]
     return answer.model_copy(update={"observations": rows, "errors": errors})
 
 
@@ -766,6 +882,17 @@ def _at_mount(answer: Result, mount: Mount) -> Result:
 def _names(error: ResultError, path: Path) -> bool:
     """Return whether ``error`` names ``path``, a directory above it, or no path at all."""
     return error.path is None or _lies_in(path, error.path)
+
+
+def _misses(error: ResultError, path: Path) -> bool:
+    """Return whether ``error`` is a ``not_found`` that names ``path``, a directory above it, or no path."""
+    return kind_family(error.kind) is ErrorKind.not_found and _names(error, path)
+
+
+def _target(error: ResultError) -> Path | None:
+    """Return the path ``error`` was raised for, which is ``data["vfs.target"]`` when set and its own path when not."""
+    target = (error.data or {}).get("vfs.target")
+    return error.path if target is None else Path(target)
 
 
 def _in_path_order(rows: Sequence[Observation], extras: Iterable[Observation]) -> list[Observation]:

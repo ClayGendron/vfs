@@ -450,15 +450,129 @@ async def test_stat_of_a_batch_makes_one_storage_call_however_many_directories_l
     assert [op for op, _kwargs in parent.calls if op == "stat"] == ["stat", "stat"]
 
 
-async def test_a_batch_drops_one_shared_miss_for_each_directory_above_a_mount() -> None:
+def batch_of(*paths: str) -> list[Observation]:
+    return [Observation(path=path) for path in paths]
+
+
+def misses(result: Result) -> list[tuple[ErrorKind | str, str | None, object]]:
+    """Each error of ``result`` as its kind, its path and the path it was raised for."""
+    return [(error.kind, error.path, (error.data or {}).get("vfs.target")) for error in result.errors]
+
+
+async def roads_world() -> AsyncVirtualFileSystem:
+    """A closed root with mounts at ``/a/x/m``, ``/a/y/m`` and ``/b/z/m``, and no grant anywhere."""
     fs = AsyncVirtualFileSystem()
     ok(await fs.set_posture("/", "none", authority=SYSTEM))
-    for path in ("/a/x/m", "/a/y/m"):
+    for path in ("/a/x/m", "/a/y/m", "/b/z/m"):
         await fs.add_mount(InMemoryStorage(), path, parents=True, authority=SYSTEM)
-    batch = [Observation(path=path) for path in ("/a/x", "/a/nope", "/a/y")]
-    stat = await fs.stat(observations=batch, authority=GRACE)
+    return fs
+
+
+async def test_a_batch_keeps_the_miss_of_the_path_that_is_missing_beside_directories_above_mounts() -> None:
+    fs = await roads_world()
+    stat = await fs.stat(observations=batch_of("/a/x", "/a/nope", "/a/y"), authority=GRACE)
     assert [(row.path, row.populated) for row in stat.observations] == [("/a/x", BARE), ("/a/y", BARE)]
-    assert [(error.kind, error.path) for error in stat.errors] == [(ErrorKind.not_found, "/a")]
+    assert misses(stat) == [(ErrorKind.not_found, "/a", "/a/nope")]
+
+
+async def test_a_batch_that_names_directories_above_mounts_twice_returns_each_row_twice_with_no_error() -> None:
+    fs = await roads_world()
+    stat = ok(await fs.stat(observations=batch_of("/a/x", "/a/x", "/a/y", "/b/z", "/b/z"), authority=GRACE))
+    assert stat.paths == ("/a/x", "/a/x", "/a/y", "/b/z", "/b/z")
+    assert stat.errors == []
+
+
+async def test_a_batch_keeps_each_miss_beneath_a_directory_above_a_mount() -> None:
+    fs = await roads_world()
+    names = ("/a/x", "/a/x/n", "/a/y", "/a/x", "/b/z", "/b/z/n", "/b/z/q")
+    stat = await fs.stat(observations=batch_of(*names), authority=GRACE)
+    assert stat.paths == ("/a/x", "/a/y", "/a/x", "/b/z")
+    assert misses(stat) == [
+        (ErrorKind.not_found, "/a", "/a/x/n"),
+        (ErrorKind.not_found, "/b", "/b/z/n"),
+        (ErrorKind.not_found, "/b", "/b/z/q"),
+    ]
+
+
+class Targetless(BindableStorage):
+    """A parent whose ``stat`` of a batch gives no row and one ``not_found`` that names no path."""
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if path is not None:
+            return await super().stat(path=path, authority=authority, **kwargs)
+        return Result(ops=("stat",), errors=[classified(ErrorKind.not_found)])
+
+
+async def test_a_miss_that_names_no_target_is_kept_and_recovers_nothing() -> None:
+    fs = AsyncVirtualFileSystem(storage=Targetless())
+    await fs.add_mount(BindableStorage(), "/a/m", parents=True)
+    stat = await fs.stat(observations=batch_of("/a", "/a/missing"))
+    assert [(row.path, row.populated) for row in stat.observations] == [("/a", BARE)]
+    assert misses(stat) == [(ErrorKind.not_found, None, None)]
+
+
+class Noting(BindableStorage):
+    """A parent whose ``stat`` of a batch gives no row and the records in ``errors``."""
+
+    errors: tuple[Any, ...] = ()
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if path is not None:
+            return await super().stat(path=path, authority=authority, **kwargs)
+        return Result(ops=("stat",), errors=list(self.errors))
+
+
+WARNED = classified(ErrorKind.truncated, severity=Severity.warning)
+
+
+@pytest.mark.parametrize(
+    ("errors", "paths"),
+    [((WARNED,), ("/a",)), ((WARNED, classified(ErrorKind.backend_unavailable)), ())],
+    ids=["a warning", "a failure that names no path"],
+)
+async def test_a_batch_keeps_its_records_beside_a_directory_above_a_mount(
+    errors: tuple[Any, ...], paths: tuple[str, ...]
+) -> None:
+    parent = Noting()
+    fs = AsyncVirtualFileSystem(storage=parent)
+    await fs.add_mount(BindableStorage(), "/a/m", parents=True)
+    parent.errors = errors
+    stat = await fs.stat(observations=batch_of("/a", "/a/missing"))
+    assert stat.paths == paths
+    assert [error.kind for error in stat.errors] == [error.kind for error in errors]
+
+
+class Missing(BindableStorage):
+    """A parent whose ``stat`` of a batch finds nothing, and names each path it was asked for."""
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if path is not None:
+            return await super().stat(path=path, authority=authority, **kwargs)
+        errors = [classified(ErrorKind.not_found, row.path) for row in kwargs["observations"]]
+        return Result(ops=("stat",), errors=errors)
+
+
+async def test_the_misses_of_a_batch_are_matched_to_directories_above_mounts_in_linear_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checks = 0
+    original = mounts_module._lies_in
+
+    def counted(path: Path, directory: Path) -> bool:
+        nonlocal checks
+        checks += 1
+        return original(path, directory)
+
+    fs = AsyncVirtualFileSystem(storage=Missing())
+    roads = [f"/r{index:02}" for index in range(40)]
+    for road in roads:
+        await fs.add_mount(BindableStorage(), f"{road}/m", parents=True)
+    names = [*roads, *(f"/f{index}" for index in range(1_000))]
+    monkeypatch.setattr(mounts_module, "_lies_in", counted)
+    stat = await fs.stat(observations=batch_of(*names))
+    assert stat.paths == tuple(roads)
+    assert len(stat.errors) == 1_000
+    assert checks <= len(names)
 
 
 async def test_a_batch_that_names_a_directory_above_a_mount_twice_lists_it_once() -> None:
@@ -554,6 +668,76 @@ async def test_a_mount_point_whose_parent_refused_the_glob_is_left_out_with_its_
     }
 
 
+async def test_a_root_that_fails_its_probe_hides_no_mount_point_beneath_another_root() -> None:
+    fs = await roads_world()
+    found = await fs.glob("m", paths=("/a/x", "/a/nope"), authority=GRACE)
+    assert found.paths == ("/a/x/m",)
+    assert misses(found) == [(ErrorKind.not_found, "/a", "/a/nope")]
+
+
+class PathlessProbe(BindableStorage):
+    """A storage whose ``stat`` of a batch fails with an error that names no path."""
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        if path is not None:
+            return await super().stat(path=path, authority=authority, **kwargs)
+        return Result(ops=("stat",), errors=[classified(ErrorKind.backend_unavailable)])
+
+
+async def test_a_probe_failure_that_names_no_root_hides_only_the_mount_points_of_the_mount_probed() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    await fs.add_mount(PathlessProbe(), "/broken")
+    await fs.add_mount(BindableStorage(), "/broken/m")
+    await fs.add_mount(BindableStorage(), "/ok")
+    await fs.add_mount(BindableStorage(), "/ok/road/m", parents=True)
+    found = await fs.glob("m", paths=("/broken", "/ok/road"))
+    assert found.paths == ("/ok/road/m",)
+    assert [(error.kind, error.source) for error in found.errors] == [(ErrorKind.backend_unavailable, "/broken")]
+    alone = AsyncVirtualFileSystem(storage=PathlessProbe())
+    await alone.add_mount(BindableStorage(), "/y/m", parents=True)
+    assert (await alone.glob("m", paths=("/x", "/y"))).paths == ()
+
+
+class PartialHolder(BindableStorage):
+    """A parent whose ``glob`` answers its rows and fails at ``/bad`` when that root is in its scope."""
+
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        scope = kwargs.get("scope")
+        errors = [classified(ErrorKind.backend_unavailable, Path("/bad"))] if scope and "/bad" in scope.roots else []
+        return Result(ops=("glob",), observations=[Observation(path="/ok/marker", kind="file")], errors=errors)
+
+
+async def test_a_parent_that_fails_one_root_keeps_the_mount_points_beneath_its_other_roots() -> None:
+    fs = AsyncVirtualFileSystem(storage=PartialHolder())
+    await fs.add_mount(BindableStorage(), "/ok/m", parents=True)
+    await fs.add_mount(BindableStorage(), "/bad/m", parents=True)
+    found = await fs.glob("m*", paths=("/ok", "/bad"))
+    assert set(found.paths) == {"/ok/m", "/ok/marker"}
+    assert [(error.kind, error.path) for error in found.errors] == [(ErrorKind.backend_unavailable, "/bad")]
+
+
+class GlobFails(BindableStorage):
+    """A storage whose ``glob`` fails with an error that names no path."""
+
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return Result(ops=("glob",), errors=[classified(ErrorKind.backend_unavailable)])
+
+
+async def test_a_limit_is_spent_only_on_mount_points_the_glob_shows() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    await fs.add_mount(GlobFails(), "/a")
+    await fs.add_mount(BindableStorage(), "/z")
+    hidden, shown = BindableStorage(), BindableStorage()
+    await fs.add_mount(hidden, "/a/m")
+    await fs.add_mount(shown, "/z/m")
+    hidden.calls.clear()
+    shown.calls.clear()
+    found = await fs.glob("m", max_count=1)
+    assert found.paths == ("/z/m",)
+    stats = [[call for call in child.calls if call[0] == "stat"] for child in (hidden, shown)]
+    assert stats == [[], [("stat", {"path": "/", "columns": None})]]
+
+
 async def test_a_mount_point_whose_parent_was_not_asked_to_glob_still_shows() -> None:
     parent = BindableStorage()
     fs = AsyncVirtualFileSystem(storage=BindableStorage(caps=parent.capabilities() - {"glob"}))
@@ -644,6 +828,24 @@ async def test_a_mount_whose_root_is_not_a_directory_shows_bare() -> None:
     await fs.add_mount(FileAtRoot(), "/m")
     for listing in (fs.ls("/"), fs.tree("/", max_depth=1), fs.glob("/*")):
         assert [(row.path, row.populated) for row in ok(await listing).observations] == [("/m", BARE)]
+
+
+class FailedWithRow(RootedStorage):
+    """A child whose ``stat`` returns the row of its root beside a failure."""
+
+    async def stat(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return Result(ops=("stat",), observations=[self.ROOT], errors=[classified(ErrorKind.backend_unavailable)])
+
+
+async def test_a_row_that_comes_with_a_failure_is_not_shown_at_a_mount_point() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    await fs.add_mount(FailedWithRow(), "/m")
+    for listing in (fs.ls("/"), fs.tree("/", max_depth=1), fs.glob("/*")):
+        listed = ok(await listing)
+        assert [(row.path, row.populated) for row in listed.observations] == [("/m", BARE)]
+        assert [(error.kind, error.severity) for error in listed.errors] == [
+            (ErrorKind.backend_unavailable, Severity.warning)
+        ]
 
 
 async def test_a_failure_that_names_no_path_becomes_a_warning_at_the_mount_path() -> None:
@@ -741,6 +943,17 @@ async def test_a_miss_beneath_a_directory_above_a_mount_is_returned_as_the_stora
         refused = await listing
         assert refused.paths == paths
         assert [(error.kind, error.path) for error in refused.errors] == [(ErrorKind.not_found, "/road/gone.md")]
+    located = await fs.locate("/road", exists=True)
+    assert (located.exists, located.kind) == (False, None)
+
+
+async def test_a_failed_listing_never_returns_the_directory_beneath_a_mount() -> None:
+    covered = Observation(path="/road/m", kind="directory", version=77)
+    fs = await answered([covered, KEPT], [classified(ErrorKind.not_found, Path("/road/gone.md"))])
+    for listing in (fs.ls("/road"), fs.tree("/road"), fs.ls(observations=batch_of("/road", "/road"))):
+        refused = await listing
+        assert set(refused.paths) == {"/road/kept.md"}
+        assert {(error.kind, error.path) for error in refused.errors} == {(ErrorKind.not_found, "/road/gone.md")}
 
 
 async def test_a_directory_above_a_mount_that_its_storage_answers_with_nothing_is_there() -> None:
@@ -838,6 +1051,60 @@ async def test_a_mount_removed_while_a_glob_waits_is_returned_once() -> None:
     assert ok(await asyncio.wait_for(pending, 5)).paths.count("/data") == 1
 
 
+class Marked(BindableStorage):
+    """A child whose root and whose one match carry its ``version``, so each row says which storage gave it."""
+
+    def __init__(self, version: int) -> None:
+        super().__init__()
+        self.version = version
+
+    async def stat(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self.calls.append(("stat", kwargs))
+        return Result(ops=("stat",), observations=[Observation(path="/", kind="directory", version=self.version)])
+
+    def _match(self, op: Op) -> Result:
+        self.calls.append((op, {}))
+        return Result(ops=(op,), observations=[Observation(path=f"/v{self.version}", kind="file")])
+
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._match("glob")
+
+    async def grep(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._match("grep")
+
+    async def search(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._match("search")
+
+
+@pytest.mark.parametrize("verb", ["glob", "grep", "search"])
+async def test_a_mount_replaced_while_a_search_plans_its_scope_leaves_that_search_as_it_began(
+    verb: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    await fs.add_mount(Marked(1), "/m")
+    started, resume = asyncio.Event(), asyncio.Event()
+    planned = fs._planned
+
+    async def held(*args: Any) -> object:
+        plan = await planned(*args)
+        started.set()
+        await resume.wait()
+        return plan
+
+    monkeypatch.setattr(fs, "_planned", held)
+    pending = asyncio.create_task(getattr(fs, verb)("*" if verb == "glob" else "needle", paths=("/m",)))
+    await asyncio.wait_for(started.wait(), 5)
+    await fs.remove_mount("/m")
+    replacement = Marked(2)
+    await fs.add_mount(replacement, "/m")
+    replacement.calls.clear()
+    resume.set()
+    found = ok(await asyncio.wait_for(pending, 5))
+    assert {row.version for row in found.observations if row.version is not None} <= {1}
+    assert {str(row.path) for row in found.observations} - {"/m"} == {"/m/v1"}
+    assert replacement.calls == []
+
+
 class Muted(BindableStorage):
     """A child that stops declaring ``stat`` once ``muted`` is set."""
 
@@ -887,6 +1154,54 @@ async def test_a_mount_that_loops_back_on_its_kernel_shows_bare_with_the_budget_
             (ErrorKind.budget_exhausted, Severity.warning, "/loop")
         ]
     assert [error.kind for error in (await fs.stat("/loop")).errors] == [ErrorKind.budget_exhausted]
+
+
+@pytest.mark.parametrize("verb", ["glob", "grep", "search"])
+async def test_a_search_with_named_roots_takes_one_hop(verb: str) -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage(), hop_budget=1)
+    await fs.add_mount(BindableStorage(), "/m")
+    search = getattr(fs, verb)
+    assert ok(await search("*" if verb == "glob" else "needle", paths=("/m/a", "/b"))).errors == []
+
+
+class Interrupted(BindableStorage):
+    """A storage whose ``stat`` and ``glob`` raise, or cancel the task that waits on them, as ``how`` says."""
+
+    how = ""
+
+    async def _interrupt(self) -> None:
+        if self.how == "raise":
+            msg = "a fault in the storage"
+            raise RuntimeError(msg)
+        if self.how == "cancel":
+            task = asyncio.current_task()
+            assert task is not None
+            asyncio.get_running_loop().call_soon(task.cancel)
+            await asyncio.Event().wait()
+
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
+        await self._interrupt()
+        return await super().stat(path=path, authority=authority, **kwargs)
+
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        await self._interrupt()
+        return await super().glob(authority=authority, **kwargs)
+
+
+@pytest.mark.parametrize("verb", ["stat", "glob"])
+@pytest.mark.parametrize("how", ["raise", "cancel"])
+async def test_a_hop_is_given_back_when_the_storage_raises_or_the_call_is_cancelled(how: str, verb: str) -> None:
+    storage = Interrupted()
+    fs = AsyncVirtualFileSystem(storage=storage, hop_budget=1)
+    storage.how = how
+    with pytest.raises((RuntimeError, asyncio.CancelledError)):
+        await getattr(fs, verb)("/x")
+    task = asyncio.current_task()
+    assert task is not None
+    if how == "cancel":
+        task.uncancel()
+    storage.how = ""
+    assert ok(await getattr(fs, verb)("/x")).errors == []
 
 
 async def test_the_trash_view_lists_a_deleted_row_at_a_mount_path() -> None:
