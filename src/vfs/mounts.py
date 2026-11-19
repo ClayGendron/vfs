@@ -22,7 +22,7 @@ from vfs.results import ErrorKind, Result, classified
 from vfs.storage import HOLDS, StorageBackend, SupportsHolds, TransportError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from vfs.authority import Authority
     from vfs.ops import Op
@@ -160,6 +160,55 @@ def validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
         msg = f"deny_ops may not mask read-family ops: {', '.join(sorted(blocked))}"
         raise ValueError(msg)
     return mask
+
+
+def mount_point_owner(mounts: Mapping[Path, Mount], mount_path: Path) -> Mount:
+    """Return the :term:`mount` in ``mounts`` that stores the directory at ``mount_path``.
+
+    That is the deepest mount above the path. The root mount stores its own. No storage is asked.
+    """
+    return mounts[max((p for p in mounts if p == ROOT or mount_path.startswith(p + "/")), key=len)]
+
+
+class MountJudgement(NamedTuple):
+    """What a check of a caller's rights judged, which must still be so when the :term:`mount` change commits.
+
+    ``owner_path`` and ``owner`` are the path and the storage of the mount that holds the mount point,
+    and that storage is the one that judged. A storage detached and attached again at another path
+    judges another path there, so the path is kept as well as the storage. ``target`` is the storage
+    of the mount at the mount point, or ``None`` when there was none.
+    """
+
+    owner_path: Path
+    owner: StorageBackend
+    target: StorageBackend | None
+
+    @classmethod
+    def of(cls, mounts: Mapping[Path, Mount], mount_path: Path) -> MountJudgement:
+        """Return what ``mounts`` holds at the mount point ``mount_path`` and above it now. No storage is asked."""
+        owner = mount_point_owner(mounts, mount_path)
+        target = mounts.get(mount_path)
+        return cls(owner.path, owner.storage, None if target is None else target.storage)
+
+
+def require_judgement_stands(
+    judged: MountJudgement | None, change: str, mount_path: Path, mounts: Mapping[Path, Mount]
+) -> None:
+    """Raise ``ValueError`` that asks for a retry when ``mounts`` no longer holds what was ``judged``.
+
+    The :term:`mount` that holds the mount point must be the same storage at the same path. If a mount
+    was at the mount point when the rights were judged, the same storage must be mounted there still.
+    ``None`` stands for the system actor, who is not judged. ``change`` is the words the error uses. No
+    storage is asked, so the caller holds the mount lock and commits with no await in between.
+    """
+    if judged is None:
+        return
+    now = MountJudgement.of(mounts, mount_path)
+    moved = now.owner_path != judged.owner_path or now.owner is not judged.owner
+    replaced = judged.target is not None and now.target is not judged.target
+    if moved or replaced:
+        msg = f"Cannot {change} {mount_path}: a mount at or above it changed while rights were checked, so retry"
+        raise ValueError(msg)
 
 
 async def rights_refusal(owner: Mount, mount_path: Path, who: Authority) -> Result | None:

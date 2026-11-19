@@ -133,14 +133,45 @@ async def test_update_mount_is_refused_where_removing_and_adding_the_mount_would
     assert fs.mounts()[1].deny_ops == frozenset()
 
 
-async def test_update_mount_needs_a_storage_above_that_can_make_and_delete_a_directory() -> None:
+@pytest.mark.parametrize("masked", ["delete", "mkdir"])
+async def test_update_mount_needs_a_storage_above_that_can_make_and_delete_a_directory(masked: Op) -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage(name="root"))
     await fs.add_mount(RecorderStorage(name="child"), "/m")
-    await fs.update_mount("/", deny_ops={"delete"})
+    await fs.update_mount("/", deny_ops={masked})
     with pytest.raises(MountError, match="Cannot update the mount at /m") as exc:
         await fs.update_mount("/m", no_overlay=True)
     assert exc.value.errors[0].kind is ErrorKind.unsupported
     assert fs.mounts()[1].no_overlay is False
+
+
+async def test_the_root_can_clear_its_own_mask_of_mkdir_and_delete() -> None:
+    # The root has no mount above it, so its own mask never refuses a change to the root mount.
+    fs = AsyncVirtualFileSystem(storage=BindableStorage(name="root"))
+    await fs.update_mount("/", deny_ops={"mkdir", "delete"})
+    await fs.update_mount("/", deny_ops=())
+    assert fs.mounts()[0].deny_ops == frozenset()
+
+
+class RestoreRecorder(InMemoryStorage):
+    """An in-memory storage that records the authority of every ``restore`` it is asked to run."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.restored_as: list[Authority | None] = []
+
+    async def restore(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        self.restored_as.append(authority)
+        return await super().restore(authority=authority, **kwargs)
+
+
+async def test_a_mount_added_again_restores_its_directory_as_the_caller() -> None:
+    root = RestoreRecorder()
+    fs = AsyncVirtualFileSystem(storage=root)
+    await fs.add_mount(InMemoryStorage(), "/data", authority=ADA)
+    await fs.remove_mount("/data", authority=ADA)
+    await fs.add_mount(InMemoryStorage(), "/data", authority=ADA)
+    assert root.restored_as == [ADA]
+    assert paths(fs) == ["/", "/data"]
 
 
 async def test_the_system_actor_and_a_default_authority_may_change_a_mount() -> None:
@@ -225,6 +256,66 @@ async def test_a_mount_added_above_while_rights_were_judged_refuses_the_change()
     with pytest.raises(ValueError, match="retry"):
         await pending
     assert paths(fs) == ["/", "/x"]
+
+
+async def test_a_storage_mounted_again_elsewhere_while_rights_were_judged_refuses_the_add() -> None:
+    # The storage at /x/y judged ada for /z inside it. It is now at /x, where /x/y/z is /y/z, a path it never judged.
+    root = BindableStorage(name="root")
+    judge = SlowRights(name="judge")
+    fs = AsyncVirtualFileSystem(storage=root)
+    await fs.add_mount(judge, "/x/y", authority=SYSTEM)
+    child = RecorderStorage(name="child")
+    pending = asyncio.create_task(fs.add_mount(child, "/x/y/z", authority=ADA))
+    await judge.asked.wait()
+    await fs.remove_mount("/x/y", authority=SYSTEM)
+    await fs.add_mount(judge, "/x", authority=SYSTEM)
+    judge.release.set()
+    with pytest.raises(ValueError, match="retry"):
+        await pending
+    assert paths(fs) == ["/", "/x"]
+    assert all(mount.storage is not child for mount in fs.mounts())
+
+
+async def replace_the_mount_at_x_y(fs: AsyncVirtualFileSystem, *, above: bool) -> RecorderStorage:
+    """Put another storage at /x/y as the system actor, under a new mount at /x when ``above`` is true."""
+    await fs.remove_mount("/x/y", authority=SYSTEM)
+    if above:
+        await fs.add_mount(BindableStorage(name="above"), "/x", authority=SYSTEM)
+    replacement = RecorderStorage(name="replacement")
+    await fs.add_mount(replacement, "/x/y", authority=SYSTEM)
+    return replacement
+
+
+@pytest.mark.parametrize("above", [False, True], ids=["replaced", "mount-added-above"])
+async def test_a_mount_replaced_while_rights_were_judged_refuses_the_update(above: bool) -> None:
+    # The root judged ada for the mount it saw at /x/y. The mount there now is another one.
+    root = SlowRights(name="root")
+    fs = AsyncVirtualFileSystem(storage=root)
+    await fs.add_mount(RecorderStorage(name="first"), "/x/y", authority=SYSTEM)
+    pending = asyncio.create_task(fs.update_mount("/x/y", no_overlay=True, deny_ops={"sweep"}, authority=ADA))
+    await root.asked.wait()
+    replacement = await replace_the_mount_at_x_y(fs, above=above)
+    root.release.set()
+    with pytest.raises(ValueError, match="retry"):
+        await pending
+    mount = fs.mounts()[-1]
+    assert (str(mount.path), mount.storage) == ("/x/y", replacement)
+    assert (mount.no_overlay, mount.deny_ops) == (False, frozenset())
+
+
+@pytest.mark.parametrize("above", [False, True], ids=["replaced", "mount-added-above"])
+async def test_a_mount_replaced_while_rights_were_judged_refuses_the_remove(above: bool) -> None:
+    root = SlowRights(name="root")
+    fs = AsyncVirtualFileSystem(storage=root)
+    await fs.add_mount(RecorderStorage(name="first"), "/x/y", authority=SYSTEM)
+    pending = asyncio.create_task(fs.remove_mount("/x/y", authority=ADA))
+    await root.asked.wait()
+    replacement = await replace_the_mount_at_x_y(fs, above=above)
+    root.release.set()
+    with pytest.raises(ValueError, match="retry"):
+        await pending
+    assert fs.mounts()[-1].storage is replacement
+    assert paths(fs) == (["/", "/x", "/x/y"] if above else ["/", "/x/y"])
 
 
 class GrantsWithoutTheQuestion(ReadFamilyStorage):

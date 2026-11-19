@@ -128,10 +128,10 @@ def test_normalize_mount_path_rejects_reserved_metadata_root(raw: str) -> None:
         normalize_mount_path(raw)
 
 
-@pytest.mark.parametrize("raw", [" /data", "/data/ ", "/x /y"])
-def test_normalize_mount_path_canonicalizes_stray_whitespace(raw: str) -> None:
+@pytest.mark.parametrize(("raw", "expected"), [(" /data", "/data"), ("/data/ ", "/data"), ("/x /y", "/x/y")])
+def test_normalize_mount_path_canonicalizes_stray_whitespace(raw: str, expected: str) -> None:
     # Leading/trailing per-segment whitespace is canonicalized, not rejected.
-    normalize_mount_path(raw)
+    assert normalize_mount_path(raw) == expected
 
 
 # ----------------------------------------------------------------------
