@@ -32,6 +32,7 @@ from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
 from vfs import chain as chain_module
 from vfs import deadline as deadline_module
+from vfs import fanout as fanout_module
 from vfs import offload as offload_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import Deadline
@@ -750,6 +751,7 @@ async def test_a_root_never_judged_is_never_admitted(monkeypatch: pytest.MonkeyP
 async def test_a_planning_stop_keeps_every_undecided_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: a stopped walk dropping the coverage records of the skips it never decided."""
     monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    monkeypatch.setattr(fanout_module, "WALL_TIME_BUDGET", -1.0)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     await fs.add_mount(RecorderStorage(caps=frozenset({"read", "stat"})), "/thin")
     result = await fs.grep("needle", paths=("/",))

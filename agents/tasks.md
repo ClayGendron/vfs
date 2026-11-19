@@ -23,7 +23,9 @@ These tasks stand between the branches and `dev`.
 
 Each is a piece of work of its own, on its own branch.
 
-- [ ] **`search` applies its file filters to rows in hand.** With `observations`, `search` ignores `ext`, `ext_not`, `globs` and `globs_not`. The spec is `agents/2026-11-17-search-applies-its-file-filters-to-rows-in-hand/spec.md`.
+- [ ] **`search` without `observations` expands its globs in the kernel, as `grep` does.** Today a brace pattern such as `*.{md,rst}` matches nothing there, and a glob that cannot be parsed is refused once by each mount, with a pattern the kernel rewrote. The fix is one call to `expand_channel` before the two routes divide.
+- [ ] **`grep` over a held row in the trash view matches its content.** `grep_rows_in_hand` looks the content up by the held path `/.vfs/trash/...`, finds none, and returns no row and no error, though `read` of the same row returns it at its live path and `search` ranks it.
+- [ ] **A storage searches 10,000 rows in hand well inside its time budget.** On SQLite in memory 10,000 rows took 8 to 9 seconds against a 10-second budget, 1,000 took 0.7 and 2,000 took 1.4, measured once by the clock. The storage adds one glob pattern for each row it is sent.
 - [ ] **The docstrings of 16 source files follow the docstring rules.** About 265 of 311 break a rule in `documentation/maintainers/how-we-write-docstrings.md`, and about 170 public members have none. The largest files are `rights.py`, `paths.py`, `backend.py`, `labels.py`, `ranking.py` and `sync.py`. The words "router", "bind path", "bind point" and "bind site" remain in them, and in `fanout.py` and `pattern_matching/glob.py`.
 - [ ] **Seven words used in docstrings get a glossary entry.** They are gate, capability, permission map, posture, authority, trash view and mount point.
 - [ ] **Test names say "mount again" and not "remount".**

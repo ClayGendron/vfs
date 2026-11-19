@@ -27,7 +27,7 @@ from vfs.ops import GRANT_OPS, READ_OPS
 from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.pattern_matching import ScopeChannel, compile_gates
 from vfs.results import ErrorKind, Result, ResultError, classified
-from vfs.results.kinds import Severity, kind_family
+from vfs.results.kinds import TRASHED_KEY, Severity, kind_family
 from vfs.storage import HOLDS, StorageBackend, SupportsHolds, TransportError
 
 if TYPE_CHECKING:
@@ -241,6 +241,15 @@ async def rights_refusal(owner: Mount, mount_path: Path, who: Authority) -> Resu
         detail = "the storage that holds the mount point keeps grants and cannot say what the caller holds"
         return Result(ops=(HOLDS,), errors=[classified(ErrorKind.unsupported, owner.path, detail=detail)])
     return None
+
+
+def is_tombstoned_site(result: Result, path: Path) -> bool:
+    """Return whether ``result`` was refused because ``path`` itself holds a deleted row.
+
+    That is the one refusal that a ``restore`` can put right.
+    """
+    error = result.errors[0]
+    return error.kind is ErrorKind.not_found and error.path == path and bool((error.data or {}).get(TRASHED_KEY))
 
 
 # ---------------------------------------------------------------------------

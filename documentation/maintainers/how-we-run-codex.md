@@ -12,7 +12,8 @@ Everything on this page was checked on 2026-11-18 with `codex-cli 0.170.0` on ma
 | `scripts/codex-wait.sh RUNDIR [SECONDS]` | Waits for that run, for 540 seconds unless told otherwise. It never stops the run. |
 
 ```bash
-scripts/codex-run.sh review.md /path/to/a/worktree gpt-6.2-astra runs/review-1
+scripts/codex-run.sh review.md /path/to/a/worktree \
+  gpt-6.2-astra runs/review-1
 scripts/codex-wait.sh runs/review-1
 ```
 
