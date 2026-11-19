@@ -1913,7 +1913,6 @@ class AsyncVirtualFileSystem:
         ``observations``, and a ``row_cap`` that is neither ``None`` nor at least 1. The call takes
         one copy of the mount table when it starts, and the plan, the probes, the calls on the
         storages and the merge all read it, so a mount changed meanwhile changes only later calls.
-        A ``glob`` that finds the kernel closed before it settles calls no storage and is refused.
         """
         if not self._mounts:
             return self._closed_error(op)
@@ -1962,8 +1961,6 @@ class AsyncVirtualFileSystem:
             results = await gather_settled([*named_coros, *(coro for _, coro in branches)])
             named = results[: len(named_coros)]
             branch_results = list(zip((path for path, _ in branches), results[len(named_coros) :], strict=True))
-            if settle is not None and not self._mounts:
-                return self._closed_error(op)  # a close() landed while the storages answered
             named = named if settle is None else await settle(named, branch_results)
             merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
             if ranked is not None:
@@ -2810,8 +2807,11 @@ class AsyncVirtualFileSystem:
         and is raised.
 
         An error made here names the root of the :term:`mount` as the storage sees it. The step that
-        restores paths then turns that into the mount's path.
+        restores paths then turns that into the mount's path. Every call on a storage comes here, so
+        once ``close()`` has emptied the mount table every verb is refused here, before the storage.
         """
+        if not self._mounts:
+            return self._closed_error(op)
         storage = mount.storage
         authority = self._admitted(authority)
         try:
