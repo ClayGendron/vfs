@@ -13,16 +13,25 @@ for mount in fs.mounts():
 
 from __future__ import annotations
 
+import asyncio
+import heapq
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, TypedDict
 
+from vfs.chain import judge_in_hand
+from vfs.deadline import WALL_TIME_BUDGET, Deadline
+from vfs.exceptions import raise_lone_or_group
+from vfs.models import Observation
+from vfs.offload import wall_truncation
 from vfs.ops import GRANT_OPS, READ_OPS
 from vfs.paths import METADATA_ROOT, ROOT, Path
-from vfs.results import ErrorKind, Result, classified
+from vfs.pattern_matching import ScopeChannel, compile_gates
+from vfs.results import ErrorKind, Result, ResultError, classified
+from vfs.results.kinds import Severity, kind_family
 from vfs.storage import HOLDS, StorageBackend, SupportsHolds, TransportError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Coroutine, Iterable, Mapping, Sequence
 
     from vfs.authority import Authority
     from vfs.ops import Op
@@ -183,6 +192,358 @@ async def rights_refusal(owner: Mount, mount_path: Path, who: Authority) -> Resu
         detail = "the storage that holds the mount point keeps grants and cannot say what the caller holds"
         return Result(ops=(HOLDS,), errors=[classified(ErrorKind.unsupported, owner.path, detail=detail)])
     return None
+
+
+# ---------------------------------------------------------------------------
+# What a listing shows at a mount point
+# ---------------------------------------------------------------------------
+
+# The fields of a bare row, which says only that a directory is there.
+BARE_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind"})
+
+# The refusals that say what a caller may see. Any other failure says the storage could not answer.
+_DENIALS: Final = frozenset({ErrorKind.not_found, ErrorKind.permission_denied, ErrorKind.unauthenticated})
+
+# What shrinks a ``glob`` that could not judge every mount point in time.
+_POINTS_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions"
+
+
+class PathFilters(NamedTuple):
+    """The caller's path filters, in the four channels of :class:`~vfs.pattern_matching.GlobGates`.
+
+    Apart from the keywords that are passed straight on, this is the one argument that ``glob`` and
+    ``grep`` hand the :term:`kernel` for a call that reaches several mounts. ``admissions`` is glob's
+    pattern, as its :term:`arms <arm>`, or grep's ``globs``. ``exclusions`` is ``globs_not`` on both
+    verbs. These two are rewritten for each mount before they reach its storage. They are sent as
+    written beside the roots that lie beneath the mount. For the few roots that lie above it, they are
+    joined to the root and cut down to the part inside the mount. The two ``ext`` channels reach the
+    storage unchanged. The kernel reads them only to judge a root's own row and the mount points.
+    """
+
+    admissions: tuple[str, ...]
+    exclusions: tuple[str, ...]
+    ext: tuple[str, ...]
+    ext_not: tuple[str, ...]
+
+
+class AskStorage(Protocol):
+    """The kernel's call on the storage of one :term:`mount`, whose result carries the kernel's own paths."""
+
+    def __call__(
+        self, mount: Mount, op: Op, *, authority: Authority | None = None, **kwargs: Any
+    ) -> Coroutine[Any, Any, Result]:
+        """Call ``op`` on the storage of ``mount`` and return its result."""
+        ...
+
+
+def bare_directory(path: Path) -> Observation:
+    """Return a row that says a directory is at ``path`` and nothing more."""
+    return Observation.model_validate({"path": path, "kind": "directory", "populated": BARE_FIELDS})
+
+
+async def gather_settled(coros: Iterable[Coroutine[Any, Any, Result]]) -> list[Result]:
+    """Run the calls on several storages at the same time, and return their results once all are done.
+
+    A verb reports failure only through a :class:`Result`, so an exception here is a fault in the
+    code, or a cancellation. A fault is raised only after every call has finished. A batch can then
+    never go on changing things behind a caller who has already seen a failure, and anything that
+    retries sees a world that has stopped moving. Several faults are raised together as a group.
+
+    A cancellation comes before a fault. If the finished batch holds both, the cancellation is raised
+    and the fault is dropped. Hiding a cancellation to show a fault would break the way a task is torn
+    down, and everything has finished either way.
+    """
+    settled = await asyncio.gather(*coros, return_exceptions=True)
+    bugs: list[Exception] = []
+    for item in settled:
+        if isinstance(item, BaseException) and not isinstance(item, Exception):
+            raise item
+        if isinstance(item, Exception):
+            bugs.append(item)
+    raise_lone_or_group(bugs, "impl errors during dispatch")
+    return [item for item in settled if isinstance(item, Result)]
+
+
+@dataclass(frozen=True, slots=True)
+class MountListing:
+    """What the listing verbs show at the mount points of one :term:`kernel`.
+
+    A mount point names two entries. One is the directory stored in the storage above, and the other
+    is the root of the storage mounted there. A listing shows the second and never the first, as a
+    directory read does on Plan 9 and as ``ls -l`` does on Linux. The mounted storage decides how much
+    of the row a caller sees, and it never hides the name. A directory that lies above a mount point
+    always shows, at least as a bare row, so a caller can walk down to the mount.
+
+    ``mounts`` is the kernel's own table. ``above`` is every directory that lies above a mount point,
+    the root among them, and it is worked out once when the table changes.
+    """
+
+    mounts: Mapping[Path, Mount]
+    above: frozenset[Path] = field(init=False)
+
+    def __post_init__(self) -> None:
+        above: set[Path] = set()
+        for path in self.mounts:
+            node = path
+            while node != ROOT and (node := node.parent_dir) not in above:
+                above.add(node)
+        object.__setattr__(self, "above", frozenset(above))
+
+    def without_hidden(self, result: Result, mount: Mount) -> Result:
+        """Return ``result``, which ``mount`` gave, without the rows that a deeper mount hides.
+
+        A row at the path of a deeper mount, or beneath it, belongs to that mount's storage whatever
+        the storage above holds there. The row at the path is the stored mount-point directory. The
+        rows beneath it can be left by a crash, or written by another client of a shared storage.
+        """
+        if len(self.mounts) == 1 or not result.observations:
+            return result
+        deeper = [path for path in self.mounts if path != mount.path and _lies_in(path, mount.path)]
+        kept = [row for row in result.observations if not any(_lies_in(row.path, path) for path in deeper)]
+        if len(kept) == len(result.observations):
+            return result
+        return result.model_copy(update={"observations": kept})
+
+    async def listed(
+        self,
+        ask: AskStorage,
+        mount: Mount,
+        op: Literal["ls", "stat"],
+        *,
+        path: Path | None = None,
+        observations: Sequence[Observation] | None = None,
+        columns: frozenset[str] | None = None,
+        authority: Authority | None = None,
+    ) -> Result:
+        """Answer ``ls`` or ``stat`` for one path or one batch that ``mount`` holds.
+
+        A target that does not lie above a mount point is answered by the storage alone, and a call
+        with no such target is one storage call, as it is with no mounts. Each directory that lies
+        above a mount point is answered on its own, once however often the batch names it. Its rows
+        come after the rows of the other targets, in the order the batch names it.
+        """
+        held = {full.without_mount(mount.path): full for full in self.above if _lies_in(full, mount.path)}
+        targets = [path] if path is not None else [row.path for row in observations or ()]
+        special = dict.fromkeys(target for target in targets if target in held)
+        if not special:
+            if path is not None:
+                return await ask(mount, op, path=path, columns=columns, authority=authority)
+            return await ask(mount, op, observations=observations, columns=columns, authority=authority)
+        plain = [row for row in observations or () if row.path not in special]
+        calls: list[Coroutine[Any, Any, Result]] = [
+            self._directory(ask, mount, op, rel, held[rel], columns, authority) for rel in special
+        ]
+        if plain:
+            calls.append(ask(mount, op, observations=plain, columns=columns, authority=authority))
+        answers = await gather_settled(calls)
+        answered = dict(zip(special, answers, strict=False))
+        rest = answers[len(special) :]
+        rows = [row for answer in rest for row in answer.observations]
+        rows += [row for target in targets if target in answered for row in answered[target].observations]
+        errors = [error for answer in (*rest, *answered.values()) for error in answer.errors]
+        return Result(ops=(op,), observations=rows, errors=errors)
+
+    async def tree(
+        self,
+        ask: AskStorage,
+        mount: Mount,
+        rel: Path,
+        *,
+        max_depth: int | None,
+        columns: frozenset[str] | None,
+        authority: Authority | None,
+    ) -> Result:
+        """List the subtree at ``rel`` of ``mount``, and of every mount beneath it that the depth reaches.
+
+        Each mount that lies within ``max_depth`` shows its row, and so does every directory between
+        it and the target. A mount with depth left beneath it is asked for its own subtree, and one
+        that cannot answer ``tree`` is skipped with a record of severity ``info``. All of them are
+        asked at the same time as the target. If the target is refused, the refusal is returned and the
+        other answers are dropped. A mount that fails while others answer becomes a warning.
+        """
+        full = rel.with_mount(mount.path)
+        reached: list[tuple[Mount, int | None]] = []
+        for deeper in self.mounts.values():
+            if deeper.path != full and _lies_in(deeper.path, full):
+                left = None if max_depth is None else max_depth - deeper.path.without_mount(full).depth
+                if left is None or left >= 0:
+                    reached.append((deeper, left))
+        entered = [(deeper, left) for deeper, left in reached if left is None or left > 0]
+        asked = [(deeper, left) for deeper, left in entered if "tree" in deeper.caps]
+        own, heads, *trees = await gather_settled(
+            [
+                ask(mount, "tree", path=rel, max_depth=max_depth, columns=columns, authority=authority),
+                self.heads(ask, [deeper for deeper, _left in reached], columns, authority),
+                *(
+                    ask(deeper, "tree", path=ROOT, max_depth=left, columns=columns, authority=authority)
+                    for deeper, left in asked
+                ),
+            ]
+        )
+        if not own.success:
+            if full not in self.above or not _only_missing(own):
+                return own
+            own = Result(ops=("tree",))
+        answers = {mount.path: own}
+        answers |= {deeper.path: answer for (deeper, _left), answer in zip(asked, trees, strict=True)}
+        head = {row.path: [row] for row in heads.observations}
+        roads: dict[Path, list[Observation]] = {}
+        for node in {above for deeper, _left in reached for above in _between(deeper.path, full)} - self.mounts.keys():
+            roads.setdefault(max((path for path in answers if _lies_in(node, path)), key=len), []).append(
+                bare_directory(node)
+            )
+        branches = [Result(errors=heads.errors)]
+        for path in (mount.path, *(deeper.path for deeper, _left in reached)):
+            answer = answers.get(path, Result(ops=("tree",)))
+            rows = [*head.get(path, ()), *_in_path_order(answer.observations, roads.get(path, ()))]
+            branches.append(answer.model_copy(update={"observations": rows}))
+        merged = Result.merge_branches(branches, op="tree")
+        skips = [skip_record("tree", deeper) for deeper, _left in entered if "tree" not in deeper.caps]
+        return merged.model_copy(update={"errors": [*merged.errors, *skips]}) if skips else merged
+
+    async def matched(
+        self,
+        ask: AskStorage,
+        roots: tuple[Path, ...],
+        filters: PathFilters,
+        *,
+        kind: str | None,
+        columns: frozenset[str] | None,
+        authority: Authority | None,
+    ) -> Result:
+        """Return the mount points, and the directories above them, that a ``glob`` matches.
+
+        No storage returns these rows. The storage above a mount point holds a directory that is
+        never shown, and the mounted storage does not list its own root. So each such path is judged
+        here, by the rule a storage applies to a row of its own. A path is kept when it lies beneath
+        a root and an arm matches it, and it is dropped when an exclusion, an extension filter or
+        ``kind`` rules it out. A mount point that is kept shows the root of its storage. A directory
+        above one shows bare, and the merge fills it in when its own storage returned the row too.
+        """
+        points = [bare_directory(path) for path in dict.fromkeys((*self.mounts, *self.above)) if path != ROOT]
+        if not points or kind not in (None, "directory"):
+            return Result()
+        arms, exclusions, ext, ext_not = filters
+        whole = not roots or ROOT in roots
+        beneath = tuple(root for root in roots if root != ROOT)
+        scope = ScopeChannel(roots=beneath, arms=arms, arms_not=exclusions) if beneath else None
+        gates = compile_gates(arms if whole else (), exclusions if whole else (), ext=ext, ext_not=ext_not, scope=scope)
+        kept, completed = await judge_in_hand(gates, points, Deadline.after(WALL_TIME_BUDGET))
+        matched = [self.mounts[row.path] for row in kept if row.path in self.mounts]
+        heads = await self.heads(ask, matched, columns, authority)
+        rows = [*heads.observations, *(row for row in kept if row.path not in self.mounts)]
+        records = [] if completed else [wall_truncation(_POINTS_REFINE_GUIDANCE)]
+        return Result(observations=rows, errors=[*heads.errors, *records])
+
+    async def heads(
+        self,
+        ask: AskStorage,
+        mounts: Sequence[Mount],
+        columns: frozenset[str] | None,
+        authority: Authority | None,
+    ) -> Result:
+        """Return the row a listing shows at the mount point of each of ``mounts``.
+
+        The row is what ``stat`` of the mounted root returns to the caller, so each mount costs one
+        storage call, and all are asked at the same time. A mount that gives no row shows bare. That
+        is a mount that refuses the caller, one that cannot answer ``stat``, and one that fails. Only
+        the last adds a record, of severity ``warning``, which names the mount.
+        """
+        asked = [mount for mount in mounts if "stat" in mount.caps]
+        stats = await gather_settled(
+            ask(mount, "stat", path=ROOT, columns=columns, authority=authority) for mount in asked
+        )
+        answers = {mount.path: answer for mount, answer in zip(asked, stats, strict=True)}
+        rows: list[Observation] = []
+        records: list[ResultError] = []
+        for mount in mounts:
+            answer = answers.get(mount.path, Result())
+            row = next((found for found in answer.observations if found.path == mount.path), None)
+            rows.append(bare_directory(mount.path) if row is None else row)
+            records += [
+                failure.model_copy(update={"severity": Severity.warning})
+                for failure in answer.failures
+                if kind_family(failure.kind) not in _DENIALS
+            ]
+        return Result(observations=rows, errors=records)
+
+    async def _directory(
+        self,
+        ask: AskStorage,
+        mount: Mount,
+        op: Literal["ls", "stat"],
+        rel: Path,
+        full: Path,
+        columns: frozenset[str] | None,
+        authority: Authority | None,
+    ) -> Result:
+        """Answer ``ls`` or ``stat`` of one directory that lies above a mount point.
+
+        The directory is there because a mount lies beneath it, so a ``not_found`` from its storage
+        only says the caller holds nothing on it. ``stat`` then answers with a bare row, and ``ls``
+        lists what the mount table knows. Any other refusal stands. ``ls`` adds the row of each mount
+        point in the directory and a bare row for each directory in it that leads to a mount, in name
+        order among the storage's own rows.
+        """
+        if op == "stat":
+            answer = await ask(mount, "stat", path=rel, columns=columns, authority=authority)
+            if answer.success or not _only_missing(answer):
+                return answer
+            return Result(ops=("stat",), observations=[bare_directory(full)])
+        inside = [deeper for deeper in self.mounts.values() if deeper.path != ROOT and deeper.path.parent_dir == full]
+        own, heads = await gather_settled(
+            [
+                ask(mount, "ls", path=rel, columns=columns, authority=authority),
+                self.heads(ask, inside, columns, authority),
+            ]
+        )
+        if not own.success:
+            if not _only_missing(own):
+                return own
+            own = Result(ops=("ls",))
+        roads = [bare_directory(path) for path in self.above - self.mounts.keys() if path.parent_dir == full]
+        rows = _in_path_order(own.observations, [*heads.observations, *roads])
+        return Result(ops=("ls",), observations=rows, errors=[*own.errors, *heads.errors])
+
+
+def skip_record(op: Op, mount: Mount) -> ResultError:
+    """Return the record that says ``mount`` was skipped because it cannot answer ``op``.
+
+    A search of a region, or a ``tree``, skips such a :term:`mount`. The record has the severity
+    ``info`` and is never a failure. The mount's path is both its ``path`` and its ``source``.
+    """
+    detail = f"skipped: operation {op!r} is not declared by the storage mounted here"
+    return classified(ErrorKind.unsupported, mount.path, severity=Severity.info, source=mount.path, detail=detail)
+
+
+def _lies_in(path: Path, directory: Path) -> bool:
+    """Return whether ``path`` is ``directory`` or lies beneath it."""
+    return directory in (path, ROOT) or path.startswith(directory + "/")
+
+
+def _between(path: Path, directory: Path) -> list[Path]:
+    """Return the directories that lie strictly between ``directory`` and ``path``, which lies beneath it."""
+    found: list[Path] = []
+    node = path.parent_dir
+    while node != directory:
+        found.append(node)
+        node = node.parent_dir
+    return found
+
+
+def _only_missing(result: Result) -> bool:
+    """Return whether every failure of ``result`` is a ``not_found``."""
+    return all(kind_family(failure.kind) is ErrorKind.not_found for failure in result.failures)
+
+
+def _in_path_order(rows: Sequence[Observation], extras: Iterable[Observation]) -> list[Observation]:
+    """Return ``rows`` with each of ``extras`` whose path is not among them put in at its place in path order.
+
+    The rows keep the order their storage gave them, whatever that order is.
+    """
+    have = {row.path for row in rows}
+    fresh = sorted((extra for extra in extras if extra.path not in have), key=lambda row: row.path)
+    return list(heapq.merge(rows, fresh, key=lambda row: row.path)) if fresh else list(rows)
 
 
 # ---------------------------------------------------------------------------

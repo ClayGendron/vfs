@@ -160,15 +160,15 @@ async def test_multi_residual_rows_arrive_exactly_once() -> None:
     assert result.paths == ("/data/api/y.txt",)
 
 
-async def test_bind_point_row_is_served_by_the_parent() -> None:
-    # /d* exhausts at the bind point: the match is the parent's stored
-    # mount-point directory, and the mount itself is never dispatched.
+async def test_a_pattern_that_ends_at_a_mount_point_returns_the_mounted_root() -> None:
+    # /d* is used up at the mount point: the match is the root of the mounted storage, which one
+    # stat gives, and the mount is asked for no glob.
     fs = AsyncVirtualFileSystem()
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/data")
     result = await fs.glob("/d*")
     assert result.paths == ("/data",)
-    assert recorder.calls == []
+    assert recorder.calls == [("stat", {"path": "/", "columns": None})]
 
 
 async def test_multiple_roots_into_one_entry_all_serve() -> None:

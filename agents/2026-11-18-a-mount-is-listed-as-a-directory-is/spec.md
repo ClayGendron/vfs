@@ -1,6 +1,6 @@
 # A mount is listed as a directory is
 
-This spec is drafted and not yet fit to build. It is the third draft. The second was reviewed twice on 2026-11-18 and found not sound, and this draft answers those reviews. It is built on its own branch, after the branch `public-names-follow-the-naming-rules` has landed.
+This spec is built, on the branch `a-mount-is-listed-as-a-directory-is`, which sits on top of the branch `public-names-follow-the-naming-rules`. It is the third draft. The second was reviewed twice on 2026-11-18 and found not sound, and this draft answers those reviews. The third draft was built without a review of its own. Decisions 4, 6, 7 and 8 were changed while it was built, decision 11 was added, and each now says what the code does. The handoff note beside this file lists what is left.
 
 ## The outcome wanted
 
@@ -88,9 +88,15 @@ Reason: the covered directory is unreachable while mounted on both systems, and 
 
 ### 4. A directory that leads to a mount point is on the road
 
-A directory in the parent that lies above a mount point is listed as a bare row in its own parent. `ls`, `stat` and `tree` of it answer as they do for a road directory, even where the parent's storage answered `not_found`. The kernel knows these directories from its mount table, so no storage is asked.
+A directory in the parent that lies above a mount point is listed as a bare row in its own parent. `ls`, `stat`, `tree`, `glob` and `locate` of it answer as they do for a road directory, even where the parent's storage answered `not_found`. The kernel knows these directories from its mount table, which it keeps as a set in memory.
 
-Only a `not_found` is replaced. A refusal of any other kind stands.
+Only a `not_found` is replaced. A refusal of any other kind stands. Where the storage returns its own row for the directory, that row is shown and no bare row is added.
+
+The directory shows to every caller whose listing succeeds, the caller who holds nothing in the mount included. Decision 2 already shows that caller the mount's full path.
+
+`tree` shows the directories above a mount only when the mount itself lies within `max_depth`. A storage does the same for a plain directory, which shows only above a row that is within the depth.
+
+One thing is left as it was. `stat` of a path beneath such a directory, where the path itself is missing, still names the directory as the first missing part of the path.
 
 Reason: on both systems a caller reaches a mount by its path through parents they cannot read, given walk or search permission. VFS has no such permission. The road is what serves that purpose in a plain tree, and decision 2 already makes the full path of every mount visible.
 
@@ -104,23 +110,35 @@ The parent and the children are asked at the same time. When the parent refuses,
 
 Reason: on both systems a caller who may not read a directory gets no listing of it.
 
-### 6. A child that cannot answer is left out, with a warning
+### 6. A child that gives no row still shows, as a bare row
 
-When a child fails, or does not answer within the listing's time budget, its row is not shown. A record of severity `warning` names the mount at its mount path, and the rest of the listing is returned.
+A mount shows a bare row when its storage gives none. There are four cases.
 
-Reason: `tree` already treats a failing mount among answering mounts this way. A mount's name is not a secret, so the record may name it. Without a time budget, one stuck child would hold every `ls` of the directory above it.
+| The child | The row | A record |
+|---|---|---|
+| Refuses the caller, with `not_found`, `permission_denied` or `unauthenticated` | Bare | None |
+| Cannot answer `stat`, by its capabilities | Bare, and the child is not asked | None |
+| Answers and returns no row for its root | Bare | None |
+| Fails in any other way, such as a transport error | Bare | One of severity `warning`, which names the mount at its mount path |
+
+The earlier text of this decision left a failing child out of the listing. It was changed while the spec was built.
+
+Reason: decision 2 says the name always shows, and leaving a failing mount out would make the set of paths in a listing depend on the health of a backend. Plan 9 keeps the entry when the `stat` of what is mounted fails, and a dead network mount on Linux still shows its name in the directory above.
+
+No time budget is added. A listing waits for each child, as `tree` and a search over several mounts already wait for each mount.
 
 ### 7. Each verb keeps its own order
 
-- `ls` puts the row in place of the covered row, in name order within the listed directory.
-- `tree` and `glob` keep the order in which they merge answers today.
-- A covered row is removed before it can count against `max_count`.
-- In `tree`, a mount point exactly at `max_depth` shows its row and is not descended.
+- `ls` puts the row of a mount, and the bare row of a directory that leads to one, in path order among the storage's own rows. The storage's rows keep the order the storage gave them.
+- `tree` returns the rows of the addressed storage first, and then each mount in table order. A mount's own row comes first among its rows.
+- `glob` returns the rows of the named roots first, then the mount points and the directories above them that match, then the rows of the mounts as before.
+- A covered row cannot cost the caller a row under `max_count`. The mount's own row is merged ahead of the parent's rows, so it takes the place the covered row took.
+- In `tree`, a mount point exactly at `max_depth` shows its row and is not descended. A mount point deeper than `max_depth` is not asked at all.
 
 ### 8. The rule covers every route to a listing
 
-- An explicit root of `glob` that is a mount point already answers from the child, and stays so.
-- `ls` with `observations` applies the rule to each directory it lists, keeps one answer for each input row, and keeps each row's own error.
+- An explicit root of `glob` that is a mount point already answers from the child, and stays so. A root that is a directory above a mount point is no longer an error for a caller who holds nothing on it.
+- `ls` and `stat` with `observations` answer each directory that holds or leads to a mount point on its own, once however often the batch names it. The other rows go to the storage in one call, as before. `ls` returns the listing of such a directory once for each time the batch names it, after the rows of the other targets. Each row keeps its own error.
 - `glob` over rows in hand returns the rows it was given, unchanged.
 - A trash view lists the deleted rows of the storage it addresses, unchanged.
 
@@ -135,6 +153,14 @@ An earlier draft gave the grant verbs a keyword, `mount_point=True`, to reach th
 Reason: on Unix a permission change at a mount path changes the mounted root, and the covered directory's permissions cannot be reached until the mount is removed. VFS behaves that way today. The right to change a mount is given before the mount is added, or on a directory above it.
 
 A decision taken for that draft, that `remove_mount` deletes the rights rows on the mount point, goes with it. On Unix the covered directory keeps its permissions through a mount and an unmount.
+
+### 11. `glob` judges a mount point itself
+
+No storage returns the row at a mount point. The parent holds the covered directory, which is never shown, and the child's own `glob` leaves its root out. So the kernel tests each mount point, and each directory above one, against the call. A path is kept when it lies beneath a root and an arm matches it. It is dropped when an exclusion, an extension filter or `kind` rules it out.
+
+The test is run by the matcher a storage uses on its own rows, in one hop to the process pool, within the time budget each matching stage has. A stage that reaches the budget leaves those rows out and adds one `truncated` warning.
+
+Reason: the same matcher gives the same answer a plain directory at that path would get. A pattern that ends in `**` does not match the directory it names, for example, and a second matcher could disagree on that.
 
 ## Cost
 
@@ -156,48 +182,58 @@ Every call is a read. Nothing is written and no lock is taken. The cost grows wi
 
 At the reference deployment a listing is one of about 150,000 verb calls a day. With 20 mounts at the root, one `ls("/")` adds 20 calls and about 60 statements. The number of mounts in a deployment is an assumption. No measurement exists.
 
-The risk that is not priced is latency. A listing is as slow as its slowest child, which decision 6 bounds.
+The risk that is not priced is latency. A listing is as slow as its slowest child, and decision 6 adds no time budget.
 
-## Not yet decided
+`ls` and `stat` of a path first look the path up in the set of directories above a mount, which the kernel works out when the mount table changes. A kernel with one mount has an empty set. A batch of 10,000 rows costs one set lookup for each row.
 
-- **The step that gives `glob` its mount-point rows.** `glob` gives each mount a pattern of its own, and a child's own `glob` leaves its root out. A step beside the root probes must test each mount path against every arm, the exclusions, the extension filters and the kind.
-- **The time budget in decision 6.** Whether it is the deadline listings already carry, or its own.
-- **Whether a road directory under decision 4 is listed when the caller is refused at the mount itself.** Decision 2 says the mount's name shows to every named caller, so the directories above it would show too.
-- **The listing cursor.** Paging is not built yet. `ls` sorts by name within a directory, so a row replaced in place fits a path key. `tree` and `glob` have no path order today.
+## Left as it is
 
-## Tests, written before the code
+- **A time budget for a child.** None is added. `tree` and a search over several mounts wait for each mount with no budget of their own, and a listing now waits in the same way. A budget for every call that reaches several mounts is a change of its own.
+- **The listing cursor.** Paging is not built yet. `ls` returns its rows in path order within a directory, so a row put in at its place fits a path key. `tree` and `glob` have no single path order.
 
-In a new `tests/base/test_mount_listing.py`. Counts are of calls recorded by a storage double, never of time.
+## Tests
 
-Three tests pin today's behaviour and are rewritten: `test_bind_point_row_is_served_by_the_parent` in `tests/base/test_glob_namespace.py`, and `test_tree_budgets_depth_from_a_non_root_target` and `test_shadow_filter_drops_ls_rows_beneath_a_deeper_mount` in `tests/base/test_mounts.py`.
+In `tests/base/test_mount_listing.py`, written and seen failing before the code. Counts are of calls recorded by a storage double, never of time.
 
-Each fixture states what was shared: the grants, the owner, the group, the posture, which rows exist, and which storage received each grant.
+Four tests pinned the earlier behaviour and were rewritten. One is `test_bind_point_row_is_served_by_the_parent` in `tests/base/test_glob_namespace.py`, which is now `test_a_pattern_that_ends_at_a_mount_point_returns_the_mounted_root`. Three are in `tests/base/test_mounts.py`: `test_tree_budgets_depth_across_mounted_regions`, `test_tree_skips_incapable_mount_with_info_record` and `test_tree_budgets_depth_from_a_non_root_target`. The comment of `test_shadow_filter_drops_ls_rows_beneath_a_deeper_mount` changed and its assertion was made exact.
+
+Each fixture states what was shared: the grants, the owner, the posture, which rows exist, and which storage received each grant.
 
 - A caller granted `read` in the child sees the mount in `ls`, `tree` and `glob("/*")` of the parent, with no grant in the parent.
 - A caller granted only deeper in the child, a caller who owns a row in the child, and a caller who holds nothing in it each see the mount as a bare row.
-- For each of those callers and each verb, a mount and a plain directory with the same contents give the same paths, except that the caller who holds nothing sees the mount's bare row.
-- The row at a mount point in `ls` of the parent equals the row `stat` of the mount point returns, for a named caller and for the system actor.
-- `ls` and `tree` return one row at a mount point, and it carries no field of the covered directory.
+- For a caller granted at the top, a caller granted deeper and a caller who owns a row, a mount and a plain directory with the same contents give the same paths in `ls`, `tree` and `glob`. The mount's own row is the one path a mount may add, and it adds it in `tree` to depth 1, where a plain directory shows nothing for a caller whose rows lie deeper.
+- A caller who holds nothing sees the mount and does not see the plain directory.
+- The row at a mount point in `ls`, `tree` and `glob` equals the row `stat` of the mount point returns, for a named caller and for the system actor.
+- Each listing returns one row at a mount point, and it carries no field of the covered directory.
 - `columns` reaches the child, and the row keeps the child's field mask.
-- With a mount at `/a/b` and a closed root, `ls("/")` shows `/a` bare, `ls("/a")` shows `/a/b`, and `stat("/a")` is a bare row.
-- The anonymous caller on a closed root is refused `ls("/")` with `unauthenticated`.
-- A child that raises a transport error is left out with one `warning` record that names the mount path, and the other rows are returned.
-- A mount point exactly at `max_depth` shows its row and is not descended.
-- `glob("/*", max_count=1)` returns a row the caller may see, and does not spend its one slot on a covered row.
+- `ls` puts a mount in name order among files.
+- With a mount at `/a/b` and a closed root, `ls("/")` shows `/a` bare, `ls("/a")` shows `/a/b`, `stat("/a")` is a bare row, `glob("/*")` returns `/a`, and `locate` says `/a` exists. This holds for a caller granted in the mount and for one who holds nothing.
+- `tree` shows the directories above a mount it reaches, and none above a mount deeper than `max_depth`.
+- A directory above a mount that the caller may see keeps its own stored row.
+- A batch of `stat` or `ls` answers for a directory above a mount and keeps the `not_found` of a missing path.
+- A `glob` beneath a directory above a mount does not fail on that directory.
+- The anonymous caller on a closed root is refused `ls("/")` and `tree("/")` with `unauthenticated`, and gets no rows.
+- A mount that refuses the caller shows bare with no record. A mount that returns no row for its root shows bare. A mount that cannot `stat` shows bare and is not asked.
+- A child that raises a transport error shows bare with one `warning` record that names the mount path, in `ls`, `tree` and `glob`, and the other rows are returned.
+- A mount point exactly at `max_depth` shows its row and is asked for no `tree`.
+- `glob("/*", max_count=1)` returns one row, and `max_count=2` returns the mount and the file beside it.
+- The filters of `glob` apply to the row at a mount point: `kind`, `globs_not`, `ext`, a pattern that ends in `**`, and a name arm that does not match.
+- `glob` beneath a root returns the mount points beneath it, by a name arm and by a path arm, and a root is never beneath itself.
+- Mount points that were not judged within the time budget are left out with one `truncated` warning.
 - `ls` with `observations` that names a directory twice returns its listing twice, and a missing directory in the same batch keeps its own `not_found`.
-- Listing a directory with no mount point makes one storage call.
-- Listing a directory with `k` mount points makes `k` more calls, and no `holds` call.
+- Listing a directory that holds no mount point makes one storage call, and so does `stat` of it.
+- Listing a directory with three mount points makes one `stat` call on each, and one `ls` call on the parent.
 - A nested mount is listed by the mount that holds its covered directory.
 
 ## Scope
 
-In: `ls`, `tree` and `glob` at a directory that holds or leads to a mount point, `stat` of a directory that leads to one, the row filter that drops entries hidden by a deeper mount, their tests, and the docs.
+In: `ls`, `tree` and `glob` at a directory that holds or leads to a mount point, `stat` and `locate` of a directory that leads to one, the row filter that drops entries hidden by a deeper mount, their tests, and the docs.
 
 Out: `grep` and `search`, which return files. The mount methods and who may call them. The grant verbs. The storage protocol.
 
 ## What the docs must say
 
-- A mount shows in the listing of its parent to every named caller. Its path is not a secret.
+- A mount shows in the listing of its parent to every caller who can list that parent. Its path is not a secret.
 - What a caller sees of the mount, and of everything in it, is decided by the mounted storage.
 - A grant at a mount path is a grant in the mounted storage. One grant shares a mount.
 - The rights on the directory beneath a mount decide only who may add, remove or change that mount. They cannot be changed while the mount is on.
