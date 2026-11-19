@@ -223,7 +223,7 @@ class _Dispatches(NamedTuple):
     probes: list[Coroutine[Any, Any, Result]]
     branches: list[tuple[Path, Coroutine[Any, Any, Result]]]
     skips: list[ResultError]
-    settle: Callable[[list[Result], list[tuple[Path, Result]]], list[Result]] | None = None
+    settle: Callable[[list[Result], list[tuple[Path, Result]]], Coroutine[Any, Any, list[Result]]] | None = None
 
 
 async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
@@ -1867,7 +1867,9 @@ class AsyncVirtualFileSystem:
         not multiplied by the number of mounts.
 
         The verb's check of its arguments has already refused ``paths`` together with
-        ``observations``, and a ``row_cap`` that is neither ``None`` nor at least 1.
+        ``observations``, and a ``row_cap`` that is neither ``None`` nor at least 1. The call takes
+        one copy of the mount table when it starts, and the plan, the probes, the calls on the
+        storages and the merge all read it, so a mount changed meanwhile changes only later calls.
         """
         if not self._mounts:
             return self._closed_error(op)
@@ -1881,7 +1883,8 @@ class AsyncVirtualFileSystem:
         if grant.refusal is not None:
             return grant.refusal
         try:
-            plan = self._classify_fanout_scopes(op, paths)
+            listing = self._listing
+            plan = self._classify_fanout_scopes(op, paths, listing)
             if plan.refusal is not None:
                 return plan.refusal
             if ranked is not None and len({*plan.scoped, *plan.unscoped}) > 1:
@@ -1889,22 +1892,24 @@ class AsyncVirtualFileSystem:
 
             if filters is not None:
                 if op == "glob":
-                    built = await self._glob_dispatches(plan, paths, filters, authority=authority, **kwargs)
+                    built = await self._glob_dispatches(plan, listing, paths, filters, authority=authority, **kwargs)
                 else:
-                    built = await self._grep_dispatches(plan, paths, filters, op=op, authority=authority, **kwargs)
+                    built = await self._grep_dispatches(
+                        plan, listing, paths, filters, op, authority=authority, **kwargs
+                    )
                 if built is None:
                     return self._closed_error(op)
                 named_coros, branches, skips, settle = built
             else:
-                settle = None
+                settle, entry = None, partial(listing.called, self._call_storage)
                 # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
-                    self._dispatch_entry(mount, op, paths=tuple(dict.fromkeys(rels)), authority=authority, **kwargs)
+                    entry(mount, op, paths=tuple(dict.fromkeys(rels)), authority=authority, **kwargs)
                     for key, (mount, rels) in plan.scoped.items()
                     if key not in plan.unscoped
                 ]
                 branches = [
-                    (mount.path, self._dispatch_entry(mount, op, paths=(), authority=authority, **kwargs))
+                    (mount.path, entry(mount, op, paths=(), authority=authority, **kwargs))
                     for mount in plan.unscoped.values()
                 ]
                 skips = plan.skips
@@ -1913,7 +1918,7 @@ class AsyncVirtualFileSystem:
             results = await gather_settled([*named_coros, *(coro for _, coro in branches)])
             named = results[: len(named_coros)]
             branch_results = list(zip((path for path, _ in branches), results[len(named_coros) :], strict=True))
-            named = named if settle is None else settle(named, branch_results)
+            named = named if settle is None else await settle(named, branch_results)
             merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
             if ranked is not None:
                 return self._with_skips(await self._rank_fanout(ranked, branch_results, merged), skips)
@@ -1921,8 +1926,8 @@ class AsyncVirtualFileSystem:
         finally:
             self._exit_hop(grant.token)
 
-    def _classify_fanout_scopes(self, op: Op, paths: tuple[str, ...]) -> _FanoutPlan:
-        """Work out which mounts will answer a search, and return the plan.
+    def _classify_fanout_scopes(self, op: Op, paths: tuple[str, ...], listing: MountListing) -> _FanoutPlan:
+        """Work out which mounts will answer a search, from the copy ``listing`` of the table, and return the plan.
 
         With no ``paths``, every :term:`mount` is taken in table order. A mount that can answer is
         asked whole, and one that cannot is recorded as skipped. A path that is the root, or that has
@@ -1941,8 +1946,8 @@ class AsyncVirtualFileSystem:
                 if resolved.path is None:
                     return _FanoutPlan({}, {}, [], refusal=self._invalid_path(resolved, raw, op))
                 full = resolved.path
-                terminal = self._resolve_terminal(full)
-                beneath = self._mounts_beneath(full)
+                terminal = self._resolve_terminal(full, listing)
+                beneath = listing.beneath(full)
                 if full == ROOT or beneath:
                     if op not in terminal.mount.caps:
                         skipped.setdefault(terminal.mount.path, skip_record(op, terminal.mount))
@@ -1963,7 +1968,7 @@ class AsyncVirtualFileSystem:
                 _b, rels = scoped.setdefault(terminal.mount.path, (terminal.mount, []))
                 rels.append(terminal.rel)
         else:
-            for mount in self._mounts.values():
+            for mount in listing.mounts.values():
                 if op in mount.caps:
                     unscoped[mount.path] = mount
                 else:
@@ -1974,6 +1979,7 @@ class AsyncVirtualFileSystem:
     async def _glob_dispatches(
         self,
         plan: _FanoutPlan,
+        listing: MountListing,
         paths: tuple[str, ...],
         filters: PathFilters,
         *,
@@ -2009,7 +2015,7 @@ class AsyncVirtualFileSystem:
 
         :meth:`MountListing.matched <vfs.mounts.MountListing.matched>` judges the mount points at the
         same time, and ``settle`` drops those whose own directory a storage refused to list. The whole
-        call reads one copy of the mount table.
+        call reads ``listing``, the one copy of the mount table that :meth:`_route_fanout` took.
 
         A mount whose set of patterns comes out empty is not called, and no skip is recorded for it.
         That is a matter of where the patterns reach, and not of what the mount can do. A skip for a
@@ -2018,14 +2024,13 @@ class AsyncVirtualFileSystem:
         arms, exclusions, ext, ext_not = filters
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: mount for key, (mount, _rels) in plan.scoped.items()}}
-        owners = {root: self._resolve_terminal(root).mount.path for root in roots}
+        owners = {root: self._resolve_terminal(root, listing).mount.path for root in roots}
         skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
         name_arms = tuple(arm for arm in arms if "/" not in arm)
         gates = compile_gates(name_arms, exclusions, ext=ext, ext_not=ext_not) if name_arms else None
         scope = await self._planned(owners, tuple(capable), skip_paths, roots, arms, exclusions, arms, frozenset())
         if not self._mounts:
             return None  # a close() landed during the hop: no table read, no dispatch
-        listing = self._listing
         kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
         cap = cast("int | None", kwargs.get("max_count"))
@@ -2051,15 +2056,17 @@ class AsyncVirtualFileSystem:
             if live or key in scope.scopes
         ]
         skips = self._scope_skips(plan, scope, unverifiable)
-        return _Dispatches([*probes, points], branches, skips, partial(listing.shown, roots))
+        settle = partial(listing.shown, self._call_storage, roots, columns, cap, authority)
+        return _Dispatches([*probes, points], branches, skips, settle)
 
     async def _grep_dispatches(
         self,
         plan: _FanoutPlan,
+        listing: MountListing,
         paths: tuple[str, ...],
         filters: PathFilters,
+        op: Op,
         *,
-        op: Op = "grep",
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
@@ -2080,11 +2087,12 @@ class AsyncVirtualFileSystem:
         Everything else is as for ``glob``. That is the cutting of patterns to each mount, the skipping
         of a mount whose set comes out empty, the planning, the two kinds of root that are joined to
         the globs, and the probe of the roots. Here the probe returns no rows and only reports errors.
+        The whole call reads ``listing``, as a ``glob`` does.
         """
         globs, exclusions, ext, ext_not = filters
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: mount for key, (mount, _rels) in plan.scoped.items()}}
-        owners = {root: self._resolve_terminal(root).mount.path for root in roots}
+        owners = {root: self._resolve_terminal(root, listing).mount.path for root in roots}
         skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
         patterns = (globs or ("**",)) if roots else globs
         operands = tuple(root for root in roots if root != ROOT)
@@ -2116,7 +2124,8 @@ class AsyncVirtualFileSystem:
             branches.append(
                 (
                     key,
-                    self._dispatch_entry(
+                    listing.called(
+                        self._call_storage,
                         mount,
                         op,
                         globs=tuple(sorted(members)) if members else (),
@@ -2129,7 +2138,7 @@ class AsyncVirtualFileSystem:
                     ),
                 )
             )
-        probes, unverifiable = self._root_probes(roots, None, None, None, listing=self._listing, authority=authority)
+        probes, unverifiable = self._root_probes(roots, None, None, None, listing=listing, authority=authority)
         return _Dispatches(probes, branches, self._scope_skips(plan, scope, [*records, *unverifiable]))
 
     @staticmethod
@@ -2179,32 +2188,12 @@ class AsyncVirtualFileSystem:
     ) -> tuple[list[Coroutine[Any, Any, Result]], list[ResultError]]:
         """Build one probe for each :term:`mount` that holds roots the caller named.
 
-        The call returns the probes, and a warning for each root that cannot be checked. The root of
-        the file tree is left out, because it is the tree itself and never a row. A mount that cannot
-        answer ``stat`` cannot say whether its roots are there. Each such root gets a warning. It is
-        never treated as absent, and it never passes in silence. ``gates`` judge the roots' own rows,
-        on the process pool. With ``None``, no row is returned. The probes read ``listing``, the copy
-        of the mount table the rest of the call reads.
+        The call returns the probes, and a warning for each root that cannot be checked, as
+        :meth:`MountListing.probed <vfs.mounts.MountListing.probed>` groups them. ``gates`` judge the
+        roots' own rows, on the process pool. With ``None``, no row is returned. The probes read
+        ``listing``, the copy of the mount table the rest of the call reads.
         """
-        grouped: dict[Path, tuple[Mount, list[Path]]] = {}
-        unverifiable: list[ResultError] = []
-        for root in roots:
-            if root == ROOT:
-                continue
-            terminal = self._resolve_terminal(root)
-            if "stat" not in terminal.mount.caps:
-                unverifiable.append(
-                    classified(
-                        ErrorKind.unsupported,
-                        root,
-                        severity=Severity.warning,
-                        source=terminal.mount.path,
-                        detail="the root is unverifiable: the storage mounted here does not support stat",
-                    )
-                )
-                continue
-            _b, rels = grouped.setdefault(terminal.mount.path, (terminal.mount, []))
-            rels.append(terminal.rel)
+        grouped, unverifiable = listing.probed(roots)
         coros: list[Coroutine[Any, Any, Result]] = [
             self._root_probe(mount, rels, gates, kind, columns, listing=listing, authority=authority)
             for mount, rels in grouped.values()
@@ -2224,9 +2213,9 @@ class AsyncVirtualFileSystem:
     ) -> Result:
         """Check the roots that one :term:`mount` holds, with one ``stat`` of all of them.
 
-        The ``stat`` takes a hop of the call's budget, as every ``stat`` does. A root that is not
-        there is reported as an error by the storage itself. ``gates`` decide whether the row of a
-        root that is there joins the result. For ``glob`` it joins when a name arm matches and no
+        The ``stat`` takes no hop of the call's budget, because the search holds one already. A root
+        that is not there is reported as an error by the storage itself. ``gates`` decide whether the
+        row of a root that is there joins the result. For ``glob`` it joins when a name arm matches and no
         exclusion, extension filter or ``kind`` drops it. A root is tested like any other row and is
         never let through untested. For ``grep``, ``gates`` is ``None`` and no row joins, because
         only a storage can test content. The rows are judged in one hop, within a time budget that
@@ -2234,8 +2223,8 @@ class AsyncVirtualFileSystem:
         returned, with one warning.
         """
         probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
-        result = await self._dispatch_read(
-            mount, "stat", listing, observations=probe, columns=columns, authority=authority
+        result = await listing.listed(
+            self._call_storage, mount, "stat", observations=probe, columns=columns, authority=authority
         )
         kept: list[Observation] = []
         records: list[ResultError] = []
@@ -2537,7 +2526,8 @@ class AsyncVirtualFileSystem:
 
         A search over several mounts takes a hop, and so do ``tree``, ``ls`` and ``stat``. A listing
         asks each mount in it for the row of its root, so those three can reach a loop. ``read`` and
-        the verbs that change something take none.
+        the verbs that change something take none. Only a verb's own entry takes a hop, so the probe
+        of a search's roots, which runs inside the search's hop, takes none.
         """
         budget = _hop_budget.get()
         if budget is None:
@@ -2561,40 +2551,31 @@ class AsyncVirtualFileSystem:
     # resolution — one table, longest prefix
     # -------------------------------------------------------------------
 
-    def _match_mount(self, path: Path) -> Mount | None:
-        """Return the deepest :term:`mount` at or above ``path``, or ``None`` when the kernel is closed."""
-        for mount_path in self._sorted_mount_paths:
-            if mount_path == ROOT or path == mount_path or path.startswith(mount_path + "/"):
-                return self._mounts[mount_path]
-        return None
+    def _match_mount(self, path: Path, listing: MountListing | None = None) -> Mount | None:
+        """Return the deepest :term:`mount` at or above ``path``, or ``None`` when the kernel is closed.
 
-    def _resolve_terminal(self, path: Path) -> ResolvedTerminal:
-        """Return the :term:`mount` that holds ``path``, and the path inside that mount.
+        ``listing`` is the copy of the table to read, and the table as it is now when it is ``None``.
+        """
+        return (self._listing if listing is None else listing).holder(path)
 
-        One search of the table is enough. A nested mount is an ordinary deeper row of the same table,
+    def _resolve_terminal(self, path: Path, listing: MountListing | None = None) -> ResolvedTerminal:
+        """Return the :term:`mount` that holds ``path`` in ``listing``, and the path inside that mount.
+
+        One walk up the path is enough. A nested mount is an ordinary deeper row of the same table,
         so there is nothing to descend into. The root mount holds every path that no deeper mount
         does. The caller checks for a closed kernel first.
         """
-        mount = self._match_mount(path)
+        mount = self._match_mount(path, listing)
         assert mount is not None, "resolve on a closed filesystem"
         return ResolvedTerminal(mount=mount, rel=path.without_mount(mount.path))
 
     async def _probe_location(self, terminal: ResolvedTerminal, row: Location, authority: Authority) -> Location:
         """Return ``row`` with the storage's answer about the path.
 
-        The storage is asked to ``stat`` the path directly, past the gate, as ``authority``. A
-        directory that lies above a mount point is there whenever its storage gives no row for it and
-        refuses with nothing but ``not_found``.
+        :meth:`MountListing.located <vfs.mounts.MountListing.located>` asks the storage, by the rule
+        ``stat`` applies, so ``locate`` and ``stat`` agree on a directory that lies above a mount point.
         """
-        above = self._listing.above
-        stat = await self._call_storage(terminal.mount, "stat", path=terminal.rel, authority=authority)
-        blocker = next((f for f in stat.failures if kind_family(f.kind) is not ErrorKind.not_found), None)
-        if blocker is not None:
-            return row._replace(note=blocker.message or f"could not stat {row.path}")
-        found = next((o for o in stat.observations if o.path == terminal.rel), None)
-        if found is not None:
-            return row._replace(exists=True, kind=found.kind)
-        return row._replace(exists=True, kind="directory") if terminal.full in above else row._replace(exists=False)
+        return await self._listing.located(self._call_storage, terminal.mount, terminal.rel, row, authority)
 
     def _locate_terminal(self, path: str) -> ResolvedTerminal:
         """Check a caller's path and return where it lands.
@@ -2611,14 +2592,11 @@ class AsyncVirtualFileSystem:
         return ResolvedTerminal(mount=mount, rel=resolved.path.without_mount(mount.path))
 
     def _mounts_beneath(self, path: Path) -> list[Mount]:
-        """Return the mounts that lie strictly beneath ``path``.
+        """Return the mounts that lie strictly beneath ``path`` in the table as it is now.
 
-        This says where calls are sent, and not what a caller may see. The search of a region
-        and the ``busy`` check read it.
+        :meth:`MountListing.beneath <vfs.mounts.MountListing.beneath>` answers. The ``busy`` check reads it.
         """
-        if path == ROOT:
-            return [b for p, b in self._mounts.items() if p != ROOT]
-        return [b for p, b in self._mounts.items() if p.startswith(path + "/")]
+        return self._listing.beneath(path)
 
     # -------------------------------------------------------------------
     # gates — capability snapshot, then composed permissions
