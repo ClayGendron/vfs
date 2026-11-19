@@ -185,7 +185,7 @@ Reason: each stage that matches rows in the kernel runs under one budget and rep
 
 | A row that passes the filters | Today | Under the design |
 |---|---|---|
-| A directory | Sent to its storage, which does not rank it. No error. | The same. |
+| A directory | Sent to its storage, which does not rank it. No error, unless the row is a mount point or `/`. Such a row reaches its storage as the path `/`, the storage turns that path into a glob, and the call fails with `invalid`. | The same. |
 | A path that is not there | Sent to its storage, which returns nothing for it. No error. | The same. |
 | A row that carries no kind | Ranked if its storage holds a file there. | The same. |
 | A row in a mount that cannot `search` | The whole call is refused with `unsupported` at the mount's path. No storage is called. | The same. |
@@ -295,6 +295,7 @@ The tests, one line each. Every expected value below was printed by the design i
 - With a third mount at `/mute`, a `RecorderStorage(caps=frozenset({"read", "stat", "ls", "glob", "grep"}))`, and `held` plus the row `/mute/m.txt`, `search("lease", observations=..., ext=("txt",))` fails with one `unsupported` error whose path is `/mute`, and no storage recorded a `search` call.
 - With the same three mounts and rows, `search("lease", observations=..., ext=("md",))` succeeds, `mute.calls == []`, `_sent(low) == [["/l1.md"]]` and `_sent(high) == [["/h2.md"]]`.
 - On one `InMemoryStorage` that holds a directory `/dir` and the file `/dir/z.md` ("alpha delta"), with rows `Observation(path=Path("/dir"), kind="directory")`, `Observation(path=Path("/dir/ghost.md"))` and `Observation(path=Path("/dir/z.md"))`, `search("alpha", observations=..., globs_not=("*.txt",))` succeeds with no error and `result.paths == ("/dir/z.md",)`.
+- On a kernel over one `InMemoryStorage` with a second mounted at `/data`, with the rows `Observation(path=Path(directory), kind="directory")` and `Observation(path=Path("/data/a.md"))`, for `directory` of `/data` and of `/`, `search("alpha", observations=..., ext_not=("txt",))` fails with one error of kind `invalid`. This pins the defect under "Found and left as it is", so the docstring cannot drift from it.
 - On one `InMemoryStorage`, `/gone.md` ("alpha trashed") is written and deleted, and `held` is the one row `Observation(path=Path("/.vfs/trash/gone.md"))`. `search("alpha", observations=held)` returns one row. `search("alpha", observations=held, globs=("*.md",))` returns the same paths. `search("alpha", observations=held, globs_not=("*.md",))` succeeds with no row.
 - On one `InMemoryStorage` that holds `/x.txt` and `/y.md`, with `/gone.md` written and deleted, and `held` as `/.vfs/trash/gone.md`, `/x.txt`, `/y.md`: `search("alpha", observations=held)` fails with one `invalid` error, `Invalid: a scope under '/.vfs/trash' cannot mix with live paths`. `search("alpha", observations=held, globs_not=("/.vfs/**",))` succeeds with sorted paths `/x.txt`, `/y.md`.
 - On the two real mounts, `search("", observations=rows, ext=("rs",))` succeeds with no row and no error, and `search("", observations=rows)` fails with `invalid`.
@@ -307,7 +308,7 @@ The new branches are each reached by a test above: the refused pattern, the clos
 
 ## Scope
 
-In: the branch of `search` for `observations` in `src/vfs/base.py`, the function `admit_rows_in_hand` and its constant in `src/vfs/chain.py`, the three moves of decision 3, the baseline entry of `base.py`, the docstring of `search`, one sentence in each of the module docstrings of `src/vfs/chain.py` and `src/vfs/fanout.py`, the tests above, and three tasks added to `agents/tasks.md`, one for each item under "Found and left as it is".
+In: the branch of `search` for `observations` in `src/vfs/base.py`, the function `admit_rows_in_hand` and its constant in `src/vfs/chain.py`, the three moves of decision 3, the baseline entry of `base.py`, the docstring of `search`, one sentence in each of the module docstrings of `src/vfs/chain.py` and `src/vfs/fanout.py`, the tests above, and four tasks added to `agents/tasks.md`, one for each item under "Found and left as it is".
 
 Depends on: `src/vfs/base.py` is also changed by two other drafts, `agents/2026-11-18-add-mount-takes-a-posture` and `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount`. All three share its fixed line baseline. Whichever lands second sets the baseline again from the file as it then stands.
 
@@ -322,13 +323,13 @@ The second paragraph ends at "checked as :meth:`glob` checks them."
 A new paragraph follows the paragraph on mounts.
 
 ```
-If ``observations`` is given, the search is limited to those rows. The four file filters are applied
-first, to the path that each row carries, as :meth:`grep` applies them to rows. Only the rows that
-pass are sent on, each to the mount that holds it, and a mount that holds none of them is not asked.
-The call then answers as it would if only those rows had been given. A row that a filter drops is
-never ranked, never checked and never reported. A row that passes is ranked only if its storage can
-rank it, so a directory or a path that is not there is left out without an error. A row that passes
-in a mount that cannot search refuses the call with ``unsupported``.
+If ``observations`` is given, the search is limited to those rows. The four file filters are applied first, to
+the path that each row carries, as :meth:`grep` applies them to rows. Only the rows that pass are sent on, each
+to the mount that holds it, and a mount that holds none of them is not asked. The call then answers as it would
+if only those rows had been given. A row that a filter drops is never ranked, never checked and never reported.
+A row that passes is ranked only if its storage can rank it. An ordinary directory or a path that is not there
+is left out without an error. The row of a mount point or of the root makes the call fail with ``invalid``.
+A row that passes in a mount that cannot search refuses the call with ``unsupported``.
 ```
 
 Three sentences are added to the end of the last paragraph.
@@ -357,6 +358,7 @@ Each was executed today, and none is touched by this spec. Each is a task in `ag
 
 - **`search` without `observations` does not expand a brace pattern in the kernel.** `grep` does. With `/y.md` in the root storage, `grep("alpha", paths=("/y.md",), globs=("*.{md,rst}",))` returns `/y.md`, and `search` with the same arguments returns nothing. A glob that cannot be parsed is refused once by each mount, and the message can show a pattern the kernel rewrote, such as `'/**/{a'`, where `grep` refuses once with the pattern as written. The cause is the same missing call to `expand_channel`. The fix is to make that call before the two routes divide, as `grep` does. It changes the route without `observations`, so it is a piece of work of its own.
 - **`grep` over a held row in the trash view matches nothing.** `read(observations=[/.vfs/trash/gone.md])` returns the row at `/gone.md`. `grep_rows_in_hand` looks the content up by the held path, finds none, and returns no row and no error. `search` returns the row. So the test that compares `search` with `grep` uses live rows only.
+- **A row in hand at a mount point or at `/` makes `search` fail with `invalid`.** The row reaches its storage as the path `/`. The storage adds one escaped glob for each row, and `/` is not a glob it accepts. Executed on a kernel over one `InMemoryStorage` with a second mounted at `/data`. With the row `Observation(path=Path("/data"), kind="directory")`, `search("alpha", observations=...)` fails with one error, `Invalid: grep glob '/': empty component — every '/' must separate non-empty segments`. It fails the same way with `ext_not=("txt",)` and with `globs=("/data",)`, which the row passes, and with the row of `/` under `globs_not=("*.txt",)`. `grep` given the row of `/` succeeds. `glob("/*")` on that kernel returns the row `/data`, so a `search` over those rows fails with no filter, and with `ext_not=("txt",)` or `globs_not=("*.txt",)`. With `ext=("md",)` the filter drops the row and the call succeeds. The failure was there before this spec, and the filter hides it only when it drops the row. The fix is for the storage to leave out a row at its own root.
 - **10,000 rows in hand take 8 to 9 seconds in one storage.** Measured once, by the clock, on one laptop, on SQLite in memory. The storage's own budget is 10 seconds. With 1,000 rows it took 0.7 seconds and with 2,000 it took 1.4. A storage adds one pattern for each row. The filter of this spec lowers the count and does not change the growth.
 
 ## Not checked

@@ -1473,13 +1473,13 @@ class AsyncVirtualFileSystem:
         never changes the order a mount gave its own rows, so each mount contributes the first rows of
         its own answer. The merged scores are scaled to lie between 0 and 1.
 
-        If ``observations`` is given, the search is limited to those rows. The four file filters are applied
-        first, to the path that each row carries, as :meth:`grep` applies them to rows. Only the rows that
-        pass are sent on, each to the mount that holds it, and a mount that holds none of them is not asked.
-        The call then answers as it would if only those rows had been given. A row that a filter drops is
-        never ranked, never checked and never reported. A row that passes is ranked only if its storage can
-        rank it, so a directory or a path that is not there is left out without an error. A row that passes
-        in a mount that cannot search refuses the call with ``unsupported``.
+        If ``observations`` is given, the search is limited to those rows. The four file filters are applied first, to
+        the path that each row carries, as :meth:`grep` applies them to rows. Only the rows that pass are sent on, each
+        to the mount that holds it, and a mount that holds none of them is not asked. The call then answers as it would
+        if only those rows had been given. A row that a filter drops is never ranked, never checked and never reported.
+        A row that passes is ranked only if its storage can rank it. An ordinary directory or a path that is not there
+        is left out without an error. The row of a mount point or of the root makes the call fail with ``invalid``.
+        A row that passes in a mount that cannot search refuses the call with ``unsupported``.
 
         The call returns a :class:`Result`. After a merge, its ``legs`` extra says how the merge was
         made. A root that is not there is an error for that root, beside the rows of the roots that are.
