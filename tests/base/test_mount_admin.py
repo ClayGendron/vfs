@@ -249,11 +249,11 @@ async def test_description_is_a_live_attribute_read() -> None:
 
 
 # ----------------------------------------------------------------------
-# remount — entry policy changes in place
+# update_mount — entry policy changes in place
 # ----------------------------------------------------------------------
 
 
-async def test_remount_read_makes_writes_classify_as_permission_denials() -> None:
+async def test_update_mount_read_makes_writes_classify_as_permission_denials() -> None:
     fs = RecorderFS()
     before = await fs.write(path="/f.md", content="x")
     assert before.success
@@ -308,7 +308,7 @@ async def test_refresh_caps_picks_up_a_widened_declaration() -> None:
     assert "write" in {str(r.path): r for r in fs.mounts()}["/m"].caps
 
 
-async def test_remount_preserves_every_unchanged_field() -> None:
+async def test_update_mount_preserves_every_unchanged_field() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     await fs.add_mount(
         RecorderStorage(name="child"), "/m", permissions=read_only(write=["/inbox"]), deny_ops={"edit"}, owned=False
@@ -323,7 +323,7 @@ async def test_remount_preserves_every_unchanged_field() -> None:
     assert {str(r.path): r for r in fs.mounts()}["/m"] == after
 
 
-async def test_remount_unknown_path_and_closed_table_raise() -> None:
+async def test_update_mount_unknown_path_and_closed_table_raise() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     with pytest.raises(ValueError, match="No mount at"):
         await fs.update_mount("/nope", permissions="read")
@@ -334,7 +334,7 @@ async def test_remount_unknown_path_and_closed_table_raise() -> None:
         await fs.update_mount("/", permissions="read")
 
 
-async def test_remount_refuses_when_the_probed_mount_is_replaced_mid_flight(monkeypatch) -> None:
+async def test_update_mount_refuses_when_the_probed_mount_is_replaced_mid_flight(monkeypatch) -> None:
     # refresh_caps probes capabilities() outside the lock; a rival
     # replacing the mount before the lock lands must refuse, not adopt.
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
@@ -353,7 +353,7 @@ async def test_remount_refuses_when_the_probed_mount_is_replaced_mid_flight(monk
         await fs.update_mount("/m", refresh_caps=True)
 
 
-async def test_no_overlay_remount_grandfathers_children_and_ratchets() -> None:
+async def test_no_overlay_update_grandfathers_children_and_ratchets() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     parent = BindableStorage(name="parent")
     child = RecorderStorage(name="child")
@@ -372,7 +372,7 @@ async def test_no_overlay_remount_grandfathers_children_and_ratchets() -> None:
         await fs.add_mount(child, "/a/b")
 
 
-async def test_no_overlay_remount_on_root_seals_the_namespace() -> None:
+async def test_no_overlay_update_on_root_seals_the_namespace() -> None:
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     await fs.add_mount(RecorderStorage(name="child"), "/m")
     await fs.update_mount("/", no_overlay=True)
@@ -443,7 +443,7 @@ async def test_read_family_masks_are_rejected_at_every_intake() -> None:
 
 async def test_bare_string_deny_ops_is_rejected_not_char_splattered() -> None:
     # frozenset("run") would silently store {'r','u','n'} — an inert mask
-    # that fails open and can even clear a working one via remount.
+    # that fails open and can even clear a working one via update_mount.
     with pytest.raises(TypeError, match="bare string"):
         AsyncVirtualFileSystem(deny_ops="read")  # ty: ignore[invalid-argument-type]
 

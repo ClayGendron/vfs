@@ -203,7 +203,7 @@ class SuspendingProbeStorage(BindableStorage):
     The suspension is what opens the race window: ``bind``'s site probe
     yields to the loop mid-sequence, so a gathered read can land in the
     gap an unbind+bind pair leaves open — the contrast that proves
-    ``remount`` has no such gap.
+    ``update_mount`` has no such gap.
     """
 
     async def stat(self, **kwargs: Any) -> Result:
