@@ -1,6 +1,6 @@
 # A mount is listed as a directory is
 
-This spec is built, on the branch `a-mount-is-listed-as-a-directory-is`, which sits on top of the branch `public-names-follow-the-naming-rules`. It is the third draft. The second was reviewed twice on 2026-11-18 and found not sound, and this draft answers those reviews. The third draft was built without a review of its own. Decisions 4, 6, 7 and 8 were changed while it was built, decision 11 was added, and each now says what the code does.
+This spec is built, on the branch `a-mount-is-listed-as-a-directory-is`, which sits on top of the branch `public-names-follow-the-naming-rules`. It is the third draft. The second was reviewed twice on 2026-11-18 and found not sound, and this draft answers those reviews. The third draft was built without a review of its own. Decisions 4, 6, 7 and 8 were changed while it was built, decision 11 was added, and each now says what the code does. What is left is in `agents/tasks.md`.
 
 ## The outcome wanted
 
