@@ -1870,6 +1870,7 @@ class AsyncVirtualFileSystem:
         ``observations``, and a ``row_cap`` that is neither ``None`` nor at least 1. The call takes
         one copy of the mount table when it starts, and the plan, the probes, the calls on the
         storages and the merge all read it, so a mount changed meanwhile changes only later calls.
+        A ``glob`` that finds the kernel closed before it settles calls no storage and is refused.
         """
         if not self._mounts:
             return self._closed_error(op)
@@ -1918,6 +1919,8 @@ class AsyncVirtualFileSystem:
             results = await gather_settled([*named_coros, *(coro for _, coro in branches)])
             named = results[: len(named_coros)]
             branch_results = list(zip((path for path, _ in branches), results[len(named_coros) :], strict=True))
+            if settle is not None and not self._mounts:
+                return self._closed_error(op)  # a close() landed while the storages answered
             named = named if settle is None else await settle(named, branch_results)
             merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
             if ranked is not None:
@@ -2014,8 +2017,8 @@ class AsyncVirtualFileSystem:
         returned past a filter the caller gave.
 
         :meth:`MountListing.matched <vfs.mounts.MountListing.matched>` judges the mount points at the
-        same time, and ``settle`` drops those whose own directory a storage refused to list. The whole
-        call reads ``listing``, the one copy of the mount table that :meth:`_route_fanout` took.
+        same time. ``settle`` drops those whose own directory a storage refused to list, and asks the
+        mounted roots of the rest. The whole call reads ``listing``, the copy :meth:`_route_fanout` took.
 
         A mount whose set of patterns comes out empty is not called, and no skip is recorded for it.
         That is a matter of where the patterns reach, and not of what the mount can do. A skip for a
@@ -2035,7 +2038,7 @@ class AsyncVirtualFileSystem:
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
         cap = cast("int | None", kwargs.get("max_count"))
         probes, unverifiable = self._root_probes(roots, gates, kind, columns, listing=listing, authority=authority)
-        points = listing.matched(self._call_storage, roots, filters, kind, columns, cap, authority=authority)
+        points = listing.matched(roots, filters, kind)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
             (
                 key,
@@ -2570,11 +2573,7 @@ class AsyncVirtualFileSystem:
         return ResolvedTerminal(mount=mount, rel=path.without_mount(mount.path))
 
     async def _probe_location(self, terminal: ResolvedTerminal, row: Location, authority: Authority) -> Location:
-        """Return ``row`` with the storage's answer about the path.
-
-        :meth:`MountListing.located <vfs.mounts.MountListing.located>` asks the storage, by the rule
-        ``stat`` applies, so ``locate`` and ``stat`` agree on a directory that lies above a mount point.
-        """
+        """Return ``row`` with what :meth:`MountListing.located <vfs.mounts.MountListing.located>` finds."""
         return await self._listing.located(self._call_storage, terminal.mount, terminal.rel, row, authority)
 
     def _locate_terminal(self, path: str) -> ResolvedTerminal:
