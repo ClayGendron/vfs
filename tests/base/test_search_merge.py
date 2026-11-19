@@ -4,6 +4,7 @@ truncation record, the explanation, and the stage seam on the instance."""
 
 from __future__ import annotations
 
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -11,12 +12,13 @@ import pytest_asyncio
 
 from tests.support.base_doubles import CannedStorage, RecorderStorage
 from vfs import chain as chain_module
+from vfs import deadline as deadline_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.chain import admit_rows_in_hand
 from vfs.models import Match, Observation
 from vfs.paths import Path
 from vfs.rerank import FANOUT_CAP, BM25Rerank, Candidate
-from vfs.results import ErrorKind, Result
+from vfs.results import ErrorKind, Result, ResultError
 from vfs.results.kinds import Severity
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -358,11 +360,13 @@ async def test_a_glob_that_cannot_be_parsed_is_refused_as_grep_refuses_it(channe
     assert low.calls == [] and high.calls == []
 
 
-async def test_a_closed_kernel_refuses_a_bad_glob_as_invalid() -> None:
+async def test_a_closed_kernel_is_unavailable_unless_a_glob_is_bad() -> None:
     root, _low, _high = await _two_mounts()
     await root.close()
     closed = await root.search("lease", observations=_held(), ext=("md",))
     assert [error.kind for error in closed.errors] == [ErrorKind.backend_unavailable]
+    not_rows = await root.search("lease", observations="abc", ext=("md",))  # ty: ignore[invalid-argument-type]
+    assert [error.kind for error in not_rows.errors] == [ErrorKind.backend_unavailable]
     bad = await root.search("lease", observations=_held(), globs=("{a",))
     assert [error.kind for error in bad.errors] == [ErrorKind.invalid]
 
@@ -395,11 +399,20 @@ async def test_a_filter_at_its_budget_drops_what_it_did_not_judge(monkeypatch: p
 
 
 async def test_an_extension_filter_reads_no_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    reads: list[float] = []
+
+    def clock() -> float:
+        reads.append(monotonic())
+        return reads[-1]
+
+    monkeypatch.setattr(deadline_module, "monotonic", clock)
     monkeypatch.setattr(chain_module, "WALL_TIME_BUDGET", -1.0)
     root, low, high = await _two_mounts()
     result = await root.search("lease", observations=_held(), ext=("md",))
-    assert result.errors == []
+    assert result.errors == [] and reads == []
     assert _sent(low) == [["/l1.md"]] and _sent(high) == [["/h2.md"]]
+    await root.search("lease", observations=_held(), globs=("*.md",))
+    assert reads != []
 
 
 async def test_an_unfinished_filter_searches_the_rows_it_admitted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -410,12 +423,18 @@ async def test_an_unfinished_filter_searches_the_rows_it_admitted(monkeypatch: p
         return [*first, *([None] * (len(rows) - 1))], False
 
     monkeypatch.setattr(chain_module, "judge_rows", partly)
-    root, low, high = await _two_mounts()
+    own = ResultError(kind=ErrorKind.truncated, message="the storage's own", severity=Severity.warning)
+    root = AsyncVirtualFileSystem()
+    low = _mount([_row("/l1", 0.2, "lease lease"), _row("/l2", 0.1, "nothing")], lexical_stats=STATS, errors=[own])
+    high = _mount([_row("/h2", 0.8, "a lease")], lexical_stats=STATS)
+    await root.add_mount(low, "/low")
+    await root.add_mount(high, "/high")
     held = _held("/low/l1.md", "/low/l3.md", "/high/h2.md")
     result = await root.search("lease", observations=held, globs=("*.md",), limit=3)
     assert _sent(low) == [["/l1.md"]] and _limits(low) == [3] and high.calls == []
     assert result.success is True and result.paths == ("/low/l1", "/low/l2")
-    [error] = result.errors
+    stored, error = result.errors
+    assert stored.message == "the storage's own"
     assert (error.kind, error.severity, error.message) == (ErrorKind.truncated, Severity.warning, TRUNCATED)
 
 
@@ -487,6 +506,18 @@ async def test_a_passing_directory_or_ghost_is_left_out_without_an_error() -> No
     result = await fs.search("alpha", observations=rows, globs_not=("*.txt",))
     assert result.success is True and result.errors == []
     assert result.paths == ("/dir/z.md",)
+    await fs.close()
+
+
+@pytest.mark.parametrize("directory", ["/data", "/"])
+async def test_a_passing_row_at_a_mount_point_or_the_root_fails_the_call(directory: str) -> None:
+    """The row reaches its storage as ``/``, which the storage refuses as a glob."""
+    fs = await _memory({"/x.md": "alpha root"})
+    await fs.add_mount(InMemoryStorage(), "/data")
+    assert (await fs.write(path="/data/a.md", content="alpha one")).success is True
+    rows = [Observation(path=Path(directory), kind="directory"), Observation(path=Path("/data/a.md"))]
+    result = await fs.search("alpha", observations=rows, ext_not=("txt",))
+    assert result.success is False and [error.kind for error in result.errors] == [ErrorKind.invalid]
     await fs.close()
 
 

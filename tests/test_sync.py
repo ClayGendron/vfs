@@ -661,6 +661,17 @@ def test_a_closed_sync_session_refuses_and_dispatches_nothing(op: Op) -> None:
     assert result == asyncio.run(the_async_refusal())
 
 
+def test_the_sync_face_and_a_session_filter_rows_in_hand() -> None:
+    # Mutant: a face that drops ext on its way to the router.
+    with VirtualFileSystem(storage=InMemoryStorage()) as fs:
+        for path in ("/a.md", "/b.txt"):
+            assert fs.write(path=path, content="a lantern").success is True
+        rows = list(fs.glob("/*").observations)
+        assert fs.search("lantern", observations=rows, ext=("md",)).paths == ("/a.md",)
+        with fs.open_session(ALICE) as s:
+            assert s.search("lantern", observations=rows, ext=("md",)).paths == ("/a.md",)
+
+
 def test_sync_closed_is_final() -> None:
     with VirtualFileSystem(storage=RecorderStorage()) as fs:
         s = fs.open_session(ALICE)
