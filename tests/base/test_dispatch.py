@@ -1775,7 +1775,7 @@ async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/full")
     await root.add_mount(ReadFamilyStorage(), "/thin")
-    plan = root._classify_fanout_scopes("glob", ())
+    plan = root._classify_fanout_scopes("glob", (), root._listing)
     assert plan.refusal is None
     assert set(plan.unscoped) == {Path("/"), Path("/full")}
     assert plan.scoped == {}
@@ -1787,7 +1787,7 @@ async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
 async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/a/b", parents=True)
-    plan = root._classify_fanout_scopes("glob", ("/a",))
+    plan = root._classify_fanout_scopes("glob", ("/a",), root._listing)
     assert plan.refusal is None
     binding, rels = plan.scoped[Path("/")]
     assert binding.path == "/" and rels == [Path("/a")]
@@ -1797,7 +1797,7 @@ async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
 async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m")
-    plan = root._classify_fanout_scopes("glob", ("/m/sub",))
+    plan = root._classify_fanout_scopes("glob", ("/m/sub",), root._listing)
     assert plan.refusal is None
     binding, rels = plan.scoped[Path("/m")]
     assert binding.path == "/m" and rels == [Path("/sub")]
@@ -1806,7 +1806,7 @@ async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
 
 async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
     root = AsyncVirtualFileSystem()
-    plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),))
+    plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),), root._listing)
     assert plan.refusal is not None
     assert plan.refusal.errors[0].kind is ErrorKind.invalid
     assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
@@ -1815,7 +1815,7 @@ async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
 async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(ReadFamilyStorage(), "/thin")
-    plan = root._classify_fanout_scopes("glob", ("/thin/sub",))
+    plan = root._classify_fanout_scopes("glob", ("/thin/sub",), root._listing)
     assert plan.refusal is not None
     assert plan.refusal.errors[0].kind is ErrorKind.unsupported
     assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
@@ -1824,7 +1824,7 @@ async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
 async def test_classify_dedups_skips_across_region_paths() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(ReadFamilyStorage(), "/a/thin", parents=True)
-    plan = root._classify_fanout_scopes("glob", ("/", "/a"))
+    plan = root._classify_fanout_scopes("glob", ("/", "/a"), root._listing)
     assert plan.refusal is None
     assert len(plan.skips) == 1
 
