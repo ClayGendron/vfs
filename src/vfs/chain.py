@@ -194,8 +194,11 @@ async def admit_rows_in_hand(
     The patterns arrive already expanded. Each row is judged by the path it carries, and the rows
     keep their order and their duplicates. With a pattern to judge, the filter runs within a time
     budget. A row it has not judged when the budget runs out is dropped, and one ``truncated``
-    warning is returned with the rows it kept. With no pattern, no clock is read.
+    warning is returned with the rows it kept. With no pattern, no clock is read. With no filter at
+    all, the rows come back as given and nothing is read from them.
     """
+    if not (globs or globs_not or ext or ext_not):
+        return rows, []
     gates = compile_gates(globs, globs_not, ext=ext, ext_not=ext_not)
     deadline = Deadline.after(WALL_TIME_BUDGET) if gates.has_patterns else Deadline.never()
     kept, completed = await judge_in_hand(gates, rows, deadline)

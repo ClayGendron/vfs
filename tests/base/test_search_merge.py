@@ -415,6 +415,22 @@ async def test_an_extension_filter_reads_no_clock(monkeypatch: pytest.MonkeyPatc
     assert reads != []
 
 
+async def test_no_filter_does_no_work_on_the_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    extensions: list[str] = []
+    real = chain_module.extract_extension
+
+    def counted(path: Any) -> Any:
+        extensions.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(chain_module, "extract_extension", counted)
+    judged = _count_judges(monkeypatch)
+    rows = [Observation(path=Path(f"/d{i % 100}/f{i % 5_000}.md")) for i in range(10_000)]
+    kept, records = await admit_rows_in_hand(rows, globs=(), globs_not=(), ext=(), ext_not=())
+    assert extensions == [] and judged == [] and records == []
+    assert kept == rows
+
+
 async def test_an_unfinished_filter_searches_the_rows_it_admitted(monkeypatch: pytest.MonkeyPatch) -> None:
     real = chain_module.judge_rows
 
