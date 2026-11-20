@@ -36,8 +36,8 @@ from vfs.storage.backends.database.engine import (
     EngineHost,
     _engine_kwargs,
     _install_sqlite_transaction_control,
-    _SerializedSession,
 )
+from vfs.storage.backends.database.oneconnection import SerializedSession
 from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
@@ -475,7 +475,7 @@ class TestSingleConnectionHost:
             async def __aexit__(self, *exc_info: object) -> None: ...
 
         lock = asyncio.Lock()
-        session = _SerializedSession(cast("AsyncSession", _ExplodingSession()), lock)
+        session = SerializedSession(cast("AsyncSession", _ExplodingSession()), lock)
         with pytest.raises(RuntimeError, match="enter failed"):
             async with session:
                 pass
