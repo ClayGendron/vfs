@@ -1,0 +1,18 @@
+Licences read by the coordinator on 2026-11-14 from each clone's licence file after the refresh. Copyleft and share-alike licences are studied only, nothing copied, as for every clone.
+numpy: LICENSE.txt: BSD-3-Clause
+fastapi: LICENSE: MIT
+polars: LICENSE: MIT
+cpython: LICENSE: Python Software Foundation License Version 2
+django: LICENSE: BSD-3-Clause
+pytest: LICENSE: MIT
+hypothesis: LICENSE.txt: MPL-2.0 (studied only)
+toga: LICENSE: BSD-3-Clause
+diataxis-documentation-framework: LICENSE.rst: CC BY-SA 4.0 (prose, studied only)
+sphinx-docs-starter-pack: LICENSE: GPL-3.0 (studied only)
+lxd: COPYING: AGPL-3.0 (studied only)
+pydantic: LICENSE: MIT
+textual: LICENSE: MIT
+griffe: LICENSE: ISC
+mkdocstrings-python: LICENSE: ISC
+zensical: LICENSE.md: MIT
+uv: LICENSE-APACHE, LICENSE-MIT: dual Apache-2.0 or MIT

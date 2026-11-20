@@ -1238,17 +1238,23 @@ async def test_the_answer_for_a_directory_above_a_mount_keeps_its_storage_envelo
 
 
 class Held(BindableStorage):
-    """A parent that lists ``/anchor`` and ``/site`` at its root, and can hold that listing until released."""
+    """A parent that lists ``/anchor`` and ``/site`` at its root, and can hold that listing until released.
+
+    ``as_it_starts`` runs as the held listing begins, before any other task has had a turn.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.hold = False
         self.started, self.release = asyncio.Event(), asyncio.Event()
+        self.as_it_starts: Callable[[], Awaitable[None]] | None = None
 
     async def _root(self, op: Op, path: Path | None) -> Result:
         if path != "/":
             return Result(ops=(op,))
         if self.hold:
+            if self.as_it_starts is not None:
+                await self.as_it_starts()
             self.started.set()
             await self.release.wait()
         rows = [Observation(path=name, kind="directory", version=17) for name in ("/anchor", "/site")]
@@ -1261,20 +1267,24 @@ class Held(BindableStorage):
         return await self._root("tree", path)
 
 
-async def held_listing(verb: str) -> tuple[AsyncVirtualFileSystem, Held, asyncio.Task[Result]]:
-    parent = Held()
+async def held_listing(
+    verb: str, *, closed_as_it_starts: bool = False
+) -> tuple[AsyncVirtualFileSystem, Held, RootedStorage, asyncio.Task[Result]]:
+    parent, anchor = Held(), RootedStorage()
     fs = AsyncVirtualFileSystem(storage=parent)
-    await fs.add_mount(RootedStorage(), "/anchor")
+    await fs.add_mount(anchor, "/anchor")
+    anchor.calls.clear()
     parent.hold = True
+    parent.as_it_starts = fs.close if closed_as_it_starts else None
     pending = asyncio.create_task(fs.ls("/") if verb == "ls" else fs.tree("/", max_depth=1))
     await asyncio.wait_for(parent.started.wait(), 5)
     parent.hold = False
-    return fs, parent, pending
+    return fs, parent, anchor, pending
 
 
 @pytest.mark.parametrize("verb", ["ls", "tree"])
 async def test_a_mount_added_while_a_listing_waits_leaves_that_listing_as_it_began(verb: str) -> None:
-    fs, parent, pending = await held_listing(verb)
+    fs, parent, _anchor, pending = await held_listing(verb)
     await fs.add_mount(RootedStorage(), "/site")
     parent.release.set()
     listed = ok(await asyncio.wait_for(pending, 5))
@@ -1282,12 +1292,14 @@ async def test_a_mount_added_while_a_listing_waits_leaves_that_listing_as_it_beg
 
 
 @pytest.mark.parametrize("verb", ["ls", "tree"])
-async def test_closing_the_kernel_while_a_listing_waits_leaves_that_listing_as_it_began(verb: str) -> None:
-    fs, parent, pending = await held_listing(verb)
-    await fs.close()
+async def test_a_kernel_closed_as_a_listing_starts_asks_no_mounted_storage(verb: str) -> None:
+    # A listing asks the parent and the mounted roots at the same time. The kernel is closed in the
+    # parent's first step, before any mounted root has had its turn.
+    _fs, parent, anchor, pending = await held_listing(verb, closed_as_it_starts=True)
     parent.release.set()
     listed = ok(await asyncio.wait_for(pending, 5))
-    # The mount is still listed as a mount. Its storage is not asked once the kernel is closed.
+    assert anchor.calls == []
+    # The mount is still listed as a mount.
     assert {(row.path, row.version) for row in listed.observations} == {("/anchor", None), ("/site", 17)}
     assert [(error.kind, error.severity) for error in listed.errors] == [
         (ErrorKind.backend_unavailable, Severity.warning)

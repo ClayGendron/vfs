@@ -1,0 +1,47 @@
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o color.o color.c
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o file.o file.c
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o filter.o filter.c
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o hash.o hash.c
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o html.o html.c
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o info.o info.c
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o json.o json.c
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o list.o list.c
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+1 warning generated.
+1 warning generated.
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o tree.o tree.c
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o unix.o unix.c
+1 warning generated.
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o util.o util.c
+1 warning generated.
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o xml.o xml.c
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+1 warning generated.
+1 warning generated.
+cc -ggdb -std=c11 -Wpedantic -Wall -Wextra -Wstrict-prototypes -Wshadow -Wconversion -Wdiscarded-qualifiers -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -c -o strverscmp.o strverscmp.c
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+1 warning generated.
+1 warning generated.
+warning: unknown warning option '-Wdiscarded-qualifiers'; did you mean '-Wignored-qualifiers'? [-Wunknown-warning-option]
+strverscmp.c:4:28: warning: invalid UTF-8 in comment [-Winvalid-utf8]
+    4 |    Contributed by Jean-Fran<E7>ois Bignolles <bignolle@ecoledoc.ibp.fr>, 1997.
+      |                            ^
+strverscmp.c:136:15: warning: implicit conversion changes signedness: 'const unsigned int' to 'int' [-Wsign-conversion]
+  136 |       state = next_state[state];
+      |             ~ ^~~~~~~~~~~~~~~~~
+3 warnings generated.
+cc  -o tree color.o file.o filter.o hash.o html.o info.o json.o list.o tree.o unix.o util.o xml.o strverscmp.o
+make -j4 CC=cc  0.52s user 0.71s system 129% cpu 0.948 total

@@ -1,0 +1,186 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded jaq v3.1.1
+  Installing jaq v3.1.1
+    Updating crates.io index
+     Locking 106 packages to latest compatible versions
+      Adding dirs v6.0.0 (available: v7.0.0)
+      Adding env_logger v0.10.2 (available: v0.11.11)
+      Adding rustyline v13.0.0 (available: v18.0.1)
+ Downloading crates ...
+  Downloaded arraydeque v0.5.1
+  Downloaded defmt-parser v1.1.0
+  Downloaded ciborium-io v0.2.2
+  Downloaded ciborium-ll v0.2.2
+  Downloaded cfg-if v1.0.5
+  Downloaded codesnake v0.3.0
+  Downloaded dyn-clone v1.0.20
+  Downloaded equivalent v1.0.3
+  Downloaded defmt-macros v1.2.0
+  Downloaded defmt v1.2.0
+  Downloaded find-msvc-tools v0.1.14
+  Downloaded env_logger v0.10.2
+  Downloaded bitflags v2.13.2
+  Downloaded cc v1.8.0
+  Downloaded jiff-static v0.2.38
+  Downloaded bstr v1.13.1
+  Downloaded jaq-all v0.3.0
+  Downloaded jaq-json v2.0.3
+  Downloaded hifijson v0.5.0
+  Downloaded jaq-std v3.0.3
+  Downloaded jiff-tzdb-platform v0.1.3
+  Downloaded jaq-core v3.1.1
+  Downloaded jaq-fmts v0.1.1
+  Downloaded jiff-tzdb v0.1.9
+  Downloaded indexmap v2.14.2
+  Downloaded jiff-core v0.1.1
+  Downloaded mimalloc v0.1.52
+  Downloaded log v0.4.34
+  Downloaded jiff v0.2.38
+  Downloaded libmimalloc-sys v0.1.49
+  Downloaded libc v0.2.190
+  Downloaded num-integer v0.1.47
+  Downloaded smallvec v1.16.3
+  Downloaded unicode-ident v1.0.27
+  Downloaded toml-span v0.7.2
+  Downloaded self_cell v1.3.0
+  Downloaded syn v3.0.9
+  Downloaded thiserror v2.0.21
+  Downloaded typed-arena v2.0.2
+  Downloaded regex-bites v0.1.6
+  Downloaded saphyr-parser v0.0.8
+  Downloaded rustyline v13.0.0
+  Downloaded rustix v1.1.5
+  Downloaded thiserror-impl v2.0.21
+  Downloaded zerocopy-derive v0.8.63
+  Downloaded xmlparser v0.13.6
+  Downloaded zerocopy v0.8.63
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling autocfg v1.5.1
+   Compiling cfg-if v1.0.5
+   Compiling memchr v2.8.3
+   Compiling libc v0.2.190
+   Compiling jiff-tzdb v0.1.9
+   Compiling zerocopy v0.8.63
+   Compiling libm v0.2.16
+   Compiling log v0.4.34
+   Compiling once_cell v1.21.4
+   Compiling jiff-tzdb-platform v0.1.3
+   Compiling regex-automata v0.4.18
+   Compiling jiff-core v0.1.1
+   Compiling thiserror v2.0.21
+   Compiling num-traits v0.2.19
+   Compiling find-msvc-tools v0.1.14
+   Compiling typed-arena v2.0.2
+   Compiling dyn-clone v1.0.20
+   Compiling shlex v2.0.1
+   Compiling jaq-core v3.1.1
+   Compiling cc v1.8.0
+   Compiling bstr v1.13.1
+   Compiling jiff v0.2.38
+   Compiling aho-corasick v1.1.5
+   Compiling hashbrown v0.17.1
+   Compiling base64 v0.22.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.9
+   Compiling urlencoding v2.1.3
+   Compiling regex-bites v0.1.6
+   Compiling equivalent v1.0.3
+   Compiling libmimalloc-sys v0.1.49
+   Compiling getrandom v0.4.3
+   Compiling indexmap v2.14.2
+   Compiling rustix v1.1.5
+   Compiling ciborium-io v0.2.2
+   Compiling self_cell v1.3.0
+   Compiling num-integer v0.1.47
+   Compiling smallvec v1.16.3
+   Compiling bitflags v2.13.2
+   Compiling num-bigint v0.4.8
+   Compiling hifijson v0.5.0
+   Compiling ryu v1.0.23
+   Compiling arraydeque v0.5.1
+   Compiling foldhash v0.1.5
+   Compiling bytes v1.12.1
+   Compiling toml-span v0.7.2
+   Compiling thiserror-impl v2.0.21
+   Compiling jaq-std v3.0.3
+   Compiling errno v0.3.14
+   Compiling option-ext v0.2.0
+   Compiling memmap2 v0.9.11
+   Compiling xmlparser v0.13.6
+warning: libmimalloc-sys@0.1.49: In file included from /Users/claygendron/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libmimalloc-sys-0.1.49/c_src/mimalloc/v3/src/static.c:16:
+warning: libmimalloc-sys@0.1.49: c_src/mimalloc/v3/include/mimalloc.h:539:10: fatal error: 'wchar.h' file not found
+warning: libmimalloc-sys@0.1.49:   539 | #include <wchar.h>  // wchar_t
+warning: libmimalloc-sys@0.1.49:       |          ^~~~~~~~~
+warning: libmimalloc-sys@0.1.49: 1 error generated.
+error: failed to run custom build command for `libmimalloc-sys v0.1.49`
+
+Caused by:
+  process didn't exit successfully: `/var/folders/_c/n40__q_16zs0cbn45nb3c_nw0000gn/T/cargo-installT8C9kJ/release/build/libmimalloc-sys-07f8fd60010836aa/build-script-build` (exit status: 1)
+  --- stdout
+  cargo:INCLUDE_DIR=/Users/claygendron/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libmimalloc-sys-0.1.49/c_src/mimalloc/v3/include
+  cargo:rerun-if-env-changed=CC_wasm32-wasip1
+  CC_wasm32-wasip1 = None
+  cargo:rerun-if-env-changed=CC_wasm32_wasip1
+  CC_wasm32_wasip1 = None
+  cargo:rerun-if-env-changed=TARGET_CC
+  TARGET_CC = None
+  cargo:rerun-if-env-changed=CC
+  CC = None
+  cargo:rerun-if-env-changed=WASI_SDK_PATH
+  WASI_SDK_PATH = None
+  cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+  cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+  CRATE_CC_NO_DEFAULTS = None
+  cargo:rerun-if-env-changed=WASI_SYSROOT
+  WASI_SYSROOT = None
+  cargo:rerun-if-env-changed=CFLAGS
+  CFLAGS = None
+  cargo:rerun-if-env-changed=TARGET_CFLAGS
+  TARGET_CFLAGS = None
+  cargo:rerun-if-env-changed=CFLAGS_wasm32_wasip1
+  CFLAGS_wasm32_wasip1 = None
+  cargo:rerun-if-env-changed=CFLAGS_wasm32-wasip1
+  CFLAGS_wasm32-wasip1 = None
+  cargo:rerun-if-env-changed=CC_FORCE_DISABLE
+  CC_FORCE_DISABLE = None
+  cargo:rerun-if-env-changed=CC_wasm32-wasip1
+  CC_wasm32-wasip1 = None
+  cargo:rerun-if-env-changed=CC_wasm32_wasip1
+  CC_wasm32_wasip1 = None
+  cargo:rerun-if-env-changed=TARGET_CC
+  TARGET_CC = None
+  cargo:rerun-if-env-changed=CC
+  CC = None
+  cargo:rerun-if-env-changed=WASI_SDK_PATH
+  WASI_SDK_PATH = None
+  cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+  CRATE_CC_NO_DEFAULTS = None
+  cargo:rerun-if-env-changed=WASI_SYSROOT
+  WASI_SYSROOT = None
+  cargo:rerun-if-env-changed=CFLAGS
+  CFLAGS = None
+  cargo:rerun-if-env-changed=TARGET_CFLAGS
+  TARGET_CFLAGS = None
+  cargo:rerun-if-env-changed=CFLAGS_wasm32_wasip1
+  CFLAGS_wasm32_wasip1 = None
+  cargo:rerun-if-env-changed=CFLAGS_wasm32-wasip1
+  CFLAGS_wasm32-wasip1 = None
+  cargo:warning=In file included from /Users/claygendron/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libmimalloc-sys-0.1.49/c_src/mimalloc/v3/src/static.c:16:
+  cargo:warning=c_src/mimalloc/v3/include/mimalloc.h:539:10: fatal error: 'wchar.h' file not found
+  cargo:warning=  539 | #include <wchar.h>  // wchar_t
+  cargo:warning=      |          ^~~~~~~~~
+  cargo:warning=1 error generated.
+
+  --- stderr
+
+
+  error occurred in cc-rs: command did not execute successfully (status code exit status: 1): "clang" "-O3" "-ffunction-sections" "-fdata-sections" "--target=wasm32-wasip1" "-I" "c_src/mimalloc/v3/include" "-I" "c_src/mimalloc/v3/src" "-Wall" "-Wextra" "-Wno-error=date-time" "-DMI_DEBUG=0" "-DMI_BUILD_RELEASE" "-DNDEBUG" "-o" "/var/folders/_c/n40__q_16zs0cbn45nb3c_nw0000gn/T/cargo-installT8C9kJ/wasm32-wasip1/release/build/libmimalloc-sys-010d7dd33e366782/out/b85de32113adef8e-static.o" "-c" "/Users/claygendron/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libmimalloc-sys-0.1.49/c_src/mimalloc/v3/src/static.c"
+
+
+warning: build failed, waiting for other jobs to finish...
+error: failed to compile `jaq v3.1.1`, intermediate artifacts can be found at `/var/folders/_c/n40__q_16zs0cbn45nb3c_nw0000gn/T/cargo-installT8C9kJ`.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
+exit=101
