@@ -152,3 +152,63 @@
 .docs-prose h4[data-api-member] {
   font-family: var(--font-mono);
 }
+
+/* What stands under a glossary term: a label column, then the names found for it, one to a row. */
+.docs-prose dl[data-term] {
+  border-top: var(--line-width) solid var(--border);
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  margin: 1.5rem 0 3rem;
+}
+
+.docs-prose dl[data-term] > :is(dt, dd) {
+  border-bottom: var(--line-width) solid var(--border);
+  margin: 0;
+  padding: 0.75rem 0;
+}
+
+.docs-prose dl[data-term] > dt {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding-top: 0.875rem;
+}
+
+.docs-prose dl[data-term] ul {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.docs-prose dl[data-term] li {
+  margin: 0;
+}
+
+/* Where a row's page sits in the site, under the name, and a row with nothing in it: both muted. */
+.docs-prose [data-term-where] {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: 0.8125rem;
+}
+
+.docs-prose [data-term-none] {
+  color: var(--muted-foreground);
+}
+
+/* On a phone the label sits above its rows. */
+@media (max-width: 40rem) {
+  .docs-prose dl[data-term] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docs-prose dl[data-term] > dt {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .docs-prose dl[data-term] > dd {
+    padding-top: 0.25rem;
+  }
+}

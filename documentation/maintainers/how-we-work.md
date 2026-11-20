@@ -1,6 +1,6 @@
 # How we work
 
-This page says how a person and a coding agent work together on vfs. It is a first draft, written on 2026-11-15, and it is revised at the end of every session.
+This page says how a person and a coding agent work together on VFS. It is a first draft, written on 2026-11-15, and it is revised at the end of every session.
 
 ## Before any work starts
 
@@ -75,7 +75,7 @@ Squashing is the common practice for short-lived branches: `dev` reads as one li
 
 `documentation/` holds everything durable. If something in a work directory must outlive the work, it is promoted to documentation, or it is lost.
 
-- It has six sections: Home, Tutorials, How-to Guides, Reference, Explanation and Maintainers. The first five are for people who use vfs. Maintainers is for people who change it: this page, the constitution, the standards and the roadmap. All six are published.
+- It has six sections: Home, Tutorials, How-to Guides, Reference, Explanation and Maintainers. The first five are for people who use VFS. Maintainers is for people who change it: this page, the constitution, the standards and the roadmap. All six are published.
 - Reference pages are generated from the code. Every other page is written by a person or under a person's guidance, and the person reviews each change as it is made. A page carries no record of who wrote it.
 - No directory under `documentation/` holds more than 16 children. A section that outgrows 16 is split.
 
