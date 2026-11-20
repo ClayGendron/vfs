@@ -9,7 +9,7 @@ keeps its write lock until the collector runs, which locks the next
 writer out.
 
 So each attempt runs in a task of its own, and a caller that is
-cancelled waits for its attempt to end before the cancellation is raised.
+cancelled waits for its attempt to end before its cancellation is raised.
 
 An attempt whose caller was cancelled is marked, and a marked attempt
 does not commit. It stops when it next releases a savepoint or reaches
@@ -17,6 +17,17 @@ its commit, and its transaction is rolled back. An attempt that is
 marked after its commit has begun has landed. A caller that is cancelled
 during a write therefore cannot know whether the write landed, and that
 is so on every engine.
+
+The refusal belongs to the sessions the host's own factory makes, which
+are ``AttemptSession``. A host that was handed its session factory makes
+no session of its own. When its database lives in memory its attempts
+still run out of reach, and nothing refuses their commit, so a write
+whose caller was cancelled there has landed.
+
+A task copies the context it is started in, so one started inside an
+attempt carries that attempt's mark for as long as it runs: a task that
+is to outlive its attempt is started outside it, as the statistics pass
+is, or sets the mark to ``None`` first.
 """
 
 from __future__ import annotations
@@ -60,10 +71,13 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
     Return what ``attempt`` returns, and raise what it raises. If the caller
     is cancelled while ``attempt`` runs, ``attempt`` is marked and runs on
     to its end. The caller goes on waiting, however many times it is
-    cancelled, and raises one ``CancelledError`` once ``attempt`` has ended.
+    cancelled. Once ``attempt`` has ended it raises the first of those
+    cancellations, the same ``CancelledError`` and not a new one, so a
+    canceller that knows its own cancellation by its message still does.
     What ``attempt`` returned or raised is then dropped.
     """
     mark = _Mark()
+    cancellation: asyncio.CancelledError | None = None
 
     async def marked() -> T:
         # Set here, in the attempt's own task: a task cannot set a variable in another's context.
@@ -74,13 +88,15 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
     while not task.done():
         try:
             await asyncio.wait({task})
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as raised:
             mark.cancelled = True
-    if not mark.cancelled:
+            cancellation = cancellation or raised
+    if cancellation is None:
         return task.result()
+    # Read what the dropped attempt raised, or the loop reports it as never retrieved.
     with suppress(asyncio.CancelledError, Exception):
         task.result()
-    raise asyncio.CancelledError
+    raise cancellation
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +118,11 @@ class AttemptSession(Session):
     to the database. SQLAlchemy asks before a commit and before the release
     of a savepoint, so a marked attempt stops at whichever comes first.
     """
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 @event.listens_for(AttemptSession, "before_commit")
