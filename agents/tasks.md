@@ -94,6 +94,10 @@ Each was shown by a script that ran, unless it says "read". The review records n
 - [ ] **A refusal in `update_mount` has an em dash in its message.** "Mount at … changed while it was being updated — retry".
 - [ ] **The docs export follows an alias of a type variable.** It now tells a type variable by what the value is, and it does not follow `T = U` or a renamed constructor.
 
+## Tests that fail on Python 3.11
+
+- [ ] **Three tests in `tests/storage/database/test_statistics.py` fail on Python 3.11, in CI and on a laptop.** `test_close_interrupts_a_running_pass_and_disposes` and `test_the_sync_facade_close_disposes_with_no_pending_task` find `copy.sqlite-wal` and `copy.sqlite-shm` left after `close()`, which says a connection was not closed. `test_two_writers_crossing_together_analyze_once` fails its last assertion. They pass on 3.12, 3.13 and 3.14. They failed on `main` on 2026-11-16, before the eight branches, and they fail on every pull request of 2026-11-20. Not diagnosed. `asyncio.wait_for` was rewritten in 3.12 and takes more turns of the loop on 3.11, which was the cause of a test failure of the same shape in `test_mount_listing.py`.
+
 ## Tests that fail now and then
 
 - [ ] **The Playwright test "a button that returns to the top shows once the reader scrolls back up".** It failed three times on 2026-11-19 while other work loaded the machine, and passed each time it was run again.
