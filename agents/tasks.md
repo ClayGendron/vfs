@@ -2,31 +2,14 @@
 
 The work that is outstanding, in one list. A task is removed from this file when it is done. Last updated on 2026-11-20.
 
-## Nine branches wait to land
+## One branch waits to land
 
-`research-logs-are-tracked` landed on 2026-11-20, as pull request 10. It tracks the 41 logs under `context/research/studies/` that the `*.log` ignore rule hid, so `test_links_resolve` passes on a fresh clone.
+Pull requests 10 to 18 landed on `dev` on 2026-11-20, and their branches are deleted.
 
-`ci-passes-on-every-leg` sits on `dev` alone, as pull request 18. It holds three fixes that kept every pull request red: a SQLite cursor whose statement fails is closed at once, the back-to-top test of the docs site waits for the page's scripts, and the hot-row storm gives each write two attempts. It is merged into each branch of the stack, so each pull request passes without it.
+`a-cancelled-call-leaves-its-storage-intact`, called branch 8 below, sits on `dev` and was pushed on 2026-11-20 for review. It holds the fix that leaves a SQLite storage whole after a cancelled call, in memory and in a file, and the glossary term Storage. It has no pull request.
 
-Seven branches are a stack, pushed on 2026-11-20, with pull requests 11 to 17 in the order of the table. Each sits on the one before it, so they reach `dev` in this order. The eighth sits on the seventh and is not pushed.
-
-| | Branch | What it holds |
-|---|---|---|
-| 1 | `glossary-rules` | The glossary and naming rules, and the fix of three dead links in an archived spec |
-| 2 | `public-names-follow-the-naming-rules` | The public names, who may change a mount, and the fixes from its review |
-| 3 | `a-mount-is-listed-as-a-directory-is` | What a listing shows at a mount point, and four rounds of fixes |
-| 4 | `the-working-agreement-covers-worktrees-codex-and-the-task-list` | Worktrees allowed, the handoff note replaced by this file, the Codex scripts and page |
-| 5 | `search-applies-its-file-filters-to-rows-in-hand` | The `search` filter fix and the fixes from its review |
-| 6 | `add-mount-takes-a-posture` | `add_mount(..., posture=...)`, the fixes from its review, and the new module `vfs.listing` |
-| 7 | `a-call-that-reaches-several-mounts-bounds-each-mount` | Two specs and a research memo, the review records, and this file. No code |
-| 8 | `a-cancelled-call-leaves-its-storage-intact` | A cancelled call leaves a SQLite storage whole, in memory and in a file. The glossary term Storage |
-
-Branches 2, 3, 5 and 6 were each reviewed by a reader that did not write them, and the records are beside each spec in `agents/`. Branches 1, 4 and 7 hold no source code. Checked on 2026-11-19 at commit `25d1f6e1`, the tip of branch 6: `scripts/ci.sh` passes to its end with 5,653 tests and coverage at 100%, `scripts/docs.sh check` passes, and the engine legs pass on Postgres (478), MariaDB (469, with 8 skipped) and Oracle (473). The listing rule on branch 3 has not had a full reading since its fourth round of fixes, only a check that the last two findings were closed.
-
-These tasks stand between the branches and `dev`.
-
-- [ ] **Merge pull request 18, then pull requests 11 to 17 in order.** Pull request 18 first keeps its three fixes out of the other diffs. Where a merge is a squash, `dev` is merged into the next branch of the stack and that branch is pushed, so that its pull request shows its own change alone. Each push needs approval of its own. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own.
-- [ ] **Review branch 8 and run the gate on it, then push it and open its pull request.** It was built in a guided session on 2026-11-20. No fresh reader has read it, `scripts/ci.sh` and `scripts/docs.sh check` have not run on its last commit, and no server engine leg has run on it.
+- [ ] **Review branch 8 and run the gate on it, then open its pull request.** It was built in a guided session on 2026-11-20. No fresh reader has read it. `scripts/ci.sh` and `scripts/docs.sh check` have not run on its last commit, and no server engine leg has run on it. Its own tests, the lint tests and the engine tests pass on Python 3.13 and 3.11.
+- [ ] **Read the listing rule once in full.** It landed as pull request 13. It has not had a full reading since its fourth round of fixes, only a check that the last two findings were closed.
 - [ ] **Run the SQL Server leg.** It could not run on the machine used on 2026-11-19. Every test failed before any statement was sent, because the ODBC driver could not load OpenSSL: `openssl@3` is installed by Homebrew and is not linked, so `/opt/homebrew/lib/libssl.3.dylib` does not exist. `brew link openssl@3` is the usual cure. It changes the machine, so it was not run.
 - [ ] **Run the engine legs once on fresh containers.** The procedure recreates the containers before each run. On 2026-11-19 the legs ran against containers that had been up for three days, because taking them down was not permitted in that session.
 
