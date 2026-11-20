@@ -12,6 +12,7 @@ cancelled while it is held.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -19,10 +20,11 @@ import aiosqlite.core
 import pytest
 from sqlalchemy import event
 
-from vfs import AsyncVirtualFileSystem, Authority, InMemoryStorage
+from vfs import AsyncVirtualFileSystem, Authority, DatabaseStorage, InMemoryStorage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+    from pathlib import Path
 
 
 class HeldRoundTrip:
@@ -44,6 +46,11 @@ class HeldRoundTrip:
     def let_go(self) -> None:
         self.chosen = None
         self._let_go.set()
+
+    def again(self) -> None:
+        """Make ready to hold one more round trip, of a call that has not started."""
+        self.reached, self._let_go = asyncio.Event(), threading.Event()
+        self.seen.clear()
 
     def since(self, prefix: str) -> list[str]:
         """The round trips from the last one that starts with *prefix*, or none when there is no such one."""
@@ -120,6 +127,60 @@ def reads_entries(round_trip: str) -> bool:
 
 def starts_with(prefix: str) -> Callable[[str], bool]:
     return lambda round_trip: round_trip.startswith(prefix)
+
+
+def number(index: int) -> Callable[[str], bool]:
+    """Pick the round trip that is *index* places after the first one asked about."""
+    asked = itertools.count()
+    return lambda _round_trip: next(asked) == index
+
+
+async def kernel_holding_a_file(storage: DatabaseStorage) -> AsyncVirtualFileSystem:
+    """A kernel that holds ``/a.txt``, with the statistics pass of that write over, so a call runs alone."""
+    kernel = AsyncVirtualFileSystem(storage=storage, default_authority=Authority.system())
+    assert (await kernel.write(path="/a.txt", content="old")).success
+    await storage._host.settle_statistics()
+    return kernel
+
+
+class Connections:
+    """The connections a storage's pool opened and threw away, from the moment this is made."""
+
+    def __init__(self, storage: DatabaseStorage) -> None:
+        self.opened: list[object] = []
+        self.invalidated: list[object] = []
+        engine = storage._host.engine.sync_engine
+        event.listen(engine, "connect", lambda connection, _record: self.opened.append(connection))
+        event.listen(engine, "invalidate", lambda connection, _record, _exception: self.invalidated.append(connection))
+
+
+CALLS: dict[str, Callable[[AsyncVirtualFileSystem], Awaitable[Any]]] = {
+    "stat": lambda kernel: kernel.stat("/"),
+    "read": lambda kernel: kernel.read("/a.txt"),
+    "write": lambda kernel: kernel.write(path="/a.txt", content="new"),
+}
+
+
+async def round_trips_of(call: str, storage: DatabaseStorage, round_trip: HeldRoundTrip) -> list[str]:
+    """The driver round trips of one *call* that nothing cancels, in order."""
+    kernel = await kernel_holding_a_file(storage)
+    round_trip.again()
+    await CALLS[call](kernel)
+    names = list(round_trip.seen)
+    await kernel.close()
+    return names
+
+
+async def content_and_version(kernel: AsyncVirtualFileSystem) -> tuple[str | None, int | None]:
+    read = await kernel.read("/a.txt")
+    assert read.success, read.errors
+    return read.one().content, (await kernel.stat("/a.txt")).one().version
+
+
+async def another_file_can_be_written(kernel: AsyncVirtualFileSystem) -> None:
+    assert (await kernel.write(path="/b.txt", content="more")).success
+    assert (await kernel.read("/b.txt")).one().content == "more"
+    assert sorted(str(row.path) for row in (await kernel.ls("/")).observations) == ["/a.txt", "/b.txt"]
 
 
 class TestACancelledRead:
@@ -202,6 +263,84 @@ class TestACancelledWrite:
         assert "execute BEGIN IMMEDIATE" not in round_trip.seen
         assert not round_trip.since("execute UPDATE vfs_entries")
         assert (await fs.read("/a.txt")).one().content == "old"
+
+
+@pytest.mark.slow
+class TestACallCancelledAtEveryRoundTrip:
+    """Each call is traced once, and then cancelled at each round trip that was traced."""
+
+    @pytest.mark.parametrize("call", ["stat", "read", "write"])
+    async def test_an_in_memory_storage_keeps_its_rows_and_its_one_connection(
+        self, round_trip: HeldRoundTrip, call: str
+    ) -> None:
+        names = await round_trips_of(call, InMemoryStorage(), round_trip)
+        commit = names.index("commit") if call == "write" else len(names)
+        assert names.count("commit") == (1 if call == "write" else 0)
+        for cut in range(len(names)):
+            storage = InMemoryStorage()
+            kernel = await kernel_holding_a_file(storage)
+            try:
+                connections = Connections(storage)
+                round_trip.again()
+                round_trip.hold(number(cut))
+                await cancel_while_held(CALLS[call](kernel), round_trip)
+                where = f"{call} cancelled at round trip {cut}, {names[cut]!r}"
+                assert (connections.opened, connections.invalidated) == ([], []), where
+                assert await content_and_version(kernel) == (("old", 1) if cut < commit else ("new", 2)), where
+                await another_file_can_be_written(kernel)
+            finally:
+                round_trip.let_go()
+                await kernel.close()
+
+    async def test_a_write_on_a_database_in_a_file_gives_the_same_two_answers(
+        self, round_trip: HeldRoundTrip, tmp_path: Path
+    ) -> None:
+        def a_file(name: str) -> DatabaseStorage:
+            return DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path / name}.sqlite")
+
+        names = await round_trips_of("write", a_file("traced"), round_trip)
+        commit = names.index("commit")
+        assert names.count("commit") == 1
+        for cut in range(len(names)):
+            storage = a_file(f"cut{cut}")
+            kernel = await kernel_holding_a_file(storage)
+            try:
+                connections = Connections(storage)
+                round_trip.again()
+                round_trip.hold(number(cut))
+                await cancel_while_held(CALLS["write"](kernel), round_trip)
+                where = f"write cancelled at round trip {cut}, {names[cut]!r}"
+                assert await content_and_version(kernel) == (("old", 1) if cut < commit else ("new", 2)), where
+                # A file outlives its connections, so a cancelled call may cost the one it was using.
+                assert len(connections.invalidated) <= 1, where
+            finally:
+                round_trip.let_go()
+                await kernel.close()
+
+
+class TestACallerThatDoesNotWait:
+    async def test_a_storage_lists_every_file_after_a_time_limit_around_a_call_ran_out(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+    ) -> None:
+        round_trip.hold(reads_entries)
+        # The round trip is held until the second timer, so the limit always runs out first.
+        asyncio.get_running_loop().call_later(0.05, round_trip.let_go)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(fs.stat("/"), timeout=0.01)
+        assert [str(row.path) for row in (await fs.ls("/")).observations] == ["/a.txt"]
+
+    async def test_a_read_that_is_cancelled_and_not_awaited_leaves_the_next_write_working(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+    ) -> None:
+        round_trip.hold(reads_entries)
+        abandoned = asyncio.ensure_future(fs.read("/a.txt"))
+        await round_trip.reached.wait()
+        abandoned.cancel()
+        round_trip.let_go()
+        assert (await fs.write(path="/b.txt", content="more")).success
+        assert sorted(str(row.path) for row in (await fs.ls("/")).observations) == ["/a.txt", "/b.txt"]
+        with pytest.raises(asyncio.CancelledError):
+            await abandoned
 
 
 class TestTheCallerWaitsForItsAttempt:

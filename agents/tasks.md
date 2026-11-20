@@ -45,6 +45,8 @@ Each was shown by a script that ran, unless it says "read". The review records n
 
 - [ ] **Cancelling a call inside a statement destroys an in-memory storage.** After one cancelled `stat`, the next read fails with `no such table` and the next write starts an empty database. On a file database a cancelled write can land while its caller is told it was cancelled. The cause is found and a fix is specified, in `spec-a-cancelled-call-leaves-its-storage-intact.md`. It is the first landing of the time limit, and it stands alone.
 
+- [ ] **On a database in a file, a write cancelled inside one of its own `SELECT` statements can leave the next write refused.** Found on 2026-11-20 by cancelling a write at each of its 81 driver round trips. At 3 of the 81, each a `SELECT` inside the write's transaction, the next write to the same storage failed with `conflict`, "kept losing to concurrent changes", after its four attempts. It succeeded once `gc.collect()` had run. No row was lost and the content was right at all 81. Reasoned and not traced in SQLite: the connection is thrown away with a cursor still open, SQLite keeps it and its write lock until Python collects the cursor, and a second writer is locked out until then. The fix for an in-memory database does not cover a file. Running each attempt out of reach of the cancellation on every SQLite database would, at the cost that a cancelled read runs its remaining statements before its caller is back.
+
 ### Changing a mount
 
 - [ ] **`remove_mount` deletes the mount-point directory after the mount lock is released.** An `add_mount` at the same path that runs between the two can end with a live mount on a deleted directory.
