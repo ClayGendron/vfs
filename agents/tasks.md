@@ -2,9 +2,11 @@
 
 The work that is outstanding, in one list. A task is removed from this file when it is done. Last updated on 2026-11-20.
 
-## Eight branches wait to land
+## Nine branches wait to land
 
 `research-logs-are-tracked` landed on 2026-11-20, as pull request 10. It tracks the 41 logs under `context/research/studies/` that the `*.log` ignore rule hid, so `test_links_resolve` passes on a fresh clone.
+
+`ci-passes-on-every-leg` sits on `dev` alone, as pull request 18. It holds three fixes that kept every pull request red: a SQLite cursor whose statement fails is closed at once, the back-to-top test of the docs site waits for the page's scripts, and the hot-row storm gives each write two attempts. It is merged into each branch of the stack, so each pull request passes without it.
 
 Seven branches are a stack, pushed on 2026-11-20, with pull requests 11 to 17 in the order of the table. Each sits on the one before it, so they reach `dev` in this order. The eighth sits on the seventh and is not pushed.
 
@@ -23,7 +25,7 @@ Branches 2, 3, 5 and 6 were each reviewed by a reader that did not write them, a
 
 These tasks stand between the branches and `dev`.
 
-- [ ] **Merge pull requests 11 to 17 in order.** Where a merge is a squash, `dev` is merged into the next branch of the stack and that branch is pushed, so that its pull request shows its own change alone. Each push needs approval of its own. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own. The fix of a test that failed on Python 3.11 is on branch 3 and reaches branches 4 to 6 as the branches below them land.
+- [ ] **Merge pull request 18, then pull requests 11 to 17 in order.** Pull request 18 first keeps its three fixes out of the other diffs. Where a merge is a squash, `dev` is merged into the next branch of the stack and that branch is pushed, so that its pull request shows its own change alone. Each push needs approval of its own. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own.
 - [ ] **Review branch 8 and run the gate on it, then push it and open its pull request.** It was built in a guided session on 2026-11-20. No fresh reader has read it, `scripts/ci.sh` and `scripts/docs.sh check` have not run on its last commit, and no server engine leg has run on it.
 - [ ] **Run the SQL Server leg.** It could not run on the machine used on 2026-11-19. Every test failed before any statement was sent, because the ODBC driver could not load OpenSSL: `openssl@3` is installed by Homebrew and is not linked, so `/opt/homebrew/lib/libssl.3.dylib` does not exist. `brew link openssl@3` is the usual cure. It changes the machine, so it was not run.
 - [ ] **Run the engine legs once on fresh containers.** The procedure recreates the containers before each run. On 2026-11-19 the legs ran against containers that had been up for three days, because taking them down was not permitted in that session.
@@ -45,6 +47,7 @@ Each was shown by a script that ran, unless it says "read". The review records n
 Branch 8 fixes the two defects that were here, for every SQLite storage VFS opens from a URL. These are what it leaves.
 
 - [ ] **A storage that is handed a session factory over SQLite is not fully covered.** Over an in-memory database, a cancelled write always lands, because the refusal at the commit sits on a session class the storage's own factory makes. Over a database in a file, a call is not run out of reach at all, so a write cancelled inside one of its own `SELECT` statements can leave the next write refused with `conflict` until Python's collector runs, as 3 of 81 cuts did before the fix. Read, and not run on a borrowed factory.
+- [ ] **A storage that is handed a session factory over SQLite keeps the open cursor of a failed statement, on Python 3.11.** VFS opens its own SQLite connections as `ClosingConnection`, which closes such a cursor at the failure. A borrowed engine opens its own connections. On Python 3.11 its closed database then keeps its `-wal` and `-shm` files until the collector runs, and the event loop can stop for the five seconds a connection waits for another writer. Read, and not run on a borrowed factory. The builder of the engine can pass `connect_args={"factory": ClosingConnection}`.
 - [ ] **A cancelled read on SQLite runs its remaining statements before its caller is back.** Before the fix it stopped after the statement in flight. A read has no commit to refuse, so the mark does not stop it.
 - [ ] **Cancellation is not run on a server engine.** What a cancelled write has done on Postgres, MariaDB, SQL Server and Oracle is read in driver source. Whether a connection thrown away there can hold a lock, as on a SQLite file, is not known.
 - [ ] **What the statistics pass's interrupt does at `close()` is not run against the fix.**
@@ -98,12 +101,8 @@ Branch 8 fixes the two defects that were here, for every SQLite storage VFS open
 - [ ] **A refusal in `update_mount` has an em dash in its message.** "Mount at … changed while it was being updated — retry".
 - [ ] **The docs export follows an alias of a type variable.** It now tells a type variable by what the value is, and it does not follow `T = U` or a renamed constructor.
 
-## Tests that fail on Python 3.11
-
-- [ ] **Three tests in `tests/storage/database/test_statistics.py` fail on Python 3.11, in CI and on a laptop.** `test_close_interrupts_a_running_pass_and_disposes` and `test_the_sync_facade_close_disposes_with_no_pending_task` find `copy.sqlite-wal` and `copy.sqlite-shm` left after `close()`, which says a connection was not closed. `test_two_writers_crossing_together_analyze_once` fails its last assertion. They pass on 3.12, 3.13 and 3.14. They failed on `main` on 2026-11-16, before the eight branches, and they fail on every pull request of 2026-11-20. Not diagnosed. `asyncio.wait_for` was rewritten in 3.12 and takes more turns of the loop on 3.11, which was the cause of a test failure of the same shape in `test_mount_listing.py`.
-
 ## Tests that fail now and then
 
-- [ ] **The Playwright test "a button that returns to the top shows once the reader scrolls back up".** It failed three times on 2026-11-19 while other work loaded the machine, and passed each time it was run again.
-- [ ] **Three database storage tests fail under load and pass alone.** `test_two_writers_crossing_together_analyze_once` in `test_statistics.py`, and `test_every_scope_statement_fits_the_budget` and `test_contract_scale_pattern_batch_chunks_within_budget[10k]` in `test_reads.py`. Seen three times on 2026-11-19, each time while other suites or the engine legs shared the machine. The two in `test_reads.py` returned no row where one was expected, which is what a `glob` gives when its stage reaches its time budget. A test that can fail on a slow machine is a test of the clock, which the working agreement forbids. `scripts/ci.sh` passes when it runs alone.
+- [ ] **Four database storage tests fail under load and pass alone.** `test_two_writers_crossing_together_analyze_once` in `test_statistics.py`, `test_every_scope_statement_fits_the_budget` and `test_contract_scale_pattern_batch_chunks_within_budget[10k]` in `test_reads.py`, and `test_scope_channel_searches_as_composition[composed]` in the storage contract. Seen three times on 2026-11-19 and once on 2026-11-20, each time while other work shared the machine. On 2026-11-20 the load was 34 on 10 cores and the suite took ten minutes in place of four. The two-writers test needs a write of 30,000 files to end inside the 20 seconds its rival waits for the lock, over four attempts of five seconds. The two in `test_reads.py` returned no row where one was expected, which is what a `glob` gives when its stage reaches its time budget. The cause of the fourth was not found. A test that can fail on a slow machine is a test of the clock, which the working agreement forbids. `scripts/ci.sh` passes when it runs alone.
+- [ ] **Other tests of the docs site may act before the page's scripts have started.** The back-to-top test did, and now waits for the theme toggle to say it is ready. The drawer test on a phone and the test that the menu for scripts off is gone both need scripts and do not wait. Neither has been seen to fail.
 - [ ] **`scripts/docs.sh check` fails to start when port 4173 is in use.** Seen once.
