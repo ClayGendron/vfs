@@ -88,6 +88,7 @@ Each was shown by a script that ran, unless it says "read". The review records n
 ## Words and names
 
 - [ ] **The docstrings of 16 source files follow the docstring rules.** About 265 of 311 break a rule in `documentation/maintainers/how-we-write-docstrings.md`, and about 170 public members have none. The largest files are `rights.py`, `paths.py`, `backend.py`, `labels.py`, `ranking.py` and `sync.py`. The words "router", "bind path", "bind point" and "bind site" remain in them, and in `fanout.py` and `pattern_matching/glob.py`.
+- [ ] **"Storage backend" gives way to the term Storage.** Storage is a glossary term since 2026-11-20, with `StorageBackend` as its type. Eleven places in four pages under `documentation/` still say "storage backend" and link nothing, and nine docstrings under `src/vfs/` say it with no `:term:` marker. The example line in `how-we-document.md` is one of the eleven.
 - [ ] **Seven words used in docstrings get a glossary entry.** They are gate, capability, permission map, posture, authority, trash view and mount point.
 - [ ] **Two test names overclaim or use an old word.** `test_update_mount_is_refused_where_removing_and_adding_the_mount_would_be` claims more than `update_mount` does. `test_unmount_and_remount_pass_under_a_rule_beneath_the_site` keeps "remount", because documents under `context/` cite it by name.
 - [ ] **A refusal in `update_mount` has an em dash in its message.** "Mount at … changed while it was being updated — retry".
