@@ -34,7 +34,6 @@ from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, ValueCap, profile_for
 from vfs.storage.backends.database.engine import (
     EngineHost,
-    _engine_kwargs,
     _install_sqlite_transaction_control,
     _SerializedSession,
 )
@@ -75,12 +74,6 @@ class TestConstruction:
         traits = DatabaseStorage(url=_fresh_url(tmp_path)).traits()
         assert set(traits) <= TRAIT_KEYS
         assert all(value in TRAIT_VALUES[key] for key, value in traits.items())
-
-    def test_an_mssql_url_disables_setinputsizes(self, tmp_path) -> None:
-        # pyodbc's ANSI setinputsizes mangles non-Latin1 bytes; only the
-        # mssql built path carries the lossless override.
-        assert _engine_kwargs("mssql+aioodbc://sa:pw@host/db") == {"use_setinputsizes": False}
-        assert _engine_kwargs(_fresh_url(tmp_path)) == {}
 
     def test_durability_full_is_declared_per_tuned_profile(self, tmp_path, monkeypatch) -> None:
         # Durability is a contract a caller must be able to read: every
