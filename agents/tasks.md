@@ -1,10 +1,14 @@
 # Tasks
 
-The work that is outstanding, in one list. A task is removed from this file when it is done. Last updated on 2026-11-19.
+The work that is outstanding, in one list. A task is removed from this file when it is done. Last updated on 2026-11-20.
 
-## Seven branches wait to land
+## Eight branches wait to land
 
-None is pushed and none has a pull request. Each sits on the one before it, so they reach `dev` in this order.
+None is pushed and none has a pull request.
+
+One branch stands apart and lands first: `research-logs-are-tracked`, cut from `dev`. It excepts `context/research/studies/` from the `*.log` ignore rule and adds the 41 logs that rule hid, so `test_links_resolve` passes on a fresh clone. It also carries the dead-link fix of branch 1, so that the test passes on it alone. It is merged into branch 7.
+
+The other seven are a stack. Each sits on the one before it, so they reach `dev` in this order.
 
 | | Branch | What it holds |
 |---|---|---|
@@ -20,10 +24,10 @@ Branches 2, 3, 5 and 6 were each reviewed by a reader that did not write them, a
 
 These tasks stand between the branches and `dev`.
 
-- [ ] **Push each branch and open its pull request to `dev`.** Each push needs approval of its own. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own.
+- [ ] **Push each branch and open its pull request to `dev`.** Each push needs approval of its own. `research-logs-are-tracked` goes first, and `dev` is merged into the next branch of the stack after each merge, so that each pull request shows its own change alone. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own.
 - [ ] **Run the SQL Server leg.** It could not run on the machine used on 2026-11-19. Every test failed before any statement was sent, because the ODBC driver could not load OpenSSL: `openssl@3` is installed by Homebrew and is not linked, so `/opt/homebrew/lib/libssl.3.dylib` does not exist. `brew link openssl@3` is the usual cure. It changes the machine, so it was not run.
 - [ ] **Run the engine legs once on fresh containers.** The procedure recreates the containers before each run. On 2026-11-19 the legs ran against containers that had been up for three days, because taking them down was not permitted in that session.
-- [ ] **Make `test_links_resolve` pass on a fresh clone.** Thirteen `.log` files that research memos link to are hidden by `.gitignore` and are in no commit, in the studies of 2026-11-09 (two) and 2026-11-14 (one). The test passes only where those files happen to be on disk. Either they are added with `git add -f`, as the logs of fifteen other studies were, or the links are dropped. Two of the thirteen hold home-directory paths.
+- [ ] **Decide whether five logs are pushed as they are.** They hold a home-directory path, which shows an account name: the three `jaq-install` logs of the 2026-10-15 study and `run-a` and `run-e` of the 2026-11-14 study. They are committed on `research-logs-are-tracked` and are not pushed. No log holds a key or a token, by a search for the usual shapes.
 
 ## Decisions waiting
 
