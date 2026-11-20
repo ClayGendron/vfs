@@ -1,0 +1,6 @@
+tantivy: MIT (LICENSE, "Copyright (c) 2018 by the project authors", MIT permission text)
+lucene: Apache License 2.0 (LICENSE.txt; the file also carries third-party notices for bundled Snowball, Morfologik and lz4 code)
+bm25s: MIT (LICENSE, "Copyright (c) 2024 Xing Han Lu")
+zoekt: Apache License 2.0 (LICENSE)
+pg_textsearch: The PostgreSQL License (LICENSE)
+postgres: The PostgreSQL License (COPYRIGHT, "Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group")

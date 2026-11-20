@@ -1,0 +1,11 @@
+Licences read from each clone studied for 01-prior-art.md (read from the clone's LICENSE/COPYRIGHT file as found on 2026-10-31; nothing copied):
+postgres b128e75 — PostgreSQL licence (COPYRIGHT)
+lucene 4eb488d — Apache-2.0
+tantivy d5e2842 — MIT
+sqlite 3d17c3f — public domain (LICENSE.md)
+pg_textsearch 710976a — PostgreSQL licence
+paradedb 0282cc5 — AGPL-3.0
+VectorChord-bm25 14fc2a3 — AGPL-3.0 / ELv2 dual
+zoekt a920600 — Apache-2.0
+pgvector 70fb225 — PostgreSQL licence
+sqlite-vec 04d28bd — MIT / Apache-2.0 dual

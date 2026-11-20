@@ -1,0 +1,4 @@
+Build started
+No issues found
+Build finished in 0.80s
+uvx --from 'zensical==0.1.1' --with 'mkdocstrings[python]>=1.0' zensical buil  0.85s user 0.29s system 111% cpu 1.014 total
