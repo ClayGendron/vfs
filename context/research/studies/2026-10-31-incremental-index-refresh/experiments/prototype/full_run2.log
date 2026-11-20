@@ -1,0 +1,14 @@
+== exp2 rerun
+K 0 done
+K 1 done
+K 4 done
+K 12 done
+K 48 done
+uv run python $P/exp2_read.py 100000 --reuse  52.63s user 0.57s system 40% cpu 2:12.73 total
+== exp3 rerun
+{"sources": [1, 2, 3, 4, 5, 6], "target": 100, "tombstones": 0, "rows_in": 179502, "bytes_in": 13425774, "rows_out": 32290, "bytes_out": 11578016, "pairs_dropped": 0, "decode_s": 1.880786168461782, "union_s": 1.0921578830457292, "encode_s": 1.5106316680612508, "insert_s": 0.1066563339845743, "total_s": 4.9849751250003465}
+{"sources": [1, 2, 3, 4, 5, 6], "target": 101, "tombstones": 600, "rows_in": 179502, "bytes_in": 13425774, "rows_out": 32212, "bytes_out": 9440039, "pairs_dropped": 1781141, "decode_s": 1.7181568932137452, "union_s": 1.2702200221538078, "encode_s": 1.1072998659510631, "insert_s": 0.06746758395456709, "total_s": 4.552855374990031}
+tier segments [200, 201, 202, 210, 43, 44, 45, 46, 47, 48]
+K 10 done
+uv run python $P/exp3_merge.py  40.60s user 1.85s system 62% cpu 1:07.57 total
+ALLDONE2
