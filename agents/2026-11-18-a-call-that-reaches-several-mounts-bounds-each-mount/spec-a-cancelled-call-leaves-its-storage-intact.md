@@ -4,6 +4,18 @@ This is the second draft, and it is not built. A fresh reader read it on 2026-11
 
 It is the first landing of the work in `spec.md` in this directory, and it stands alone: the defect is in the kernel as it is, with or without that design. The experiments are in `research.md`, sections 3.4 and 3.5.
 
+## What was built, and where it differs
+
+Built on 2026-11-20, on the branch `a-cancelled-call-leaves-its-storage-intact`. The text below this section is the spec as it was read, and it is not rewritten. The build differs from it in five ways.
+
+- **Decision 7 is changed: a database in a file is covered too.** The fix applies to every SQLite database that VFS opens from a URL. The build cancelled a write on a database in a file at each of its 81 driver round trips. No row was lost at any. At 3 of the 81, each a `SELECT` inside the write's transaction, the next write was refused with `conflict` after its four attempts, and it succeeded once `gc.collect()` had run. The experiment this spec rests on had checked the rows after each cut and had not tried the next write. With the fix, the next write works after every cut of a `stat`, a `read` and a `write`, in memory and in a file, and no connection is thrown away.
+- **A storage that is handed a session factory is as this spec left it.** It is run out of reach when its database is in memory, with no refusal at the commit, so a cancelled write there always lands. It is not run out of reach when its database is a file.
+- **First touch is covered from its first run** on a storage VFS opened from a URL, because the dialect is known from the URL. "Left as it is" says otherwise for the first first touch.
+- **"Unit of work" is "attempt" in the code,** the word `with_retry` already used for it.
+- **The module of decision 8 is two.** `attempts.py` holds the task, the mark and the refusal, which a database in a file needs too. `oneconnection.py` holds the serialized sessions and the re-arm.
+
+The tests are `tests/storage/test_cancelled_call.py`. No server engine was run.
+
 ## The outcome wanted
 
 A caller may cancel any call at any moment. Afterwards the storage holds every row it held, the call's own change is there whole or not at all, and the next call works. A cancelled write means the same thing on the in-memory storage as on a database in a file.

@@ -76,6 +76,7 @@ from vfs.models import encoded_at_creation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
+from vfs.storage.backends.database.attempts import AttemptSession, run_out_of_reach
 from vfs.storage.backends.database.dialects import (
     SQLITE_VEC_PROBE,
     DialectProfile,
@@ -91,12 +92,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.oneconnection import (
-    OneConnectionSession,
-    SerializedSessions,
-    rearm_on_fresh_connection,
-    run_out_of_reach,
-)
+from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
 
@@ -219,6 +215,8 @@ class EngineHost:
         self.value_cap: ValueCap | None = None
         self._engine: AsyncEngine | None
         self.session_factory: Callable[[], AsyncSession]
+        # Whether each attempt runs in a task of its own; a borrowed host learns it at first touch.
+        self._out_of_reach = False
         if session_factory is not None:
             self._engine = None
             self.session_factory = session_factory
@@ -226,10 +224,13 @@ class EngineHost:
             engine = create_async_engine(str(url), **_engine_kwargs(str(url)))
             self._engine = engine
             factory = async_sessionmaker(engine, expire_on_commit=False)
+            # A caller that is cancelled is never cut off inside a SQLite connection.
+            if engine.dialect.name == "sqlite":
+                self._out_of_reach = True
+                factory.configure(sync_session_class=AttemptSession)
             # One shared DBAPI connection cannot overlap transactions: ops
             # serialize, and a re-minted connection re-arms first touch.
             if isinstance(engine.sync_engine.pool, StaticPool):
-                factory.configure(sync_session_class=OneConnectionSession)
                 self.session_factory = SerializedSessions(factory)
                 rearm_on_fresh_connection(engine.sync_engine, self._rearm)
             else:
@@ -373,15 +374,16 @@ class EngineHost:
         do not retry in lockstep and collide again; the base delay bounds
         the longest wait the same as an unjittered schedule would.
 
-        On a database that lives in memory, a caller that is cancelled waits
-        for the attempt in hand to end, and the cancellation is raised then.
-        The database lives in its one connection, and a cancellation that
-        reached that connection would close it.
+        On a SQLite database this host opened, and on any database that lives
+        in memory, a caller that is cancelled waits for the attempt in hand
+        to end, and the cancellation is raised then. A cancellation that
+        reached the connection would close an in-memory database, and could
+        leave a database in a file locked against its next writer.
         """
         step = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):
             try:
-                return await (run_out_of_reach(fn) if self.in_memory else fn())
+                return await (run_out_of_reach(fn) if self._out_of_reach else fn())
             except (DBAPIError, StaleSnapshot) as exc:
                 if not isinstance(exc, StaleSnapshot) and not is_retryable(self.profile, exc):
                     raise
@@ -605,6 +607,7 @@ class EngineHost:
             await self._apply_file_settings(profile)
         if profile.statistics_listing is not None:
             self.in_memory = await self._read_in_memory()
+            self._out_of_reach |= self.in_memory
             if self._replaces and (self.in_memory or not self.statistics_enabled):
                 event.remove(self.engine.sync_engine, "checkout", self._replace_stale)
                 self._replaces = False

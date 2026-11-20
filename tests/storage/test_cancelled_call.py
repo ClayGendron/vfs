@@ -135,6 +135,11 @@ def number(index: int) -> Callable[[str], bool]:
     return lambda _round_trip: next(asked) == index
 
 
+def sqlite_storage(kept: str, file: Path) -> DatabaseStorage:
+    """A storage on SQLite, ``in memory`` or ``in a file`` at *file*."""
+    return InMemoryStorage() if kept == "in memory" else DatabaseStorage(url=f"sqlite+aiosqlite:///{file}.sqlite")
+
+
 async def kernel_holding_a_file(storage: DatabaseStorage) -> AsyncVirtualFileSystem:
     """A kernel that holds ``/a.txt``, with the statistics pass of that write over, so a call runs alone."""
     kernel = AsyncVirtualFileSystem(storage=storage, default_authority=Authority.system())
@@ -270,14 +275,15 @@ class TestACallCancelledAtEveryRoundTrip:
     """Each call is traced once, and then cancelled at each round trip that was traced."""
 
     @pytest.mark.parametrize("call", ["stat", "read", "write"])
-    async def test_an_in_memory_storage_keeps_its_rows_and_its_one_connection(
-        self, round_trip: HeldRoundTrip, call: str
+    @pytest.mark.parametrize("kept", ["in memory", "in a file"])
+    async def test_a_sqlite_storage_keeps_its_rows_and_its_connections(
+        self, round_trip: HeldRoundTrip, tmp_path: Path, kept: str, call: str
     ) -> None:
-        names = await round_trips_of(call, InMemoryStorage(), round_trip)
+        names = await round_trips_of(call, sqlite_storage(kept, tmp_path / "traced"), round_trip)
         commit = names.index("commit") if call == "write" else len(names)
         assert names.count("commit") == (1 if call == "write" else 0)
         for cut in range(len(names)):
-            storage = InMemoryStorage()
+            storage = sqlite_storage(kept, tmp_path / f"cut{cut}")
             kernel = await kernel_holding_a_file(storage)
             try:
                 connections = Connections(storage)
@@ -286,36 +292,29 @@ class TestACallCancelledAtEveryRoundTrip:
                 await cancel_while_held(CALLS[call](kernel), round_trip)
                 where = f"{call} cancelled at round trip {cut}, {names[cut]!r}"
                 assert (connections.opened, connections.invalidated) == ([], []), where
+                # The same two answers in memory and in a file: nothing before the commit, all of it after.
                 assert await content_and_version(kernel) == (("old", 1) if cut < commit else ("new", 2)), where
                 await another_file_can_be_written(kernel)
             finally:
                 round_trip.let_go()
                 await kernel.close()
 
-    async def test_a_write_on_a_database_in_a_file_gives_the_same_two_answers(
+
+class TestACancelledWriteOnADatabaseInAFile:
+    async def test_a_write_cancelled_inside_one_of_its_reads_leaves_the_next_write_working(
         self, round_trip: HeldRoundTrip, tmp_path: Path
     ) -> None:
-        def a_file(name: str) -> DatabaseStorage:
-            return DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path / name}.sqlite")
-
-        names = await round_trips_of("write", a_file("traced"), round_trip)
-        commit = names.index("commit")
-        assert names.count("commit") == 1
-        for cut in range(len(names)):
-            storage = a_file(f"cut{cut}")
-            kernel = await kernel_holding_a_file(storage)
-            try:
-                connections = Connections(storage)
-                round_trip.again()
-                round_trip.hold(number(cut))
-                await cancel_while_held(CALLS["write"](kernel), round_trip)
-                where = f"write cancelled at round trip {cut}, {names[cut]!r}"
-                assert await content_and_version(kernel) == (("old", 1) if cut < commit else ("new", 2)), where
-                # A file outlives its connections, so a cancelled call may cost the one it was using.
-                assert len(connections.invalidated) <= 1, where
-            finally:
-                round_trip.let_go()
-                await kernel.close()
+        storage = sqlite_storage("in a file", tmp_path / "one")
+        kernel = await kernel_holding_a_file(storage)
+        try:
+            round_trip.again()
+            round_trip.hold(starts_with("execute SELECT vfs_meta.grant_revision"))
+            await cancel_while_held(kernel.write(path="/a.txt", content="new"), round_trip)
+            assert await content_and_version(kernel) == ("old", 1)
+            await another_file_can_be_written(kernel)
+        finally:
+            round_trip.let_go()
+            await kernel.close()
 
 
 class TestACallerThatDoesNotWait:

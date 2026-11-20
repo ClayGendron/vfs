@@ -4,11 +4,9 @@ The work that is outstanding, in one list. A task is removed from this file when
 
 ## Eight branches wait to land
 
-None is pushed and none has a pull request.
+`research-logs-are-tracked` landed on 2026-11-20, as pull request 10. It tracks the 41 logs under `context/research/studies/` that the `*.log` ignore rule hid, so `test_links_resolve` passes on a fresh clone.
 
-One branch stands apart and lands first: `research-logs-are-tracked`, cut from `dev`. It excepts `context/research/studies/` from the `*.log` ignore rule and adds the 41 logs that rule hid, so `test_links_resolve` passes on a fresh clone. It also carries the dead-link fix of branch 1, so that the test passes on it alone. It is merged into branch 7.
-
-The other seven are a stack. Each sits on the one before it, so they reach `dev` in this order.
+Seven branches are a stack, pushed on 2026-11-20, with pull requests 11 to 17 in the order of the table. Each sits on the one before it, so they reach `dev` in this order. The eighth sits on the seventh and is not pushed.
 
 | | Branch | What it holds |
 |---|---|---|
@@ -19,20 +17,21 @@ The other seven are a stack. Each sits on the one before it, so they reach `dev`
 | 5 | `search-applies-its-file-filters-to-rows-in-hand` | The `search` filter fix and the fixes from its review |
 | 6 | `add-mount-takes-a-posture` | `add_mount(..., posture=...)`, the fixes from its review, and the new module `vfs.listing` |
 | 7 | `a-call-that-reaches-several-mounts-bounds-each-mount` | Two specs and a research memo, the review records, and this file. No code |
+| 8 | `a-cancelled-call-leaves-its-storage-intact` | A cancelled call leaves a SQLite storage whole, in memory and in a file. The glossary term Storage |
 
 Branches 2, 3, 5 and 6 were each reviewed by a reader that did not write them, and the records are beside each spec in `agents/`. Branches 1, 4 and 7 hold no source code. Checked on 2026-11-19 at commit `25d1f6e1`, the tip of branch 6: `scripts/ci.sh` passes to its end with 5,653 tests and coverage at 100%, `scripts/docs.sh check` passes, and the engine legs pass on Postgres (478), MariaDB (469, with 8 skipped) and Oracle (473). The listing rule on branch 3 has not had a full reading since its fourth round of fixes, only a check that the last two findings were closed.
 
 These tasks stand between the branches and `dev`.
 
-- [ ] **Push each branch and open its pull request to `dev`.** Each push needs approval of its own. `research-logs-are-tracked` goes first, and `dev` is merged into the next branch of the stack after each merge, so that each pull request shows its own change alone. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own.
+- [ ] **Merge pull requests 11 to 17 in order.** Where a merge is a squash, `dev` is merged into the next branch of the stack and that branch is pushed, so that its pull request shows its own change alone. Each push needs approval of its own. Branch 3 is best read with branch 6 in view: branch 6 moves the listing rules into a module of their own. The fix of a test that failed on Python 3.11 is on branch 3 and reaches branches 4 to 6 as the branches below them land.
+- [ ] **Review branch 8 and run the gate on it, then push it and open its pull request.** It was built in a guided session on 2026-11-20. No fresh reader has read it, `scripts/ci.sh` and `scripts/docs.sh check` have not run on its last commit, and no server engine leg has run on it.
 - [ ] **Run the SQL Server leg.** It could not run on the machine used on 2026-11-19. Every test failed before any statement was sent, because the ODBC driver could not load OpenSSL: `openssl@3` is installed by Homebrew and is not linked, so `/opt/homebrew/lib/libssl.3.dylib` does not exist. `brew link openssl@3` is the usual cure. It changes the machine, so it was not run.
 - [ ] **Run the engine legs once on fresh containers.** The procedure recreates the containers before each run. On 2026-11-19 the legs ran against containers that had been up for three days, because taking them down was not permitted in that session.
-- [ ] **Decide whether five logs are pushed as they are.** They hold a home-directory path, which shows an account name: the three `jaq-install` logs of the 2026-10-15 study and `run-a` and `run-e` of the 2026-11-14 study. They are committed on `research-logs-are-tracked` and are not pushed. No log holds a key or a token, by a search for the usual shapes.
 
 ## Decisions waiting
 
 - [ ] **Whether the three choices of `add_mount(..., posture=...)` stand.** The default is `None`, which keeps the storage's posture, so a call that names no posture still leaves a new mount open. A given posture replaces the posture stored at the storage's root. No failure puts the earlier posture back. The spec in `agents/2026-11-18-add-mount-takes-a-posture/` gives the cost of each alternative.
-- [ ] **The five choices of the time limit.** The specs are `spec.md` and `spec-a-cancelled-call-leaves-its-storage-intact.md` in `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/`. Both were read three times and found fit to build. Nothing is built. The choices, each with its recommendation: a default of 30 seconds, yes; a late call cancelled at its timeout, yes; the addressed storage timed too, no; a late mount marked and probed once in each timeout, yes, as a later landing; and for the cancellation fix, the unit of work shielded and its commit refused when it was cancelled.
+- [ ] **The four choices of the time limit.** The spec is `spec.md` in `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/`. It was read three times and found fit to build, and it is not built. Its first landing, the cancellation fix, is built on branch 8. The choices, each with its recommendation: a default of 30 seconds, yes; a late call cancelled at its timeout, yes; the addressed storage timed too, no; a late mount marked and probed once in each timeout, yes, as a later landing.
 - [ ] **Whether a fault in a mounted storage should raise out of a listing of its parent.** A storage that raises an ordinary exception, and not a transport error, now raises out of `ls`, `tree` and `glob` of the directory its mount is in. That is the kernel's rule for a fault. Before the listing rule, `ls` of the parent did not ask the mounted storage. The other choice is a bare row and a warning, as for a storage that cannot be reached.
 - [ ] **Whether `glob` may ask the mounted roots after the storages have answered.** It does since the third round of fixes, which costs one more round trip when a pattern matches a mount point. It is what lets a limit be spent only on rows that are shown, and what keeps a storage from being called after `close()`.
 - [ ] **Which feature is next.** Write preconditions, spec 174, is the recommendation. The ranged read and the listing cursor are the others considered.
@@ -43,9 +42,12 @@ Each was shown by a script that ran, unless it says "read". The review records n
 
 ### A cancelled call
 
-- [ ] **Cancelling a call inside a statement destroys an in-memory storage.** After one cancelled `stat`, the next read fails with `no such table` and the next write starts an empty database. On a file database a cancelled write can land while its caller is told it was cancelled. The cause is found and a fix is specified, in `spec-a-cancelled-call-leaves-its-storage-intact.md`. It is the first landing of the time limit, and it stands alone.
+Branch 8 fixes the two defects that were here, for every SQLite storage VFS opens from a URL. These are what it leaves.
 
-- [ ] **On a database in a file, a write cancelled inside one of its own `SELECT` statements can leave the next write refused.** Found on 2026-11-20 by cancelling a write at each of its 81 driver round trips. At 3 of the 81, each a `SELECT` inside the write's transaction, the next write to the same storage failed with `conflict`, "kept losing to concurrent changes", after its four attempts. It succeeded once `gc.collect()` had run. No row was lost and the content was right at all 81. Reasoned and not traced in SQLite: the connection is thrown away with a cursor still open, SQLite keeps it and its write lock until Python collects the cursor, and a second writer is locked out until then. The fix for an in-memory database does not cover a file. Running each attempt out of reach of the cancellation on every SQLite database would, at the cost that a cancelled read runs its remaining statements before its caller is back.
+- [ ] **A storage that is handed a session factory over SQLite is not fully covered.** Over an in-memory database, a cancelled write always lands, because the refusal at the commit sits on a session class the storage's own factory makes. Over a database in a file, a call is not run out of reach at all, so a write cancelled inside one of its own `SELECT` statements can leave the next write refused with `conflict` until Python's collector runs, as 3 of 81 cuts did before the fix. Read, and not run on a borrowed factory.
+- [ ] **A cancelled read on SQLite runs its remaining statements before its caller is back.** Before the fix it stopped after the statement in flight. A read has no commit to refuse, so the mark does not stop it.
+- [ ] **Cancellation is not run on a server engine.** What a cancelled write has done on Postgres, MariaDB, SQL Server and Oracle is read in driver source. Whether a connection thrown away there can hold a lock, as on a SQLite file, is not known.
+- [ ] **What the statistics pass's interrupt does at `close()` is not run against the fix.**
 
 ### Changing a mount
 
