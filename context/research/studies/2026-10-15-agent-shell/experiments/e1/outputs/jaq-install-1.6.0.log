@@ -1,0 +1,95 @@
+ Downloading crates ...
+  Downloaded jaq v1.6.0
+    Updating crates.io index
+  Installing jaq v1.6.0
+    Updating crates.io index
+     Locking 78 packages to latest compatible versions
+      Adding codesnake v0.2.1 (available: v0.3.0)
+      Adding env_logger v0.10.2 (available: v0.11.11)
+      Adding hifijson v0.2.3 (available: v0.5.0)
+      Adding jaq-core v1.5.1 (available: v3.1.1)
+      Adding jaq-std v1.6.0 (available: v3.0.3)
+      Adding unicode-width v0.1.14 (available: v0.2.2)
+ Downloading crates ...
+  Downloaded clap v4.6.7
+  Downloaded atty v0.2.14
+  Downloaded hifijson v0.2.3
+  Downloaded clap_builder v4.6.7
+  Downloaded clap_derive v4.6.7
+  Downloaded jaq-interpret v1.5.0
+  Downloaded jaq-syn v1.6.0
+  Downloaded yansi v1.0.1
+  Downloaded codesnake v0.2.1
+  Downloaded jaq-core v1.5.1
+  Downloaded jaq-std v1.6.0
+  Downloaded serde_json v1.0.154
+  Downloaded clap_lex v1.1.1
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling memchr v2.8.3
+   Compiling cfg-if v1.0.5
+   Compiling getrandom v0.3.4
+   Compiling zmij v1.0.23
+   Compiling zerocopy v0.8.63
+   Compiling version_check v0.9.5
+   Compiling libc v0.2.190
+   Compiling autocfg v1.5.1
+   Compiling ahash v0.8.12
+   Compiling once_cell v1.21.4
+   Compiling num-traits v0.2.19
+   Compiling serde_json v1.0.154
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling aho-corasick v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling getrandom v0.4.3
+   Compiling colorchoice v1.0.5
+   Compiling itoa v1.0.18
+   Compiling libm v0.2.16
+   Compiling hashbrown v0.17.1
+   Compiling syn v3.0.9
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling regex-syntax v0.8.11
+   Compiling equivalent v1.0.3
+   Compiling rustix v1.1.5
+   Compiling anstream v1.0.0
+   Compiling errno v0.3.14
+   Compiling log v0.4.34
+   Compiling dyn-clone v1.0.20
+   Compiling hifijson v0.2.3
+   Compiling bitflags v2.13.2
+   Compiling heck v0.5.0
+   Compiling indexmap v2.14.2
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling chrono v0.4.45
+   Compiling clap_builder v4.6.7
+   Compiling urlencoding v2.1.3
+   Compiling fastrand v2.5.0
+   Compiling base64 v0.22.1
+   Compiling tempfile v3.27.0
+   Compiling regex-automata v0.4.18
+   Compiling env_logger v0.10.2
+   Compiling atty v0.2.14
+   Compiling codesnake v0.2.1
+   Compiling memmap2 v0.9.11
+   Compiling unicode-width v0.1.14
+   Compiling yansi v1.0.1
+   Compiling serde_derive v1.0.229
+   Compiling clap_derive v4.6.7
+   Compiling clap v4.6.7
+   Compiling regex v1.13.1
+   Compiling jaq-syn v1.6.0
+   Compiling jaq-interpret v1.5.0
+   Compiling jaq-std v1.6.0
+   Compiling jaq-core v1.5.1
+   Compiling jaq v1.6.0
+    Finished `release` profile [optimized] target(s) in 16.40s
+  Installing /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/e1/downloads/jaq/bin/jaq.wasm
+   Installed package `jaq v1.6.0` (executable `jaq.wasm`)
+warning: be sure to add `/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/e1/downloads/jaq/bin` to your PATH to be able to run the installed binaries
+exit=0
