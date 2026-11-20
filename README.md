@@ -135,7 +135,7 @@ The namespace is designed to be an agent's whole toolbox behind one MCP tool: ve
 What the tree does not do yet, and where each decision lives.
 
 - **Permissions are enforced at the node.** The mount-level and per-prefix map is checked before dispatch; row-level grants are landed ([spec 058](context/specifications/archive/058-row-level-permission-grants/spec.md)).
-- **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it. Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table.
+- **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it. `add_mount(storage, path, posture="none")` mounts a storage closed, with the posture in force before the mount can be reached. Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table.
 - **`copy` and `move` do not cross a mount boundary.** They come back `cross_mount`; copy a file across mounts with `read` and `write` ([spec 160](context/specifications/active/160-cross-mount-copy-as-read-plus-write/spec.md) lifts this for files).
 - **`edit` does not touch a binary body.** It refuses `wrong_kind`; replace the bytes with `write(data=...)` ([spec 154](context/specifications/archive/154-errors-are-facts/spec.md)).
 - **Neither face is a storage and neither can be mounted.** `add_mount` takes a storage backend ([spec 156](context/specifications/active/156-mount-admission/spec.md) makes the refusal explicit).

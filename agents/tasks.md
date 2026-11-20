@@ -39,7 +39,7 @@ Each is a piece of work of its own, on its own branch.
 ## Waiting on a decision
 
 - [ ] **Whether `remove_mount` keeps the mount-point directory.** It deletes it, and `umount` on Unix leaves it. It also deletes it as the system actor, where `add_mount` makes it as the caller.
-- [ ] **Whether `add_mount` takes a posture.** A new mount gives everyone `read_write` until its posture is set, even under a closed root. The docs say so.
+- [ ] **Whether the three choices of `add_mount(..., posture=...)` stand.** The default is `None`, which keeps the storage's posture, where `"none"` would close every mount not told otherwise. A given posture replaces a stored root posture, and no failure puts the earlier posture back. The spec in `agents/2026-11-18-add-mount-takes-a-posture/` gives the cost of each alternative under "Choices to confirm".
 - [ ] **Whether a call that reaches several mounts gets a time budget for each mount.** `ls`, `tree` and the searches wait for every mounted storage with none. One stuck storage holds every listing of the directory above it.
 - [ ] **How headless Codex runs are set up.** The proposal is a wrapper at `scripts/codex-run.sh`, a Maintainers page, and one sentence in `AGENTS.md`. The facts found: a run is started detached and with no timeout, `project_doc_max_bytes=262144` is needed for the whole of `AGENTS.md` to be read, and an exit code of 0 is the only proof that a run finished. The wrapper was written and tested and is in no repository.
 - [ ] **Whether a guided session still ends with a handoff note.** `AGENTS.md` and `documentation/maintainers/how-we-work.md` say it does. The two notes written on 2026-11-18 were deleted, and this file took their lists.

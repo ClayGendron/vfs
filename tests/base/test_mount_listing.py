@@ -10,7 +10,7 @@ import pytest
 from tests.support.base_doubles import BindableStorage, RecorderStorage, TransportFailStorage
 from vfs import AsyncVirtualFileSystem, InMemoryStorage
 from vfs import base as base_module
-from vfs import mounts as mounts_module
+from vfs import listing as listing_module
 from vfs import paths as paths_module
 from vfs.authority import Authority, Principal
 from vfs.models import Observation
@@ -352,7 +352,7 @@ async def test_mount_points_that_were_not_judged_in_time_are_left_out_with_a_war
     async def out_of_time(*_args: Any) -> tuple[list[Observation], bool]:
         return [], False
 
-    monkeypatch.setattr(mounts_module, "judge_in_hand", out_of_time)
+    monkeypatch.setattr(listing_module, "judge_in_hand", out_of_time)
     fs = AsyncVirtualFileSystem()
     await fs.add_mount(InMemoryStorage(), "/data")
     result = ok(await fs.glob("/*"))
@@ -559,7 +559,7 @@ async def test_the_misses_of_a_batch_are_matched_to_directories_above_mounts_in_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checks = 0
-    original = mounts_module._target
+    original = listing_module._target
 
     def counted(error: ResultError) -> Path | None:
         nonlocal checks
@@ -571,7 +571,7 @@ async def test_the_misses_of_a_batch_are_matched_to_directories_above_mounts_in_
     for road in roads:
         await fs.add_mount(BindableStorage(), f"{road}/m", parents=True)
     names = [*roads, *(f"/f{index}" for index in range(1_000))]
-    monkeypatch.setattr(mounts_module, "_target", counted)
+    monkeypatch.setattr(listing_module, "_target", counted)
     stat = await fs.stat(observations=batch_of(*names))
     assert stat.paths == tuple(roads)
     assert len(stat.errors) == 1_000
@@ -591,7 +591,7 @@ async def test_the_containment_checks_of_a_listing_do_not_grow_with_mounts_times
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checks = 0
-    original = mounts_module._lies_in
+    original = listing_module._lies_in
 
     def counted(path: Path, directory: Path) -> bool:
         nonlocal checks
@@ -603,7 +603,7 @@ async def test_the_containment_checks_of_a_listing_do_not_grow_with_mounts_times
     mounted = [f"/m{index:02}" for index in range(50)]
     for path in mounted:
         await fs.add_mount(BindableStorage(), path)
-    monkeypatch.setattr(mounts_module, "_lies_in", counted)
+    monkeypatch.setattr(listing_module, "_lies_in", counted)
     ok(await fs.ls("/"))
     ok(await fs.stat(observations=[Observation(path=f"/f{index}") for index in range(1_000)]))
     assert checks <= len(mounted)
@@ -613,13 +613,13 @@ async def test_glob_beneath_roots_that_hold_no_mount_point_judges_no_mount_point
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     judged: list[object] = []
-    original = mounts_module.judge_in_hand
+    original = listing_module.judge_in_hand
 
     async def spied(*args: Any) -> tuple[list[Observation], bool]:
         judged.append(args)
         return await original(*args)
 
-    monkeypatch.setattr(mounts_module, "judge_in_hand", spied)
+    monkeypatch.setattr(listing_module, "judge_in_hand", spied)
     fs = AsyncVirtualFileSystem()
     ok(await fs.write(path="/src/a.py", content="a", parents=True))
     await fs.add_mount(InMemoryStorage(), "/elsewhere")
@@ -658,7 +658,7 @@ def test_finding_the_mount_that_holds_a_path_checks_no_path_again(
 ) -> None:
     deep = deep_path()
     table = {Path(path): Mount(Path(path), BindableStorage()) for path in ("/", *mounted)}
-    listing = mounts_module.MountListing(table)
+    listing = listing_module.MountListing(table)
     checked: list[str] = []
     original = paths_module.validate_path
 
@@ -678,15 +678,15 @@ def test_a_table_that_holds_only_the_root_answers_without_walking_the_path(
     mounted: tuple[str, ...], steps: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     table = {Path(path): Mount(Path(path), BindableStorage()) for path in ("/", *mounted)}
-    listing = mounts_module.MountListing(table)
+    listing = listing_module.MountListing(table)
     walked: list[str] = []
-    original = mounts_module._parent
+    original = listing_module._parent
 
     def counted(path: str) -> str:
         walked.append(path)
         return original(path)
 
-    monkeypatch.setattr(mounts_module, "_parent", counted)
+    monkeypatch.setattr(listing_module, "_parent", counted)
     holder = listing.holder(deep_path())
     assert holder is not None
     assert holder.path == "/"
