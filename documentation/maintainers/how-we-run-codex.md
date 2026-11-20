@@ -25,7 +25,7 @@ scripts/codex-wait.sh runs/review-1
 
 - **The command that starts a run returns in about a second.** It has a timeout like any other.
 - **The wait has a deadline.** `codex-wait.sh` stops when its seconds are up.
-- **The run itself has no deadline.** A timeout that fires in the middle of a review kills it and loses the work. The four review runs made here took six, nine, ten and twelve minutes, and nothing says in advance how long the next one takes.
+- **The run itself has no deadline.** A timeout that fires in the middle of a review kills it and loses the work. The eight runs made here took from two to twelve minutes, and nothing says in advance how long the next one takes.
 
 The start script gives the run a session and a process group of its own. A signal sent to the agent's own shell does not reach it. This was tested: the shell that started a run was killed, and the run finished and wrote its files.
 
