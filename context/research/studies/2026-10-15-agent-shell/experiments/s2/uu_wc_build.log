@@ -1,0 +1,55 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded icu_locale_core v2.3.0
+  Downloaded fluent v0.17.0
+  Downloaded cfg_aliases v0.2.2
+  Downloaded intl_pluralrules v7.0.2
+  Downloaded icu_locale_fallback_data v2.3.0
+  Downloaded fluent-langneg v0.13.1
+  Downloaded intl-memoizer v0.5.3
+  Downloaded bytecount v0.6.9
+  Downloaded displaydoc v0.2.7
+  Downloaded icu_locale_fallback v2.3.0
+  Downloaded potential_utf v0.1.6
+  Downloaded fluent-syntax v0.12.0
+  Downloaded os_display v0.1.4
+  Downloaded fluent-bundle v0.16.0
+  Downloaded synstructure v0.14.0
+  Downloaded smallvec v1.16.1
+  Downloaded icu_locale v2.3.1
+  Downloaded icu_provider v2.3.1
+  Downloaded litemap v0.8.3
+  Downloaded unic-langid v0.9.6
+  Downloaded icu_collections v2.3.0
+  Downloaded tinystr v0.8.4
+  Downloaded bigdecimal v0.4.11
+  Downloaded type-map v0.5.1
+  Downloaded unicode-ident v1.0.26
+  Downloaded zerovec-derive v0.11.6
+  Downloaded syn v3.0.6
+  Downloaded yoke-derive v0.8.4
+  Downloaded unic-langid-impl v0.9.6
+  Downloaded zerofrom-derive v0.1.8
+  Downloaded zerovec v0.11.8
+  Downloaded writeable v0.6.4
+  Downloaded zerotrie v0.2.5
+  Downloaded icu_locale_data v2.3.0
+    Finished `release` profile [optimized] target(s) in 16.22s
+cargo build --release --target wasm32-wasip1 -p uu_wc --target-dir   32.05s user 4.84s system 226% cpu 16.296 total
+exit=0
+total 3792
+drwxr-xr-x@  14 claygendron  wheel      448 Oct 15 19:29 .
+drwxr-xr-x@   4 claygendron  wheel      128 Oct 15 19:28 ..
+-rw-r--r--@   1 claygendron  wheel        0 Oct 15 19:28 .cargo-artifact-lock
+-rw-r--r--@   1 claygendron  wheel        0 Oct 15 19:28 .cargo-build-lock
+-rw-r--r--@   1 claygendron  wheel        0 Oct 15 19:28 .cargo-lock
+drwxr-xr-x@  71 claygendron  wheel     2272 Oct 15 19:28 .fingerprint
+drwxr-xr-x@  11 claygendron  wheel      352 Oct 15 19:28 build
+drwxr-xr-x@ 181 claygendron  wheel     5792 Oct 15 19:29 deps
+drwxr-xr-x@   2 claygendron  wheel       64 Oct 15 19:28 examples
+drwxr-xr-x@   2 claygendron  wheel       64 Oct 15 19:28 incremental
+-rw-r--r--@   1 claygendron  wheel    20637 Oct 15 19:29 libuu_wc.d
+-rw-r--r--@   1 claygendron  wheel   564528 Oct 15 19:29 libuu_wc.rlib
+-rw-r--r--@   1 claygendron  wheel    20699 Oct 15 19:29 wc.d
+-rwxr-xr-x@   1 claygendron  wheel  1325099 Oct 15 19:29 wc.wasm
+72

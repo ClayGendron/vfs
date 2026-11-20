@@ -1,0 +1,20 @@
+plan9port          master 1f1396913f 2026-10-20 | ./LICENSE: Copyright © 2021 Plan 9 Foundation Portions Copyright © 2001-2008 Russ Cox 
+libfuse            master fe66006fbb 2026-10-15 | ./LICENSE: The following files may be used under the terms of the GNU Lesser General Public License, version 2.
+filesystem_spec    master fb355c4c1b 2026-10-23 | ./LICENSE: BSD 3-Clause License Copyright (c) 2018, Martin Durant 
+pyfilesystem2      master 77a8562785 2025-05-17 | ./LICENSE: MIT License Copyright (c) 2017-2021 The PyFilesystem2 contributors 
+opendal            main   19ba33da9e 2026-10-23 | ./LICENSE:  Apache License Version 2.0, January 2004 
+WASI               main   463701e0f6 2026-10-13 | ./LICENSE.md: Copyright © 2019-2023 the Contributors to the WASI Specification, published by the [WebAssembly Comm
+sqlite             master 3d17c3f9e9 2026-08-04 | ./LICENSE.md: License Information =================== 
+juicefs            main   b2a3be78a0 2026-10-23 | ./LICENSE:  Apache License Version 2.0, January 2004 
+computer           main   2b23503eac 2026-10-23 | ./LICENSE: MIT License Copyright (c) 2026 Cloudflare, Inc. Permission is hereby granted, free of 
+agentfs            main   0a014ebd49 2026-06-03 | ./licenses: ./licenses/LICENSE-fuser.md:The MIT License (MIT) ./licenses/LICENSE-fuser.md:===================== 
+libsqlfs           master 4d330a6055 2019-07-10 | ./COPYING: 		 GNU LESSER GENERAL PUBLIC LICENSE 		 Version 2.1, February 1999 
+jackrabbit-oak     trunk  52f2591e8b 2026-10-22 | ./LICENSE.txt:  Apache License Version 2.0, January 2004 
+deepagents         main   a3381668c4 2026-10-23 | ./LICENSE: MIT License Copyright (c) LangChain, Inc. 
+mirage             main   02f6b99501 2026-10-23 | ./LICENSE:  Apache License Version 2.0, January 2004 
+afs                main   1e9b731693 2026-03-24 | ./LICENSE: Business Source License 1.1 Parameters 
+langchain-mongodb  main   f9889d9baa 2026-10-23 | ./LICENSE: MIT License Copyright (c) 2024 LangChain 
+mcpfs              main   640511ef47 2026-03-06 | ./LICENSE: MIT License Copyright (c) 2026 AirShelf 
+pjdfstest          master 85a8aea9e6 2026-08-07 | ./COPYING: License for all regression tests available with pjdfstest: Copyright (c) 2006-2012 Pawel Jakub Dawid
+browser_wasi_shim  main   b068ec2c22 2026-02-03 | ./LICENSE-APACHE:  Apache License Version 2.0, January 2004 
+seaweedfs          master 6c87fb70f9 2026-10-23 | ./LICENSE:  Apache License Version 2.0, January 2004 
