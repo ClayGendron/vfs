@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
 from sqlalchemy.exc import DBAPIError, ProgrammingError
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker, create_async_engine
 
 from tests.support.database_helpers import _url
 from tests.support.server_schemas import server_storage
@@ -124,6 +124,17 @@ class TestInstallExtensions:
         assert storage._host.vector_version is not None
         assert (await storage.first_touch()).success is True
         await storage.close()
+
+    async def test_a_storage_handed_its_sessions_over_a_file_proves_the_function_too(self, tmp_path: Any) -> None:
+        # This host runs no attempt out of reach, so the verb runs in its caller's task.
+        engine = create_async_engine(_url(tmp_path))
+        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
+        result = await storage.install_extensions()
+        assert result.success is True, result.errors
+        assert storage._host.vector_version is not None
+        assert storage._host._out_of_reach is False
+        await storage.close()
+        await engine.dispose()
 
     async def test_an_install_the_engine_refuses_classifies_and_never_raises(self, tmp_path: Any, monkeypatch) -> None:
         url = _url(tmp_path)

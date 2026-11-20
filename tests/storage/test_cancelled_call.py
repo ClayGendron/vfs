@@ -376,6 +376,20 @@ class TestACancelledWriteOnADatabaseInAFile:
         await another_file_can_be_written(fs)
 
 
+class TestACancelledInstallOfExtensions:
+    @IN_MEMORY_AND_IN_A_FILE
+    async def test_an_install_cancelled_inside_its_probe_costs_no_connection_and_no_row(
+        self, fs: AsyncVirtualFileSystem, storage: DatabaseStorage, round_trip: HeldRoundTrip
+    ) -> None:
+        """Guards ``install_extensions``: run in its caller's task, a cancellation inside it reaches the connection."""
+        connections = Connections(storage._host.engine)
+        round_trip.hold(lambda name: "vec_version" in name)
+        await cancel_while_held(storage.install_extensions(), round_trip)
+        assert (connections.opened, connections.invalidated) == ([], [])
+        assert await content_and_version(fs) == ("old", 1)
+        await another_file_can_be_written(fs)
+
+
 class TestACallerThatDoesNotWait:
     async def test_a_storage_lists_every_file_after_a_time_limit_around_a_call_ran_out(
         self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip

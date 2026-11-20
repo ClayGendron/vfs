@@ -343,14 +343,19 @@ class EngineHost:
         savepoint; a role that may not install is answered
         ``permission_denied`` naming the fix, and any other failure,
         from the install or the probe, classifies as first touch's would.
+        A caller that is cancelled waits as ``with_retry`` says it does.
         """
         function = self._policy().profile.vector_function
         if function is None:
             return None
-        try:
+
+        async def install() -> ResultError | None:
             if function.install is not None:
                 await self._install_vector_function(function.install)
             return await self._probe_vector_function(function)
+
+        try:
+            return await (run_out_of_reach(install) if self._out_of_reach else install())
         except DBAPIError as exc:
             origin = driver_origin(exc)
             if is_insufficient_privilege(origin):
@@ -376,7 +381,7 @@ class EngineHost:
 
         On a SQLite database this host opened, and on any database that lives
         in memory, a caller that is cancelled waits for the attempt in hand
-        to end, and the cancellation is raised then. A cancellation that
+        to end, and its own cancellation is raised then. A cancellation that
         reached the connection would close an in-memory database, and could
         leave a database in a file locked against its next writer.
         """
@@ -394,10 +399,6 @@ class EngineHost:
                 await asyncio.sleep(random.uniform(step / 2, step))
                 step *= 2
         raise AssertionError("unreachable")  # pragma: no cover
-
-    def _rearm(self) -> None:
-        """Make the next call provision the schema again."""
-        self._ready = False
 
     def classify_failure(self, exc: BaseException, *, context: str) -> ResultError:
         """Classify a driver failure that escaped retry — always a Result, never a raise.
@@ -578,6 +579,10 @@ class EngineHost:
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    def _rearm(self) -> None:
+        """Make the next call provision the schema again."""
+        self._ready = False
 
     def _policy(self) -> _ResolvedPolicy:
         profile, dialect = self._profile, self._dialect
