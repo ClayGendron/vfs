@@ -192,7 +192,7 @@ Reason: the serialized sessions and the re-arm exist for the same fact as this f
 - **Interrupting a statement.** Not built. It lost the database when it landed outside the transaction's own statements.
 - **Loop shutdown.** When the event loop shuts down, every task is cancelled, the unit's own included, and an in-memory database goes with its loop, as today.
 - **`close()`.** It does not wait for a unit. Closing the connection queues behind the statement in flight on the worker thread, and the kernel's `close_timeout` bounds that, as today.
-- **The analysis pass.** It keeps its own shield and its interrupt. It never runs on an in-memory database, `engine.py:834`.
+- **The analysis pass.** It keeps its own shield and its interrupt. An earlier draft of this line said it never runs on an in-memory database, and that was wrong: the build, on 2026-11-20, saw its `BEGIN IMMEDIATE /* vfs_statistics */` and its `ANALYZE` statements on an `InMemoryStorage` after the first write. What `engine.py` stops for an in-memory database is the replacement of a stale connection, in `_replace_stale`, and not the pass. The pass is a task of the host, started outside any attempt, so it carries no mark and no caller's cancellation reaches it. Its interrupt at `close()` was not run against this fix.
 
 ## Cost
 
