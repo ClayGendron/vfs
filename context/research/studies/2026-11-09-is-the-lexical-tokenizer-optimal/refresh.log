@@ -1,0 +1,6 @@
+tantivy: origin/HEAD -> main, checked out d66f88d (detached), commit date 2026-11-05, refreshed 2026-11-09, clean
+lucene: origin/HEAD -> main, checked out e0a3a95 (detached), commit date 2026-11-09, refreshed 2026-11-09, clean
+bm25s: origin/HEAD -> main, checked out ca2b051 (detached), commit date 2026-11-01, refreshed 2026-11-09, clean
+zoekt: origin/HEAD -> main, checked out d64299b4 (detached), commit date 2026-11-09, refreshed 2026-11-09, clean
+pg_textsearch: origin/HEAD -> main, checked out 09a66ac (detached), commit date 2026-10-30, refreshed 2026-11-09, clean
+postgres: origin/HEAD -> master, checked out 6a3da13d (detached), commit date 2026-11-09, refreshed 2026-11-09, clean (added because pg_textsearch delegates tokenization to Postgres core's to_tsvector_byid)

@@ -15,6 +15,11 @@ async function topOf(page: Page, selector: string): Promise<number> {
   return page.locator(selector).evaluate((element) => Math.round(element.getBoundingClientRect().top));
 }
 
+// The page's scripts are running. Until then a scroll moves the page and nothing on it follows.
+async function started(page: Page): Promise<void> {
+  await page.locator('[data-slot="theme-toggle"][data-ready]').first().waitFor();
+}
+
 async function scrollTo(page: Page, y: number): Promise<void> {
   await page.evaluate((top) => window.scrollTo(0, top), y);
   await page.waitForFunction((top) => Math.abs(window.scrollY - top) < 2, y);
@@ -214,6 +219,7 @@ const BACK_TO_TOP = '[data-slot="docs-back-to-top"]';
 test("a button that returns to the top shows once the reader scrolls back up", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
   await page.goto(LONG_PAGE);
+  await started(page);
   const button = page.locator(BACK_TO_TOP);
   await expect(button).toBeHidden();
   // Reading down, it stays out of the way; it is for the reader who has turned back.
