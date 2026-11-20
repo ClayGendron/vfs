@@ -143,6 +143,10 @@ class DatabaseStorage:
     mount — ``open``, ``shared`` or ``private``. It is planted once, at
     first touch: a mount that already exists keeps its stored posture,
     and only the ``set_posture`` verb changes it.
+
+    On SQLite a caller that is cancelled waits for its attempt to end. A
+    write cancelled before its commit changes nothing, and one cancelled
+    later has landed, so the caller cannot tell which.
     """
 
     def __init__(
