@@ -48,7 +48,7 @@ from vfs import Authority
 
 system = Authority.system()
 
-fs.posture("/", "none", authority=system)
+fs.set_posture("/", "none", authority=system)
 ```
 
 ```text
@@ -80,8 +80,8 @@ Open a session for each of two people, Ada and Grace.
 ```python
 from vfs import Principal
 
-ada = fs.session(Authority.of(Principal("ada")))
-grace = fs.session(Authority.of(Principal("grace")))
+ada = fs.open_session(Authority.of(Principal("ada")))
+grace = fs.open_session(Authority.of(Principal("grace")))
 ```
 
 This cell prints nothing. A session is the file system as one person sees it. It has the same calls as `fs`, and every call it makes carries that person's name.
@@ -198,9 +198,9 @@ The write goes through. Her access to the finance folder has not changed.
 
 You closed a file system and opened it again for two people, one folder at a time.
 
-- `fs.posture` set what everyone gets by default. You set it to `none`.
+- `fs.set_posture` set what everyone gets by default. You set it to `none`.
 - `fs.grant` gave one person a level of access to one folder.
-- `fs.session` ran calls as a named person.
+- `fs.open_session` ran calls as a named person.
 
 **Access is decided on every call, by who is asking.** A person sees only what they were granted, and everything else does not exist for them.
 

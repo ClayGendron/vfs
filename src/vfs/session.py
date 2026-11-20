@@ -6,7 +6,7 @@ funnel with ``authority=`` filled in, so a session-mediated call and the
 direct call with the same authority return the same result — there is no
 second dispatch path. The session is sugar; the funnel is the gate.
 
-    async with vfs.session(Authority.of(Principal("alice"))) as s:
+    async with vfs.open_session(Authority.of(Principal("alice"))) as s:
         result = await s.read("/reports/q2.md")      # no identity argument
 
 Closed is final: a verb on a closed session refuses with a structured
@@ -416,10 +416,10 @@ class AsyncSession:
             return refusal
         return await self._fs.grants(path, authority=self._authority)
 
-    async def posture(self, path: str, posture: Posture) -> Result:
-        if (refusal := self._refuse_closed("posture")) is not None:
+    async def set_posture(self, path: str, posture: Posture) -> Result:
+        if (refusal := self._refuse_closed("set_posture")) is not None:
             return refusal
-        return await self._fs.posture(path, posture, authority=self._authority)
+        return await self._fs.set_posture(path, posture, authority=self._authority)
 
     async def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
         if (refusal := self._refuse_closed("add_member")) is not None:

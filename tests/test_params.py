@@ -50,8 +50,8 @@ def test_the_grant_choices_derive_from_the_ladder() -> None:
     assert POSTURES == frozenset(get_args(Posture)) == frozenset(RUNGS)
     assert GRANTABLE == frozenset(GRANTABLE_LEVELS) == POSTURES - {"none"}
     assert {"open", "shared", "private"}.isdisjoint(POSTURES)
-    assert param_violation("posture", {"path": "/", "posture": "private"}) is not None
-    assert param_violation("posture", {"path": "/", "posture": "list"}) is None
+    assert param_violation("set_posture", {"path": "/", "posture": "private"}) is not None
+    assert param_violation("set_posture", {"path": "/", "posture": "list"}) is None
     assert param_violation("grant", {"path": "/", "principal": "bob", "level": "none"}) is not None
     assert param_violation("grant", {"path": "/", "principal": "bob", "level": "contribute"}) is None
 

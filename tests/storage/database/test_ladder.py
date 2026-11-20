@@ -77,7 +77,7 @@ def _shown(result: Result) -> dict[str, frozenset[str]]:
 async def _seed(storage: InMemoryStorage, files: dict[str, str], root: GrantLevel = "none") -> None:
     entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/"), posture=root, authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture=root, authority=SYSTEM)).success is True
 
 
 async def _grant(storage: InMemoryStorage, path: str, principal: str, level: GrantLevel) -> None:
@@ -253,7 +253,7 @@ async def test_anonymous_creates_under_an_add_posture_and_alters_nothing(
     storage: InMemoryStorage, posture: GrantLevel
 ) -> None:
     await _seed(storage, {"/inbox/carol.md": "x"})
-    assert (await storage.posture(path=Path("/inbox"), posture=posture, authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/inbox"), posture=posture, authority=SYSTEM)).success is True
     assert (await _write(storage, "/inbox/anon.md", ANON)).success is True
     assert (await storage.read(path=Path("/inbox/anon.md"), authority=ANON)).success is True
     # Anonymous owns nothing, so it never alters or trashes its own creation.
@@ -412,7 +412,7 @@ async def test_rmedge_answers_a_hidden_target_exactly_as_an_absent_one(storage: 
 
 async def _scratch(storage: InMemoryStorage) -> None:
     await _seed(storage, {"/scratch/old.md": "lantern old", "/notes.txt": "lantern notes"})
-    assert (await storage.posture(path=Path("/scratch"), posture="read_write", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/scratch"), posture="read_write", authority=SYSTEM)).success is True
 
 
 async def test_anonymous_writes_and_reads_under_the_open_folder_and_nowhere_else(storage: InMemoryStorage) -> None:
@@ -477,7 +477,7 @@ async def test_mkdir_at_a_tombstone_answers_by_what_the_caller_may_read(storage:
     hinted = await storage.mkdir(path=Path("/team/gone.md"), authority=BOB)
     assert _kind(hinted) == ErrorKind.not_found and "vfs.deleted_at" in (hinted.errors[0].data or {})
     # A tombstone held only at list: the row stays judged, the hint never rides.
-    assert (await storage.posture(path=Path("/pub"), posture="list", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/pub"), posture="list", authority=SYSTEM)).success is True
     await storage.revoke(path=Path("/pub"), principal="bob", authority=SYSTEM)
     plain = await storage.mkdir(path=Path("/pub/gone.md"), authority=BOB)
     assert _kind(plain) == ErrorKind.not_found and not plain.errors[0].data
@@ -500,6 +500,7 @@ GATED_CALLS = {
     ),
     "grants": lambda s, who: s.grants(path=Path("/d"), authority=who),
     "grant": lambda s, who: s.grant(path=Path("/d"), principal="bob", level="read", authority=who),
+    "holds": lambda s, who: s.holds(path=Path("/d"), level="read_write", authority=who),
     "stat": lambda s, who: s.stat(path=Path("/d/f.md"), authority=who),
 }
 

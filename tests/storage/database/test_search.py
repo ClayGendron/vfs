@@ -192,7 +192,7 @@ async def _twenty_folders(tmp_path: Any, readable: Sequence[str], hidden: Sequen
     folders = [f"/f{n:02}" for n in range(20)]
     docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words\n") for folder in folders]
     assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     for folder in folders:
         granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
         assert granted.success is True, granted.errors
@@ -1108,7 +1108,7 @@ async def _partial_store(tmp_path: Any = None) -> DatabaseStorage:
     storage = InMemoryStorage() if tmp_path is None else DatabaseStorage(url=_url(tmp_path))
     entries = [Entry(path=Path(path), content=body) for path, body in PARTIAL.items()]
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success is True
     assert (await storage.rebuild()).success is True
     return storage
@@ -1804,7 +1804,7 @@ class TestLiveSet:
             return None
 
         storage = InMemoryStorage()
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
         monkeypatch.setattr(maintenance_module, "refresh_refusal", no_refusal)

@@ -1,6 +1,10 @@
 # How we document
 
-This page holds the rules for the documentation of VFS. Today it covers the [glossary](../reference/glossary.md). The rules exist so that a word has one meaning, and a meaning has one word, on every page and in every docstring.
+This page holds the rules for the documentation of VFS. It covers docstrings and the [glossary](../reference/glossary.md). The rules exist so that a word has one meaning, and a meaning has one word, on every page and in every docstring.
+
+## Docstrings
+
+A docstring is a page's content. The reference pages are built from the docstrings, so a reader meets them as prose. [How we write docstrings](how-we-write-docstrings.md) holds the rules.
 
 ## What belongs in the glossary
 

@@ -97,6 +97,8 @@ from vfs.results import ErrorKind, Result, classified
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+# What a caller setting a mount's permissions needs. The rest serves the kernel's gate.
+__all__ = ["Permission", "PermissionMap", "PermissionsPayload", "read_only", "read_write"]
 
 Permission = Literal["read", "read_write"]
 """Filesystem-level permission value."""

@@ -307,8 +307,8 @@ async def _agreement_world(storage: DatabaseStorage) -> None:
     await drop_world(storage)
     written = await storage.write(entries=[Entry(path=Path("/drop/h/pub/f.txt"), content="p")], parents=True)
     assert written.success is True
-    assert (await storage.posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
     assert (await storage.write(entries=[Entry(path=Path("/drop/a.txt"), content="a")], authority=ALICE)).success
     assert (await storage.delete(path=Path("/drop/a.txt"), authority=ALICE)).success is True
     road = Edge(source=Path("/drop/e/f.txt"), target=Path("/drop/h"), edge_type="in")
@@ -613,7 +613,7 @@ async def _gate_world(size: int, *, url: str | None = None) -> DatabaseStorage:
 
 async def _postures(storage: DatabaseStorage, rows: list[tuple[str, Any]]) -> None:
     for path, level in rows:
-        assert (await storage.posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
 
 
 async def _probes(storage: DatabaseStorage) -> dict[str, tuple[str, tuple[Any, ...]]]:

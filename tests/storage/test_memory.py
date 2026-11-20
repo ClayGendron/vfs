@@ -41,7 +41,7 @@ def test_capabilities_pin_the_landed_set() -> None:
             "grant",
             "revoke",
             "grants",
-            "posture",
+            "set_posture",
             "add_member",
             "remove_member",
         }

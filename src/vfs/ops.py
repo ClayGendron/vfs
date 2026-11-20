@@ -56,10 +56,12 @@ Op = Literal[
     "grant",
     "revoke",
     "grants",
-    "posture",
+    "set_posture",
     "add_member",
     "remove_member",
 ]
+"""The name of one verb. A storage may declare a name that is not in this list, so a set of capabilities holds
+plain strings."""
 
 MUTATING_OPS: Final[frozenset[Op]] = frozenset(
     {"write", "edit", "delete", "restore", "sweep", "mkdir", "mkedge", "rmedge", "move", "copy"},
@@ -85,7 +87,7 @@ READ_OPS: Final[frozenset[Op]] = frozenset(
 EXEC_OPS: Final[frozenset[Op]] = frozenset({"run"})
 """Ops that execute a capability — not a namespace mutation, not a read."""
 
-GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "posture", "add_member", "remove_member"})
+GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "set_posture", "add_member", "remove_member"})
 """Ops over the grant and membership rows — who may see and write what."""
 
 GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
@@ -94,7 +96,7 @@ GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
 WRITE_GATED_OPS: Final[frozenset[Op]] = MUTATING_OPS | GRANT_WRITE_OPS
 """Every op a read-only mount refuses: the mutations and the grant writes."""
 
-DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "posture", "add_member", "remove_member"})
+DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "set_posture", "add_member", "remove_member"})
 """Developer-plane ops: never registered on any agent-facing tool surface
 (MCP serve, CLI) — Python-API only. Sweep destroys; agents only delete.
 Posture and group membership shape a whole mount's policy, so they stay
@@ -104,7 +106,7 @@ ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
 
 MANAGEMENT_METHODS: Final[frozenset[str]] = frozenset(
-    {"add_mount", "remove_mount", "bind", "unbind", "remount", "close", "locate", "locate_edge"}
+    {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
 )
 """The router's public coroutines that manage the mount tree rather than route an op.
 They are not ops; the router's public surface is exactly ``ALL_OPS | MANAGEMENT_METHODS``,
@@ -159,7 +161,7 @@ VERB_RUNGS: Final[dict[Op, Needs]] = {
     "rmedge": Needs("contribute", passing="list"),
     "grant": Needs("read_write"),
     "revoke": Needs("read_write"),
-    "posture": Needs("read_write"),
+    "set_posture": Needs("read_write"),
     "grants": Needs("read"),
     "run": Needs("read"),
     "sweep": Needs("read_write"),
@@ -181,7 +183,10 @@ axis.
 # Grep option vocabularies — shared by the router, the storage protocols,
 # and the CLI grammar when it lands.
 CaseMode = Literal["sensitive", "insensitive", "smart"]
+"""How ``grep`` treats letter case. ``smart`` ignores case unless the pattern has an upper-case letter."""
+
 GrepOutputMode = Literal["lines", "files", "count"]
+"""What ``grep`` returns. The matching lines, the files that hold a match, or the number of matches in each file."""
 
 # The graph walk's defaults, carried by the verb's signature and by the
 # params table alike: the gate never substitutes a schema default.

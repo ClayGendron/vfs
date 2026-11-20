@@ -10,7 +10,10 @@ candidate union (:func:`min_max`). A :class:`Fusion` combines those
 normalised legs; the mount's :class:`Ranker` names which one, declared
 at construction and never chosen per call.
 
-    DatabaseStorage(url=..., embedder=..., ranker=Ranker(fusion=Convex({"vector": 0.4, "lexical": 0.6})))
+```python
+ranker = Ranker(fusion=Convex({"vector": 0.4, "lexical": 0.6}))
+DatabaseStorage(url=..., embedder=..., ranker=ranker)
+```
 
 :class:`Convex` is the reference — ``a * norm(vec) + (1 - a) * norm(lex)``,
 the weights renormalised over the legs actually present so a one-leg
@@ -31,6 +34,26 @@ from typing import TYPE_CHECKING, Final, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+# What a caller declaring a mount's ranking needs. The rest serves the backend's own search.
+__all__ = [
+    "RRF",
+    "Convex",
+    "Fusion",
+    "InDegree",
+    "Katz",
+    "Linear",
+    "Log1p",
+    "MaxP",
+    "Measure",
+    "PageRank",
+    "PathShape",
+    "Ranker",
+    "Saturation",
+    "Sigmoid",
+    "Signal",
+    "Transform",
+]
 
 K = TypeVar("K")
 

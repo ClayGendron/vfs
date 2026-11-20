@@ -31,7 +31,7 @@ The table shows each call on a file that someone else created. "Yes" means the c
 | `write` over the file | Permission denied | Permission denied | Permission denied | Permission denied | Yes | Yes |
 | `edit` | Not found | Permission denied | Permission denied | Permission denied | Yes | Yes |
 | `delete`, `move`, `restore` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
-| `grant`, `revoke`, `posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
+| `grant`, `revoke`, `set_posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 | `sweep` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 
 `sweep` destroys a file for good, and `delete` moves it to the trash.
@@ -52,12 +52,12 @@ A level is given to a person, to a group, or to everyone.
 |---|---|---|
 | A person | `grant` | `fs.grant("/eng", "ada", "read")` |
 | A group | `grant` | `fs.grant("/eng", "group:eng", "read")` |
-| Everyone | `posture` | `fs.posture("/eng", "read")` |
+| Everyone | `set_posture` | `fs.set_posture("/eng", "read")` |
 
 Each of these calls also takes `authority=`, which names the caller making the change. [Who May Change Access](#who-may-change-access) says which callers are allowed.
 
 - **A group's name starts with `group:`.** `fs.add_member("group:eng", "ada", authority=Authority.system())` puts a person in a group, and `fs.remove_member` takes them out. A group may hold other groups, up to eight deep.
-- **`grant` accepts every level except `none`.** `posture` accepts all six.
+- **`grant` accepts every level except `none`.** `set_posture` accepts all six.
 - **`fs.grants(path)` lists the rows that decide access at a path.** Everyone appears in those rows as `*`.
 
 ## How a Caller's Level Is Decided
@@ -71,10 +71,17 @@ Each of these calls also takes `authority=`, which names the caller making the c
 
 | Call | Who may call it |
 |---|---|
-| `grant`, `revoke`, `posture` | A caller who holds `read_write` at the path and everything below it |
+| `grant`, `revoke`, `set_posture` | A caller who holds `read_write` at the path and everything below it |
 | `add_member`, `remove_member` | The system only |
+| `add_mount`, `remove_mount`, `update_mount` | A caller who holds `read_write` at the path of the mount |
 
 A caller with `Authority.system()` passes every check on this page. It stands for your own application code.
+
+The right to change a mount is kept by the storage above the mount, on the directory the mount is attached at. Three things follow.
+
+- **To add a mount, a caller must also be able to make its directory.** `add_mount` makes the directory with the caller's own `mkdir`. If the directory is already there, `read_write` at it is enough for a named caller. A caller with no name is still refused when a directory above the mount point gives everyone `none`, because its `mkdir` must first find the directories above.
+- **Give the right before you add the mount, or on a directory above it.** Once a mount is at `/data`, `grant("/data", ...)` reaches the mounted storage. It no longer changes who may change the mount.
+- **Whoever may change a mount may remove it, and may change its policy in place.** `remove_mount` asks the gate for a `delete` at the mount point. `update_mount` asks for a `delete` and a `mkdir` there, and for nothing more.
 
 ## Callers with No Name
 

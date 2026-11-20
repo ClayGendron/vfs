@@ -33,7 +33,7 @@ result = await fs.read("/notes/alice.md", authority=alice)
 A session fills in `authority=` for you. Its verbs have the same signatures minus that parameter.
 
 ```python
-async with fs.session(alice) as s:
+async with fs.open_session(alice) as s:
     await s.write(path="/notes/session.md", content="hi")
     result = await s.read("/notes/session.md")
 ```

@@ -114,6 +114,9 @@ export type ApiExport = {
       kind: string;
       labels: string[];
       signature: string | null;
+      /** An exported type alias is an attribute: its value is the type it stands for. */
+      annotation: string | null;
+      value: string | null;
       bases: string[];
       doc: string;
       members: ExportedMember[];

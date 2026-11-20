@@ -42,8 +42,8 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from vfs.authority import Authority
-    from vfs.base import Binding, EdgeLocation, Location, MountInfo
     from vfs.models import Edge, Entry, Observation
+    from vfs.mounts import EdgeLocation, Location, Mount
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.permissions import Permission, PermissionMap
@@ -185,30 +185,6 @@ class VirtualFileSystem:
     # mount administration
     # -------------------------------------------------------------------
 
-    def bind(
-        self,
-        storage: StorageBackend,
-        path: str,
-        *,
-        permissions: Permission | PermissionMap | None = None,
-        deny_ops: Iterable[Op] = (),
-        no_overlay: bool = False,
-        owned: bool = True,
-    ) -> None:
-        return self._await(
-            "bind",
-            self._fs.bind,
-            storage,
-            path,
-            permissions=permissions,
-            deny_ops=deny_ops,
-            no_overlay=no_overlay,
-            owned=owned,
-        )
-
-    def unbind(self, path: str) -> Binding:
-        return self._await("unbind", self._fs.unbind, path)
-
     def add_mount(
         self,
         storage: StorageBackend,
@@ -219,6 +195,7 @@ class VirtualFileSystem:
         deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
+        authority: Authority | None = None,
     ) -> None:
         return self._await(
             "add_mount",
@@ -230,12 +207,13 @@ class VirtualFileSystem:
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             owned=owned,
+            authority=authority,
         )
 
-    def remove_mount(self, path: str) -> None:
-        return self._await("remove_mount", self._fs.remove_mount, path)
+    def remove_mount(self, path: str, *, authority: Authority | None = None) -> Mount:
+        return self._await("remove_mount", self._fs.remove_mount, path, authority=authority)
 
-    def remount(
+    def update_mount(
         self,
         path: str,
         *,
@@ -243,18 +221,20 @@ class VirtualFileSystem:
         deny_ops: Iterable[Op] | None = None,
         no_overlay: bool | None = None,
         refresh_caps: bool = False,
+        authority: Authority | None = None,
     ) -> None:
         return self._await(
-            "remount",
-            self._fs.remount,
+            "update_mount",
+            self._fs.update_mount,
             path,
             permissions=permissions,
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             refresh_caps=refresh_caps,
+            authority=authority,
         )
 
-    def mounts(self) -> tuple[MountInfo, ...]:
+    def mounts(self) -> tuple[Mount, ...]:
         return self._fs.mounts()
 
     def locate(self, path: str, *, exists: bool = False, authority: Authority | None = None) -> Location:
@@ -265,8 +245,8 @@ class VirtualFileSystem:
     ) -> EdgeLocation:
         return self._await("locate_edge", self._fs.locate_edge, source, target, exists=exists, authority=authority)
 
-    def session(self, authority: Authority) -> Session:
-        """An authority-scoped twin of the router's session: the verbs without the identity argument."""
+    def open_session(self, authority: Authority) -> Session:
+        """Open an authority-scoped twin of the router's session: the verbs without the identity argument."""
         return Session(self, authority)
 
     def capabilities(self) -> frozenset[str]:
@@ -614,8 +594,8 @@ class VirtualFileSystem:
     def grants(self, path: str, *, authority: Authority | None = None) -> Result:
         return self._result("grants", self._fs.grants, path, authority=authority)
 
-    def posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
-        return self._result("posture", self._fs.posture, path, posture, authority=authority)
+    def set_posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
+        return self._result("set_posture", self._fs.set_posture, path, posture, authority=authority)
 
     def add_member(
         self,
@@ -1058,8 +1038,8 @@ class Session:
     def grants(self, path: str) -> Result:
         return self._result("grants", self._session.grants, path)
 
-    def posture(self, path: str, posture: Posture) -> Result:
-        return self._result("posture", self._session.posture, path, posture)
+    def set_posture(self, path: str, posture: Posture) -> Result:
+        return self._result("set_posture", self._session.set_posture, path, posture)
 
     def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
         return self._result("add_member", self._session.add_member, group, member, path=path)

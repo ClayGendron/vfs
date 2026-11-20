@@ -141,7 +141,7 @@ class TestRights:
     async def test_a_hidden_middle_node_cuts_the_walk_under_the_join(self, storage: InMemoryStorage) -> None:
         # Mutant: judge rows after the loop — c would be reached through b.
         await _chain(storage)
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for path in (CHAIN[0], CHAIN[2]):
             assert (await storage.grant(path=Path(path), principal="bob", level="read", authority=SYSTEM)).success
         cut = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
@@ -155,7 +155,7 @@ class TestRights:
         # The generic floor: no range source and a starved bind budget, so
         # the view is several clauses merged per hop. Same answer.
         await _chain(storage)
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for path in (CHAIN[0], CHAIN[2], "/w/other.md"):
             assert (await storage.write(entries=[Entry(path=Path(path), content="x")], authority=SYSTEM)).success
             assert (await storage.grant(path=Path(path), principal="bob", level="read", authority=SYSTEM)).success
@@ -177,7 +177,7 @@ class TestRights:
         # Mutant: build the view at read — b would be dropped in SQL and c
         # never reached, while the leak test above still passed.
         await _chain(storage)
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for path, level in ((CHAIN[0], "read"), (CHAIN[1], "list"), (CHAIN[2], "read")):
             assert (await storage.grant(path=Path(path), principal="bob", level=level, authority=SYSTEM)).success
         result = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
@@ -198,7 +198,7 @@ class TestRights:
         # root while tree reaches the granted file.
         entries = [Entry(path=Path("/r/deep/file.md"), content="x"), Entry(path=Path("/r/other.md"), content="x")]
         assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (
             await storage.grant(path=Path("/r/deep/file.md"), principal="bob", level="read", authority=SYSTEM)
         ).success
@@ -220,8 +220,8 @@ class TestRights:
         # A list posture lets anonymous walk and see bare nodes; a none
         # posture refuses the seed before any row is read.
         await _chain(storage)
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/w"), posture="list", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/w"), posture="list", authority=SYSTEM)).success is True
         with recording(storage) as recorded:
             bare = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=ANON)
         assert _nodes(bare) == {CHAIN[0]: 0, CHAIN[1]: 1, CHAIN[2]: 2}

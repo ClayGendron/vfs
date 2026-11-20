@@ -10,8 +10,13 @@
     "types": ["Entry"]
   },
   {
+    "term": "Kernel",
+    "summary": "The object that holds the file tree, checks every call and sends it to the storage backend that holds the path.",
+    "types": ["AsyncVirtualFileSystem"]
+  },
+  {
     "term": "Mount",
     "summary": "A storage backend attached at a path in the file tree.",
-    "types": ["MountInfo", "base.Binding"]
+    "types": ["Mount"]
   }
 ]

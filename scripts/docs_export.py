@@ -7,8 +7,11 @@ no build of the Rust extension::
     uv run --only-group docs python scripts/docs_export.py    # writes docs-app/src/lib/generated/api.json
 
 The export is ``{"names": [...], "objects": {name: {kind, labels, signature,
-bases, doc, members: [{name, kind, labels, signature, annotation, value, doc,
-members}]}}, "internals": {path: {...}}}``. ``internals`` holds the private
+annotation, value, bases, doc, members: [{name, kind, labels, signature,
+annotation, value, doc, members}]}}, "internals": {path: {...}}}``. An exported
+type alias is an attribute, and its ``value`` is the type it stands for. A type
+of the package that a public signature names must itself be reached by an
+exported name, or the export is refused. ``internals`` holds the private
 objects a page under ``maintainers/`` pulls in, each under its dotted path inside
 the package and in the shape of an exported one; a private object on any other
 page, or a public one on a maintainer page, is refused.
@@ -91,6 +94,13 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 CLASS_ATTRIBUTE = "class-attribute"
 INSTANCE_ATTRIBUTE = "instance-attribute"
 
+# The most members a refusal names for one type that is not exported; the rest are counted.
+SHOWN_HOLDERS = 3
+# The calls that make a type variable, which is a name in a signature and not a type to import.
+TYPE_VARIABLE_MODULES = ("typing", "typing_extensions")
+TYPE_VARIABLE_KINDS = ("TypeVar", "ParamSpec", "TypeVarTuple")
+TYPE_VARIABLES = frozenset(f"{module}.{kind}" for module in TYPE_VARIABLE_MODULES for kind in TYPE_VARIABLE_KINDS)
+
 
 class ExportError(Exception):
     """The export was refused; the message names the object or the page, and why."""
@@ -114,8 +124,9 @@ def export(source: Path, documentation: Path, *, package: str = PACKAGE) -> dict
     objects = {name: _describe_object(target, terms, exported) for name, target in resolved.items()}
     private = {name: _private_target(loaded, name, pages, exported, package) for name, pages in internal.items()}
     internals = {name: _describe_object(target, terms, exported) for name, target in private.items()}
-    public = {target.path: name for name, target in resolved.items()}
-    book = _Book(package, loaded, resolved, public, api, internal, terms)
+    public, listing = _public_paths(resolved)
+    book = _Book(package, loaded, resolved, public, listing, api, internal, terms)
+    _check_signatures(book)
     glossary = _describe_glossary(_written_terms(documentation), documentation, book)
     return {"names": names, "objects": objects, "internals": internals, "glossary": glossary}
 
@@ -333,9 +344,28 @@ class _Book(NamedTuple):
     loaded: griffe.Object | griffe.Alias
     resolved: dict[str, griffe.Object]
     public: dict[str, str]
+    listing: frozenset[str]
     api: dict[str, list[str]]
     internal: dict[str, list[str]]
     terms: dict[str, str]
+
+
+def _public_paths(resolved: dict[str, griffe.Object]) -> tuple[dict[str, str], frozenset[str]]:
+    """Where each public name is defined, with the name a caller writes, and the modules that list their own names.
+
+    An exported name is public, and so is each name an exported module lists in its ``__all__``. Such a module
+    reaches only the names it lists, so the second value says which modules those are.
+    """
+    public = {target.path: name for name, target in resolved.items()}
+    listing = {
+        name: target
+        for name, target in resolved.items()
+        if isinstance(target, griffe.Module) and target.exports is not None
+    }
+    for name, module in listing.items():
+        for member in _public_members(module):
+            public.setdefault(member.path, f"{name}.{member.name}")
+    return public, frozenset(module.path for module in listing.values())
 
 
 def _describe_glossary(written: list[_Term], documentation: Path, book: _Book) -> dict[str, dict[str, Any]]:
@@ -440,9 +470,15 @@ def _placed(target: griffe.Object, book: _Book) -> tuple[str, str | None, bool]:
     """An object's name, its page and whether it is public: by the exported name above it, or by its own path."""
     parts = target.path.split(".")
     for cut in range(len(parts), 0, -1):
-        exported = book.public.get(".".join(parts[:cut]))
-        if exported is not None:
-            return ".".join([exported, *parts[cut:]]), book.api[exported][0], True
+        above = ".".join(parts[:cut])
+        exported = book.public.get(above)
+        # A module that lists its own names reaches those names alone, and each is in the book by its own path.
+        if exported is None or (cut < len(parts) and above in book.listing):
+            continue
+        # A page draws the public members of a name. A private member beneath it is on no page.
+        if not all(_is_public(part) for part in parts[cut:]):
+            break
+        return ".".join([exported, *parts[cut:]]), book.api[exported.partition(".")[0]][0], True
     inside = parts[1:]
     for cut in range(len(inside), 0, -1):
         pages = book.internal.get(".".join(inside[:cut]))
@@ -499,6 +535,73 @@ def _check_placement(names: list[str], blocks: dict[str, list[str]], package: st
         raise ExportError("; ".join(problems))
 
 
+def _check_signatures(book: _Book) -> None:
+    """Refuse when a public signature names a type of the package that no exported name reaches.
+
+    A caller who reads a type on a reference page can import it. A type that an exported module or class
+    holds counts as reached, because that page lists it.
+    """
+    unreached: dict[str, list[str]] = {}
+    for name, target in book.resolved.items():
+        for holder, annotation in _annotations(name, target):
+            for named in _package_types(annotation, book):
+                if not _placed(named, book)[2] and holder not in unreached.setdefault(named.path, []):
+                    unreached[named.path].append(holder)
+    if not unreached:
+        return
+    problems = []
+    for path, holders in sorted(unreached.items()):
+        shown = ", ".join(f"{book.package}.{holder}" for holder in holders[:SHOWN_HOLDERS])
+        more = f" and {len(holders) - SHOWN_HOLDERS} more" if len(holders) > SHOWN_HOLDERS else ""
+        problems.append(f"{path}, named by {shown}{more}")
+    msg = f"public signatures name types that {book.package}.__all__ does not export: {'; '.join(problems)}"
+    raise ExportError(msg)
+
+
+def _annotations(name: str, target: griffe.Object) -> Iterator[tuple[str, str | griffe.Expr]]:
+    """Each annotation a caller reads under an exported name, with the name of the member that writes it."""
+    if isinstance(target, griffe.Function):
+        for parameter in target.parameters:
+            if parameter.annotation is not None:
+                yield name, parameter.annotation
+        if target.returns is not None:
+            yield name, target.returns
+    elif isinstance(target, griffe.Attribute):
+        if target.annotation is not None:
+            yield name, target.annotation
+        # An exported attribute is a type alias, and an alias is its value.
+        if "." not in name and target.value is not None:
+            yield name, target.value
+    elif target.is_class or target.is_module:
+        constructor = target.members.get("__init__")
+        members = _public_members(target) + ([constructor] if isinstance(constructor, griffe.Function) else [])
+        for member in members:
+            yield from _annotations(f"{name}.{member.name}", member)
+
+
+def _package_types(annotation: str | griffe.Expr, book: _Book) -> Iterator[griffe.Object]:
+    """The objects of the package that an annotation names. A name that cannot be read is left out."""
+    if isinstance(annotation, str):
+        return
+    prefix = f"{book.package}."
+    for part in annotation.iterate(flat=True):
+        if not isinstance(part, griffe.ExprName) or not part.canonical_path.startswith(prefix):
+            continue
+        try:
+            found = book.loaded[part.canonical_path.removeprefix(prefix)]
+            named = found.final_target if isinstance(found, griffe.Alias) else found
+        except (KeyError, griffe.AliasResolutionError, griffe.CyclicAliasError):
+            continue
+        # A type variable stands for the caller's own type, so there is nothing to import.
+        if not (isinstance(named, griffe.Attribute) and _is_type_variable(named.value)):
+            yield named
+
+
+def _is_type_variable(value: str | griffe.Expr | None) -> bool:
+    """Whether an attribute's value is a call that makes a type variable, however the call is spelled."""
+    return isinstance(value, griffe.ExprCall) and value.function.canonical_path in TYPE_VARIABLES
+
+
 def _resolved(loaded: griffe.Object | griffe.Alias, name: str, package: str) -> griffe.Object:
     """The object an exported name stands for, wherever in the package it is defined."""
     try:
@@ -514,10 +617,13 @@ def _describe_object(target: griffe.Object, terms: dict[str, str], exported: fro
     members: list[dict[str, Any]] = []
     if target.is_class or target.is_module:
         members = [_describe_member(member, terms, exported) for member in _public_members(target)]
+    alias = target if isinstance(target, griffe.Attribute) else None
     return {
         "kind": target.kind.value,
         "labels": sorted(target.labels),
         "signature": _signature_of(target),
+        "annotation": None if alias is None or alias.annotation is None else str(alias.annotation),
+        "value": None if alias is None or alias.value is None else str(alias.value),
         "bases": [str(base) for base in target.bases] if isinstance(target, griffe.Class) else [],
         "doc": _markdown(target, terms),
         "members": members,
@@ -549,7 +655,13 @@ def _describe_member(
 
 
 def _public_members(target: griffe.Object) -> list[griffe.Object]:
-    """A class's public attributes and functions, or what a module itself defines, in source order."""
+    """A class's public attributes and functions, or what a module offers, in source order.
+
+    A module that writes its own ``__all__`` offers exactly that list, in the list's order, and a name it
+    imported is followed to where it is defined. A module with no list offers what it defines itself.
+    """
+    if isinstance(target, griffe.Module) and target.exports is not None:
+        return [_listed(target, str(name)) for name in target.exports]
     members: list[griffe.Object] = []
     for name, member in target.members.items():
         if isinstance(member, griffe.Alias) or name == "__init__" or not _is_public(name):
@@ -559,6 +671,16 @@ def _public_members(target: griffe.Object) -> list[griffe.Object]:
             continue
         members.append(member)
     return members
+
+
+def _listed(module: griffe.Module, name: str) -> griffe.Object:
+    """The object a module's ``__all__`` names, read through the import that brought it in."""
+    try:
+        member = module.members[name]
+        return member.final_target if isinstance(member, griffe.Alias) else member
+    except (KeyError, griffe.AliasResolutionError, griffe.CyclicAliasError) as error:
+        msg = f"{module.path} lists {name!r} in its __all__, which cannot be read from the source: {error}"
+        raise ExportError(msg) from error
 
 
 def _is_public(name: str) -> bool:

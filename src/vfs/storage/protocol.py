@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
     from vfs.authority import Authority
     from vfs.models import Edge, Entry, Observation
-    from vfs.ops import CaseMode, GrepOutputMode, Op
+    from vfs.ops import CaseMode, GrepOutputMode, Op, Rung
     from vfs.paths import ObjectKind, Path
     from vfs.pattern_matching import ScopeChannel
     from vfs.results import Result
@@ -380,7 +380,7 @@ class SupportsGrants(Protocol):
 
     A grant names a principal (a ``sub`` or a ``group:`` id), a path
     prefix, and a level — a rung of the ladder ``list < read < add <
-    contribute < read_write``; ``posture`` writes the everyone row that
+    contribute < read_write``; ``set_posture`` writes the everyone row that
     sets what a caller with no grant holds, named by the same rungs
     (``none`` included). Membership is mount-wide, so the
     membership verbs take no path. Answers ride as ``grants=`` and
@@ -412,7 +412,7 @@ class SupportsGrants(Protocol):
         authority: Authority | None = None,
     ) -> Result: ...
 
-    async def posture(
+    async def set_posture(
         self,
         *,
         path: Path,
@@ -433,6 +433,33 @@ class SupportsGrants(Protocol):
         *,
         group: str,
         member: str,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+
+HOLDS: Final = "holds"
+"""The name the rights question carries on its result. It is not a routed verb."""
+
+
+@runtime_checkable
+class SupportsHolds(Protocol):
+    """The rights question, which a storage that keeps grants answers for one caller, level and path.
+
+    ``holds`` reads the rights and writes nothing. A successful result means
+    the caller holds ``level`` at ``path``. A failed result says why it does
+    not, in the same words a verb would use. The path need not hold a row,
+    because a grant or a posture above it decides.
+
+    This is not a routed verb. The :term:`kernel` asks it before it changes
+    a :term:`mount`, so that a mount change needs ``read_write`` at the
+    mount point.
+    """
+
+    async def holds(
+        self,
+        *,
+        path: Path,
+        level: Rung,
         authority: Authority | None = None,
     ) -> Result: ...
 

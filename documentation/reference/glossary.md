@@ -32,8 +32,18 @@ An entry is one file or one directory in the file tree. A file is an entry with 
 
 The path a [mount](#mount) is attached at is an entry too. It is an empty directory, stored in the mount above it. The directory is the entry. The storage backend attached there is the mount.
 
+## Kernel
+
+The kernel is the object that holds the file tree and answers every call on it. For each call it finds the [mount](#mount) that holds the path, checks the call against the permissions of that mount, and sends the call to the storage backend of that mount with the name of the caller. The storage backend decides what that caller may see or change. **Every call passes through the kernel, so no call reaches a storage backend unchecked.**
+
+In code the kernel is `AsyncVirtualFileSystem`, with calls you `await`. `VirtualFileSystem` is the same kernel with plain calls. One kernel is one file tree. A kernel never holds another kernel, and two file trees are joined only through a storage backend.
+
+The name follows the kernel of an operating system, which every call on a file passes through.
+
 ## Mount
 
 A mount is a storage backend attached at a path in the file tree. **Every path belongs to exactly one mount, the deepest one at or above it.** With one mount at `/` and one at `/projects`, the path `/projects/app/main.py` belongs to the mount at `/projects`.
 
-A mount added with `fs.bind()` is attached at an [entry](#entry), an empty directory that must exist first. **The directory is stored. The mount is not.** The mount lasts only while the file system is open, and `fs.unbind()` leaves the directory in place.
+A mount is attached at an [entry](#entry), an empty directory. `fs.add_mount()` makes that directory when it is absent. **The directory is stored. The mount is not.** The mount lasts only while the file system is open. `fs.remove_mount()` removes the mount and then its directory.
+
+Adding or removing a mount is a write at its path. A read-only mount takes no new mount beneath it and loses none. The caller must also hold `read_write` at that path, as for a change to who can access it.

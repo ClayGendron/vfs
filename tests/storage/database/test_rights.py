@@ -104,7 +104,7 @@ async def _replay(world: GrantWorld) -> InMemoryStorage:
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
     for row in world.grants:
         if row.principal_id == EVERYONE_NAME:
-            result = await storage.posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
+            result = await storage.set_posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
         else:
             result = await storage.grant(
                 path=Path(row.path_prefix), principal=row.principal_id, level=row.level, authority=SYSTEM
@@ -273,7 +273,7 @@ async def test_without_a_range_source_the_arms_answer_as_the_join_did(
         entries = [Entry(path=Path(f"{folder}/doc.md"), content=f"lantern {folder}") for folder in folders]
         entries += [Entry(path=Path(f"/hidden/{n}.md"), content="lantern lantern") for n in range(5)]
         assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             assert (await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
@@ -301,7 +301,7 @@ async def test_a_partial_read_issues_the_profiles_range_settings_and_derived_hin
     try:
         entries = [Entry(path=Path(f"/d/{n}.md"), content="lantern") for n in range(3)]
         assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
         host = storage._host
@@ -343,7 +343,7 @@ async def test_every_row_carries_the_oracles_everyone_level_after_every_mutation
             for _change in range(3):
                 target = rng.choice(("/", "/c1", "/m1", "/c1/deep", *layout.paths))
                 level = rng.choice(_POSTURES)
-                changed = await storage.posture(path=Path(target), posture=level, authority=SYSTEM)
+                changed = await storage.set_posture(path=Path(target), posture=level, authority=SYSTEM)
                 assert changed.success is True, changed.errors
                 assert set((changed.model_extra or {})["relabel"]) == {"rows", "statements", "transactions"}
                 _set_posture(world, target, level)
@@ -353,7 +353,7 @@ async def test_every_row_carries_the_oracles_everyone_level_after_every_mutation
             # A posture change while /m1 is deleted reaches its rows where they sit.
             target = rng.choice(("/", "/m1", *layout.paths))
             level = rng.choice(_POSTURES)
-            assert (await storage.posture(path=Path(target), posture=level, authority=SYSTEM)).success
+            assert (await storage.set_posture(path=Path(target), posture=level, authority=SYSTEM)).success
             _set_posture(world, target, level)
             await _assert_labels(storage, world)
             assert (await storage.restore(path=Path("/m1"), authority=SYSTEM)).success is True
@@ -454,7 +454,7 @@ async def test_a_failed_relabel_chunk_returns_the_posture_with_its_grant(tmp_pat
             raise OperationalError("relabel", {}, Exception("disk full"))
 
         monkeypatch.setattr(backend_module.Relabeller, "step", boom)
-        result = await storage.posture(path=Path("/d"), posture="none", authority=SYSTEM)
+        result = await storage.set_posture(path=Path("/d"), posture="none", authority=SYSTEM)
         assert result.success is False
         assert _granted(result)[0]["path_prefix"] == "/d"
         host = storage._host
@@ -465,8 +465,8 @@ async def test_a_failed_relabel_chunk_returns_the_posture_with_its_grant(tmp_pat
         await storage.close()
 
 
-@pytest.mark.parametrize("op", ["grant", "posture"])
-async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: Literal["grant", "posture"]) -> None:
+@pytest.mark.parametrize("op", ["grant", "set_posture"])
+async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: Literal["grant", "set_posture"]) -> None:
     # The lock-before-decide pin. A rival revoke of ann's right lands in
     # the gap before the admin write takes the lock — staged on the
     # verb's own writer session, the repo's SQLite race idiom, since a
@@ -496,7 +496,7 @@ async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: Lite
 async def test_a_grant_write_invalidates_its_grantees_cached_resolution(storage: InMemoryStorage) -> None:
     ann = Authority.of(Principal("ann"))
     await storage.write(entries=[Entry(path=Path("/d/f.md"), content="x")], parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     assert (await storage.read(path=Path("/d/f.md"), authority=ann)).success is False
     assert (await storage.grant(path=Path("/d"), principal="ann", level="read", authority=SYSTEM)).success is True
     assert (await storage.read(path=Path("/d/f.md"), authority=ann)).success is True
@@ -561,7 +561,7 @@ async def test_a_posture_change_retires_no_compile_but_its_window_and_its_settli
     callers = await _three_cached_callers(storage)
     # A posture change that has settled by the time anyone reads: the
     # labels decide, and every compile made before it serves again.
-    assert (await storage.posture(path=Path("/d"), posture="read", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/d"), posture="read", authority=SYSTEM)).success is True
     for who in callers:
         assert (await storage.read(path=Path("/d/f.md"), authority=who)).success is True
     assert compiled[3:] == []
@@ -590,7 +590,7 @@ async def test_a_posture_change_retires_the_anonymous_compile(
     assert (await storage.read(path=Path("/d/f.md"), authority=anon)).success is True
     assert (await storage.read(path=Path("/d/f.md"), authority=anon)).success is True
     assert compiled == [(ANONYMOUS_NAME,)]
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     refused = await storage.read(path=Path("/d/f.md"), authority=anon)
     assert _kind(refused) == ErrorKind.unauthenticated
     assert compiled == [(ANONYMOUS_NAME,), (ANONYMOUS_NAME,)]
@@ -788,7 +788,7 @@ async def _finish_relabels(storage: InMemoryStorage) -> None:
 
 
 async def _locked_admin_write(
-    host: EngineHost, op: Literal["grant", "posture"], authority: Authority, *, revoke_in_gap: object
+    host: EngineHost, op: Literal["grant", "set_posture"], authority: Authority, *, revoke_in_gap: object
 ) -> Result:
     """One admin write in the backend's order, a revoke of ann staged in the gap before the lock.
 
@@ -881,7 +881,7 @@ def _recompiles(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
 async def _three_cached_callers(storage: InMemoryStorage) -> tuple[Authority, Authority, Authority]:
     """ann, bob and carol, each cached by one read of a private mount's ``/d/f.md``."""
     await storage.write(entries=[Entry(path=Path("/d/f.md"), content="x")], parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     callers = (Authority.of(Principal("ann")), Authority.of(Principal("bob")), Authority.of(Principal("carol")))
     for who in callers:
         await storage.read(path=Path("/d/f.md"), authority=who)
@@ -958,7 +958,7 @@ async def _fill_leak_worlds(directory: pathlib.Path) -> None:
         try:
             assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
             for row in _leak_world(order).grants:
-                posted = await storage.posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
+                posted = await storage.set_posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
                 assert posted.success is True
         finally:
             await storage.close()

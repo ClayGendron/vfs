@@ -506,7 +506,7 @@ class TestBounds:
         entries = [Entry(path=Path(f"/bulk/f{n:05}.txt"), content=body.format(n=n)) for n in range(10_000)]
         assert (await storage.write(entries=entries, parents=True)).success is True
         await _written(storage, {"/d/a.txt": "lantern visible", "/h/b.txt": "lantern hidden"})
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
         parameters = storage._host.parameter_budget

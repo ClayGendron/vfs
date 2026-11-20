@@ -174,12 +174,12 @@ async def _fill_posture_world(fs: AsyncVirtualFileSystem, *, private_roots: bool
     """
     rows = list(_files(POSTURE_DIRECTORIES, ("a.py", "src/c.py")))
     assert (await fs.write(entries=rows, parents=True, authority=_SYSTEM)).success is True
-    assert (await fs.posture("/m", "none", authority=_SYSTEM)).success is True
+    assert (await fs.set_posture("/m", "none", authority=_SYSTEM)).success is True
     root_level, src_level = ("none", "read") if private_roots else ("read", "none")
     for root in POSTURE_DIRECTORIES:
         if root_level != "none":
-            assert (await fs.posture(root, root_level, authority=_SYSTEM)).success is True
-        assert (await fs.posture(f"{root}/src", src_level, authority=_SYSTEM)).success is True
+            assert (await fs.set_posture(root, root_level, authority=_SYSTEM)).success is True
+        assert (await fs.set_posture(f"{root}/src", src_level, authority=_SYSTEM)).success is True
 
 
 def _files(directories: tuple[str, ...], names: tuple[str, ...]) -> list[Entry]:
