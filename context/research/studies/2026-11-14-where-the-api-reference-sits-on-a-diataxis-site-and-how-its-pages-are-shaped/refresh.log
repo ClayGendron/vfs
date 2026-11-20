@@ -1,0 +1,18 @@
+Refreshed by the coordinator on 2026-11-14 before any researcher read a clone. Existing clones: `git fetch origin`, `origin/HEAD` read, `origin/<default>` checked out detached; `git status --porcelain` was empty for every clone before and after, so none was skipped. New clones: `git clone --depth 1` of the upstream default branch, except the Diátaxis text, cloned with full history because a study reads a page its author removed.
+numpy: fetched 2026-11-14, detached at origin/main d63a30827d (2026-11-14), clean
+fastapi: fetched 2026-11-14, detached at origin/master 913c68062 (2026-11-14), clean
+polars: fetched 2026-11-14, detached at origin/main 2d9938d (2026-11-14), clean
+cpython: fetched 2026-11-14, detached at origin/main b968417 (2026-11-14), clean
+django: cloned shallow from https://github.com/django/django.git on 2026-11-14; at origin/main f24f38c (2026-11-13), clean
+pytest: cloned shallow from https://github.com/pytest-dev/pytest.git on 2026-11-14; at origin/main fc9a7ef (2026-11-11), clean
+hypothesis: cloned shallow from https://github.com/HypothesisWorks/hypothesis.git on 2026-11-14; at origin/master 9ab0be6 (2026-11-06), clean
+toga: cloned shallow from https://github.com/beeware/toga.git on 2026-11-14; at origin/main c2e9a35 (2026-11-13), clean
+diataxis-documentation-framework: cloned with full history from https://github.com/evildmp/diataxis-documentation-framework.git on 2026-11-14; at origin/main 957c09c (2026-08-06), clean
+sphinx-docs-starter-pack: cloned shallow from https://github.com/canonical/sphinx-docs-starter-pack.git on 2026-11-14; at origin/main 47c1ca7 (2026-10-16), clean
+lxd: cloned shallow from https://github.com/canonical/lxd.git on 2026-11-14; at origin/main f051822 (2026-11-13), clean
+pydantic: cloned shallow from https://github.com/pydantic/pydantic.git on 2026-11-14; at origin/main 560f0f9 (2026-11-10), clean
+textual: cloned shallow from https://github.com/Textualize/textual.git on 2026-11-14; at origin/main 5e5b7ef (2026-10-09), clean
+griffe: cloned shallow from https://github.com/mkdocstrings/griffe.git on 2026-11-14; at origin/main 698e528 (2026-11-14), clean
+mkdocstrings-python: cloned shallow from https://github.com/mkdocstrings/python.git on 2026-11-14; at origin/main f5b9e25 (2026-11-12), clean
+zensical: cloned shallow from https://github.com/zensical/zensical.git on 2026-11-14; at origin/master 31d9acd (2026-11-14), clean (upstream's default branch is `master`)
+uv: cloned shallow from https://github.com/astral-sh/uv.git on 2026-11-14; at origin/main d5c3f17 (2026-11-13), clean

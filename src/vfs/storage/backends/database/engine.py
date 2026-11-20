@@ -64,7 +64,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 
 from sqlalchemy import Engine, event, func, insert, inspect, select
-from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -91,6 +90,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
+from vfs.storage.backends.database.drivers import engine_arguments
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
 
@@ -217,7 +217,7 @@ class EngineHost:
             self._engine = None
             self.session_factory = session_factory
         else:
-            engine = create_async_engine(str(url), **_engine_kwargs(str(url)))
+            engine = create_async_engine(str(url), **engine_arguments(str(url)))
             self._engine = engine
             factory = async_sessionmaker(engine, expire_on_commit=False)
             # One shared DBAPI connection cannot overlap transactions: ops
@@ -980,26 +980,6 @@ class EngineHost:
 # ---------------------------------------------------------------------------
 # Module helpers
 # ---------------------------------------------------------------------------
-
-
-def _engine_kwargs(url: str) -> dict[str, bool]:
-    """Per-driver engine arguments the lossless byte contract requires.
-
-    SQLAlchemy's pyodbc dialect declares ``String`` binds as ANSI
-    ``SQL_VARCHAR`` via setinputsizes, and the server squeezes those
-    through the database codepage before they reach a UTF-8 column —
-    mangling non-Latin1 to ``?``. Disabling setinputsizes restores
-    pyodbc's Unicode default (``SQL_WVARCHAR``), whose conversion into
-    the UTF-8 collation is lossless. pyodbc's ``fast_executemany`` is
-    deliberately *not* set: engine-wide it rewrites UPDATE executemany,
-    whose rowcount the guarded bumps verify, and as a bulk-insert mode it
-    is still one RPC per row, slower than Core's pages on wide rows —
-    SQL Server's bulk inserts take Core's pages. Borrowed session
-    factories carry their builder's engine and must apply this themselves.
-    """
-    if make_url(url).get_backend_name() == "mssql":
-        return {"use_setinputsizes": False}
-    return {}
 
 
 def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectProfile) -> None:

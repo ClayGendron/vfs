@@ -1,0 +1,33 @@
+Refreshed by the coordinator on 2026-11-09 before any researcher read a clone: `git fetch origin`, `origin/HEAD` read, `origin/<default>` checked out detached; `git status --porcelain` was empty for every clone, so none was left dirty. The five clones marked "cloned shallow" did not exist before this study and were made with `git clone --depth 1`.
+tree: cloned shallow from https://github.com/Old-Man-Programmer/tree.git on 2026-11-09; detached at origin/master 1a41b51 (2026-03-16), clean
+dust: cloned shallow from https://github.com/bootandy/dust.git on 2026-11-09; detached at origin/master 079c552 (2026-11-01), clean
+ncdu: cloned shallow from https://code.blicky.net/yorhel/ncdu.git on 2026-11-09; detached at origin/zig 1b3d0a6 (2025-10-24), clean (upstream's default branch is `zig`)
+tokei: cloned shallow from https://github.com/XAMPPRocky/tokei.git on 2026-11-09; detached at origin/master c14f744 (2026-09-06), clean
+scc: cloned shallow from https://github.com/boyter/scc.git on 2026-11-09; detached at origin/master 62ac0b0 (2026-11-08), clean
+uutils-coreutils: fetched 2026-11-09, detached at origin/main 460f1de (2026-11-09), clean
+toybox: fetched 2026-11-09, detached at origin/master 6a0c0ef (2026-10-05), clean
+busybox: fetched 2026-11-09, detached at origin/master 371fe9f (2024-07-14), clean
+sbase: fetched 2026-11-09, detached at origin/master b30fb56 (2024-03-22), clean
+plan9port: fetched 2026-11-09, detached at origin/master 1f139691 (2026-10-20), clean
+macdirstat: fetched 2026-11-09, detached at origin/main 07ac725 (2026-03-08), clean
+nushell: fetched 2026-11-09, detached at origin/main 09f275bd0 (2026-11-08), clean
+PowerShell: fetched 2026-11-09, detached at origin/master 1aac7f5 (2026-11-05), clean
+ripgrep: fetched 2026-11-09, detached at origin/master 91f5d22 (2026-10-27), clean
+zoekt: fetched 2026-11-09, detached at origin/main a5a933bc (2026-11-03), clean
+codesearch: fetched 2026-11-09, detached at origin/master 74a12a9 (2026-08-30), clean
+git: fetched 2026-11-09, detached at origin/master fb255012ac (2026-11-06), clean
+datasette: fetched 2026-11-09, detached at origin/main 4e70219b (2026-11-08), clean
+sqlite-utils: fetched 2026-11-09, detached at origin/main 9c66baf (2026-10-10), clean
+lucene: fetched 2026-11-09, detached at origin/main b00bfc3 (2026-11-09), clean
+tantivy: fetched 2026-11-09, detached at origin/main d66f88d (2026-11-05), clean
+qdrant: fetched 2026-11-09, detached at origin/master 222b2e44a (2026-10-21), clean
+filesystem_spec: fetched 2026-11-09, detached at origin/master 12c823b (2026-11-04), clean
+pyfilesystem2: fetched 2026-11-09, detached at origin/master 77a8562 (2025-05-17), clean
+opendal: fetched 2026-11-09, detached at origin/main d0ef0e3 (2026-11-09), clean
+juicefs: fetched 2026-11-09, detached at origin/main a921e08 (2026-11-09), clean
+seaweedfs: fetched 2026-11-09, detached at origin/master 7506e5f9 (2026-11-09), clean
+minio: fetched 2026-11-09, detached at origin/master 7aac2a2 (2026-02-12), clean
+agentfs: fetched 2026-11-09, detached at origin/main 0a014eb (2026-06-03), clean
+mirage: fetched 2026-11-09, detached at origin/main c531777b6e (2026-11-09), clean
+afs: fetched 2026-11-09, detached at origin/main 1e9b731 (2026-03-24), clean
+computer: fetched 2026-11-09, detached at origin/main 9f70253d (2026-11-05), clean

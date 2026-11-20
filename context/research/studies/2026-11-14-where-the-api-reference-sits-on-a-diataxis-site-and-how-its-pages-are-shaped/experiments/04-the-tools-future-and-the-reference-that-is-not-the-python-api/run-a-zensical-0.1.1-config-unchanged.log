@@ -1,0 +1,47 @@
+Downloading zensical (7.9MiB)
+Downloading zensical-ui (9.6MiB)
+   Building pyyaml==6.0.3
+ Downloaded zensical
+ Downloaded zensical-ui
+      Built pyyaml==6.0.3
+Installed 25 packages in 353ms
+Build started
+INFO -  [privacy] Downloading external file: https://unpkg.com/pyodide@314.0.2/pyodide.js
+INFO -  [privacy] Downloading external file: https://unpkg.com/ace-builds@1.44.0/src-noconflict/ace.js
+INFO -  [privacy] Downloading external file: https://unpkg.com/glightbox@3/dist/js/glightbox.min.js
+INFO -  [privacy] Downloading external file: https://unpkg.com/glightbox@3/dist/css/glightbox.min.css
+INFO -  [privacy] Downloading external file: https://unpkg.com/mermaid@12/dist/mermaid.min.js
+INFO -  [privacy] Downloading external file: https://cdn.plyr.io/3.6.12/plyr.css
+INFO -  [privacy] Downloading external file: https://cdn.plyr.io/3.6.12/plyr.js
+INFO -  [privacy] Downloading external file: https://player.vimeo.com/api/player.js
+INFO -  [privacy] Downloading external file: https://imasdk.googleapis.com/js/sdkloader/ima3.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/pagead/js/err_rep.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/live/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/control/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/canary/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/experimental/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://s0.2mdn.net/instream/video/client.js
+INFO -  [privacy] Downloading external file: http://imasdk.googleapis.com/js/sdkloader/loader.js
+No issues found
+Traceback (most recent call last):
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/bin/zensical", line 12, in <module>
+    sys.exit(cli())
+             ~~~^^
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/lib/python3.15/site-packages/click/core.py", line 1653, in __call__
+    return self.main(*args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/lib/python3.15/site-packages/click/core.py", line 1560, in main
+    rv = self.invoke(ctx)
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/lib/python3.15/site-packages/click/core.py", line 2054, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/lib/python3.15/site-packages/click/core.py", line 1414, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/lib/python3.15/site-packages/click/core.py", line 911, in invoke
+    return callback(*args, **kwargs)
+  File "/Users/claygendron/.cache/uv/archive-v0/KPRHijkpz1cik3Ae/lib/python3.15/site-packages/zensical/main.py", line 81, in execute_build
+    build(os.path.abspath(config_file), kwargs)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: could not render include: error in "partials/footer.html" (in base.html:222): could not render include: error in "partials/copyright.html" (in partials/footer.html:50): unknown method: undefined has no method named strftime (in partials/copyright.html:18)
+uvx --from 'zensical==0.1.1' --with 'mkdocstrings[python]>=1.0' zensical buil  2.82s user 2.56s system 50% cpu 10.743 total
