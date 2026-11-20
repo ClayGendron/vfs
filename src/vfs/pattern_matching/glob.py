@@ -578,7 +578,7 @@ def residuals(pattern: str, mount_path: Path) -> frozenset[tuple[str, ...]]:
     and may match zero components, so one bind segment can leave two
     live derivatives. The empty set is a dead mount — no dispatch. An
     empty tuple in the set is the bind point itself: that row is the
-    parent's stored mount-point directory, never a child dispatch. A
+    router's to return, and never a pattern sent to the mount. A
     live residual renders back via :func:`render_residual`. Input is
     canonicalized, so the zero-match arm never faces adjacent ``**``.
     """

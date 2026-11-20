@@ -560,12 +560,15 @@ class Result(BaseModel):
         For scoped and grouped dispatch, where every branch answers for an
         entry the caller named: any fatal entry fails the merged envelope.
         *op* seeds the envelope's verb for an empty merge. Rows for the
-        same global path fuse left-wins by mask; at bind paths this
-        decorates the owner's row with the mounted root's fields (the two
-        rows are the same entry seen from both sides of the seam — their
-        counters are unrelated, so the decorated row's version reads
-        null) — bind paths are the one place branch row-sets are *not*
-        disjoint. Computed as one linear pass over a running path index,
+        same global path fuse left-wins by mask. The router's branches
+        are disjoint but in two places. A directory above a mount point
+        is added bare and its storage's own row then fills it in. A
+        named root of a ``glob`` is returned by its probe, and again by
+        a storage or as a mount point when it lies beneath another
+        named root. The router drops the stored directory at a mount
+        point before any merge, so that path carries the mounted root's
+        row alone.
+        Computed as one linear pass over a running path index,
         equivalent to the pairwise fold without its quadratic rescans.
         """
         merged_ops: tuple[str, ...] = (op,) if op else ()

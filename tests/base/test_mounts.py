@@ -157,7 +157,8 @@ async def test_attach_mount_step_beneath_a_dead_backend_reports_the_transport_fa
     assert "mkdir" not in str(exc.value)
 
 
-async def test_attach_mount_step_racing_close_refuses_cleanly() -> None:
+@pytest.mark.parametrize("held", ["stat", "ls"])
+async def test_attach_mount_step_racing_close_refuses_cleanly(held: str) -> None:
     # close() may empty the table while the private attach step's site probe is
     # suspended; the step must refuse as "closed", never escape a KeyError.
     class GateStatStorage(BindableStorage):
@@ -166,10 +167,18 @@ async def test_attach_mount_step_racing_close_refuses_cleanly() -> None:
             self.entered = asyncio.Event()
             self.release = asyncio.Event()
 
+        async def _gate(self, op: str) -> None:
+            if op == held:
+                self.entered.set()
+                await self.release.wait()
+
         async def stat(self, **kwargs: Any) -> Result:
-            self.entered.set()
-            await self.release.wait()
+            await self._gate("stat")
             return await super().stat(**kwargs)
+
+        async def ls(self, **kwargs: Any) -> Result:
+            await self._gate("ls")
+            return await super().ls(**kwargs)
 
     backend = GateStatStorage()
     root = AsyncVirtualFileSystem(storage=backend)
@@ -731,7 +740,7 @@ async def test_shadow_filter_drops_ls_rows_beneath_a_deeper_mount() -> None:
     await root.add_mount(RecorderStorage(), "/a")
     result = await root.ls("/")
     assert "/a/ghost.txt" not in result.paths
-    assert "/a" in result.paths  # the mount point row itself survives, decorated
+    assert result.paths == ("/a",)  # the row at the mount point is the mounted root, and it is the only one
 
 
 async def test_shadow_filter_drops_tree_rows_beneath_a_deeper_mount() -> None:
@@ -825,20 +834,24 @@ async def test_tree_budgets_depth_across_mounted_regions() -> None:
     child = RecorderStorage()
     await root.add_mount(child, "/data/a", parents=True)
 
+    # A mount deeper than the listing goes is not asked at all.
     depth1 = await root.tree("/", max_depth=1)
     assert set(depth1.paths) == {"/data"}
     assert child.calls == []
 
+    # A mount exactly at the depth shows its own row, which one stat gives, and is not listed.
+    head = ("stat", {"path": "/", "columns": None})
     depth2 = await root.tree("/", max_depth=2)
     assert set(depth2.paths) == {"/data", "/data/a"}
-    assert child.calls == []
+    assert child.calls == [head]
 
+    child.calls.clear()
     await root.tree("/", max_depth=3)
-    assert child.calls == [("tree", {"path": "/", "max_depth": 1, "columns": None})]
+    assert sorted(child.calls, key=str) == [head, ("tree", {"path": "/", "max_depth": 1, "columns": None})]
 
     child.calls.clear()
     await root.tree("/")
-    assert child.calls == [("tree", {"path": "/", "max_depth": None, "columns": None})]
+    assert sorted(child.calls, key=str) == [head, ("tree", {"path": "/", "max_depth": None, "columns": None})]
 
 
 async def test_tree_skips_incapable_mount_with_info_record() -> None:
@@ -850,7 +863,7 @@ async def test_tree_skips_incapable_mount_with_info_record() -> None:
     result = await root.tree("/")
     assert result.success is True
     assert {"/data", "/data/a", "/data/b"} <= set(result.paths)
-    assert dim.calls == []
+    assert dim.calls == [("stat", {"path": "/", "columns": None})]  # its row is shown, and it is asked no tree
     [skip] = result.errors
     assert skip.kind is ErrorKind.unsupported
     assert skip.severity is Severity.info
@@ -863,13 +876,15 @@ async def test_tree_budgets_depth_from_a_non_root_target() -> None:
     await root.add_mount(child, "/data/a/b", parents=True)
 
     # The mount sits two segments beneath the target: depth 2 exhausts the
-    # budget at the mount point, whose stored directory row still shows.
+    # budget at the mount point, whose row is the mounted root and is not listed.
+    head = ("stat", {"path": "/", "columns": None})
     depth2 = await root.tree("/data", max_depth=2)
     assert set(depth2.paths) == {"/data/a", "/data/a/b"}
-    assert child.calls == []
+    assert child.calls == [head]
 
+    child.calls.clear()
     await root.tree("/data", max_depth=3)
-    assert child.calls == [("tree", {"path": "/", "max_depth": 1, "columns": None})]
+    assert sorted(child.calls, key=str) == [head, ("tree", {"path": "/", "max_depth": 1, "columns": None})]
 
 
 async def test_tree_dead_descent_demotes_beside_live_rows() -> None:

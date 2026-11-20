@@ -83,6 +83,16 @@ The right to change a mount is kept by the storage above the mount, on the direc
 - **Give the right before you add the mount, or on a directory above it.** Once a mount is at `/data`, `grant("/data", ...)` reaches the mounted storage. It no longer changes who may change the mount.
 - **Whoever may change a mount may remove it, and may change its policy in place.** `remove_mount` asks the gate for a `delete` at the mount point. `update_mount` asks for a `delete` and a `mkdir` there, and for nothing more.
 
+## Mounts
+
+A mount is a storage attached at a path, and **each storage keeps its own access**. Five things follow.
+
+- **A mount's path is not a secret.** `ls`, `tree` and `glob` show a mount to every caller who can list the directory it is in, and they show the directories that lead to it. A caller who holds nothing in the mount sees only its path and its kind.
+- **The mounted storage decides what a caller sees inside the mount.** That covers the rest of the mount's own row and everything below it.
+- **A grant at a mount's path is a grant in the mounted storage.** With a mount at `/data`, one call to `fs.grant("/data", "ada", "read")` shares the whole mount with ada.
+- **A level does not cross a mount.** Setting `/` to `none` does not close a mount at `/data`. A new mount gives everyone `read_write` until `fs.set_posture("/data", ...)` says otherwise.
+- **A mount whose storage cannot answer still shows.** Its row has only a path and a kind. When the storage fails, the result carries a warning that names the mount. A storage that does not answer `stat` at all is not asked, and its mount shows bare with no warning.
+
 ## Callers with No Name
 
 A call made with no authority holds only what everyone holds. When that level does not allow the call, the error is "Unauthenticated".

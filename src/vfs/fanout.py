@@ -281,8 +281,9 @@ def _composed_members(
 def _residual_renders(pattern: str, bind_path: Path, walk: _Walk) -> list[str]:
     """Sorted entry-local renders of the pattern's live residuals.
 
-    Empty-tuple residuals are dropped: the bind-point row is the
-    parent's stored directory, never a child dispatch.
+    Empty-tuple residuals are dropped: the row at a mount point is the
+    router's to return, from one stat of the mounted root, and never a
+    pattern sent to the mount.
     """
     return sorted(render_residual(components) for components in walk.residuals(pattern, bind_path) if components)
 
