@@ -1,0 +1,17 @@
+linux: NOT refreshed, git status reports 13 modified files (case-colliding names under include/uapi/linux/netfilter, net/netfilter and tools/memory-model on this case-insensitive disk; none under fs/ or Documentation/filesystems/); read as it stands at faeab1661, commit date 2026-04-18, origin/HEAD -> master
+plan9: NOT refreshed, git status reports 12 modified files (case-colliding names under rc/bin, sys/lib and sys/src/cmd/postscript; none under sys/man/5); read as it stands at ed1a9c21e, commit date 2025-10-28, origin/HEAD -> main
+pjdfstest: origin/HEAD -> master, checked out 85a8aea (detached), commit date 2026-08-07, refreshed 2026-11-15, clean (no upstream change since the last refresh)
+freebsd-src: origin/HEAD -> main, checked out 5e809bf1c93f (detached), commit date 2026-11-15, refreshed 2026-11-15, clean (sparse checkout: share and sys only)
+juicefs: origin/HEAD -> main, checked out f086a15 (detached), commit date 2026-11-13, refreshed 2026-11-15, clean
+seaweedfs: origin/HEAD -> master, checked out 4f70ad01 (detached), commit date 2026-11-14, refreshed 2026-11-15, clean
+minio: origin/HEAD -> master, checked out 7aac2a2 (detached), commit date 2026-02-12, refreshed 2026-11-15, clean (no upstream change since the last refresh)
+jackrabbit-oak: origin/HEAD -> trunk, checked out 8efe23c (detached), commit date 2026-11-15, refreshed 2026-11-15, clean
+opendal: origin/HEAD -> main, checked out 68de94d (detached), commit date 2026-11-14, refreshed 2026-11-15, clean
+agentfs: origin/HEAD -> main, checked out 0a014eb (detached), commit date 2026-06-03, refreshed 2026-11-15, clean (no upstream change since the last refresh)
+mirage: origin/HEAD -> main, checked out 0b93eee5bb (detached), commit date 2026-11-15, refreshed 2026-11-15, clean
+afs: origin/HEAD -> main, checked out 1e9b731 (detached), commit date 2026-03-24, refreshed 2026-11-15, clean (no upstream change since the last refresh)
+branchfs: origin/HEAD -> main, checked out a4b6592 (detached), commit date 2026-05-22, refreshed 2026-11-15, clean (no upstream change since the last refresh)
+computer: origin/HEAD -> main, checked out 4a304c48 (detached), commit date 2026-11-13, refreshed 2026-11-15, clean
+deepagents: origin/HEAD -> main, checked out 35a8b61ef (detached), commit date 2026-11-15, refreshed 2026-11-15, clean
+letta: origin/HEAD -> main, checked out 8816d3a85 (detached), commit date 2026-10-18, refreshed 2026-11-15, clean
+libsqlfs: origin/HEAD -> master, checked out 4d330a6 (detached), commit date 2019-07-10, refreshed 2026-11-15, clean (no upstream change since the last refresh)

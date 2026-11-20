@@ -693,6 +693,8 @@ class TestExhaustionClassification:
             try:
                 for instance in instances:
                     assert (await instance.first_touch()).success is True
+                    # Two attempts, not four: a write that loses twice has exhausted, so every storm has conflicts.
+                    instance._host._retry_attempts = 2
 
                 async def hammer(instance: DatabaseStorage, tag: int) -> list[Result]:
                     outcomes = []
