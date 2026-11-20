@@ -1,0 +1,68 @@
+== exp1
+{"set": "base N=100000", "docs": 100000, "gen_s": 19.29022637104208, "fold_s": 0.2564409629412694, "feed_s": 3.599374583020108, "drain_s": 0.06854180785012431, "insert_s": 0.7895640948554501, "rows": 32361, "bytes": 300566211, "doc_bytes": 504012291, "index_s": 4.713921448666952, "maxrss_mb": 636.731392}
+{"set": "delta 100", "docs": 100, "gen_s": 0.01876287499908358, "fold_s": 0.00022979099594522268, "feed_s": 0.00637829200422857, "drain_s": 0.00436791600077413, "insert_s": 0.06624045799253508, "rows": 25168, "bytes": 532017, "doc_bytes": 504974, "index_s": 0.07721645699348301}
+{"set": "delta 500", "docs": 500, "gen_s": 0.0913467079953989, "fold_s": 0.0011280000035185367, "feed_s": 0.021221082992269658, "drain_s": 0.006020584012730978, "insert_s": 0.049744375006412156, "rows": 29981, "bytes": 2268744, "doc_bytes": 2516690, "index_s": 0.07811404201493133}
+{"set": "delta 2000", "docs": 2000, "gen_s": 0.35330620799504686, "fold_s": 0.004685583000537008, "feed_s": 0.07338808399799746, "drain_s": 0.009082207005121745, "insert_s": 0.06281854100234341, "rows": 32096, "bytes": 8024436, "doc_bytes": 9932774, "index_s": 0.14997441500599962}
+{"set": "delta 6000", "docs": 6000, "gen_s": 2.3655135840090225, "fold_s": 0.016074666986241937, "feed_s": 0.3473372080043191, "drain_s": 0.017938667093403637, "insert_s": 0.2413466689758934, "rows": 32358, "bytes": 21559042, "doc_bytes": 29964853, "index_s": 0.6226972110598581}
+{"set": "delta 25000", "docs": 25000, "gen_s": 6.18213383499824, "fold_s": 0.12634441402042285, "feed_s": 1.182961500962847, "drain_s": 0.025920790998497978, "insert_s": 0.22476070797711145, "rows": 32361, "bytes": 79715067, "doc_bytes": 125930666, "index_s": 1.5599874139588792}
+db bytes 882189448
+uv run python $P/exp1_build.py 100000  30.47s user 1.49s system 84% cpu 37.708 total
+== exp2
+base 9.382654588174773 32361 300566211
+delta index_s mean 0.06184758758051127
+K 0 done
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/1bff4c75-daaa-4734-82d6-6bf1657ce644/scratchpad/incremental/prototype/exp2_read.py", line 160, in <module>
+    results = run_queries(state, (0, 1, 4, 12, 48))
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/1bff4c75-daaa-4734-82d6-6bf1657ce644/scratchpad/incremental/prototype/exp2_read.py", line 122, in run_queries
+    assert set(ids_b) <= set(ids_a), (name, K)  # per-segment AND is the tighter superset
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('regex-alt2', 1)
+uv run python $P/exp2_read.py 100000  47.94s user 1.48s system 63% cpu 1:17.28 total
+== exp3
+{"sources": [1, 2, 3, 4, 5, 6], "target": 100, "tombstones": 0, "rows_in": 179502, "bytes_in": 13425774, "rows_out": 32290, "bytes_out": 11578016, "pairs_dropped": 0, "decode_s": 1.180153584224172, "union_s": 0.7166524819767801, "encode_s": 0.9541265344741987, "insert_s": 0.09250787098426372, "total_s": 3.203662500003702}
+{"sources": [1, 2, 3, 4, 5, 6], "target": 101, "tombstones": 600, "rows_in": 179502, "bytes_in": 13425774, "rows_out": 32212, "bytes_out": 9440039, "pairs_dropped": 1781141, "decode_s": 1.187461023364449, "union_s": 1.0147302856348688, "encode_s": 0.7855073590471875, "insert_s": 0.0651070419989992, "total_s": 3.3207890829944517}
+tier segments [200, 201, 202, 210, 43, 44, 45, 46, 47, 48]
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/1bff4c75-daaa-4734-82d6-6bf1657ce644/scratchpad/incremental/prototype/exp3_merge.py", line 155, in <module>
+    results["tier_queries"] = exp2_read.run_queries(state, (len(tier_segments),), covered=list(range(1, 49)))
+                              ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/1bff4c75-daaa-4734-82d6-6bf1657ce644/scratchpad/incremental/prototype/exp2_read.py", line 122, in run_queries
+    if total_a <= 25000:  # under the cap both lists are complete; per-segment AND is the tighter superset
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('word-0', 10)
+uv run python $P/exp3_merge.py  32.34s user 1.79s system 60% cpu 56.252 total
+== exp4
+{
+ "N": 100000,
+ "reposted": 5000,
+ "n_base": 100000,
+ "avg_dl_base": 835.52702,
+ "avg_dl_true": 835.91154,
+ "terms_true": 124136,
+ "terms_base": 124117,
+ "terms_only_in_delta": 1161,
+ "gen_s": 20.69888479200017,
+ "lexical_build_base_s": 17.26586483400024,
+ "lexical_build_delta_s": 0.8265842079999857,
+ "lexical_build_true_s": 30.267398208001396,
+ "idf_abs_rel_err_base_only": {
+  "median": 0.0,
+  "p90": 0.03175271466560632,
+  "p99": 0.08258124906598227,
+  "max": 3.0746128912218413
+ },
+ "rows": [
+  {
+   "term": "hotfixmarker",
+   "df_base": 0,
+   "df_delta": 5000,
+   "df_true": 5000,
+   "idf_base_only": 12.206082645480175,
+   "idf_summed": 3.0444319664872626,
+   "idf_true": 2.995642278503658,
+   "err_base_only_pct": 307.46128912218416,
+   "err_summed_pct": 1.628688723407097
+uv run python $P/exp4_bm25.py 100000  54.51s user 0.41s system 77% cpu 1:11.29 total
+head -30  0.00s user 0.00s system 0% cpu 1:11.09 total
+ALLDONE

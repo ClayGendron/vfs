@@ -1,0 +1,33 @@
+Licences read by the coordinator on 2026-11-09 from each clone's licence file after the refresh. Copyleft and source-available licences are studied only, nothing copied, as for every clone.
+tree: LICENSE: GPL-2.0 (studied only)
+dust: LICENSE: Apache-2.0
+ncdu: LICENSES/MIT.txt: MIT
+tokei: LICENCE-APACHE, LICENCE-MIT: dual Apache-2.0 or MIT
+scc: LICENSE: MIT
+uutils-coreutils: LICENSE: MIT
+toybox: LICENSE: 0BSD-style permissive (the toybox licence)
+busybox: LICENSE: GPL-2.0 (studied only)
+sbase: LICENSE: MIT
+plan9port: LICENSE: MIT-style with Lucent Public License 1.02 portions
+macdirstat: LICENSE: GPL-3.0 (studied only)
+nushell: LICENSE: MIT
+PowerShell: LICENSE.txt: MIT
+ripgrep: COPYING, UNLICENSE, LICENSE-MIT: dual Unlicense or MIT
+zoekt: LICENSE: Apache-2.0
+codesearch: LICENSE: BSD-3-Clause
+git: COPYING: GPL-2.0-only (studied only)
+datasette: LICENSE: Apache-2.0
+sqlite-utils: LICENSE: Apache-2.0
+lucene: LICENSE.txt: Apache-2.0
+tantivy: LICENSE: MIT
+qdrant: LICENSE: Apache-2.0
+filesystem_spec: LICENSE: BSD-3-Clause
+pyfilesystem2: LICENSE: MIT
+opendal: LICENSE: Apache-2.0
+juicefs: LICENSE: Apache-2.0
+seaweedfs: LICENSE: Apache-2.0
+minio: LICENSE: AGPL-3.0 (studied only)
+agentfs: no LICENSE file in the clone; README.md "License" section declares MIT, and licenses/ holds third-party MIT and BSD-3-Clause notices
+mirage: LICENSE: Apache-2.0
+afs: LICENSE: Business Source License 1.1 (studied only)
+computer: LICENSE: MIT

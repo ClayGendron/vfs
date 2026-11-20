@@ -69,6 +69,8 @@ cover/
 
 # Django stuff:
 *.log
+# A research study keeps the output its notes link to.
+!context/research/studies/**/*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal

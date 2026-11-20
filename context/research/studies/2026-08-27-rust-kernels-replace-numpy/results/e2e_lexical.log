@@ -1,0 +1,232 @@
+1          blocks=   23 post=  2,856 | summary np=0.008 py=0.006 rs=0.000 | k10 np=1.10 pyfull=2.60 pyskip=2.85 rs=0.28 | K1000 np=1.33 pyskip=2.70 rs=0.30 | sel10 0.03704102709889412/0.09379186667501926/0.004708068445324898
+1          blocks=   13 post=  1,539 | summary np=0.005 py=0.003 rs=0.000 | k10 np=0.59 pyfull=1.21 pyskip=1.29 rs=0.13 | K1000 np=0.77 pyskip=1.28 rs=0.17 | sel10 0.029166927561163902/0.08016708306968212/0.004291068762540817
+1          blocks=   17 post=  2,067 | summary np=0.007 py=0.005 rs=0.000 | k10 np=0.78 pyfull=1.78 pyskip=1.92 rs=0.20 | K1000 np=0.97 pyskip=1.95 rs=0.23 | sel10 0.032125040888786316/0.08345814421772957/0.005041947588324547
+1          blocks=   15 post=  1,897 | summary np=0.005 py=0.004 rs=0.000 | k10 np=0.67 pyfull=1.53 pyskip=1.64 rs=0.18 | K1000 np=0.85 pyskip=1.66 rs=0.21 | sel10 0.030167168006300926/0.08116685785353184/0.004375120624899864
+1          blocks=   19 post=  2,413 | summary np=0.006 py=0.005 rs=0.000 | k10 np=0.87 pyfull=2.04 pyskip=2.20 rs=0.22 | K1000 np=1.07 pyskip=2.24 rs=0.26 | sel10 0.032125040888786316/0.08324999362230301/0.004792120307683945
+1          blocks=   14 post=  1,751 | summary np=0.005 py=0.004 rs=0.000 | k10 np=0.64 pyfull=1.42 pyskip=1.53 rs=0.16 | K1000 np=0.84 pyskip=1.56 rs=0.19 | sel10 0.029708025977015495/0.08079200051724911/0.004041939973831177
+1          blocks=   18 post=  2,279 | summary np=0.006 py=0.004 rs=0.000 | k10 np=0.81 pyfull=1.90 pyskip=2.03 rs=0.20 | K1000 np=0.99 pyskip=2.04 rs=0.24 | sel10 0.031708041206002235/0.08350005373358727/0.004958128556609154
+1          blocks=   14 post=  1,668 | summary np=0.005 py=0.004 rs=0.000 | k10 np=0.63 pyfull=1.36 pyskip=1.46 rs=0.14 | K1000 np=0.82 pyskip=1.49 rs=0.18 | sel10 0.030749943107366562/0.08141598664224148/0.004125060513615608
+1          blocks=   36 post=  4,484 | summary np=0.012 py=0.009 rs=0.000 | k10 np=1.63 pyfull=3.87 pyskip=4.22 rs=0.44 | K1000 np=1.83 pyskip=4.24 rs=0.47 | sel10 0.036874786019325256/0.09041698649525642/0.005708076059818268
+1          blocks=   11 post=  1,379 | summary np=0.004 py=0.003 rs=0.000 | k10 np=0.52 pyfull=1.14 pyskip=1.23 rs=0.12 | K1000 np=0.70 pyskip=1.24 rs=0.16 | sel10 0.027458183467388153/0.07883296348154545/0.004041939973831177
+3          blocks= 3143 post=402,158 | summary np=0.870 py=0.682 rs=0.009 | k10 np=152.03 pyfull=486.05 pyskip=75.37 rs=4.44 | K1000 np=152.66 pyskip=109.65 rs=8.38 | sel10 0.35600014962255955/1.1057499796152115/0.06295810453593731
+3          blocks= 1177 post=150,531 | summary np=0.339 py=0.269 rs=0.004 | k10 np=55.98 pyfull=157.81 pyskip=39.46 rs=3.27 | K1000 np=55.99 pyskip=60.95 rs=5.70 | sel10 0.33774995245039463/0.970957800745964/0.06800005212426186
+3          blocks= 1341 post=171,536 | summary np=0.387 py=0.309 rs=0.004 | k10 np=63.57 pyfull=184.76 pyskip=45.82 rs=3.68 | K1000 np=63.73 pyskip=72.54 rs=6.83 | sel10 0.33308309502899647/0.9512079413980246/0.06587500683963299
+3          blocks= 2062 post=263,863 | summary np=0.591 py=0.466 rs=0.006 | k10 np=96.79 pyfull=302.21 pyskip=55.91 rs=4.78 | K1000 np=96.98 pyskip=59.98 rs=5.35 | sel10 0.3169160336256027/1.0619999375194311/0.07116701453924179
+3          blocks= 1527 post=195,389 | summary np=0.440 py=0.348 rs=0.005 | k10 np=72.99 pyfull=215.29 pyskip=38.23 rs=2.25 | K1000 np=73.07 pyskip=63.04 rs=6.11 | sel10 0.32754079438745975/0.9781250264495611/0.05791708827018738
+3          blocks= 1392 post=177,898 | summary np=0.415 py=0.326 rs=0.005 | k10 np=66.66 pyfull=193.91 pyskip=44.66 rs=4.08 | K1000 np=67.50 pyskip=114.08 rs=10.75 | sel10 0.35887514241039753/0.9775410871952772/0.06595789454877377
+3          blocks= 2414 post=308,759 | summary np=0.679 py=0.538 rs=0.007 | k10 np=114.75 pyfull=362.35 pyskip=60.59 rs=4.87 | K1000 np=114.60 pyskip=65.18 rs=5.95 | sel10 0.33566588535904884/1.048667123541236/0.06645801477134228
+3          blocks= 1768 post=226,211 | summary np=0.506 py=0.401 rs=0.005 | k10 np=83.25 pyfull=256.96 pyskip=62.04 rs=5.50 | K1000 np=83.82 pyskip=72.00 rs=6.29 | sel10 0.313374912366271/0.9678339120000601/0.06008311174809933
+3          blocks= 1341 post=171,348 | summary np=0.386 py=0.307 rs=0.004 | k10 np=64.10 pyfull=187.89 pyskip=35.21 rs=2.64 | K1000 np=64.56 pyskip=72.02 rs=6.50 | sel10 0.3054579719901085/0.9617079049348831/0.06600003689527512
+3          blocks= 1579 post=201,957 | summary np=0.457 py=0.361 rs=0.005 | k10 np=75.01 pyfull=225.80 pyskip=47.60 rs=4.65 | K1000 np=75.50 pyskip=55.01 rs=4.49 | sel10 0.3449998330324888/0.9576249867677689/0.05729193799197674
+6          blocks= 2563 post=327,624 | summary np=0.718 py=0.564 rs=0.010 | k10 np=153.21 pyfull=511.99 pyskip=74.80 rs=4.39 | K1000 np=126.14 pyskip=74.87 rs=6.26 | sel10 0.7650828920304775/2.4944159667938948/0.15079183503985405
+6          blocks= 2256 post=288,366 | summary np=0.647 py=0.511 rs=0.007 | k10 np=107.80 pyfull=334.76 pyskip=56.44 rs=4.68 | K1000 np=107.64 pyskip=80.62 rs=6.82 | sel10 0.7316668052226305/2.315749879926443/0.13733282685279846
+6          blocks= 1389 post=177,377 | summary np=0.402 py=0.318 rs=0.005 | k10 np=66.77 pyfull=194.63 pyskip=38.67 rs=4.71 | K1000 np=66.68 pyskip=60.81 rs=5.82 | sel10 0.7801658939570189/2.3889169096946716/0.14599994756281376
+6          blocks= 1380 post=176,358 | summary np=0.403 py=0.317 rs=0.005 | k10 np=67.41 pyfull=192.86 pyskip=42.82 rs=3.72 | K1000 np=67.58 pyskip=100.65 rs=9.83 | sel10 0.830124830827117/2.3827918339520693/0.13687508180737495
+6          blocks= 2241 post=286,479 | summary np=0.644 py=0.508 rs=0.007 | k10 np=110.25 pyfull=336.65 pyskip=61.74 rs=5.33 | K1000 np=110.48 pyskip=112.21 rs=10.91 | sel10 0.8014999330043793/2.4334171321243048/0.14937506057322025
+6          blocks= 1217 post=155,320 | summary np=0.354 py=0.278 rs=0.004 | k10 np=57.75 pyfull=160.72 pyskip=38.50 rs=2.74 | K1000 np=58.15 pyskip=88.75 rs=8.69 | sel10 0.7301250007003546/2.2851251997053623/0.13479194603860378
+6          blocks= 1222 post=156,058 | summary np=0.355 py=0.281 rs=0.004 | k10 np=58.27 pyfull=165.26 pyskip=39.18 rs=3.48 | K1000 np=58.86 pyskip=86.16 rs=8.66 | sel10 0.8101658895611763/2.40395893342793/0.14895806089043617
+6          blocks= 1283 post=163,842 | summary np=0.373 py=0.295 rs=0.004 | k10 np=61.13 pyfull=171.56 pyskip=41.00 rs=3.44 | K1000 np=61.22 pyskip=103.45 rs=10.35 | sel10 0.8232088293880224/2.423832891508937/0.15587499365210533
+6          blocks= 2714 post=346,801 | summary np=0.766 py=0.604 rs=0.010 | k10 np=131.49 pyfull=408.99 pyskip=85.72 rs=6.50 | K1000 np=131.41 pyskip=168.93 rs=15.54 | sel10 0.8567499462515116/2.4877500254660845/0.1750420778989792
+6          blocks= 1678 post=214,226 | summary np=0.486 py=0.386 rs=0.006 | k10 np=80.14 pyfull=237.24 pyskip=50.55 rs=3.56 | K1000 np=80.00 pyskip=149.82 rs=13.53 | sel10 0.7870418485254049/2.4152910336852074/0.15941588208079338
+all_common blocks= 5983 post=765,671 | summary np=1.655 py=1.310 rs=0.016 | k10 np=282.75 pyfull=789.22 pyskip=906.91 rs=70.17 | K1000 np=282.61 pyskip=917.90 rs=70.40 | sel10 0.2655838616192341/0.7794999983161688/0.0766250304877758
+-> <scratchpad>/rust-kernels/results/lexical_sites.json
+{
+ "1": {
+  "blocks": 16.0,
+  "postings": 1982.0,
+  "summary_blocks": 16.0,
+  "summary_numpy_ms": 0.006,
+  "summary_stdlib_ms": 0.004,
+  "summary_rust_ms": 0.0,
+  "summary_rust_tolist_ms": 0.001,
+  "score_k10_numpy_ms": 0.723,
+  "score_k10_stdlib_full_ms": 1.655,
+  "score_k10_stdlib_skip_ms": 1.779,
+  "score_k10_rust_ms": 0.19,
+  "score_k1000_numpy_ms": 0.913,
+  "score_k1000_stdlib_full_ms": 1.683,
+  "score_k1000_stdlib_skip_ms": 1.805,
+  "score_k1000_rust_ms": 0.223,
+  "score_k10_numpy_peak_kb": 211.456,
+  "score_k10_stdlib_skip_peak_kb": 381.828,
+  "score_cand_numpy_ms": 1.007,
+  "score_cand_stdlib_skip_ms": 1.039,
+  "score_cand_rust_ms": 0.03,
+  "select_k10": {
+   "overflowing_terms": 1.0,
+   "summary_blocks": 16.0,
+   "candidates": 1024.0,
+   "competing": 11.5,
+   "numpy_ms": 0.031,
+   "stdlib_ms": 0.082,
+   "rust_ms": 0.005
+  },
+  "select_k1000": {
+   "overflowing_terms": 1.0,
+   "summary_blocks": 16.0,
+   "candidates": 1024.0,
+   "competing": 16.0,
+   "numpy_ms": 0.03,
+   "stdlib_ms": 0.082,
+   "rust_ms": 0.004
+  }
+ },
+ "3": {
+  "blocks": 1553.0,
+  "postings": 198673.0,
+  "summary_blocks": 1553.0,
+  "summary_numpy_ms": 0.449,
+  "summary_stdlib_ms": 0.354,
+  "summary_rust_ms": 0.005,
+  "summary_rust_tolist_ms": 0.04,
+  "score_k10_numpy_ms": 74.002,
+  "score_k10_stdlib_full_ms": 220.543,
+  "score_k10_stdlib_skip_ms": 46.712,
+  "score_k10_rust_ms": 4.261,
+  "score_k1000_numpy_ms": 74.283,
+  "score_k1000_stdlib_full_ms": 221.527,
+  "score_k1000_stdlib_skip_ms": 68.589,
+  "score_k1000_rust_ms": 6.198,
+  "score_k10_numpy_peak_kb": 19288.75,
+  "score_k10_stdlib_skip_peak_kb": 3238.781,
+  "score_cand_numpy_ms": 57.407,
+  "score_cand_stdlib_skip_ms": 37.275,
+  "score_cand_rust_ms": 1.978,
+  "select_k10": {
+   "overflowing_terms": 3.0,
+   "summary_blocks": 1553.0,
+   "candidates": 3063.5,
+   "competing": 84.0,
+   "numpy_ms": 0.334,
+   "stdlib_ms": 0.974,
+   "rust_ms": 0.066
+  },
+  "select_k1000": {
+   "overflowing_terms": 3.0,
+   "summary_blocks": 1553.0,
+   "candidates": 3063.5,
+   "competing": 239.0,
+   "numpy_ms": 0.337,
+   "stdlib_ms": 0.97,
+   "rust_ms": 0.066
+  }
+ },
+ "6": {
+  "blocks": 1533.5,
+  "postings": 195801.5,
+  "summary_blocks": 1533.5,
+  "summary_numpy_ms": 0.445,
+  "summary_stdlib_ms": 0.352,
+  "summary_rust_ms": 0.006,
+  "summary_rust_tolist_ms": 0.042,
+  "score_k10_numpy_ms": 73.776,
+  "score_k10_stdlib_full_ms": 215.938,
+  "score_k10_stdlib_skip_ms": 46.684,
+  "score_k10_rust_ms": 4.053,
+  "score_k1000_numpy_ms": 73.789,
+  "score_k1000_stdlib_full_ms": 218.1,
+  "score_k1000_stdlib_skip_ms": 94.698,
+  "score_k1000_rust_ms": 9.26,
+  "score_k10_numpy_peak_kb": 18974.563,
+  "score_k10_stdlib_skip_peak_kb": 2924.664,
+  "score_cand_numpy_ms": 57.503,
+  "score_cand_stdlib_skip_ms": 38.804,
+  "score_cand_rust_ms": 2.521,
+  "select_k10": {
+   "overflowing_terms": 5.0,
+   "summary_blocks": 1532.5,
+   "candidates": 5060.0,
+   "competing": 149.5,
+   "numpy_ms": 0.794,
+   "stdlib_ms": 2.41,
+   "rust_ms": 0.149
+  },
+  "select_k1000": {
+   "overflowing_terms": 5.0,
+   "summary_blocks": 1532.5,
+   "candidates": 5060.0,
+   "competing": 588.5,
+   "numpy_ms": 0.802,
+   "stdlib_ms": 2.417,
+   "rust_ms": 0.151
+  }
+ },
+ "all_common": {
+  "blocks": 5983,
+  "postings": 765671,
+  "summary_blocks": 5983,
+  "summary_numpy_ms": 1.655,
+  "summary_stdlib_ms": 1.31,
+  "summary_rust_ms": 0.016,
+  "summary_rust_tolist_ms": 0.149,
+  "score_k10_numpy_ms": 282.746,
+  "score_k10_stdlib_full_ms": 789.224,
+  "score_k10_stdlib_skip_ms": 906.913,
+  "score_k10_rust_ms": 70.171,
+  "score_k1000_numpy_ms": 282.606,
+  "score_k1000_stdlib_full_ms": 801.908,
+  "score_k1000_stdlib_skip_ms": 917.9,
+  "score_k1000_rust_ms": 70.395,
+  "score_k10_numpy_peak_kb": 74096.699,
+  "score_k10_stdlib_skip_peak_kb": 119739.734,
+  "score_cand_numpy_ms": 224.066,
+  "score_cand_stdlib_skip_ms": 283.579,
+  "score_cand_rust_ms": 11.115,
+  "select_k10": {
+   "overflowing_terms": 2,
+   "summary_blocks": 5983,
+   "candidates": 1840,
+   "competing": 2916,
+   "numpy_ms": 0.266,
+   "stdlib_ms": 0.779,
+   "rust_ms": 0.077
+  },
+  "select_k1000": {
+   "overflowing_terms": 2,
+   "summary_blocks": 5983,
+   "candidates": 1840,
+   "competing": 5983,
+   "numpy_ms": 0.297,
+   "stdlib_ms": 0.745,
+   "rust_ms": 0.109
+  }
+ }
+}
+[
+ {
+  "term": "struct",
+  "blocks": 3075,
+  "numpy_ms": 0.8480830583721399,
+  "stdlib_ms": 0.6664998363703489,
+  "rust_ms": 0.008041970431804657,
+  "numpy_peak_kb": 264.921875,
+  "stdlib_peak_kb": 216.75390625
+ },
+ {
+  "term": "if",
+  "blocks": 2908,
+  "numpy_ms": 0.8049998432397842,
+  "stdlib_ms": 0.6361249834299088,
+  "rust_ms": 0.007666880264878273,
+  "numpy_peak_kb": 253.1171875,
+  "stdlib_peak_kb": 207.55859375
+ },
+ {
+  "term": "to",
+  "blocks": 2536,
+  "numpy_ms": 0.7076249457895756,
+  "stdlib_ms": 0.5584999453276396,
+  "rust_ms": 0.008750008419156075,
+  "numpy_peak_kb": 216.2421875,
+  "stdlib_peak_kb": 176.49609375
+ }
+]
+1          k=10    blocks=    12 r2=    4 | np total=2.5 (sql 1.0, compute 1.4) | py total=3.5 (compute 2.4) | rs total=1.4 (compute 0.4) ms
+1          k=1000  blocks=    16 r2=    8 | np total=2.9 (sql 1.1, compute 1.8) | py total=4.0 (compute 3.0) | rs total=1.6 (compute 0.5) ms
+3          k=10    blocks=    91 r2=   67 | np total=9.2 (sql 1.4, compute 7.8) | py total=14.9 (compute 13.5) | rs total=3.4 (compute 2.1) ms
+3          k=1000  blocks=   242 r2=  218 | np total=17.3 (sql 1.7, compute 15.6) | py total=23.5 (compute 21.9) | rs total=5.1 (compute 3.4) ms
+6          k=10    blocks=   156 r2=  116 | np total=15.6 (sql 1.7, compute 13.8) | py total=23.0 (compute 21.4) | rs total=5.1 (compute 3.6) ms
+6          k=1000  blocks=   592 r2=  552 | np total=38.1 (sql 2.7, compute 35.4) | py total=55.9 (compute 53.6) | rs total=9.8 (compute 7.6) ms
+all_common k=10    blocks=  2916 r2= 2900 | np total=157.4 (sql 7.4, compute 150.0) | py total=560.6 (compute 553.1) | rs total=55.1 (compute 48.0) ms
+all_common k=1000  blocks=  5983 r2= 5967 | np total=314.3 (sql 14.1, compute 300.5) | py total=946.2 (compute 931.7) | rs total=95.5 (compute 81.9) ms
+-> <scratchpad>/rust-kernels/results/e2e_lexical.json
