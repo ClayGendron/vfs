@@ -55,10 +55,10 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never,
 from pydantic import ValidationError
 
 from vfs.authority import Authority
-from vfs.chain import glob_rows_in_hand, grep_rows_in_hand, judge_in_hand
+from vfs.chain import admit_rows_in_hand, glob_rows_in_hand, grep_rows_in_hand, judge_in_hand
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
-from vfs.fanout import plan_scope, walks
+from vfs.fanout import planned_scope, scope_argument
 from vfs.models import (
     MEASURE_OFFLOAD_BYTES,
     MEASURED_BODY,
@@ -76,6 +76,7 @@ from vfs.mounts import (
     MountListing,
     PathFilters,
     gather_settled,
+    is_tombstoned_site,
     mount_point_owner,
     normalize_mount_path,
     require_judgement_stands,
@@ -101,7 +102,7 @@ from vfs.paths import (
     is_trash_path,
     resolve_path,
 )
-from vfs.pattern_matching import PatternError, ScopeChannel, compile_gates, expand_channel
+from vfs.pattern_matching import PatternError, compile_gates, expand_channel
 from vfs.permissions import (
     Permission,
     PermissionLayer,
@@ -111,7 +112,7 @@ from vfs.permissions import (
 )
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
-from vfs.results.kinds import TRASHED_KEY, Severity, kind_family
+from vfs.results.kinds import Severity, kind_family
 from vfs.session import AsyncSession
 from vfs.storage import (
     ResolvedPair,
@@ -402,7 +403,7 @@ class AsyncVirtualFileSystem:
         judge = await self._require_mount_rights("mount at", mount_path, authority)
 
         made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=authority)
-        if not made.success and _is_tombstoned_site(made, mount_path):
+        if not made.success and is_tombstoned_site(made, mount_path):
             made = await self.restore(str(mount_path), authority=authority)
         if not made.success:
             detail = made.error_message or "storage refused the mount-point directory"
@@ -1464,8 +1465,7 @@ class AsyncVirtualFileSystem:
         which can be vectors, words and links, and joins them as it sees fit. ``limit`` is the most
         rows returned. ``globs``, ``globs_not``, ``ext`` and ``ext_not`` choose the files as they do
         for :meth:`grep`, and ``paths`` are the roots to search beneath, checked as :meth:`glob` checks
-        them. ``observations`` limits the search to the rows of an earlier result. The four file filters
-        are not yet applied to those rows.
+        them.
 
         If one :term:`mount` answers, its order and its scores are the answer, cut to ``limit``. If
         more than one can answer, each is asked for ``min(3 * limit, 256)`` rows and the kernel merges
@@ -1473,8 +1473,19 @@ class AsyncVirtualFileSystem:
         never changes the order a mount gave its own rows, so each mount contributes the first rows of
         its own answer. The merged scores are scaled to lie between 0 and 1.
 
+        If ``observations`` is given, the search is limited to those rows. The four file filters are applied first, to
+        the path that each row carries, as :meth:`grep` applies them to rows. Only the rows that pass are sent on, each
+        to the mount that holds it, and a mount that holds none of them is not asked. The call then answers as it would
+        if only those rows had been given. A row that a filter drops is never ranked, never checked and never reported.
+        A row that passes is ranked only if its storage can rank it. An ordinary directory or a path that is not there
+        is left out without an error. The row of a mount point or of the root makes the call fail with ``invalid``.
+        A row that passes in a mount that cannot search refuses the call with ``unsupported``.
+
         The call returns a :class:`Result`. After a merge, its ``legs`` extra says how the merge was
         made. A root that is not there is an error for that root, beside the rows of the roots that are.
+        A pattern in ``globs`` or ``globs_not`` that cannot be parsed is refused with ``invalid``. The
+        filtering of ``observations`` runs within a time budget. If it reaches the budget, the rows it has
+        not judged are left out, with one ``truncated`` warning.
         """
         refusal = self._gate_params(
             "search",
@@ -1491,10 +1502,31 @@ class AsyncVirtualFileSystem:
         )
         if refusal is not None:
             return refusal
+        if observations is not None:
+            try:
+                globs = expand_channel("globs", globs)
+                globs_not = expand_channel("globs_not", globs_not)
+            except PatternError as exc:
+                return self._error(ErrorKind.invalid, op="search", detail=str(exc))
+            if not self._mounts:
+                return self._closed_error("search")
+            rows, invalid = self._observation_rows("search", observations)
+            if invalid is not None:
+                return invalid
+            kept, records = await admit_rows_in_hand(rows, globs=globs, globs_not=globs_not, ext=ext, ext_not=ext_not)
+            answer = await self._route_fanout(
+                "search",
+                observations=kept,
+                ranked=_Ranked(query, limit, fanout_depth(limit)),
+                query=query,
+                limit=limit,
+                columns=columns,
+                authority=authority,
+            )
+            return self._with_skips(answer, records)
         return await self._route_fanout(
             "search",
             paths=paths,
-            observations=observations,
             ranked=_Ranked(query, limit, fanout_depth(limit)),
             filters=PathFilters(globs, globs_not, ext, ext_not),
             query=query,
@@ -2028,7 +2060,7 @@ class AsyncVirtualFileSystem:
         skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
         name_arms = tuple(arm for arm in arms if "/" not in arm)
         gates = compile_gates(name_arms, exclusions, ext=ext, ext_not=ext_not) if name_arms else None
-        scope = await self._planned(owners, tuple(capable), skip_paths, roots, arms, exclusions, arms, frozenset())
+        scope = await planned_scope(owners, tuple(capable), skip_paths, roots, arms, exclusions, arms, frozenset())
         if not self._mounts:
             return None  # a close() landed during the hop: no table read, no dispatch
         kind = cast("str | None", kwargs.get("kind"))
@@ -2048,7 +2080,7 @@ class AsyncVirtualFileSystem:
                     ext=ext,
                     ext_not=ext_not,
                     authority=authority,
-                    **_scoped(scope, key),
+                    **scope_argument(scope, key),
                     **kwargs,
                 ),
             )
@@ -2109,7 +2141,7 @@ class AsyncVirtualFileSystem:
             if not completed:
                 records.append(wall_truncation(_SCOPED_REFINE_GUIDANCE))
         reach = globs or ("**",)
-        scope = await self._planned(
+        scope = await planned_scope(
             owners, tuple(capable), skip_paths, roots, patterns, exclusions, reach, frozenset(admitted)
         )
         if not self._mounts:
@@ -2133,36 +2165,13 @@ class AsyncVirtualFileSystem:
                         ext=ext,
                         ext_not=ext_not,
                         authority=authority,
-                        **_scoped(scope, key),
+                        **scope_argument(scope, key),
                         **kwargs,
                     ),
                 )
             )
         probes, unverifiable = self._root_probes(roots, None, None, None, listing=listing, authority=authority)
         return _Dispatches(probes, branches, self._scope_skips(plan, scope, [*records, *unverifiable]))
-
-    @staticmethod
-    async def _planned(
-        owners: dict[Path, Path],
-        keys: tuple[Path, ...],
-        skip_paths: tuple[Path, ...],
-        roots: tuple[Path, ...],
-        patterns: tuple[str, ...],
-        exclusions: tuple[str, ...],
-        reach: tuple[str, ...],
-        literals: frozenset[Path],
-    ) -> ScopePlan:
-        """Return the plan of which patterns each mount receives.
-
-        A call with no root, no path arm and no skipped mount only copies its name arms to each mount.
-        That costs one step for each arm, so it is planned in place. Every other plan is worked out in
-        one hop to the process pool, within the time budget.
-        """
-        if not walks(roots, patterns, exclusions, skip_paths):
-            return plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, Deadline.never())
-        deadline = Deadline.after(WALL_TIME_BUDGET)
-        walk = partial(plan_scope, owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, deadline)
-        return await call_offloaded(offload_pool(), walk)
 
     @staticmethod
     def _scope_skips(plan: _FanoutPlan, scope: ScopePlan, records: list[ResultError]) -> list[ResultError]:
@@ -3039,18 +3048,3 @@ def _reaches_beneath(op: Op, rel: Path, kwargs: Mapping[str, Any]) -> bool:
     if op == "delete":
         return bool(kwargs.get("cascade", True))
     return op == "sweep" and not is_trash_path(str(rel))
-
-
-def _is_tombstoned_site(result: Result, path: Path) -> bool:
-    """Return whether ``result`` was refused because ``path`` itself holds a deleted row.
-
-    That is the one refusal that a ``restore`` can put right.
-    """
-    error = result.errors[0]
-    return error.kind is ErrorKind.not_found and error.path == path and bool((error.data or {}).get(TRASHED_KEY))
-
-
-def _scoped(plan: ScopePlan, key: Path) -> dict[str, ScopeChannel]:
-    """Return the ``scope=`` argument for the call to one mount, or nothing when no root lies beneath it."""
-    channel = plan.scopes.get(key)
-    return {} if channel is None else {"scope": channel}

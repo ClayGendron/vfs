@@ -716,7 +716,7 @@ async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None
         await fs.add_mount(RecorderStorage(), f"/m{index}")
     turns = [0]
     readings: list[tuple[int, int]] = []
-    real = base_module.plan_scope
+    real = fanout_module.plan_scope
 
     def watched(*args: Any, **kwargs: Any) -> Any:
         start = turns[0]
@@ -729,7 +729,7 @@ async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None
             await asyncio.sleep(0)
             turns[0] += 1
 
-    monkeypatch.setattr(base_module, "plan_scope", watched)
+    monkeypatch.setattr(fanout_module, "plan_scope", watched)
     counter = asyncio.ensure_future(count_turns())
     exclusions = tuple(_arms(f"e{j:02}x") for j in range(31))
     result = await fs.glob(_arms("x") + "*.txt", paths=("/",), globs_not=exclusions)
@@ -742,6 +742,7 @@ async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None
 
 async def test_planning_past_the_wall_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    monkeypatch.setattr(fanout_module, "WALL_TIME_BUDGET", -1.0)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     roots = [f"/d{i:02}" for i in range(50)]
     for root in roots:
@@ -754,14 +755,14 @@ async def test_planning_past_the_wall_truncates(monkeypatch: pytest.MonkeyPatch)
         return real(root, pattern)
 
     plans: list[Any] = []
-    real_plan = base_module.plan_scope
+    real_plan = fanout_module.plan_scope
 
     def recorded(*args: Any, **kwargs: Any) -> Any:
         plans.append(real_plan(*args, **kwargs))
         return plans[-1]
 
     monkeypatch.setattr(fanout_module, "composed_pattern", counted)
-    monkeypatch.setattr(base_module, "plan_scope", recorded)
+    monkeypatch.setattr(fanout_module, "plan_scope", recorded)
     result = await fs.glob("/**/*.txt", paths=tuple(roots))
     walls = [error for error in result.errors if error.kind is ErrorKind.truncated]
     assert [(e.severity, e.message) for e in walls] == [(Severity.warning, _PLANNING_GUIDANCE)]

@@ -9,6 +9,7 @@ import pytest
 
 from tests.support.base_doubles import BindableStorage, RecorderStorage, TransportFailStorage
 from vfs import AsyncVirtualFileSystem, InMemoryStorage
+from vfs import base as base_module
 from vfs import mounts as mounts_module
 from vfs import paths as paths_module
 from vfs.authority import Authority, Principal
@@ -1458,7 +1459,7 @@ async def test_a_mount_replaced_while_a_search_plans_its_scope_leaves_that_searc
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     await fs.add_mount(Marked(1), "/m")
     started, resume = asyncio.Event(), asyncio.Event()
-    planned = fs._planned
+    planned = base_module.planned_scope
 
     async def held(*args: Any) -> object:
         plan = await planned(*args)
@@ -1466,7 +1467,7 @@ async def test_a_mount_replaced_while_a_search_plans_its_scope_leaves_that_searc
         await resume.wait()
         return plan
 
-    monkeypatch.setattr(fs, "_planned", held)
+    monkeypatch.setattr(base_module, "planned_scope", held)
     pending = asyncio.create_task(getattr(fs, verb)("*" if verb == "glob" else "needle", paths=("/m",)))
     await asyncio.wait_for(started.wait(), 5)
     await fs.remove_mount("/m")

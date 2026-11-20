@@ -13,23 +13,24 @@ is a :class:`ScopePlan` of plain data.
     plan = plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, deadline)
 
 The walk is pure: it reads no mount table, no router and no storage,
-only the facts its caller resolved and the pattern text. So the router
-runs it on a worker under a deadline, and a test runs it with no router
-at all. :func:`walks` says whether a call's plan needs the worker.
+only the facts its caller resolved and the pattern text. So
+:func:`planned_scope` runs it in place, or on a worker under a deadline,
+as :func:`walks` says, and a test runs it with no router at all.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
-from vfs.deadline import CHECK_EVERY
+from vfs.deadline import CHECK_EVERY, WALL_TIME_BUDGET, Deadline
+from vfs.offload import call_offloaded, offload_pool
 from vfs.paths import ROOT, address_of
 from vfs.pattern_matching import ScopeChannel, composed_pattern, escape_glob, render_residual, residuals
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from vfs.deadline import Deadline
     from vfs.paths import Path
 
 
@@ -191,6 +192,35 @@ def plan_scope(
         return ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=False, scopes=scopes)
     scopes = _scope_channels(channeled, patterns, exclusions)
     return ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=True, scopes=scopes)
+
+
+async def planned_scope(
+    owners: dict[Path, Path],
+    keys: tuple[Path, ...],
+    skip_paths: tuple[Path, ...],
+    roots: tuple[Path, ...],
+    patterns: tuple[str, ...],
+    exclusions: tuple[str, ...],
+    reach: tuple[str, ...],
+    literals: frozenset[Path],
+) -> ScopePlan:
+    """Return the plan of which patterns each mount receives.
+
+    A call with no root, no path arm and no skipped mount only copies its name arms to each mount.
+    That costs one step for each arm, so it is planned in place. Every other plan is worked out in
+    one hop to the process pool, within the time budget.
+    """
+    if not walks(roots, patterns, exclusions, skip_paths):
+        return plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, Deadline.never())
+    deadline = Deadline.after(WALL_TIME_BUDGET)
+    walk = partial(plan_scope, owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, deadline)
+    return await call_offloaded(offload_pool(), walk)
+
+
+def scope_argument(plan: ScopePlan, key: Path) -> dict[str, ScopeChannel]:
+    """Return the ``scope=`` argument for the call to one mount, or nothing when no root lies beneath it."""
+    channel = plan.scopes.get(key)
+    return {} if channel is None else {"scope": channel}
 
 
 # ---------------------------------------------------------------------------
