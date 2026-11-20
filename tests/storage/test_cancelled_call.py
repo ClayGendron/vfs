@@ -26,11 +26,16 @@ if TYPE_CHECKING:
 
 
 class HeldRoundTrip:
-    """Holds the first driver round trip that *chosen* picks, on the worker thread."""
+    """Holds the first driver round trip that *chosen* picks, on the worker thread.
+
+    A round trip is named by the driver function and the statement it carries, as
+    ``execute SELECT ...`` or ``commit``. ``seen`` lists every round trip in order.
+    """
 
     def __init__(self) -> None:
         self.chosen: Callable[[str], bool] | None = None
         self.reached = asyncio.Event()
+        self.seen: list[str] = []
         self._let_go = threading.Event()
 
     def hold(self, chosen: Callable[[str], bool]) -> None:
@@ -39,6 +44,11 @@ class HeldRoundTrip:
     def let_go(self) -> None:
         self.chosen = None
         self._let_go.set()
+
+    def since(self, prefix: str) -> list[str]:
+        """The round trips from the last one that starts with *prefix*, or none when there is no such one."""
+        starts = [index for index, name in enumerate(self.seen) if name.startswith(prefix)]
+        return self.seen[starts[-1] :] if starts else []
 
     def wrap(self, function: Callable[..., Any]) -> Callable[..., Any]:
         loop = asyncio.get_running_loop()
@@ -58,8 +68,10 @@ def round_trip(monkeypatch: pytest.MonkeyPatch) -> Iterator[HeldRoundTrip]:
     queue_it = aiosqlite.core.Connection._execute
 
     async def _execute(self: Any, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        statement = next((arg for arg in args if isinstance(arg, str)), "")
-        if held.chosen is not None and held.chosen(statement):
+        statement = next((" ".join(arg.split()) for arg in args if isinstance(arg, str)), "")
+        name = f"{getattr(function, '__name__', '')} {statement}".strip()
+        held.seen.append(name)
+        if held.chosen is not None and held.chosen(name):
             function = held.wrap(function)
         return await queue_it(self, function, *args, **kwargs)
 
@@ -78,6 +90,7 @@ async def fs(storage: InMemoryStorage, round_trip: HeldRoundTrip) -> AsyncIterat
     """A kernel that holds ``/a.txt``, closed whatever the test did so no driver thread is left running."""
     kernel = AsyncVirtualFileSystem(storage=storage, default_authority=Authority.system())
     assert (await kernel.write(path="/a.txt", content="old")).success
+    round_trip.seen.clear()
     yield kernel
     round_trip.let_go()
     await kernel.close()
@@ -101,8 +114,12 @@ async def turns_of_the_loop() -> None:
         await asyncio.sleep(0)
 
 
-def reads_entries(statement: str) -> bool:
-    return statement.lstrip().upper().startswith("SELECT") and "vfs_entries" in statement
+def reads_entries(round_trip: str) -> bool:
+    return round_trip.startswith("execute SELECT") and "vfs_entries" in round_trip
+
+
+def starts_with(prefix: str) -> Callable[[str], bool]:
+    return lambda round_trip: round_trip.startswith(prefix)
 
 
 class TestACancelledRead:
@@ -133,6 +150,58 @@ class TestACancelledRead:
         await cancel_while_held(fs.stat("/"), round_trip)
         await fs.stat("/")
         assert opened == []
+
+
+class TestACancelledWrite:
+    @pytest.mark.parametrize(
+        "cut_at",
+        ["execute UPDATE vfs_entries", "execute INSERT INTO vfs_content", "execute RELEASE vfs_statistics"],
+        ids=["at its first change", "after a savepoint is released", "at the last statement before the commit"],
+    )
+    async def test_a_write_cancelled_before_its_commit_changes_nothing(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip, cut_at: str
+    ) -> None:
+        round_trip.hold(starts_with(cut_at))
+        await cancel_while_held(fs.write(path="/a.txt", content="new"), round_trip)
+        assert "commit" not in round_trip.since("execute UPDATE vfs_entries")
+        assert (await fs.read("/a.txt")).one().content == "old"
+        assert (await fs.stat("/a.txt")).one().version == 1
+
+    async def test_a_cancelled_write_stops_at_the_next_savepoint_it_releases(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+    ) -> None:
+        round_trip.hold(starts_with("execute UPDATE vfs_entries"))
+        await cancel_while_held(fs.write(path="/a.txt", content="new"), round_trip)
+        sent = round_trip.since("execute UPDATE vfs_entries")
+        # The write's next statements are the version row and the content. None of them is sent.
+        assert [name for name in sent if name.startswith(("execute INSERT", "execute DELETE"))] == []
+
+    @pytest.mark.parametrize("cut_at", ["commit", "rollback"], ids=["at its commit", "after its commit"])
+    async def test_a_write_cancelled_at_its_commit_or_after_has_landed_whole(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip, cut_at: str
+    ) -> None:
+        round_trip.hold(lambda name: name == cut_at and bool(round_trip.since("execute INSERT INTO vfs_content")))
+        await cancel_while_held(fs.write(path="/a.txt", content="new"), round_trip)
+        assert (await fs.read("/a.txt")).one().content == "new"
+        assert (await fs.stat("/a.txt")).one().version == 2
+
+    async def test_a_write_cancelled_while_it_waits_its_turn_sends_nothing(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+    ) -> None:
+        round_trip.hold(reads_entries)
+        ahead = asyncio.ensure_future(fs.stat("/a.txt"))
+        await round_trip.reached.wait()
+        behind = asyncio.ensure_future(fs.write(path="/a.txt", content="new"))
+        await turns_of_the_loop()
+        behind.cancel()
+        round_trip.let_go()
+        with pytest.raises(asyncio.CancelledError):
+            await behind
+        assert (await ahead).one().version == 1
+        # A write opens with a bare BEGIN IMMEDIATE. The statistics pass of the first write tags its own.
+        assert "execute BEGIN IMMEDIATE" not in round_trip.seen
+        assert not round_trip.since("execute UPDATE vfs_entries")
+        assert (await fs.read("/a.txt")).one().content == "old"
 
 
 class TestTheCallerWaitsForItsAttempt:

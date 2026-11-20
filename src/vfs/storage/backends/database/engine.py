@@ -92,6 +92,7 @@ from vfs.storage.backends.database.dialects import (
     topology_execution_options,
 )
 from vfs.storage.backends.database.oneconnection import (
+    OneConnectionSession,
     SerializedSessions,
     rearm_on_fresh_connection,
     run_out_of_reach,
@@ -228,6 +229,7 @@ class EngineHost:
             # One shared DBAPI connection cannot overlap transactions: ops
             # serialize, and a re-minted connection re-arms first touch.
             if isinstance(engine.sync_engine.pool, StaticPool):
+                factory.configure(sync_session_class=OneConnectionSession)
                 self.session_factory = SerializedSessions(factory)
                 rearm_on_fresh_connection(engine.sync_engine, self._rearm)
             else:
