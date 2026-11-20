@@ -536,9 +536,8 @@ class TestAbandonment:
         await _until(lambda: abandoned.finished)
 
     async def test_a_cancelled_grep_leaves_the_next_call_whole(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The end-to-end law: the abandoned worker holds only its batch —
-        # the cancelled call's session closed under it, and the reissued
-        # grep answers correctly while that worker still drains.
+        # The end-to-end law: the reissued grep answers correctly while the cancelled one's
+        # worker still drains. On SQLite the cancelled caller waits for that worker to end.
         storage = DatabaseStorage(url=_url(tmp_path))
         entry = Entry(path=Path("/a.txt"), content="a needle body")
         assert (await storage.write(entries=[entry])).success is True
@@ -555,12 +554,13 @@ class TestAbandonment:
         task = asyncio.ensure_future(storage.grep(pattern="needle", allow_scan=True, output_mode="count"))
         await _until(gated.started.is_set)
         task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
         result = await storage.grep(pattern="needle", allow_scan=True, output_mode="count")
         assert [str(row.path) for row in result.observations] == ["/a.txt"]
+        assert not task.done()
         gated.gate.set()
-        await _until(lambda: gated.finished)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert gated.finished is True
         await storage.close()
 
 
