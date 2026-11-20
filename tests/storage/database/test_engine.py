@@ -3,9 +3,9 @@
 The construction XOR (built url vs borrowed session factory — never a bare
 engine), idempotent provisioning under the serialization point,
 schema-version verification, restart rebind, cross-loop first touch,
-borrowed-sessions close, the single-connection host (serialized sessions,
-re-minted connections re-arming first touch), and pool exhaustion
-classified rather than raised.
+borrowed-sessions close, and pool exhaustion classified rather than
+raised. The single-connection host (serialized sessions, re-minted
+connections re-arming first touch) is in ``test_oneconnection.py``.
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ from vfs.storage.backends.database.engine import (
     EngineHost,
     _install_sqlite_transaction_control,
 )
-from vfs.storage.backends.database.oneconnection import SerializedSession
 from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
@@ -450,46 +449,6 @@ class TestLifecycle:
         assert getattr(engine, "_vfs_sqlite_control", False) is True
         assert len(engine.pool.dispatch.checkout) == installed  # ty: ignore[unresolved-attribute]
         engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Single-connection host — serialized sessions, re-minted connections
-# ---------------------------------------------------------------------------
-
-
-class TestSingleConnectionHost:
-    async def test_failed_session_enter_releases_the_host_lock(self) -> None:
-        # A session whose enter fails must not leave the host lock held —
-        # that would deadlock every later op on the storage.
-        class _ExplodingSession:
-            async def __aenter__(self) -> AsyncSession:
-                raise RuntimeError("enter failed")
-
-            async def __aexit__(self, *exc_info: object) -> None: ...
-
-        lock = asyncio.Lock()
-        session = SerializedSession(cast("AsyncSession", _ExplodingSession()), lock)
-        with pytest.raises(RuntimeError, match="enter failed"):
-            async with session:
-                pass
-        assert lock.locked() is False
-
-    async def test_replacement_connection_re_arms_first_touch(self) -> None:
-        # A :memory: database lives inside its one connection: a re-minted
-        # connection is empty, and serving off the stale latch is a lie.
-        storage = DatabaseStorage(url="sqlite+aiosqlite:///:memory:")
-        assert (await storage.first_touch()).success is True
-        host = storage._host
-        assert host._ready is True
-        async with host.engine.connect() as conn:
-            await conn.invalidate()
-        async with host.engine.connect() as conn:  # checkout mints the replacement
-            await conn.execute(text("SELECT 1"))
-        assert host._ready is False
-        result = await storage.stat(path=Path("/"))  # next op re-provisions
-        assert result.success is True
-        assert result.observations[0].kind == "directory"
-        await storage.close()
 
 
 # ---------------------------------------------------------------------------
