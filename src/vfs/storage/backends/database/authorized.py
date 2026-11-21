@@ -312,19 +312,20 @@ def admit_targets(session: AsyncSession, op: str, live: Mapping[str, Any], targe
     admit(judging(session, VERB_RUNGS[cast("Op", op)].primary), rows)
 
 
-def admit_staged(session: AsyncSession, op: str, plan: WritePlan) -> None:
+def admit_staged(session: AsyncSession, op: str, plan: WritePlan, primary: Rung | None = None) -> None:
     """Judge every update or revive the plan staged, by the row its own read returned for it.
 
     A revive at restore's primary rung, every other update at the
     verb's, the owner floor riding: the rule the gate gives a tombstoned
     and an occupied target. The undisturbed plan judges the rows the
-    gate judged and passes.
+    gate judged and passes. *primary* names the rung of an update whose
+    gate judged it below the verb's own, as an append's did.
     """
     staged = [entry for entry in plan.staged.values() if entry.persistence == "update"]
     revived = [plan.committed[str(entry.path)] for entry in staged if entry.revive]
     changed = [plan.committed[str(entry.path)] for entry in staged if not entry.revive]
     admit(judging(session, VERB_RUNGS["restore"].primary), revived)
-    admit(judging(session, VERB_RUNGS[cast("Op", op)].primary), changed)
+    admit(judging(session, primary or VERB_RUNGS[cast("Op", op)].primary), changed)
 
 
 async def admit_landed(

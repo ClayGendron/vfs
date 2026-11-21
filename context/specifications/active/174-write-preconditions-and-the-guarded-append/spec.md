@@ -1,6 +1,6 @@
 # 174 — Write preconditions and the guarded append: `if_version`, `if_absent`, `append`, and `unchanged`
 
-- **Status:** draft — cut 2026-10-24 from ADR 087 (proposed the same day) and the two memos it stands on. Not started. One open `[NEEDS CLARIFICATION]` (§9, the content-hash precondition).
+- **Status:** replaced on 2026-11-20 by `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, which checks every fact here against the tree of that day. This draft is kept for its reasoning and its research links. It was cut 2026-10-24 from ADR 087 (proposed the same day) and the two memos it stands on, and was never started.
 - **Date:** 2026-10-24
 - **Owner:** Clay Gendron
 - **Kind:** feature (three new arguments on `write` across the router, the session, the params table and the storage seam; `overwrite=` leaves `write`; a pure-Python judgment pass in `staging.py`; a locked read-modify-write path in `writes.py`; one companion rung constant in `ops.py`; conformance rows on every engine leg).
