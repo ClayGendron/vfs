@@ -13,6 +13,7 @@ Every assertion counts statements, events, rows or plan details.
 from __future__ import annotations
 
 import asyncio
+import math
 import shutil
 import sqlite3
 import threading
@@ -26,8 +27,9 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
+from sqlalchemy.util import greenlet_spawn
 
-from tests.support.database_helpers import _fresh_url, _url
+from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock
 from tests.support.plan_store import (
     PLAN_ARMS,
     PLAN_EXTENSIONS,
@@ -451,12 +453,14 @@ class TestPlannerStatistics:
         """Guards: a second pass that analyzes again instead of reloading and re-listing under its own lock."""
         url = _url(tmp_path)
         x, y = DatabaseStorage(url=url), DatabaseStorage(url=url)
+        _waits_out_every_lock(x)
+        _waits_out_every_lock(y)
         traces = [_trace(x._host.engine), _trace(y._host.engine)]
         first = await asyncio.gather(
             x.write(entries=_entries(CROSSING_ROOTS, "/x"), parents=True),
             y.write(entries=_entries(CROSSING_ROOTS, "/y"), parents=True),
         )
-        assert all(result.success for result in first)
+        assert all(result.success for result in first), [result.errors for result in first]
         await x._host.settle_statistics()
         await y._host.settle_statistics()
         assert sum(_count(traced, ENTRIES_ANALYZE) for traced in traces) == 1
@@ -468,7 +472,7 @@ class TestPlannerStatistics:
             x.write(entries=_entries(1_200, "/p"), parents=True),
             y.write(entries=_entries(1_200, "/q"), parents=True),
         )
-        assert all(result.success for result in second)
+        assert all(result.success for result in second), [result.errors for result in second]
         await x._host.settle_statistics()
         await y._host.settle_statistics()
         assert sum(_count(traced, ENTRIES_ANALYZE) for traced in traces) == 1
@@ -684,11 +688,11 @@ class TestPlannerStatistics:
 
     @pytest.mark.slow
     async def test_close_interrupts_a_running_pass_and_disposes(self, tmp_path, large_store, monkeypatch) -> None:
-        """Guards: a close that waits on the pass past its bound, or skips the dispose when the bound fires.
+        """Guards: a close that waits on the pass to its end instead of interrupting it, or skips the dispose.
 
-        The bound is a second, not the millisecond the interrupt takes, so a
-        saturated machine cannot fake a timeout; the rollback and the empty
-        ``sqlite_stat1`` are what prove the pass was interrupted, not awaited.
+        The close is given no bound, so no machine is slow enough to fire
+        one; the rollback and the empty ``sqlite_stat1`` are what prove the
+        pass was interrupted, not awaited.
         """
         url = _copied(large_store, tmp_path)
         _empty_statistics(url)
@@ -702,7 +706,7 @@ class TestPlannerStatistics:
             await dispose(self, close)
 
         monkeypatch.setattr(AsyncEngine, "dispose", counted)
-        fs = AsyncVirtualFileSystem(storage=storage, close_timeout=1.0)
+        fs = AsyncVirtualFileSystem(storage=storage, close_timeout=math.inf)
         traced = _trace(engine)
         first = asyncio.Event()
         _first_analyze(engine, first)
@@ -714,7 +718,7 @@ class TestPlannerStatistics:
         assert isinstance(pool, QueuePool) and pool.checkedout() == 0
         assert disposed == [id(engine)]
         assert _pass_outcome(traced) == "rollback"
-        with sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///")) as connection:
+        with closing(sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"))) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
         assert [task for task in asyncio.all_tasks() if task is not asyncio.current_task()] == []
         reopened = DatabaseStorage(url=url)
@@ -762,15 +766,15 @@ class TestPlannerStatistics:
         traced = _trace(engine)
         first = threading.Event()
         _first_analyze(engine, first)
-        facade = VirtualFileSystem(storage=storage)
+        facade = VirtualFileSystem(storage=storage, close_timeout=math.inf)
         assert facade.write(entries=[Entry(path=Path("/one.txt"), content="x")]).success is True
-        assert first.wait(timeout=10.0) is True
+        first.wait()
         facade.close()
         assert [path.name for path in tmp_path.iterdir() if path.name.endswith(("-wal", "-shm"))] == []
         assert facade._thread.is_alive() is False
         assert pending == [0]
         assert disposed == [id(engine)]
-        with sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///")) as connection:
+        with closing(sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"))) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
         assert len(interrupted) >= 1
         assert _pass_outcome(traced) == "rollback"
@@ -1043,6 +1047,7 @@ class TestPlannerStatistics:
                 held.set()
 
         fs = AsyncVirtualFileSystem(storage=storage, close_timeout=0.01)
+        disposed_pool = engine.sync_engine.pool
         traced = _trace(engine)
         assert (await fs.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
         await held.wait()
@@ -1053,13 +1058,16 @@ class TestPlannerStatistics:
         rival.close()
         named = [task for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)]
         if named:
-            await asyncio.wait(named, timeout=10.0)
+            await asyncio.wait(named)
         assert [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)] == []
         [pass_begin] = [index for index, item in enumerate(traced) if item.text == PASS_BEGIN]
         connection = traced[pass_begin].connection
         assert [item for item in traced[pass_begin:] if item.kind == "commit" and item.connection == connection] == []
-        with sqlite3.connect(file) as connection:
+        with closing(sqlite3.connect(file)) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
+        # The pass checked its connection back in to the pool the timed-out close had disposed, which nothing closes.
+        assert disposed_pool is not engine.sync_engine.pool and disposed_pool.checkedin() == 1
+        await greenlet_spawn(disposed_pool.dispose)
 
     @pytest.mark.slow
     async def test_a_held_advisory_rides_on_a_topology_verb_and_on_posture(self, tmp_path) -> None:

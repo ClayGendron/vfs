@@ -9,6 +9,9 @@ OLD_CLAUDE.md
 # JetBrains
 .idea/
 
+# The stacks a test past its deadline leaves (tests/conftest.py)
+test-hangs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
