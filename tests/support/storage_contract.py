@@ -418,6 +418,17 @@ class StorageContract:
         assert (await storage.write(entries=[directory])).success is True
         assert (await storage.write(entries=[_file("/d", "body")])).errors[0].kind == ErrorKind.wrong_kind
 
+    @needs("write", "stat")
+    async def test_a_create_only_batch_that_names_a_path_twice_is_refused_whole(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # The second entry meets the first, which is staged and not stored: there is no version to name.
+        twice = [_file("/a.txt", "first"), _file("/b.txt", "other"), _file("/a.txt", "second")]
+        result = await storage.write(entries=twice, if_absent=True)
+        assert [(e.kind, e.path, e.data) for e in result.errors] == [(ErrorKind.exists, "/a.txt", None)]
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+        assert (await storage.stat(path=Path("/b.txt"))).success is False
+
     @needs("write", "read")
     async def test_twenty_create_only_writes_of_one_path_admit_one(self, storage: ConformanceBackend) -> None:
         claims = [storage.write(entries=[_file("/lock", f"holder {n}")], if_absent=True) for n in range(20)]
