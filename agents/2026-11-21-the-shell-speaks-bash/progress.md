@@ -2,7 +2,7 @@
 
 ## Step in hand
 
-The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done); the host-resolved program request (done in this commit); one write per redirection; the differential fuzzer; a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
+The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done); the host-resolved program request (done); one write per redirection (done in this commit); the differential fuzzer; a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
 
 ## Score
 
@@ -28,7 +28,7 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - Refused before anything runs: `eval`, `source`, `.`, `exec`, `trap`, `jobs`, `fg`, `bg`, `disown`, `suspend`, `alias`, `unalias` and `coproc`. A refused word reached at run time also ends the line with status 2.
 - A request key is the path of the task in the walk (one index for each enclosing pipeline stage, subshell, substitution and job) and the request's ordinal in that task.
 - Process substitution runs its list to its end into a buffer before the command that names it. `>(list)` feeds its list once the command ends.
-- A file written through a redirection is created or truncated when it is opened, as bash does. Its bytes are held and written in one appending request when the redirection ends; a read of the same path writes them first.
+- A redirection is one write. Opening it only reads: a `stat` of the target, and of its directory when the target is absent, so a directory, a missing directory or a noclobber clash fails before the command runs, as in bash. The bytes are held and written in one request when the redirection ends, creating, truncating or appending as the operator says, with `if_absent` under `set -C`; a read of the same path inside the line writes first, so `cat f > f` reads an empty file. A write the host refuses at the end prints its error and fails the command with status 1. Output past 64 KiB is written in more than one request.
 - A loop iteration is one run of a loop's body.
 - The vfs host reads each body once for the line and forgets it at any mutation. A verb a program was refused is kept as a warning: a program's failure is not the call's.
 - `cli` is a management method, not an op, and joins `MANAGEMENT_METHODS`. On the synchronous face it is a management hop, so a closed face raises as the other management methods do.
@@ -51,4 +51,4 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 
 ## Next
 
-One write per redirection, then the differential fuzzer, and the review of steps 3 to 7.
+The differential fuzzer, then the review of steps 3 to 7.

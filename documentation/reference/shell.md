@@ -20,7 +20,7 @@ The interpreter does no input or output of its own. It asks for every effect as 
 |---|---|
 | reads a file (`cat f`, `< f`, `$(<f)`) | `read` |
 | tests or lists (`[ -f f ]`, `cd d`, `*.md`, `ls`) | `stat`, `ls` |
-| writes (`> f`, `>> f`, `touch f`) | `write`, with `append` or `if_absent` |
+| writes (`> f`, `>> f`, `touch f`) | `stat` to judge the target, then one `write` with the bytes, with `append` or `if_absent` |
 | `mkdir`, `rm`, `cp`, `mv` | `mkdir`, `delete`, `copy`, `move` |
 
 A line never runs as the system actor.

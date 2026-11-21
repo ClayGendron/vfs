@@ -161,6 +161,25 @@ async def test_every_request_reaches_a_public_verb_with_the_admitted_authority(m
     assert {verb for verb, _ in calls} >= {"read", "stat", "ls", "write", "mkdir", "delete", "copy", "move"}
 
 
+async def test_each_redirection_is_one_write_verb(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    writes: list[dict[str, Any]] = []
+    real_write = fs.write
+
+    async def spy(**kwargs: Any) -> Result:
+        writes.append(kwargs)
+        return await real_write(**kwargs)
+
+    monkeypatch.setattr(fs, "write", spy)
+    result = await fs.cli("echo x > /f; echo y >> /f; { echo a; echo b; } >> /g; cat /f /g", authority=ADA)
+    assert result.stdout == "x\ny\na\nb\n"
+    assert [(w["path"], w["content"], w["append"]) for w in writes] == [
+        ("/f", "x\n", False),
+        ("/f", "y\n", True),
+        ("/g", "a\nb\n", True),
+    ]
+
+
 async def test_two_authorities_see_different_listings() -> None:
     fs = AsyncVirtualFileSystem()
     ok(await fs.set_posture("/", "none", authority=SYSTEM))

@@ -500,9 +500,8 @@ pub fn exec_command<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, command: &'b Comman
                     Err(status) => return Ok(status),
                 };
                 let result = exec_compound(ctx, sh, compound).await;
-                let restored = restore(sh, saved).await;
-                restored?;
-                result
+                let written = restore(sh, saved).await?;
+                if written { result } else { result.map(|_| 1) }
             }
         }
     })
@@ -953,8 +952,7 @@ async fn exec_simple_inner(ctx: &Ctx<'_>, sh: &mut Shell, simple: &SimpleCommand
     if temporary {
         sh.vars.scopes.pop();
     }
-    restored?;
-    result
+    if restored? { result } else { result.map(|_| 1) }
 }
 
 fn first_field(args: &[Expanded]) -> Option<String> {
@@ -1915,10 +1913,55 @@ pub async fn open_write(
     }
     let absolute = absolute(sh, path);
     sync_path(sh, &absolute).await?;
+    if let Err(error) = openable(sh, &absolute).await? {
+        return Ok(Err(error));
+    }
+    Ok(Ok(Fd::FileOut(FileWriter::open(&sh.hub, absolute, mode))))
+}
+
+/// Judge, by reading alone, whether `path` can be opened for writing: not a directory, and in a
+/// directory that exists. The write itself waits for the redirection's first flush.
+async fn openable(sh: &mut Shell, path: &str) -> Result<Result<(), HostError>, Fatal> {
     let key = sh.key();
-    Ok(FileWriter::open(&sh.hub, key, absolute, mode)
-        .await?
-        .map(Fd::FileOut))
+    match io::host_call(
+        &sh.hub,
+        key,
+        Request::Stat {
+            path: path.to_owned(),
+        },
+    )
+    .await?
+    {
+        Reply::Stat {
+            kind: super::EntryKind::Directory,
+            ..
+        } => Ok(Err(HostError::IsADirectory)),
+        Reply::Error(HostError::NotFound) => {
+            let parent = path
+                .rsplit_once('/')
+                .map_or("/", |(dir, _)| if dir.is_empty() { "/" } else { dir });
+            let key = sh.key();
+            match io::host_call(
+                &sh.hub,
+                key,
+                Request::Stat {
+                    path: parent.to_owned(),
+                },
+            )
+            .await?
+            {
+                Reply::Stat {
+                    kind: super::EntryKind::Directory,
+                    ..
+                } => Ok(Ok(())),
+                Reply::Stat { .. } => Ok(Err(HostError::NotADirectory)),
+                Reply::Error(error) => Ok(Err(error)),
+                _ => Ok(Ok(())),
+            }
+        }
+        Reply::Error(error) => Ok(Err(error)),
+        _ => Ok(Ok(())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2071,7 +2114,11 @@ async fn apply_one(
                 Ok(fd) => fd,
                 Err(HostError::NotFound) if redirect.op == RedirOp::ReadWrite => {
                     match open_write(sh, &target, WriteMode::Append).await? {
-                        Ok(_) => Fd::Buffer(ReadBuffer::new(&sh.hub, Vec::new())?),
+                        // The created file is written when the redirection ends, as any other.
+                        Ok(created) => {
+                            saved.opened.push(created);
+                            Fd::Buffer(ReadBuffer::new(&sh.hub, Vec::new())?)
+                        }
                         Err(error) => return Ok(Err(format!("{}: {}", target, error.message()))),
                     }
                 }
@@ -2103,8 +2150,13 @@ async fn apply_one(
                     return Ok(Err(format!("{target}: cannot overwrite existing file")));
                 }
             }
+            // With noclobber set, the one write refuses a file that appeared since the check above.
             let mode = if append {
                 WriteMode::Append
+            } else if sh.options.noclobber
+                && matches!(redirect.op, RedirOp::Write | RedirOp::WriteBoth)
+            {
+                WriteMode::CreateNew
             } else {
                 WriteMode::Truncate
             };
@@ -2148,7 +2200,9 @@ fn replace_fd(sh: &mut Shell, saved: &mut Saved, fd: u32, value: Option<Fd>, var
 }
 
 /// Put back what redirections replaced, writing out files they opened.
-pub async fn restore(sh: &mut Shell, saved: Saved) -> Result<(), Flow> {
+/// Put back the descriptors a command's redirections replaced, and write what its files hold.
+/// False when a write was refused: the line has said so, and the command fails with status 1.
+pub async fn restore(sh: &mut Shell, saved: Saved) -> Result<bool, Flow> {
     for (fd, previous) in saved.previous.into_iter().rev() {
         match previous {
             Some(value) => {
@@ -2159,13 +2213,26 @@ pub async fn restore(sh: &mut Shell, saved: Saved) -> Result<(), Flow> {
             }
         }
     }
+    let mut written = true;
     for opened in saved.opened {
         if let Fd::FileOut(writer) = opened {
             let key = sh.key();
             FileWriter::flush(&writer, &sh.hub, key).await?;
+            let failed = writer.borrow_mut().error.take();
+            if let Some(error) = failed {
+                let path = writer.borrow().path.clone();
+                sh.error_text(&format!(
+                    "bash: line {}: {}: {}\n",
+                    sh.lineno,
+                    path,
+                    error.message()
+                ))
+                .await?;
+                written = false;
+            }
         }
     }
-    Ok(())
+    Ok(written)
 }
 
 /// Write to a descriptor; a broken pipe ends this shell as SIGPIPE would.

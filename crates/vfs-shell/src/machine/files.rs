@@ -136,45 +136,31 @@ impl Drop for FileReader {
     }
 }
 
-/// A file being written: bytes held until the next flush.
+/// A file being written: bytes held until the next flush. Nothing is written when it opens: its
+/// first flush creates, truncates or appends to the file with the bytes held, in one request.
 pub struct FileWriter {
     pub path: String,
     buffer: Vec<u8>,
+    /// How the first write treats the file; `None` once it has been written.
+    pending: Option<WriteMode>,
     pub error: Option<HostError>,
     hub: HubRef,
 }
 
 impl FileWriter {
-    /// Open `path` for writing: truncate, append or create it now, as bash does.
-    pub async fn open(
-        hub: &HubRef,
-        key: RequestKey,
-        path: String,
-        mode: WriteMode,
-    ) -> Result<Result<Rc<RefCell<FileWriter>>, HostError>, Fatal> {
-        let reply = super::io::host_call(
-            hub,
-            key,
-            Request::Write {
-                path: path.clone(),
-                data: Vec::new(),
-                mode,
-            },
-        )
-        .await?;
-        if let Reply::Error(error) = reply {
-            return Ok(Err(error));
-        }
+    /// A writer for `path`, already judged openable, that writes nothing until its first flush.
+    pub fn open(hub: &HubRef, path: String, mode: WriteMode) -> Rc<RefCell<FileWriter>> {
         let writer = Rc::new(RefCell::new(FileWriter {
             path,
             buffer: Vec::new(),
+            pending: Some(mode),
             error: None,
             hub: Rc::clone(hub),
         }));
         let mut hub = hub.borrow_mut();
         hub.writers.retain(|weak| weak.strong_count() > 0);
         hub.writers.push(Rc::downgrade(&writer));
-        Ok(Ok(writer))
+        writer
     }
 
     /// Hold `bytes`; true when a chunk is held and should be written.
@@ -184,35 +170,28 @@ impl FileWriter {
         Ok(self.buffer.len() >= CHUNK)
     }
 
+    /// Whether a flush would write: bytes are held, or the file is not yet created or truncated.
     pub fn is_dirty(&self) -> bool {
-        !self.buffer.is_empty()
+        !self.buffer.is_empty() || self.pending.is_some()
     }
 
-    /// Write what is held, as one appending request.
+    /// Write what is held as one request: the opening mode the first time, appending after.
     pub async fn flush(
         writer: &Rc<RefCell<FileWriter>>,
         hub: &HubRef,
         key: RequestKey,
     ) -> Result<(), Fatal> {
-        let (path, data) = {
+        let (path, data, mode) = {
             let mut this = writer.borrow_mut();
-            if this.buffer.is_empty() {
+            if !this.is_dirty() {
                 return Ok(());
             }
             let data = std::mem::take(&mut this.buffer);
             this.hub.borrow_mut().release(data.len());
-            (this.path.clone(), data)
+            let mode = this.pending.take().unwrap_or(WriteMode::Append);
+            (this.path.clone(), data, mode)
         };
-        let reply = super::io::host_call(
-            hub,
-            key,
-            Request::Write {
-                path,
-                data,
-                mode: WriteMode::Append,
-            },
-        )
-        .await?;
+        let reply = super::io::host_call(hub, key, Request::Write { path, data, mode }).await?;
         if let Reply::Error(error) = reply {
             writer.borrow_mut().error = Some(error);
         }

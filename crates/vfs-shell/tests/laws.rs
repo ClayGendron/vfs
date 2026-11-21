@@ -245,6 +245,40 @@ fn a_regex_search_that_spends_its_budget_fails_and_never_answers_no_match() {
 }
 
 // ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn each_redirection_is_one_write() {
+    let line = "echo x > f; echo y >> f; echo z >> new; { echo a; echo b; } > g; set -C; echo n > fresh; set +C; : > empty; cat f g new fresh";
+    let outcome = run(line, Limits::default(), |_| {});
+    assert_eq!(
+        String::from_utf8_lossy(&outcome.stdout),
+        "x\ny\na\nb\nz\nn\n"
+    );
+    let writes: Vec<&String> = outcome
+        .requests
+        .iter()
+        .filter(|r| r.contains("Write"))
+        .collect();
+    assert_eq!(writes.len(), 6, "{writes:#?}");
+    assert!(
+        writes[1].contains("Append") && writes[4].contains("CreateNew"),
+        "{writes:#?}"
+    );
+}
+
+#[test]
+fn a_read_of_a_file_its_own_command_truncates_sees_it_empty() {
+    let outcome = run(
+        "echo old > f; cat f > f; wc -c < f",
+        Limits::default(),
+        |_| {},
+    );
+    assert_eq!(String::from_utf8_lossy(&outcome.stdout), "0\n");
+}
+
+// ---------------------------------------------------------------------------
 // Programs the host resolves
 // ---------------------------------------------------------------------------
 
