@@ -10,13 +10,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table, event, insert, select
-from sqlalchemy.dialects import mssql as mssql_dialect
-from sqlalchemy.dialects import mysql as mysql_dialect
-from sqlalchemy.dialects import oracle as oracle_dialect
 from sqlalchemy.dialects import postgresql as postgresql_dialect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
@@ -30,12 +27,8 @@ from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, dialects
-from vfs.storage.backends.database.descent import escape_like
 from vfs.storage.backends.database.dialects import (
     GENERIC,
-    MARIADB,
-    MSSQL,
-    ORACLE,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -53,7 +46,6 @@ from vfs.storage.backends.database.dialects import (
     op_execution_options,
     profile_for,
     rows_per_statement,
-    wire_bytes,
 )
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.labels import hold_postures, open_relabel, watch_postures
@@ -75,31 +67,6 @@ class _PgError(Exception):
     def __init__(self, state: str) -> None:
         super().__init__("serialization")
         self.sqlstate = state
-
-
-class _MySQLError(Exception):
-    """PyMySQL-shaped: args lead with the errno; the server's SQLSTATE rides on ``sqlstate``."""
-
-    _SQLSTATES: ClassVar[dict[int, str]] = {1213: "40001", 1205: "HY000", 1062: "23000", 1048: "23000"}
-
-    def __init__(self, errno: int) -> None:
-        super().__init__(errno, "deadlock found when trying to get lock")
-        self.sqlstate = self._SQLSTATES.get(errno, "HY000")
-
-
-class _OracleErrorValue:
-    """The ``_Error`` object python-oracledb packs as the sole argument."""
-
-    def __init__(self, code: int) -> None:
-        self.code = code
-        self.message = f"ORA-{code:05d}: fault"
-
-
-class _OracleError(Exception):
-    """python-oracledb-shaped: ``args = (_Error,)``, errno on ``.code``, no sqlstate."""
-
-    def __init__(self, code: int) -> None:
-        super().__init__(_OracleErrorValue(code))
 
 
 class TestDialectPolicy:
@@ -130,24 +97,24 @@ class TestDialectPolicy:
         """Guards: a statistics listing on a server engine, which maintains its own statistics."""
         assert SQLITE.statistics_listing is not None
         assert "PRAGMA" in SQLITE.statistics_listing and "optimize" in SQLITE.statistics_listing
-        assert [p.statistics_listing for p in (POSTGRESQL, MARIADB, MSSQL, ORACLE, GENERIC)] == [None] * 5
+        assert [p.statistics_listing for p in (POSTGRESQL, GENERIC)] == [None] * 2
 
     def test_only_sqlite_declares_a_rarity_hint(self) -> None:
         """Guards: a planner hint sent to an engine that has no such function, or SQLite losing the overlay seek."""
         assert SQLITE.rarity_hint == "unlikely"
-        assert [p.rarity_hint for p in (POSTGRESQL, MARIADB, MSSQL, ORACLE, GENERIC)] == [None] * 5
+        assert [p.rarity_hint for p in (POSTGRESQL, GENERIC)] == [None] * 2
 
     def test_the_entry_probe_is_declared_on_sqlite_only(self) -> None:
         """Guards: SQLite's chunk pages joining the entry table, a Bloom filter rebuilt on every page, or an
         engine whose planner serves the join, Postgres JIT-compiling the probe, sent the probe unmeasured."""
         assert SQLITE.probe_entry_filter is True
-        assert [p.probe_entry_filter for p in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC)] == [False] * 5
+        assert [p.probe_entry_filter for p in (POSTGRESQL, GENERIC)] == [False] * 2
 
     def test_the_stored_length_is_the_function_that_reads_no_body(self) -> None:
-        """Guards: an engine sizing a stored rendering with a function that reads it, Postgres's ``length``
-        detoasting it and SQL Server's ``LEN`` reading its LOB pages, where a stored-size function reads none."""
-        assert (POSTGRESQL.stored_length, MSSQL.stored_length) == ("octet_length", "datalength")
-        assert [p.stored_length for p in (SQLITE, MARIADB, ORACLE, GENERIC)] == ["length"] * 4
+        """Guards: Postgres sizing a stored rendering with ``length``, which detoasts it, where ``octet_length``
+        reads none."""
+        assert POSTGRESQL.stored_length == "octet_length"
+        assert [p.stored_length for p in (SQLITE, GENERIC)] == ["length"] * 2
 
     def test_serialization_sqlstates_are_retryable(self) -> None:
         assert is_retryable(POSTGRESQL, _PgError("40001")) is True
@@ -185,34 +152,19 @@ class TestDialectPolicy:
         assert is_permanent_defect(DBAPIError("SELECT 1", None, _SqliteError(5))) is False
         assert is_permanent_defect(DBAPIError("SELECT", None, _PgError("40001"))) is False
 
-    def test_mariadb_is_tuned_and_mysql_community_is_an_unknown_dialect(self) -> None:
-        assert profile_for("mariadb") is MARIADB and MARIADB.vector_distance == "ann"
-        assert MARIADB.key_byte_budget == 3_072 and MARIADB.arbitration == "catch_retry"
-        assert MARIADB.op_isolation == "REPEATABLE READ"
-        # Community MySQL has no distance function vfs can install: served
-        # the core verbs on the generic floor under its own name.
-        mysql = profile_for("mysql")
-        assert mysql.name == "mysql" and mysql.key_byte_budget == GENERIC.key_byte_budget
-        assert mysql.vector_distance == "none" and mysql.retryable_driver_codes == frozenset()
-
     def test_the_range_join_keyword_and_hints_are_the_measured_ones(self) -> None:
-        # Each planner misreads the everyone-level term its own way; the
-        # profile carries the keyword, the index pin and the hints it needs.
-        assert SQLITE.range_join == "CROSS JOIN" and MSSQL.range_join == "INNER LOOP JOIN"
-        assert MARIADB.range_join == "STRAIGHT_JOIN" and MARIADB.range_entry_hint == "FORCE INDEX ({index})"
+        # Each planner misreads the everyone-level term its own way; the profile carries the keyword it needs.
+        assert SQLITE.range_join == "CROSS JOIN"
         assert POSTGRESQL.range_join == "JOIN" and POSTGRESQL.range_settings == ("SET LOCAL jit = off",)
-        assert ORACLE.range_join == "JOIN" and ORACLE.range_source == "json_table_clob"
-        assert ORACLE.range_hints.ranges == "/*+ CARDINALITY({source} {count}) */"
-        assert ORACLE.range_hints.relabel == "/*+ USE_CONCAT */"
-        assert GENERIC.range_source is None and GENERIC.range_join == "JOIN" and not any(GENERIC.range_hints)
-        assert all(p.range_settings == () for p in (SQLITE, MSSQL, MARIADB, ORACLE, GENERIC))
+        assert GENERIC.range_source is None and GENERIC.range_join == "JOIN"
+        assert all(p.range_settings == () for p in (SQLITE, GENERIC))
         assert SQLITE.range_fence == "MATERIALIZED"
-        assert all(p.range_fence is None for p in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC))
+        assert all(p.range_fence is None for p in (POSTGRESQL, GENERIC))
 
     def test_the_relabel_row_cap_is_the_measured_fifty_thousand_on_every_profile(self) -> None:
         # The chunk size one relabel transaction writes: SQLAlchemy models
         # no such cap, and 50,000 was safe on every engine measured.
-        for profile in (SQLITE, POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC):
+        for profile in (SQLITE, POSTGRESQL, GENERIC):
             assert profile.relabel_rows == 50_000, profile.name
 
     def test_every_tuned_profile_declares_a_distance_function(self) -> None:
@@ -220,57 +172,24 @@ class TestDialectPolicy:
             assert profile.vector_distance in ("exact", "ann"), profile.name
         assert GENERIC.vector_distance == "none" and SQLITE.vector_distance == "exact"
 
-    def test_mysql_deadlock_and_lock_wait_errnos_are_retryable(self) -> None:
-        assert is_retryable(MARIADB, _MySQLError(1213)) is True
-        # 1205 ships under the HY000 catch-all: the sqlstate rung must
-        # defer to the errno, or the declared code set is dead on MySQL.
-        assert is_retryable(MARIADB, _MySQLError(1205)) is True
-        # Duplicate entry is a definite exists-outcome, never retried.
-        assert is_retryable(MARIADB, _MySQLError(1062)) is False
-        # The errno rung is profile-scoped: the floor declares no errnos.
-        assert is_retryable(GENERIC, _MySQLError(1205)) is False
-
-    def test_oracle_is_tuned_for_retry_classification(self) -> None:
-        # Budgets stay at the floor Oracle itself defines (ORA-01795);
-        # the tuning is the driver-code rung — oracledb exposes no
-        # sqlstate, and its errno rides args[0].code, not args[0].
-        profile = profile_for("oracle")
-        assert profile.name == "oracle"
-        assert profile.in_list_budget == GENERIC.in_list_budget
-        assert profile.key_byte_budget == GENERIC.key_byte_budget
-        assert is_retryable(profile, _OracleError(60)) is True  # deadlock
-        assert is_retryable(profile, _OracleError(8177)) is True  # serialization
-        assert is_retryable(profile, _OracleError(1400)) is False  # NOT NULL
-        assert is_retryable(GENERIC, _OracleError(60)) is False
-
     def test_every_lawful_path_fits_every_declared_key_budget(self) -> None:
         # The contract is byte-denominated, so the worst-case index key is
         # MAX_PATH_LENGTH bytes — the budget↔DDL gap closes by construction.
         for profile in (*PROFILES.values(), GENERIC):
             assert profile.key_byte_budget >= MAX_PATH_LENGTH
 
-    def test_the_bracket_class_escape_is_mssql_only(self) -> None:
-        # T-SQL LIKE reads [...] as a class; escaping "[" anywhere else
-        # is itself an error (ORA-01424 on Oracle), so the escape is a
-        # declared profile fact, off on every other engine and the floor.
-        assert MSSQL.like_bracket_class is True
-        for profile in (SQLITE, POSTGRESQL, MARIADB, ORACLE, GENERIC):
-            assert profile.like_bracket_class is False
-        assert escape_like("/a[1]b_c%", MSSQL) == "/a\\[1]b\\_c\\%"
-        assert escape_like("/a[1]b_c%", ORACLE) == "/a[1]b\\_c\\%"
-
     def test_content_bytes_is_sqlite_only_until_audited(self) -> None:
         # The cast must return the column's UTF-8 bytes as a cheap
         # reinterpretation — proven only on sqlite; servers await audit.
         assert SQLITE.content_bytes is True
-        for profile in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC):
+        for profile in (POSTGRESQL, GENERIC):
             assert profile.content_bytes is False
 
     def test_values_join_is_declared_only_where_proven(self) -> None:
         # SQLite rejects the column-aliased VALUES join despite declaring
         # update_returning — the bit is earned per engine, floor stays off.
-        assert POSTGRESQL.values_join and MSSQL.values_join
-        assert not SQLITE.values_join and not MARIADB.values_join and not GENERIC.values_join
+        assert POSTGRESQL.values_join
+        assert not SQLITE.values_join and not GENERIC.values_join
 
     def test_parameter_budget_is_read_from_sqlalchemy(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -361,13 +280,6 @@ def _sqlite_integrity_errors() -> list[sqlite3.IntegrityError]:
     return raised
 
 
-def _odbc(native: int) -> Exception:
-    """pyodbc-shaped: SQLSTATE 23000 for every integrity class, the native number in the diagnostic's parentheses."""
-    driver = "[Microsoft][ODBC Driver 18 for SQL Server][SQL Server]"
-    first = f"[23000] {driver}The key value is (7). ({native}) (SQLExecDirectW)"
-    return Exception("23000", f"{first}; [01000] {driver}The statement has been terminated. (3621)")
-
-
 def test_a_unique_violation_is_told_from_every_other_integrity_failure() -> None:
     """Guards: a dialect's unique-violation code dropped from the classifier, or a non-unique code added,
     so a rival chunk pass's collision is mistaken for a defect or a defect redrives as a collision."""
@@ -376,10 +288,6 @@ def test_a_unique_violation_is_told_from_every_other_integrity_failure() -> None
         (unique, not_null),
         (primary, not_null),
         (_PgError("23505"), _PgError("23502")),
-        (_MySQLError(1062), _MySQLError(1048)),
-        (_OracleError(1), _OracleError(1400)),
-        (_odbc(2627), _odbc(515)),
-        (_odbc(2601), _odbc(515)),
     ]
     for violation, other in pairs:
         assert dialects.is_unique_violation(IntegrityError("INSERT", None, violation)) is True, violation
@@ -391,46 +299,20 @@ def test_a_unique_violation_is_told_from_every_other_integrity_failure() -> None
 # ---------------------------------------------------------------------------
 
 
-def _lock_sql(profile: DialectProfile, dialect: Dialect) -> str:
+def _lock_sql(dialect: Dialect) -> str:
     table = Table("entry", MetaData(), Column("entry_id", String), Column("path", String))
     stmt = select(table.c.entry_id).where(table.c.path.in_(["/a"]))
-    return " ".join(str(lock_rows(stmt, table, profile).compile(dialect=dialect)).split())
+    return " ".join(str(lock_rows(stmt).compile(dialect=dialect)).split())
 
 
 class TestLockRows:
-    @pytest.mark.parametrize(
-        ("profile", "dialect"),
-        [
-            (POSTGRESQL, postgresql_dialect.dialect()),
-            (MARIADB, mysql_dialect.dialect()),
-            (ORACLE, oracle_dialect.dialect()),
-        ],
-        ids=["postgresql", "mariadb", "oracle"],
-    )
-    def test_for_update_renders_where_the_compiler_has_it(self, profile: DialectProfile, dialect: Dialect) -> None:
-        assert _lock_sql(profile, dialect).endswith("FOR UPDATE")
+    def test_for_update_renders_where_the_compiler_has_it(self) -> None:
+        assert _lock_sql(postgresql_dialect.dialect()).endswith("FOR UPDATE")
 
     def test_sqlite_renders_no_clause_the_writer_transaction_is_the_lock(self) -> None:
-        sql = _lock_sql(SQLITE, sqlite_dialect.dialect())
+        sql = _lock_sql(sqlite_dialect.dialect())
         assert "FOR UPDATE" not in sql
         assert "WITH (" not in sql
-
-    def test_mssql_spells_the_lock_as_an_updlock_table_hint(self) -> None:
-        # with_for_update() is a bare SELECT on T-SQL; the hint is the lock.
-        sql = _lock_sql(MSSQL, mssql_dialect.dialect())
-        assert "FROM entry WITH (UPDLOCK, FORCESEEK) WHERE" in sql
-        assert "HOLDLOCK" not in sql
-        assert "FOR UPDATE" not in sql
-
-    def test_the_hint_is_gated_on_the_profile_dialect_and_never_leaks(self) -> None:
-        # A hint declared for one engine renders in no other engine's SQL.
-        sql = _lock_sql(MSSQL, postgresql_dialect.dialect())
-        assert "UPDLOCK" not in sql
-
-    def test_the_generic_floor_trusts_the_compiler(self) -> None:
-        profile = profile_for("duckdb")
-        assert profile.row_lock_hint is None
-        assert _lock_sql(profile, postgresql_dialect.dialect()).endswith("FOR UPDATE")
 
 
 class _Recorder:
@@ -458,9 +340,6 @@ class _Recorder:
 _HOLDS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
     (SQLITE, sqlite_dialect.dialect(), ("WHERE vfs_principal_revisions.principal_id = ?",)),
     (POSTGRESQL, postgresql_dialect.dialect(), ("FOR SHARE",)),
-    (MARIADB, mysql_dialect.dialect(), ("LOCK IN SHARE MODE",)),
-    (MSSQL, mssql_dialect.dialect(), ("FROM vfs_principal_revisions WITH (REPEATABLEREAD, FORCESEEK) WHERE",)),
-    (ORACLE, oracle_dialect.dialect(), ("LOCK TABLE vfs_principal_revisions IN SHARE MODE", "principal_id = :")),
     (GENERIC, postgresql_dialect.dialect(), ("FOR UPDATE",)),
 ]
 
@@ -474,10 +353,8 @@ def test_sqlite_alone_declares_that_its_attempts_run_out_of_reach() -> None:
 
 def test_each_profile_declares_how_a_mint_shares_the_stamp_lock() -> None:
     """The shared form is one profile fact: a row lock by default, and what each other engine needs spelled."""
-    assert SQLITE.share_lock == MARIADB.share_lock == ShareLock()
+    assert SQLITE.share_lock == ShareLock()
     assert POSTGRESQL.share_lock == ShareLock(door=True)
-    assert MSSQL.share_lock == ShareLock(hint="REPEATABLEREAD, FORCESEEK")
-    assert ORACLE.share_lock == ShareLock(form="table")
     assert GENERIC.share_lock == profile_for("duckdb").share_lock == ShareLock(form="exclusive")
 
 
@@ -500,7 +377,7 @@ async def test_the_hold_renders_each_profiles_shared_form(
     for statement, fragment in zip(held, hold, strict=True):
         assert fragment in statement, statement
     locking = ("FOR SHARE", "FOR UPDATE", "LOCK IN SHARE MODE", "WITH (")
-    if profile in (SQLITE, ORACLE):
+    if profile is SQLITE:
         assert not any(word in held[-1] for word in locking), held[-1]
 
 
@@ -551,17 +428,17 @@ class TestMembershipChunking:
 
     Every membership predicate (``path IN``, ``id IN``, glob's anchor
     fan) chunks by ``membership_budget`` and merges, so a batch's SQL
-    stays within every engine's limits (Oracle's 1,000-element IN floor,
-    MSSQL's 2,100 bind params) regardless of N.
+    stays within every engine's limits (the floor's 1,000-element IN
+    list, SQLAlchemy's 32,700 bind params) regardless of N.
     """
 
     def test_membership_budget_honors_both_caps(self) -> None:
-        # The generic floor is Oracle's 1,000-element IN-list cap.
+        # The generic floor's 1,000-element IN-list cap binds first.
         assert membership_budget(GENERIC, 32_700) == 1_000
         # A parameter-capped engine binds through the tighter budget.
         assert membership_budget(replace(GENERIC, in_list_budget=65_535), 2_099) == 2_099 - 32
-        # SQL Server's declared lock budget binds before its bind cap.
-        assert membership_budget(MSSQL, 2_099) == 2_000
+        # Both tuned engines bind through SQLAlchemy's parameter budget.
+        assert membership_budget(SQLITE, 32_700) == membership_budget(POSTGRESQL, 32_700) == 32_668
         # Degenerate budgets never chunk below one element.
         assert membership_budget(GENERIC, 8) == 1
 
@@ -928,7 +805,7 @@ class TestBulkInsert:
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # sqlite3 also speaks the named paramstyle, so the live dialect
-        # can stand in for oracledb/pyodbc: dicts, not tuples, reach the driver.
+        # can stand in for a named-paramstyle driver: dicts, not tuples, reach it.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.mkdir(path=Path("/warm"))
         self._pin_mode(monkeypatch, "driver")
@@ -1052,8 +929,12 @@ class TestBulkInsert:
                 "VALUES ($1, $2, $3)",
                 ("epoch", "term", "block_no"),
             ),
-            (lambda: mysql_dialect.dialect(paramstyle="format"), "VALUES (%s, %s, %s)", ("epoch", "term", "block_no")),
-            (lambda: oracle_dialect.dialect(paramstyle="named"), "VALUES (:epoch, :term, :block_no)", None),
+            (
+                lambda: postgresql_dialect.dialect(paramstyle="format"),
+                "VALUES (%s, %s, %s)",
+                ("epoch", "term", "block_no"),
+            ),
+            (lambda: sqlite_dialect.dialect(paramstyle="named"), "VALUES (:epoch, :term, :block_no)", None),
         ],
     )
     def test_rendering_follows_the_dialects_paramstyle(
@@ -1072,20 +953,12 @@ class TestBulkInsert:
 
     @pytest.mark.parametrize(
         "make",
-        [
-            sqlite_dialect.dialect,
-            postgresql_dialect.dialect,
-            mysql_dialect.dialect,
-            mssql_dialect.dialect,
-            oracle_dialect.dialect,
-        ],
-        ids=["sqlite", "postgresql", "mysql", "mssql", "oracle"],
+        [sqlite_dialect.dialect, postgresql_dialect.dialect],
+        ids=["sqlite", "postgresql"],
     )
     def test_the_bulk_statement_never_returns_the_identity_key(self, make: Callable[[], Dialect]) -> None:
-        # A one-row insert into an identity-keyed table picks up the dialect's
-        # implicit OUTPUT/RETURNING; under a parameter array that is one
-        # pending result per row, and pyodbc's fast path cancels the batch
-        # at cursor close (rows past the first ~80 never ran, no error).
+        # A one-row insert into an identity-keyed table can pick up the dialect's
+        # implicit RETURNING; under a parameter array that is one pending result per row.
         entry = build_vfs_tables().entry
         keys = tuple(column.key for column in entry.columns if column.key != "id")
         statement = dialects._bulk_statement(make(), entry, keys)
@@ -1096,13 +969,7 @@ class TestBulkInsert:
         # Read from the before/after benchmark on each engine; GENERIC never
         # assumes an unknown driver's executemany is a batch.
         assert GENERIC.bulk_insert == "core"
-        assert {p.name: p.bulk_insert for p in (SQLITE, POSTGRESQL, MARIADB, MSSQL, ORACLE)} == {
-            "sqlite": "driver",
-            "postgresql": "copy",
-            "mariadb": "driver",
-            "mssql": "core",
-            "oracle": "core",
-        }
+        assert {p.name: p.bulk_insert for p in (SQLITE, POSTGRESQL)} == {"sqlite": "driver", "postgresql": "copy"}
 
 
 class TestValueTooLarge:
@@ -1117,33 +984,10 @@ class TestValueTooLarge:
         assert is_value_too_large(_PgError("54001")) is True
         assert is_value_too_large(_PgError("23505")) is False
 
-    def test_the_mysql_packet_error_counts(self) -> None:
-        class _PacketError(Exception):
-            def __init__(self) -> None:
-                super().__init__(1153, "Got a packet bigger than 'max_allowed_packet' bytes")
-
-        assert is_value_too_large(_PacketError()) is True
-        assert is_value_too_large(_MySQLError(1213)) is False
-
     def test_a_wrapped_driver_error_is_unwrapped_first(self) -> None:
         wrapped = DBAPIError("INSERT", None, sqlite3.DataError("too big"))
         assert is_value_too_large(wrapped) is True
         assert is_value_too_large(RuntimeError("nope")) is False
-
-
-class TestValueCap:
-    def test_the_mysql_family_declares_its_packet_cap_and_the_rest_declare_none(self) -> None:
-        assert MARIADB.value_cap_query == "SELECT @@max_allowed_packet"
-        assert MARIADB.value_cap_setting == "max_allowed_packet"
-        for profile in (SQLITE, POSTGRESQL, MSSQL, ORACLE, GENERIC):
-            assert (profile.value_cap_query, profile.value_cap_setting) == (None, None)
-
-
-class TestWireBytes:
-    def test_escaped_bytes_count_twice(self) -> None:
-        assert wire_bytes(b"plain") == 5
-        assert wire_bytes(b"\x00\n\r\\'\"\x1a") == 14
-        assert wire_bytes(bytes(1024)) == 2048
 
 
 class TestBulkStatementCache:

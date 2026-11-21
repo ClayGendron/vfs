@@ -30,9 +30,8 @@ from typing import Any, ClassVar, NamedTuple
 
 import pytest
 from sqlalchemy import event as sqlalchemy_event
-from sqlalchemy import func, insert, select, text, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
 from tests.support.commit_worlds import (
@@ -72,14 +71,6 @@ from vfs.storage.replace import EditOperation
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
 _RACE_KINDS = frozenset({ErrorKind.not_found, ErrorKind.conflict, ErrorKind.exists, ErrorKind.invalid})
-
-# On the engines that lock index keys: a session's own id, and whether that session now waits on a row lock.
-_SESSION_ID = {"mariadb": "SELECT CONNECTION_ID()", "mssql": "SELECT @@SPID"}
-_LOCK_WAIT = {
-    "mariadb": "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = :id"
-    " AND trx_state = 'LOCK WAIT'",
-    "mssql": "SELECT COUNT(*) FROM sys.dm_exec_requests WHERE session_id = :id AND wait_type LIKE 'LCK_M_%'",
-}
 
 
 async def _audit(storage: DatabaseStorage) -> None:
@@ -508,12 +499,7 @@ class TestObservationHonesty:
     # Per-engine pins for the same staged race: the reprobe engines
     # classify the definite conflict; the redrive engines re-execute
     # against fresh state and report what a fresh attempt finds.
-    _EXPECTED: ClassVar[dict[str, ErrorKind]] = {
-        "VFS_TEST_POSTGRES_URL": ErrorKind.not_found,
-        "VFS_TEST_MARIADB_URL": ErrorKind.not_found,
-        "VFS_TEST_MSSQL_URL": ErrorKind.conflict,
-        "VFS_TEST_ORACLE_URL": ErrorKind.conflict,
-    }
+    _EXPECTED: ClassVar[dict[str, ErrorKind]] = {"VFS_TEST_POSTGRES_URL": ErrorKind.not_found}
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_edit_never_reports_success_at_a_moved_address(self, env_var: str) -> None:
@@ -686,10 +672,9 @@ class TestNaturalTimingStorm:
         async with server_storage(env_var) as writer:
             rival = sibling(env_var, writer)
             try:
-                # Warm both instances before the storm: a cold MSSQL first
-                # touch blocks unboundedly behind an in-flight rival
-                # transaction — a filed open question this family does not
-                # own, and the documented deployment posture is warm pools.
+                # Warm both instances before the storm: a cold first touch can
+                # block behind an in-flight rival transaction, and the
+                # documented deployment posture is warm pools.
                 assert (await rival.first_touch()).success is True
                 for round_no in range(rounds):
                     base = f"/storm{round_no}"
@@ -1023,8 +1008,8 @@ class TestBuildAgreement:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_write_between_the_two_reads_never_splits_an_entry(self, env_var: str, monkeypatch) -> None:
-        # No snapshot spans the build on SQL Server and Oracle: a write committed between the posting
-        # scan and the lexical pages changes what a second read of the entry flags would choose.
+        # Where no snapshot spans the build, a write committed between the posting scan
+        # and the lexical pages changes what a second read of the entry flags would choose.
         async with server_storage(env_var) as storage:
             words = {"/d/x.txt": "xylophone", "/a.txt": "alpha", "/b.txt": "bravo"}
             entries = [Entry(path=Path(path), content=f"{word} body") for path, word in words.items()]
@@ -1222,15 +1207,11 @@ class TestLeaseFence:
             relabels: list[int] = []
             holding = asyncio.Event()
             started: list[asyncio.Task[Result]] = []
-            engine, sessions = storage._host.profile.name, []
-            watcher = sibling(env_var, storage)
 
             async def relabel(session: Any) -> Result:
                 relabels.append(len(relabels))
                 tables = writer._host.tables
                 await hold_revision(session, tables)
-                if engine in _SESSION_ID:
-                    sessions.append((await session.execute(text(_SESSION_ID[engine]))).scalar_one())
                 holding.set()
                 stmt = update(tables.entry).where(tables.entry.c.entry_id == target).values(everyone_level=level)
                 await session.execute(stmt)
@@ -1244,8 +1225,6 @@ class TestLeaseFence:
                 if ours and not started:
                     started.append(asyncio.create_task(writer._execute_topology("set_posture", relabel)))
                     await _arrived(holding, started[0])
-                    if sessions:  # the relabel parked on the slice's row, holding whatever key it sought
-                        await asyncio.wait_for(_lock_waiting(watcher, engine, sessions[0]), 30)
 
             monkeypatch.setattr(indexing, "_flip_flags", crossed)
             try:
@@ -1253,7 +1232,6 @@ class TestLeaseFence:
                 written = await started[0]
             finally:
                 await writer.close()
-                await watcher.close()
             assert result.success is True, result.errors
             assert written.success is True, written.errors
             assert (len(attempts), len(relabels)) == (1, 1)
@@ -1343,47 +1321,6 @@ class TestLeaseFence:
                         await dialects.bulk_insert(session, chunks, [row])
                     assert dialects.is_unique_violation(raised.value) is unique, raised.value
                     await session.rollback()
-
-
-@pytest.mark.mariadb
-class TestGenerationRedirtyLockScope:
-    """The probe-guarded re-dirty: a settled store's chunk pass locks nothing.
-
-    REPEATABLE READ scan-locks every row an unindexed UPDATE reads, so an
-    unguarded generation re-dirty — matching zero rows on every rebuild
-    after the first — parks every rival entry write on next-key locks
-    until the rebuild transaction commits (measured: a single-row rival
-    UPDATE blocked 3 s to lock-wait timeout at 20k rows). The probe skips
-    the UPDATE in the steady state, so the rival commits immediately.
-    """
-
-    async def test_a_rival_row_update_passes_during_the_chunk_pass(self) -> None:
-        async with server_storage("VFS_TEST_MARIADB_URL") as storage:
-            settled = [Entry(path=Path(f"/f{i:03}.txt"), content=f"settled body {i:03}") for i in range(50)]
-            assert (await storage.write(entries=settled)).success is True
-            assert (await storage.rebuild()).success is True
-            # One fresh body keeps the chunk pass busy enough to reach the
-            # seam with its transaction open; every settled row stays clean.
-            assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="fresh body")])).success
-
-            entry = storage._host.tables.entry
-            rival_engine = create_async_engine(os.environ["VFS_TEST_MARIADB_URL"])
-            served: list[bool] = []
-
-            async def rival() -> None:
-                seams.clear("rebuild:before-chunk-flip")
-                async with rival_engine.begin() as conn:
-                    await conn.execute(text("SET SESSION innodb_lock_wait_timeout = 3"))
-                    await conn.execute(update(entry).where(entry.c.path == "/f000.txt").values(name=entry.c.name))
-                served.append(True)
-
-            try:
-                with seams.installed("rebuild:before-chunk-flip", rival):
-                    assert (await storage.rebuild()).success is True
-            finally:
-                await rival_engine.dispose()
-            assert served == [True]
-            await _audit(storage)
 
 
 # ---------------------------------------------------------------------------
@@ -1706,14 +1643,6 @@ class TestGenerationConsistency:
 
 async def _noop() -> None:
     return None
-
-
-async def _lock_waiting(watcher: DatabaseStorage, engine: str, session_id: int) -> None:
-    """Return once the server reports *session_id* waiting on a row lock, read on *watcher*'s own connection."""
-    query = text(_LOCK_WAIT[engine])
-    async with watcher._host.engine.connect() as conn:
-        while not (await conn.execute(query, {"id": session_id})).scalar_one():
-            await conn.rollback()  # each poll reads the server's live lock table, never a held snapshot
 
 
 async def _arrived(event: asyncio.Event, *running: asyncio.Task[Any]) -> None:
@@ -2072,7 +2001,7 @@ class TestRightsAtCommit:
         The same refusal on every engine, for two reasons. Where each
         statement reads the latest commit, the fence finds everyone stamped
         and the call redrives. Where a write's commit point is its snapshot
-        (Postgres, MariaDB), the relabel rewrote the row of ``/p`` the write
+        (Postgres), the relabel rewrote the row of ``/p`` the write
         bumps, so the engine refuses the bump and the write redrives too.
         """
         async with server_storage(env_var, posture="none") as storage:
@@ -2217,7 +2146,7 @@ class TestRightsAtCommit:
             assert await _minted_under_the_standing_posture(storage, restored, ("/p/d/f.txt",), "/p/d/f.txt", none)
             await _audit(storage)
 
-    @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id in ("postgres", "mariadb", "oracle")])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_only_a_create_waits_while_a_posture_write_is_open(self, env_var: str) -> None:
         """While a posture write stands open, calls that create a row wait for it and nothing else waits for it.
 
@@ -2339,14 +2268,6 @@ class TestRightsAtCommit:
             assert succeeded > writers * 50 // 2, succeeded
             assert len([path for path in stored if path.endswith(".txt")]) == succeeded
             await _audit(storage)
-
-    @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id == "mariadb"])
-    async def test_the_mariadb_leg_runs_with_snapshot_isolation(self, env_var: str) -> None:
-        """The MariaDB leg's server runs with ``innodb_snapshot_isolation`` on, which a write's commit point needs."""
-        async with server_storage(env_var) as storage:
-            assert (await storage.first_touch()).success is True
-            async with storage._host.engine.connect() as conn:
-                assert (await conn.execute(text("SELECT @@innodb_snapshot_isolation"))).scalar_one() == 1
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_grant_landed_before_an_in_place_refusal_redrives_into_success(

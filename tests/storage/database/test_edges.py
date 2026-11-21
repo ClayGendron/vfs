@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import delete, event, insert, select
-from sqlalchemy.dialects import mssql, postgresql
+from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from tests.support.commit_worlds import BOB, EVE, SYSTEM, attempts, authored_edges, clearing, drop_world, row_at
@@ -398,7 +398,6 @@ class TestHubBoundedStatements:
         assert sql.startswith("UPDATE") and "FROM (VALUES" in sql and sql.endswith("_edges.id = incoming.v_id")
         # Bare NULL payloads would type as text; every assignment casts.
         assert "SET weight=CAST(incoming.v_weight AS FLOAT)" in sql
-        assert "(VALUES" in str(statements[0].compile(dialect=mssql.dialect()))
 
 
 class TestEndpointLocks:

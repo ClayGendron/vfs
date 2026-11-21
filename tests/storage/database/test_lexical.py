@@ -10,7 +10,7 @@ from functools import partial
 from typing import Any
 
 from sqlalchemy import event, func, select, update
-from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 
 from tests.support.database_helpers import _url
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
@@ -245,7 +245,7 @@ class TestBuild:
         posting scan already read."""
         assert "profile" not in inspect.signature(lexical_store.lexical_scan_page).parameters
         page = lexical_store.lexical_scan_page(build_vfs_tables(), after=1_000)
-        for dialect in (sqlite.dialect(), postgresql.dialect(), mssql.dialect(), oracle.dialect()):
+        for dialect in (sqlite.dialect(), postgresql.dialect()):
             sql = str(page.compile(dialect=dialect))
             assert "vfs_chunks" in sql and "vfs_entries" not in sql, (dialect.name, sql)
 
@@ -442,7 +442,7 @@ class TestBatchBudgets:
 
     async def test_the_scan_reads_keyset_pages_never_an_open_cursor(self, tmp_path, monkeypatch) -> None:
         """A write between batches on a connection with an open cursor is
-        refused by drivers without MARS (SQL Server over ODBC); the scan
+        refused by drivers without multiple active result sets; the scan
         must fetch each page whole before the build writes."""
         monkeypatch.setattr(lexical_store, "_SCAN_PAGE_ROWS", 1)
         storage = DatabaseStorage(url=_url(tmp_path))

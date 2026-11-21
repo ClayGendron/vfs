@@ -89,16 +89,16 @@ def test_the_publish_matrix_builds_the_five_wheels_a_host_can_install() -> None:
     assert [platform["manylinux"] for platform in linux] == ["2_28", "2_28"]
 
 
-def test_the_dialect_workflow_pins_its_runner_and_its_keyring() -> None:
-    """The ODBC step names the 24.04 feed, so the runner is that release and the keys go where its signed-by looks."""
+def test_the_dialect_workflow_runs_postgres_17_and_18_alone() -> None:
+    """Guards: a dropped engine's leg or its driver step coming back, or one of the two Postgres versions lost."""
     workflow = _workflow("test-dialects.yml")
     jobs = workflow["jobs"]
     assert isinstance(jobs, dict)
-    assert [job["runs-on"] for job in jobs.values()] == ["ubuntu-24.04"]
     (job,) = jobs.values()
-    (odbc,) = [step for step in job["steps"] if step.get("name") == "Install ODBC driver"]
-    run = odbc["run"]
-    assert "/usr/share/keyrings/microsoft-prod.gpg" in run
-    assert "keys/microsoft.asc" in run
-    assert "keys/microsoft-2025.asc" in run
-    assert "trusted.gpg.d" not in run
+    assert job["runs-on"] == "ubuntu-24.04"
+    rows = job["strategy"]["matrix"]["include"]
+    assert [(row["version"], row["image"]) for row in rows] == [
+        ("17", "pgvector/pgvector:pg17"),
+        ("18", "pgvector/pgvector:pg18"),
+    ]
+    assert not [step for step in job["steps"] if "ODBC" in str(step.get("name"))]

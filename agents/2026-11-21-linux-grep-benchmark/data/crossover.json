@@ -1,0 +1,1194 @@
+[
+  {
+    "scope": "mm/tests",
+    "files": 1,
+    "bytes": 1405,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 10.601333997328766,
+      "min_ms": 9.911000001011416,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.623207995085977,
+      "min_ms": 5.0249580017407425,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2.8201250024721958,
+      "min_ms": 2.602166998258326,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "mm/tests",
+    "files": 1,
+    "bytes": 1405,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 9.721500005980488,
+      "min_ms": 9.389041995746084,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.623207995085977,
+      "min_ms": 5.0249580017407425,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2.9609999983222224,
+      "min_ms": 2.715834001719486,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "mm/tests",
+    "files": 1,
+    "bytes": 1405,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 11.009209003532305,
+      "min_ms": 9.822792002523784,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.623207995085977,
+      "min_ms": 5.0249580017407425,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2.555707993451506,
+      "min_ms": 2.541624999139458,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "mm/tests",
+    "files": 1,
+    "bytes": 1405,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 13.783458001853433,
+      "min_ms": 11.995291002676822,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.623207995085977,
+      "min_ms": 5.0249580017407425,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2.70595899928594,
+      "min_ms": 2.586082999187056,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/unwind",
+    "files": 3,
+    "bytes": 13744,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 13.624249993881676,
+      "min_ms": 13.070084001810756,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.516499997407664,
+      "min_ms": 4.335833000368439,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 3.194874996552244,
+      "min_ms": 2.9739589954260737,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/unwind",
+    "files": 3,
+    "bytes": 13744,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 13.06858300085878,
+      "min_ms": 12.074708996806294,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.516499997407664,
+      "min_ms": 4.335833000368439,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2.8252920019440353,
+      "min_ms": 2.736249996814877,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/unwind",
+    "files": 3,
+    "bytes": 13744,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 12.937416999193374,
+      "min_ms": 12.717207995592616,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.516499997407664,
+      "min_ms": 4.335833000368439,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 3.1944579968694597,
+      "min_ms": 2.7772079993155785,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/unwind",
+    "files": 3,
+    "bytes": 13744,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 8,
+    "agree": true,
+    "index": {
+      "median_ms": 20.280042001104448,
+      "min_ms": 19.23687499947846,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.516499997407664,
+      "min_ms": 4.335833000368439,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2.818291999574285,
+      "min_ms": 2.75004099967191,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/kcsan",
+    "files": 10,
+    "bytes": 152076,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 12.260749994311482,
+      "min_ms": 11.34499999898253,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.444792004709598,
+      "min_ms": 4.505333003180567,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 3.551791000063531,
+      "min_ms": 3.2905000043683685,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/kcsan",
+    "files": 10,
+    "bytes": 152076,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 12.184666004031897,
+      "min_ms": 12.0249999963562,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.444792004709598,
+      "min_ms": 4.505333003180567,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 3.3154589982586913,
+      "min_ms": 3.212208997865673,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/kcsan",
+    "files": 10,
+    "bytes": 152076,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 14.203624996298458,
+      "min_ms": 12.945542002853472,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.444792004709598,
+      "min_ms": 4.505333003180567,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 3.2943750047707,
+      "min_ms": 3.071999999519903,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "kernel/kcsan",
+    "files": 10,
+    "bytes": 152076,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 9,
+    "agree": true,
+    "index": {
+      "median_ms": 20.803334002266638,
+      "min_ms": 19.671666996146087,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.444792004709598,
+      "min_ms": 4.505333003180567,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 3.566166000382509,
+      "min_ms": 3.248583001550287,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/atm",
+    "files": 30,
+    "bytes": 929961,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 53.68212499888614,
+      "min_ms": 53.17658300191397,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.7006250024423935,
+      "min_ms": 4.4639589978032745,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 4.2001660040114075,
+      "min_ms": 4.08074999722885,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/atm",
+    "files": 30,
+    "bytes": 929961,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 77.16229200013913,
+      "min_ms": 76.15541700215545,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.7006250024423935,
+      "min_ms": 4.4639589978032745,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 4.351916999439709,
+      "min_ms": 4.09850000141887,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/atm",
+    "files": 30,
+    "bytes": 929961,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 65.34624999767402,
+      "min_ms": 63.237458998628426,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.7006250024423935,
+      "min_ms": 4.4639589978032745,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 4.235624997818377,
+      "min_ms": 4.116875003091991,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/atm",
+    "files": 30,
+    "bytes": 929961,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 210,
+    "agree": true,
+    "index": {
+      "median_ms": 175.5873329966562,
+      "min_ms": 172.18400000274414,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 4.7006250024423935,
+      "min_ms": 4.4639589978032745,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 4.633417003788054,
+      "min_ms": 4.388250003103167,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/clocksource",
+    "files": 100,
+    "bytes": 807044,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 53.260084001522046,
+      "min_ms": 52.61945799429668,
+      "statements": 19,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.742790999647696,
+      "min_ms": 5.490584000654053,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 6.613457997445948,
+      "min_ms": 6.156374998681713,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/clocksource",
+    "files": 100,
+    "bytes": 807044,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 4,
+    "agree": true,
+    "index": {
+      "median_ms": 78.87050000135787,
+      "min_ms": 76.61075000214623,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.742790999647696,
+      "min_ms": 5.490584000654053,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 6.315250000625383,
+      "min_ms": 6.078875005187001,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/clocksource",
+    "files": 100,
+    "bytes": 807044,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 14,
+    "agree": true,
+    "index": {
+      "median_ms": 64.16358300339198,
+      "min_ms": 62.03687499510124,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.742790999647696,
+      "min_ms": 5.490584000654053,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 6.103665997216012,
+      "min_ms": 5.986832999042235,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/clocksource",
+    "files": 100,
+    "bytes": 807044,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 520,
+    "agree": true,
+    "index": {
+      "median_ms": 173.96554100560024,
+      "min_ms": 172.0768750019488,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 5.742790999647696,
+      "min_ms": 5.490584000654053,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 7.1770840004319325,
+      "min_ms": 6.966166998608969,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/md",
+    "files": 296,
+    "bytes": 5881018,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 53.843082998355385,
+      "min_ms": 52.129750001768116,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 8.059708001383115,
+      "min_ms": 7.737792002444621,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 16.357415996026248,
+      "min_ms": 15.606542001478374,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/md",
+    "files": 296,
+    "bytes": 5881018,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 76.76020899816649,
+      "min_ms": 76.01091600372456,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 8.059708001383115,
+      "min_ms": 7.737792002444621,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 15.117750001081731,
+      "min_ms": 14.875415996357333,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/md",
+    "files": 296,
+    "bytes": 5881018,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 222,
+    "agree": true,
+    "index": {
+      "median_ms": 64.2662910031504,
+      "min_ms": 63.21816700074123,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 8.059708001383115,
+      "min_ms": 7.737792002444621,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 15.631292000762187,
+      "min_ms": 15.317499994125683,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/md",
+    "files": 296,
+    "bytes": 5881018,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 1070,
+    "agree": true,
+    "index": {
+      "median_ms": 175.89987500105053,
+      "min_ms": 174.41054200025974,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 8.059708001383115,
+      "min_ms": 7.737792002444621,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 18.049417005386204,
+      "min_ms": 17.46929199725855,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu/drm/amd/display/dc",
+    "files": 1033,
+    "bytes": 17724497,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 19.037229001696687,
+      "min_ms": 18.836208000720944,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 16.83654200314777,
+      "min_ms": 16.502750004292466,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 84.38885450232192,
+      "min_ms": 83.08195900463033,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu/drm/amd/display/dc",
+    "files": 1033,
+    "bytes": 17724497,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 19.86804099942674,
+      "min_ms": 19.857291001244448,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 16.83654200314777,
+      "min_ms": 16.502750004292466,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 81.41372900354327,
+      "min_ms": 80.39762500266079,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu/drm/amd/display/dc",
+    "files": 1033,
+    "bytes": 17724497,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 19.75420800226857,
+      "min_ms": 19.656875003420282,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 16.83654200314777,
+      "min_ms": 16.502750004292466,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 84.10591700157966,
+      "min_ms": 83.04020899959141,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu/drm/amd/display/dc",
+    "files": 1033,
+    "bytes": 17724497,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 129,
+    "agree": true,
+    "index": {
+      "median_ms": 22.757708000426646,
+      "min_ms": 22.048416001780424,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 16.83654200314777,
+      "min_ms": 16.502750004292466,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 96.07208349916618,
+      "min_ms": 82.24512499873526,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/media",
+    "files": 3023,
+    "bytes": 43541228,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 61.669061997235985,
+      "min_ms": 60.93166599748656,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 36.83570849898388,
+      "min_ms": 35.80870799487457,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 175.9094164990529,
+      "min_ms": 158.32587499608053,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/media",
+    "files": 3023,
+    "bytes": 43541228,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 24,
+    "agree": true,
+    "index": {
+      "median_ms": 89.37041649915045,
+      "min_ms": 89.0052500035381,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 36.83570849898388,
+      "min_ms": 35.80870799487457,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 157.45377099665347,
+      "min_ms": 157.33841699693585,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/media",
+    "files": 3023,
+    "bytes": 43541228,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 883,
+    "agree": true,
+    "index": {
+      "median_ms": 81.1812079991796,
+      "min_ms": 78.50774999678833,
+      "statements": 20,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 36.83570849898388,
+      "min_ms": 35.80870799487457,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 158.7357085008989,
+      "min_ms": 157.4834999992163,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/media",
+    "files": 3023,
+    "bytes": 43541228,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 14435,
+    "agree": true,
+    "index": {
+      "median_ms": 270.0714170023275,
+      "min_ms": 241.18487499799812,
+      "statements": 21,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 36.83570849898388,
+      "min_ms": 35.80870799487457,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 224.988249996386,
+      "min_ms": 189.0316669960157,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu",
+    "files": 8036,
+    "bytes": 596495091,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 117.69197950343369,
+      "min_ms": 107.29320900281891,
+      "statements": 32,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 91.55670799736981,
+      "min_ms": 89.64554099657107,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 756.7916250045528,
+      "min_ms": 741.8563750034082,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu",
+    "files": 8036,
+    "bytes": 596495091,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 7,
+    "agree": true,
+    "index": {
+      "median_ms": 156.84889600379393,
+      "min_ms": 156.76737500325544,
+      "statements": 36,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 91.55670799736981,
+      "min_ms": 89.64554099657107,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 732.9708955039678,
+      "min_ms": 700.4944580039592,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu",
+    "files": 8036,
+    "bytes": 596495091,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 418,
+    "agree": true,
+    "index": {
+      "median_ms": 125.9645205027482,
+      "min_ms": 123.4063750016503,
+      "statements": 32,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 91.55670799736981,
+      "min_ms": 89.64554099657107,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 758.641145999718,
+      "min_ms": 750.061166996602,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers/gpu",
+    "files": 8036,
+    "bytes": 596495091,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 18150,
+    "agree": true,
+    "index": {
+      "median_ms": 371.3701874985418,
+      "min_ms": 326.7078329954529,
+      "statements": 34,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 91.55670799736981,
+      "min_ms": 89.64554099657107,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 862.4370835023001,
+      "min_ms": 854.5171250007115,
+      "statements": 5,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers",
+    "files": 37340,
+    "bytes": 1102564900,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 0,
+    "agree": true,
+    "index": {
+      "median_ms": 84.75237500169897,
+      "min_ms": 83.31370800442528,
+      "statements": 30,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 815.868750501977,
+      "min_ms": 697.1999170054914,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2912.69877099694,
+      "min_ms": 2776.8594169974676,
+      "statements": 7,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers",
+    "files": 37340,
+    "bytes": 1102564900,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 498,
+    "agree": true,
+    "index": {
+      "median_ms": 190.89372949747485,
+      "min_ms": 189.85687499662163,
+      "statements": 39,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 815.868750501977,
+      "min_ms": 697.1999170054914,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2812.7664375024324,
+      "min_ms": 2708.569834001537,
+      "statements": 7,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers",
+    "files": 37340,
+    "bytes": 1102564900,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 13073,
+    "agree": true,
+    "index": {
+      "median_ms": 172.15343749921885,
+      "min_ms": 170.795874997566,
+      "statements": 32,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 815.868750501977,
+      "min_ms": 697.1999170054914,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 2932.3640414986585,
+      "min_ms": 2785.616374996607,
+      "statements": 7,
+      "notes": []
+    }
+  },
+  {
+    "scope": "drivers",
+    "files": 37340,
+    "bytes": 1102564900,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 136687,
+    "agree": true,
+    "index": {
+      "median_ms": 1530.9273754974129,
+      "min_ms": 1321.1969589974615,
+      "statements": 42,
+      "notes": [
+        "warning:vfs.budget_exhausted.truncated:Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths"
+      ]
+    },
+    "list": {
+      "median_ms": 815.868750501977,
+      "min_ms": 697.1999170054914,
+      "statements": 10,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 4084.9932084965985,
+      "min_ms": 3788.0589999986114,
+      "statements": 7,
+      "notes": []
+    }
+  },
+  {
+    "scope": "(whole tree)",
+    "files": 93759,
+    "bytes": 1586998712,
+    "pattern": "rare",
+    "regex": "^struct dentry \\{",
+    "hits": 1,
+    "agree": true,
+    "index": {
+      "median_ms": 87.94535449851537,
+      "min_ms": 79.69679199595703,
+      "statements": 26,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 2303.722166499938,
+      "min_ms": 1998.821624998527,
+      "statements": 5,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 6897.71093750096,
+      "min_ms": 6344.902875003754,
+      "statements": 11,
+      "notes": []
+    }
+  },
+  {
+    "scope": "(whole tree)",
+    "files": 93759,
+    "bytes": 1586998712,
+    "pattern": "medium",
+    "regex": "i_count",
+    "hits": 769,
+    "agree": true,
+    "index": {
+      "median_ms": 193.79699999990407,
+      "min_ms": 193.75941700127441,
+      "statements": 36,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 2303.722166499938,
+      "min_ms": 1998.821624998527,
+      "statements": 5,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 6999.99693800055,
+      "min_ms": 6730.512916998123,
+      "statements": 11,
+      "notes": []
+    }
+  },
+  {
+    "scope": "(whole tree)",
+    "files": 93759,
+    "bytes": 1586998712,
+    "pattern": "common",
+    "regex": "EXPORT_SYMBOL_GPL",
+    "hits": 20800,
+    "agree": true,
+    "index": {
+      "median_ms": 459.00677049939986,
+      "min_ms": 214.73212500131922,
+      "statements": 29,
+      "notes": []
+    },
+    "list": {
+      "median_ms": 2303.722166499938,
+      "min_ms": 1998.821624998527,
+      "statements": 5,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 7150.053624998691,
+      "min_ms": 6904.756333002297,
+      "statements": 11,
+      "notes": []
+    }
+  },
+  {
+    "scope": "(whole tree)",
+    "files": 93759,
+    "bytes": 1586998712,
+    "pattern": "very common",
+    "regex": "return 0;",
+    "hits": 178180,
+    "agree": false,
+    "index": {
+      "median_ms": 1825.7232705000206,
+      "min_ms": 1794.2440829938278,
+      "statements": 28,
+      "notes": [
+        "warning:vfs.budget_exhausted.truncated:Truncated: at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths"
+      ]
+    },
+    "list": {
+      "median_ms": 2303.722166499938,
+      "min_ms": 1998.821624998527,
+      "statements": 5,
+      "notes": []
+    },
+    "in_hand": {
+      "median_ms": 8699.172771001031,
+      "min_ms": 8650.754750000488,
+      "statements": 11,
+      "notes": []
+    }
+  }
+]

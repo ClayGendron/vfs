@@ -1536,18 +1536,12 @@ class StorageContract:
         walks = {
             "sqlite": r"\bSCAN vfs_\w+",
             "postgresql": r"Seq Scan on vfs_\w+",
-            "mariadb": r"'table': 'vfs_\w+', 'type': '(?:ALL|index)'",
-            "mssql": r'PhysicalOp="(?:Table Scan|Clustered Index Scan|Index Scan)"',
-            "oracle": r"TABLE ACCESS FULL\s*\|\s*VFS_|INDEX (?:FAST )?FULL SCAN",
         }[plan_store.engine]
         for name, plan in plan_store.refresh_plans.items():
             table, index = REFRESH_INDEXES[name]
             shape = {
                 "sqlite": rf"SEARCH {table} USING (?:COVERING )?(?:INDEX )?{index} \(",
                 "postgresql": rf"(?:Index (?:Only )?Scan (?:Backward )?using|Bitmap Index Scan on) {index}",
-                "mariadb": rf"'table': '{table}', 'type': '\w+', 'possible_keys': '[^']*', 'key': '{index}'",
-                "mssql": rf'PhysicalOp="(?:Clustered )?Index Seek"[^>]*>.*?Index="\[{index}\]"',
-                "oracle": rf"INDEX (?:RANGE|UNIQUE) SCAN\s*\|\s*{index}",
             }[plan_store.engine]
             assert re.search(shape, plan, flags=re.IGNORECASE | re.DOTALL), (name, plan)
             assert not re.search(walks, plan, flags=re.IGNORECASE), (name, plan)
@@ -1637,9 +1631,8 @@ class StorageContract:
 
     @needs("write", "delete", "tree", "stat")
     async def test_cascade_delete_of_a_bracket_directory_leaves_no_orphans(self, storage: ConformanceBackend) -> None:
-        # T-SQL LIKE reads [...] as a class: an unescaped bracket prefix
-        # marks the root but strands its live descendants — the orphan
-        # shape. The subtree must be marked whole.
+        # A LIKE that read [...] as a class would mark the root but strand its
+        # live descendants — the orphan shape. The subtree must be marked whole.
         await _mint_metachar_tree(storage)
         result = await storage.delete(path=Path("/a[1]b"))
         assert result.success is True

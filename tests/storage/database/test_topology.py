@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import event, select
-from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine.default import DefaultDialect
 
 from tests.support.commit_worlds import (
@@ -41,8 +41,6 @@ from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
     GENERIC,
-    MARIADB,
-    MSSQL,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -99,18 +97,17 @@ class TestTopologyOptions:
 
     def test_topology_options_carry_the_writer_marker_only_on_unpinned_engines(self) -> None:
         assert topology_execution_options(SQLITE) == {"vfs_writer": True}
-        assert topology_execution_options(MSSQL) == {"vfs_writer": True}
         assert topology_execution_options(GENERIC) == {"vfs_writer": True}
 
     def test_topology_options_pin_read_committed_where_declared(self) -> None:
-        for profile in (POSTGRESQL, MARIADB, PROFILES["mariadb"]):
+        for profile in (POSTGRESQL, PROFILES["postgresql"]):
             options = topology_execution_options(profile)
             assert options == {"vfs_writer": True, "isolation_level": "READ COMMITTED"}
 
     def test_topology_pin_never_borrows_the_op_pin(self) -> None:
-        # MySQL ops run REPEATABLE READ; its topology pin must differ.
-        assert op_execution_options(MARIADB, writer=True)["isolation_level"] == "REPEATABLE READ"
-        assert topology_execution_options(MARIADB)["isolation_level"] == "READ COMMITTED"
+        # Postgres ops run REPEATABLE READ; its topology pin must differ.
+        assert op_execution_options(POSTGRESQL, writer=True)["isolation_level"] == "REPEATABLE READ"
+        assert topology_execution_options(POSTGRESQL)["isolation_level"] == "READ COMMITTED"
 
 
 class TestAdvisoryKey:
@@ -143,9 +140,6 @@ class _StatementCapture:
 _SPELLINGS = [
     pytest.param(SQLITE, sqlite.dialect(), None, id="sqlite"),
     pytest.param(POSTGRESQL, postgresql.dialect(), "FOR UPDATE", id="postgresql"),
-    pytest.param(MARIADB, mysql.dialect(), "FOR UPDATE", id="mariadb"),
-    pytest.param(MSSQL, mssql.dialect(), "WITH (UPDLOCK, FORCESEEK)", id="mssql"),
-    pytest.param(PROFILES["oracle"], oracle.dialect(), "FOR UPDATE", id="oracle"),
     pytest.param(GENERIC, DefaultDialect(), "FOR UPDATE", id="generic"),
 ]
 
@@ -156,7 +150,8 @@ class TestSerializationPoint:
     @pytest.mark.parametrize(("profile", "dialect", "spelling"), _SPELLINGS)
     async def test_one_locking_read_of_the_lock_row(self, profile, dialect, spelling) -> None:
         capture = _StatementCapture()
-        await serialize(cast("AsyncSession", capture), profile, build_vfs_tables().lock)
+        del profile
+        await serialize(cast("AsyncSession", capture), build_vfs_tables().lock)
         [stmt] = capture.statements
         sql = str(stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
         assert sql.lstrip().startswith("SELECT") and "vfs_lock" in sql and "vfs_meta" not in sql
