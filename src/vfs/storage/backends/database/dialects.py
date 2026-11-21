@@ -6,25 +6,24 @@ copied here: the parameter budget is ``dialect.insertmanyvalues_max_parameters``
 transport-down classification is ``dialect.is_disconnect()``.  What this
 module declares is only what SQLAlchemy takes no position on: retryable
 SQLSTATEs, connection/file settings, isolation pins, index-key byte
-budgets, create-arbitration mode, the row-lock and membership
-spellings, and the vector-distance facts.
+budgets, create-arbitration mode, the shared-lock spelling, and the
+vector-distance facts.
 
-Known engines (sqlite, postgresql, mssql, oracle, mariadb) carry tuned
-policy; **any other SQLAlchemy dialect resolves to a conservative
-generic profile** — the backend serves the core verbs on any
-SQLAlchemy-compatible database, degrading to safe defaults rather than
-refusing, and withholds the ranked verbs the floor cannot vouch for.
+The two supported engines, sqlite and postgresql, carry tuned policy;
+**any other SQLAlchemy dialect resolves to a conservative generic
+profile** — the backend serves it the core verbs, degrading to safe
+defaults rather than refusing, and withholds the ranked verbs the floor
+cannot vouch for. No engine leg tests the floor; it is fit for testing.
 
     profile = profile_for(engine.dialect.name)
     if is_retryable(profile, exc): ...
 
-Retryability is classified by SQLSTATE, SQLite extended error code, or
-integer driver error number — never by message text.
+Retryability is classified by SQLSTATE or SQLite extended error code —
+never by message text.
 """
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeVar, cast
@@ -69,63 +68,15 @@ class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an 
 
 
 BulkInsertMode = Literal["driver", "copy", "core"]
-MembershipForm = Literal["in_list", "values"]
 VectorDistance = Literal["none", "exact", "ann"]
-RangeSource = Literal["json_each", "unnest", "openjson", "json_table", "json_table_clob"]
-
-
-class RangeHints(NamedTuple):
-    """Optimizer hints the range join's statements carry, as ``str.format`` templates; empty where none is needed.
-
-    ``everyone`` prefixes the everyone branch (``{entry}`` the table,
-    ``{index}`` the ``(everyone_level, path)`` index); ``ranges`` prefixes
-    each range branch (``{source}`` the unpacked ranges' alias,
-    ``{count}`` its row count); ``derived`` prefixes a statement that
-    joins the visible set as a derived table (``{visible}`` its alias,
-    ``{table}`` the chunk-side table, ``{index}`` its entry index);
-    ``relabel`` prefixes the literal-``OR`` relabel ``UPDATE``.
-    """
-
-    everyone: str = ""
-    ranges: str = ""
-    derived: str = ""
-    relabel: str = ""
-
-
-NO_RANGE_HINTS: Final = RangeHints()
+RangeSource = Literal["json_each", "unnest"]
 
 RELABEL_ROWS: Final = 50_000
 """Entry rows per relabel chunk, the default every profile declares: the
-measured safe statement size on every engine (see ``relabel_rows``)."""
+bound measured safe on every engine vfs has run (see ``relabel_rows``)."""
 
-# Bytes of body per bulk blob statement: the mysql family sends one
-# statement as one packet, and every engine materialises the page in RAM.
+# Bytes of body per bulk blob statement: every engine holds the page in client memory.
 BLOB_PAGE_BYTES: Final = 8 * 1024 * 1024
-
-
-class ValueCap(NamedTuple):
-    """An engine's single-value cap read from the live server: the bytes and the setting's name.
-
-    The cap binds the statement as sent, so a body is measured in wire
-    bytes (:func:`wire_bytes`), not raw bytes.
-    """
-
-    limit: int
-    setting: str
-
-
-# The bytes the MySQL family's text protocol escapes: each costs two on the wire.
-_ESCAPED_BYTES: Final = (b"\x00", b"\n", b"\r", b"\\", b"'", b'"', b"\x1a")
-
-
-def wire_bytes(data: bytes) -> int:
-    """The bytes *data* occupies inside a MySQL-family statement: every escaped byte counted twice.
-
-    The drivers inline a body as an escaped string literal, so a
-    NUL-heavy body (a zero-filled region, a padded archive) is about
-    twice its size on the wire; the packet cap judges that size.
-    """
-    return len(data) + sum(data.count(escaped) for escaped in _ESCAPED_BYTES)
 
 
 class VectorFunction(NamedTuple):
@@ -150,14 +101,12 @@ class VectorFunction(NamedTuple):
 class ShareLock(NamedTuple):
     """How a mint shares the lock on the everyone stamp, which a posture write takes whole.
 
-    ``form`` is ``"row"`` for a shared row lock, ``"table"`` where the engine has none and
-    locks the table in share mode, ``"exclusive"`` for the floor's ``FOR UPDATE``. ``hint``
-    is the T-SQL table hint that holds a shared row lock to the commit. ``door`` has a
-    posture write lock the table first, where a later sharer would otherwise pass it.
+    ``form`` is ``"row"`` for a shared row lock and ``"exclusive"`` for the floor's
+    ``FOR UPDATE``. ``door`` has a posture write lock the table first, where a later
+    sharer would otherwise pass it.
     """
 
-    form: Literal["row", "table", "exclusive"] = "row"
-    hint: str | None = None
+    form: Literal["row", "exclusive"] = "row"
     door: bool = False
 
 
@@ -172,7 +121,7 @@ class DialectProfile:
     lawful path over it classifies at the backend); ``in_list_budget``
     caps elements per ``IN`` expression list — a limit SQLAlchemy does
     not model and some engines enforce independently of bind-parameter
-    count (Oracle's ORA-01795 at 1,000 is the generic floor);
+    count (the generic floor's 1,000 is the tightest vfs has met);
     ``arbitration`` names how concurrent create resolves (native upsert
     vs catch-and-retry — the portable fallback). ``session_settings``
     run at every checkout of a connection (state that each connection
@@ -196,15 +145,8 @@ class DialectProfile:
     ``tuple_in`` declares whether the engine accepts a row-value
     constructor inside an ``IN`` list (``(a, b) IN ((:x, :y), ...)``) —
     SQLAlchemy renders the form on request (``tuple_in_values`` picks
-    the spelling) but takes no position on acceptance: T-SQL has no row
-    constructors in ``IN``, and the generic floor claims nothing.
-
-    ``like_bracket_class`` declares that the engine's ``LIKE`` treats
-    ``[...]`` as a character class (the T-SQL family) — SQLAlchemy takes
-    no position, and the fix cannot be unconditional: escaping ``[`` on
-    engines without the class raises ORA-01424 on Oracle.
-    :func:`~vfs.storage.backends.database.descent.escape_like` escapes
-    ``[`` exactly where this is declared.
+    the spelling) but takes no position on acceptance: some engines have
+    no row constructors in ``IN``, and the generic floor claims nothing.
 
     ``content_bytes`` declares that casting the content column to the
     engine's bytes type returns exactly the column's UTF-8 bytes, cheaply
@@ -212,9 +154,8 @@ class DialectProfile:
     reinterpretation (sqlite: TEXT and BLOB share storage). Grep fetches
     bodies as bytes where declared, skipping the driver's decode and the
     matcher seam's re-encode; everywhere else bodies stay ``str``. Never
-    declare it where the cast transcodes (NVARCHAR's UTF-16) or where
-    the database character set may not be UTF-8 — wrong bytes match
-    nothing, silently.
+    declare it where the cast transcodes or where the database character
+    set may not be UTF-8 — wrong bytes match nothing, silently.
 
     ``bulk_insert`` declares how a bulk insert reaches the engine —
     ``"core"`` (SQLAlchemy's executemany, paged as multirow statements),
@@ -222,57 +163,33 @@ class DialectProfile:
     connection), or ``"copy"`` (asyncpg's binary ``COPY`` of records on
     that connection). Which one wins is a per-driver fact SQLAlchemy
     takes no position on (asyncpg pipelines one execute per row but
-    streams a COPY; sqlite3 has no round trips to lose; pyodbc round
-    trips per row, and its parameter-array mode is still one RPC per
-    row, slower than Core's pages on wide rows), so the value is read
-    from the bulk-insert benchmark and the engine legs; the generic
+    streams a COPY; sqlite3 has no round trips to lose), so the value is
+    read from the bulk-insert benchmark and the engine legs; the generic
     floor never assumes an unknown driver's executemany is a batch.
 
     ``vector_distance`` declares the engine's server-side cosine:
-    ``exact`` (a distance function, no usable ANN index — SQL Server
-    2025, whose DiskANN makes the table read-only; SQLite through the
-    sqlite-vec extension vfs loads), ``ann`` (a distance function and an
-    index the planner may use), or ``none`` — only the generic floor,
-    which therefore serves no ranked verb. Facts SQLAlchemy takes no
-    position on, read from the engine matrix.
-    ``vector_dimension_cap`` is the widest native column the engine
-    creates (pgvector 16,000; SQL Server 1,998; MariaDB 16,383 — its
-    65,535-byte row cap binds first; Oracle 65,535); ``ann_dimension_cap``
-    the widest an ANN index accepts (pgvector's HNSW 2,000).
-    ``ann_honours_scope`` declares that a scoped query can still use the
-    ANN index (pgvector filters inside the index scan; MariaDB and
-    Oracle drop to an exact scan the moment a predicate appears).
+    ``exact`` (a distance function, no usable ANN index — SQLite through
+    the sqlite-vec extension vfs loads), ``ann`` (a distance function and
+    an index the planner may use — pgvector), or ``none`` — only the
+    generic floor, which therefore serves no ranked verb. Facts
+    SQLAlchemy takes no position on. ``ann_honours_scope`` declares that
+    a scoped query can still use the ANN index.
 
     ``range_source`` declares the table function that unpacks one bound
     list of path ranges into rows, so a partial caller's rights join the
     ``path`` index with statement text that never changes with its
-    grants: ``json_each`` (SQLite), ``unnest`` of arrays (Postgres),
-    ``OPENJSON`` (SQL Server), ``JSON_TABLE`` (MariaDB, the bound list
-    cast to bytes), ``json_table_clob`` (Oracle: ``JSON_TABLE`` over a
-    CLOB bind, so any number of ranges travels). SQLAlchemy takes no
-    position on it. ``None`` keeps the literal OR of pieces — the
-    generic floor.
+    grants: ``json_each`` (SQLite) or ``unnest`` of arrays (Postgres).
+    SQLAlchemy takes no position on it. ``None`` keeps the literal OR of
+    pieces — the generic floor.
 
     ``range_join`` declares the join keyword between the unpacked
     ranges and the entry table in a range branch — SQLAlchemy models
-    only ``JOIN`` and its outer forms. Measured on five engines with
-    the everyone level on the row: SQLite's planner otherwise seeks
-    ``everyone_level < :r`` on the composite index and scans the ranges
-    per row (90 ms against 1 ms at 1,000 users), so it takes ``CROSS
-    JOIN`` with the ranges driving; MariaDB otherwise scans the
-    composite with a block nested loop over the ranges (745 ms against
-    50 at 10,000), so it takes ``STRAIGHT_JOIN`` with the ranges first
-    and ``FORCE INDEX`` on the path index (``range_entry_hint``); SQL
-    Server rewrites the plain join into a semi-join driven by a scan
-    of the entry table (3.2 s against 64 ms), so it takes ``INNER LOOP
-    JOIN`` with the ranges outer; Postgres and Oracle plan the plain
-    ``JOIN`` correctly. ``range_hints`` carries Oracle's optimizer
-    hints, the only dialect whose spelling takes a number from the
-    caller: without ``CARDINALITY`` on the unpacked ranges it estimates
-    them at 8,168 rows and hash-joins a full scan; without the index
-    hint on the everyone branch it full-scans; without the derived
-    hints the chunk index drives and the visible set is re-evaluated
-    per chunk row. ``range_settings`` are statements issued in the
+    only ``JOIN`` and its outer forms. Measured with the everyone level
+    on the row: SQLite's planner otherwise seeks ``everyone_level < :r``
+    on the composite index and scans the ranges per row (90 ms against
+    1 ms at 1,000 users), so it takes ``CROSS JOIN`` with the ranges
+    driving; Postgres plans the plain ``JOIN`` correctly.
+    ``range_settings`` are statements issued in the
     transaction before a partial caller's read: Postgres turns JIT off
     for it, because the range branch is misestimated by orders of
     magnitude and JIT compilation then costs a hundred milliseconds a
@@ -284,51 +201,21 @@ class DialectProfile:
     tree at 10,000 users); ``MATERIALIZED`` computes the union once,
     every piece a seek, and the outer statement probes it. ``None``
     joins the visible set as a plain derived table, the measured shape
-    on the other engines.
-
-    ``row_lock_hint`` declares how a guard read locks the rows it
-    addresses. SQLAlchemy models ``FOR UPDATE`` yet its T-SQL compiler
-    renders ``with_for_update()`` as a bare SELECT (the clause exists
-    only on cursors there), so SQL Server spells the lock as a table
-    hint: ``UPDLOCK`` alone — update locks on the addressed keys, held
-    to commit, exactly what ``FOR UPDATE`` means elsewhere; ``HOLDLOCK``
-    is not taken, its key-range locks guard phantoms the guard never
-    reads. ``None`` means ``FOR UPDATE`` as the compiler renders it —
-    also nothing on SQLite, lawfully: the writer transaction is the
-    lock there. :func:`lock_rows` applies the declared spelling. SQL
-    Server's hint also names ``FORCESEEK``: under the ``values``
-    membership form a locking read that the optimizer plans as a scan
-    takes an update lock on every row and escalates to a table lock,
-    so the seek is forced where the lock is held (measured: two key locks
-    per row, never a table lock, at 40,000 rows in one transaction).
+    on Postgres.
 
     ``share_lock`` declares the shared lock a mint proves its label under
-    (:class:`ShareLock`), which SQLAlchemy renders on two engines of five.
-
-    ``membership`` declares how a chunked membership predicate
-    (``column IN (...)``) reaches the engine — a plan-quality decision
-    SQLAlchemy takes no position on. ``in_list`` is the expanding bind
-    list every compiler renders. ``values`` joins a ``VALUES`` derived
-    table of the keys instead: SQL Server plans a long ``IN`` list as a
-    clustered scan on small tables and converts every ``nvarchar`` bind
-    against a ``varchar`` key (one non-Latin path makes the seek range
-    swallow the table), while the derived table seeks at every table
-    size and casts the keys once, server-side, in the column's own
-    collation. :mod:`~vfs.storage.backends.database.membership` spells
-    both. ``in_list_budget`` doubles as the lock budget there: two key
-    locks per row under ``UPDLOCK``, kept under the 5,000-lock
-    escalation trigger per statement.
+    (:class:`ShareLock`).
 
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
     re-probe of the missed row classifies the miss honestly
-    (``not_found`` vs ``conflict``). ``redrive``: the two disagree — on
-    MariaDB at REPEATABLE READ the UPDATE current-reads past
-    the snapshot the probe would report — so the only honest move is
-    :class:`StaleSnapshot`, retrying the whole method from fresh state.
-    The generic floor declares ``redrive``: never classify off a probe
-    an unknown engine may contradict.
+    (``not_found`` vs ``conflict``). ``redrive``: the two disagree — an
+    UPDATE that current-reads past the snapshot the probe would report —
+    so the only honest move is :class:`StaleSnapshot`, retrying the
+    whole method from fresh state. The generic floor declares
+    ``redrive``: never classify off a probe an unknown engine may
+    contradict.
 
     ``relabel_rows`` caps the entry rows one relabel chunk rewrites — a
     posture change's ``UPDATE`` over its subtree, one chunk per
@@ -336,11 +223,11 @@ class DialectProfile:
     a statement's text, not the rows it touches, and what this bounds is
     the time one chunk holds its row locks and the admin lock, so a
     posture change over millions of rows never parks every reader and
-    rival admin write behind one transaction. Measured on all five
-    engines: 50,000 rows per statement, one transaction per statement,
-    was safe everywhere (the slowest, SQL Server at 38 µs a row, holds a
-    chunk under two seconds); the value is the same on every profile
-    because no engine measured a reason to differ.
+    rival admin write behind one transaction. 50,000 rows per statement,
+    one transaction per statement, was measured safe on every engine
+    vfs has run, and is kept until it is measured on Postgres alone;
+    the value is the same on every profile because no engine measured a
+    reason to differ.
 
     ``vector_function`` declares the engine's cosine distance function
     as a precondition first touch proves and never installs on its own:
@@ -350,9 +237,8 @@ class DialectProfile:
     ``unavailable`` naming the fix. SQLite probes sqlite-vec (loaded on
     every connection, missing only where the interpreter cannot load
     extensions) and PostgreSQL probes the pgvector catalog row, with
-    pgvector's ``CREATE EXTENSION`` as the install. The engines whose
-    function is built into every supported server version, and the
-    generic floor, declare none.
+    pgvector's ``CREATE EXTENSION`` as the install. The generic floor
+    declares none.
 
     ``scope_facts_beside_fan`` declares that the engine keeps an
     index-served OR of scope root clauses (each a strict-descendant
@@ -371,13 +257,9 @@ class DialectProfile:
     optimize`` listing with the check-every-table, consider-``ANALYZE``
     and list-only bits set and no cap bit, formatted with the quoted
     schema the mount's tables live in. SQLAlchemy takes no position on
-    maintaining statistics, and the server engines need none of ours:
-    PostgreSQL's autovacuum analyzes a table after 50 rows plus a tenth
-    of it change and scales stored estimates to the live size; SQL
-    Server's ``AUTO_UPDATE_STATISTICS`` refreshes after a modification
-    threshold; Oracle gathers missing and stale statistics in its daily
-    maintenance window; MariaDB's InnoDB recalculates persistent
-    statistics after a tenth of a table changes. So only SQLite fills
+    maintaining statistics, and Postgres needs none of ours: its
+    autovacuum analyzes a table after 50 rows plus a tenth of it change
+    and scales stored estimates to the live size. So only SQLite fills
     it, and the generic floor runs no step. The pass holds the write
     lock for one crossing's analysis, measured at 0.9 to 1.5 s at a
     million entry rows and about 9 to 15 s inferred at ten million,
@@ -405,13 +287,10 @@ class DialectProfile:
     the ``LIMIT`` and rebuilt over every entry row on each execution, so
     a scan of many pages pays a cost that grows with the entry count on
     every page; the probe is one unique-index lookup per chunk row and
-    builds nothing. Every other engine keeps the join: Postgres was
-    measured to serve it as a memoized index probe and to JIT-compile
-    the probe into a regression; MariaDB, SQL Server and Oracle served
-    the build's page, when it read the filter, as an index probe per row,
-    Oracle's embed page hashes the entry table per page, and the probe
-    is unmeasured on all three. A SQLite planner that took the ``LIMIT``
-    into its filter estimate would let the join come back.
+    builds nothing. Postgres keeps the join: it was measured to serve it
+    as a memoized index probe and to JIT-compile the probe into a
+    regression. A SQLite planner that took the ``LIMIT`` into its filter
+    estimate would let the join come back.
 
     ``attempts_out_of_reach`` declares that a try of a call's transaction
     runs out of its caller's reach, because SQLAlchemy throws away a
@@ -423,36 +302,22 @@ class DialectProfile:
     in_list_budget: int
     arbitration: Literal["upsert", "catch_retry"]
     guard_miss: Literal["reprobe", "redrive"] = "redrive"
-    row_lock_hint: str | None = None
     share_lock: ShareLock = ROW_SHARE
-    membership: MembershipForm = "in_list"
     op_isolation: str | None = None
     topology_isolation: str | None = None
     session_settings: tuple[str, ...] = ()
     file_settings: tuple[str, ...] = ()
     retryable_sqlstates: frozenset[str] = frozenset({"40001", "40P01"})
     retryable_sqlite_codes: frozenset[int] = frozenset()
-    # Integer driver error numbers, for drivers that lead with an errno
-    # instead of a SQLSTATE (the MySQL family's drivers: aiomysql args[0]).
-    retryable_driver_codes: frozenset[int] = frozenset()
     expression_depth_budget: int = 1_000
     values_join: bool = False
     tuple_in: bool = False
-    like_bracket_class: bool = False
     content_bytes: bool = False
     bulk_insert: BulkInsertMode = "core"
     vector_distance: VectorDistance = "none"
-    vector_dimension_cap: int | None = None
-    ann_dimension_cap: int | None = None
     ann_honours_scope: bool = False
     range_source: RangeSource | None = None
     range_join: str = "JOIN"
-    range_entry_hint: str | None = None
-    # Where the engine's single-value cap is a server setting it answers
-    # for, the query that reads it and the setting's name for the refusal.
-    value_cap_query: str | None = None
-    value_cap_setting: str | None = None
-    range_hints: RangeHints = NO_RANGE_HINTS
     range_settings: tuple[str, ...] = ()
     range_fence: str | None = None
     relabel_rows: int = RELABEL_ROWS
@@ -462,7 +327,7 @@ class DialectProfile:
     rarity_hint: str | None = None
     probe_entry_filter: bool = False
     # The ``sqlalchemy.func`` name that sizes a stored body without reading it, which SQLAlchemy does not model:
-    # exact bytes on SQL Server, encoding bytes on Postgres and MariaDB, characters elsewhere (the floor's ``length``).
+    # encoding bytes on Postgres, characters elsewhere (the floor's ``length``).
     stored_length: str = "length"
     attempts_out_of_reach: bool = False
 
@@ -553,112 +418,14 @@ POSTGRESQL: Final = DialectProfile(
     ),
     range_source="unnest",
     range_settings=("SET LOCAL jit = off",),
-    vector_dimension_cap=16_000,
-    ann_dimension_cap=2_000,
     ann_honours_scope=True,
     # Plan-pinned: a BitmapOr of path-index scans with the facts beside the OR, as without them.
     scope_facts_beside_fan=True,
     stored_length="octet_length",
 )
 
-MSSQL: Final = DialectProfile(
-    name="mssql",
-    key_byte_budget=1_700,
-    # A lock budget as much as a bind budget (2,100): two key locks per
-    # row under UPDLOCK stay under the 5,000-lock escalation trigger.
-    in_list_budget=2_000,
-    arbitration="catch_retry",
-    guard_miss="reprobe",
-    # with_for_update() renders as a bare SELECT on T-SQL; the guard read
-    # locks through this hint, and seeks, or the lock is a table lock.
-    row_lock_hint="UPDLOCK, FORCESEEK",
-    share_lock=ShareLock(hint="REPEATABLEREAD, FORCESEEK"),
-    membership="values",
-    values_join=True,
-    # T-SQL LIKE treats [...] as a character class; escape_like must
-    # quote "[" here or a bracketed path silently misses its subtree.
-    like_bracket_class=True,
-    # pyodbc round-trips per row (560 µs); its parameter-array mode is still
-    # one RPC per row — slower than Core's multirow pages on entry-wide rows.
-    bulk_insert="core",
-    vector_distance="exact",
-    range_source="openjson",
-    range_join="INNER LOOP JOIN",
-    vector_dimension_cap=1_998,
-    # Plan-pinned: an Index Seek on the path index with the facts beside the OR, as without them.
-    scope_facts_beside_fan=True,
-    stored_length="datalength",
-)
-
-# catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict
-# target and fires on ANY unique index — unsafe beside two unique keys.
-# MariaDB is the MySQL family's supported member: community MySQL has
-# the VECTOR type but no distance function and no extension vfs can
-# install, so it is served as an unknown dialect.
-MARIADB: Final = DialectProfile(
-    name="mariadb",
-    key_byte_budget=3_072,
-    in_list_budget=65_535,
-    arbitration="catch_retry",
-    # A zero-row guard at REPEATABLE READ is ambiguous: the UPDATE
-    # current-reads past the snapshot any re-probe would report.
-    guard_miss="redrive",
-    op_isolation="REPEATABLE READ",
-    # Topology reads must see post-rival state per statement; REPEATABLE
-    # READ would pin a pre-lock snapshot. Mirrors the Postgres pin.
-    topology_isolation="READ COMMITTED",
-    # Deadlock (1213) also carries SQLSTATE 40001; lock-wait timeout
-    # (1205) ships under the HY000 catch-all, so only its errno classifies;
-    # 1020 is the snapshot-isolation conflict; vfs requires innodb_snapshot_isolation on, the 11.6+ default.
-    retryable_driver_codes=frozenset({1213, 1205, 1020}),
-    tuple_in=True,
-    # aiomysql renders executemany as one multirow statement client-side (44 vs 51 µs).
-    bulk_insert="driver",
-    # VEC_DISTANCE_COSINE and an MHNSW index the planner uses only on an
-    # unscoped ORDER BY … LIMIT; the InnoDB row cap binds before 16,383.
-    vector_distance="ann",
-    range_source="json_table",
-    range_join="STRAIGHT_JOIN",
-    range_entry_hint="FORCE INDEX ({index})",
-    vector_dimension_cap=16_383,
-    # An oversized statement is not answered with error 1153: the server
-    # drops the connection, so the cap is read up front and refused before sending.
-    value_cap_query="SELECT @@max_allowed_packet",
-    value_cap_setting="max_allowed_packet",
-    # Plan-pinned: a range access on the path key with the facts beside the OR, as without them.
-    scope_facts_beside_fan=True,
-)
-
-# Budgets stay at the floor Oracle itself defines (ORA-01795's 1,000
-# IN-list cap; the conservative key budget) — the tuning here is retry
-# classification: python-oracledb exposes no SQLSTATE, so deadlock
-# (ORA-00060) and serialization failure (ORA-08177, reachable only
-# under a future isolation pin) ride the driver-code rung.
-ORACLE: Final = DialectProfile(
-    name="oracle",
-    key_byte_budget=1_700,
-    in_list_budget=1_000,
-    arbitration="catch_retry",
-    guard_miss="reprobe",
-    share_lock=ShareLock(form="table"),
-    retryable_driver_codes=frozenset({60, 8177}),
-    tuple_in=True,
-    # Core already issues array DML here; the bare driver path loses the
-    # setinputsizes typing (DATE binds drop microseconds) — 179 leg failures.
-    bulk_insert="core",
-    vector_distance="ann",
-    vector_dimension_cap=65_535,
-    range_source="json_table_clob",
-    range_hints=RangeHints(
-        everyone="/*+ INDEX({entry} {index}) */",
-        ranges="/*+ CARDINALITY({source} {count}) */",
-        derived="/*+ NO_MERGE({visible}) LEADING({visible}) USE_NL({table}) INDEX({table} {index}) */",
-        relabel="/*+ USE_CONCAT */",
-    ),
-)
-
-# The floor for engines this project has not measured: the tightest known
-# key and IN-list budgets, no settings, serialization-failure SQLSTATEs only.
+# The floor for every other engine: the tightest key and IN-list caps vfs
+# has met, no settings, serialization-failure SQLSTATEs only.
 GENERIC: Final = DialectProfile(
     name="generic",
     key_byte_budget=1_700,
@@ -670,9 +437,6 @@ GENERIC: Final = DialectProfile(
 PROFILES: Final[dict[str, DialectProfile]] = {
     SQLITE.name: SQLITE,
     POSTGRESQL.name: POSTGRESQL,
-    MSSQL.name: MSSQL,
-    MARIADB.name: MARIADB,
-    ORACLE.name: ORACLE,
 }
 
 
@@ -727,22 +491,19 @@ def topology_execution_options(profile: DialectProfile) -> dict[str, str | bool]
 _Row = TypeVar("_Row", bound=tuple[Any, ...])
 
 
-def lock_rows(stmt: Select[_Row], table: Table, profile: DialectProfile) -> Select[_Row]:
-    """*stmt* as a locking read of *table*'s rows, held to the transaction's end.
+def lock_rows(stmt: Select[_Row]) -> Select[_Row]:
+    """*stmt* as a locking read of the rows it selects, held to the transaction's end.
 
     The liveness proof every guard rests on: a row read through here
     cannot be rewritten or deleted by a rival before this transaction
     commits, so the caller's decision stands on the row it read. Spelled
-    ``FOR UPDATE`` wherever the compiler renders it, and as the
-    profile's table hint where it declares one (T-SQL); the hint is
-    gated on the profile's dialect name, so it never leaks into another
-    engine's SQL. Callers order the rows they lock (sorted keys, chunked)
-    so rival batches lock in one order; a deadlock against a verb with
-    its own claim order classifies retryable and rides the retry channel.
+    ``FOR UPDATE``, which SQLite's compiler renders as nothing, lawfully:
+    the writer transaction is the lock there. Callers order the rows they
+    lock (sorted keys, chunked) so rival batches lock in one order; a
+    deadlock against a verb with its own claim order classifies retryable
+    and rides the retry channel.
     """
-    if profile.row_lock_hint is None:
-        return stmt.with_for_update()
-    return stmt.with_hint(table, f"WITH ({profile.row_lock_hint})", dialect_name=profile.name)
+    return stmt.with_for_update()
 
 
 # ---------------------------------------------------------------------------
@@ -768,7 +529,7 @@ def membership_budget(profile: DialectProfile, parameter_budget: int) -> int:
 
 
 # Measured OR-fan sweet spot: the win saturates by ~200 arms/statement,
-# and 200 clears every known engine's bind, IN-list, and depth caps.
+# and 200 clears SQLite's expression depth of 1,000.
 _PATTERN_ARM_CEILING: Final = 200
 
 
@@ -806,8 +567,8 @@ def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object
     return max(1, parameter_budget // max(len(row) for row in rows))
 
 
-# Bind slots held back from every measured multi-row statement: driver
-# wrappers (ODBC's sp_prepexec among them) spend from the same server cap.
+# Bind slots held back from every measured multi-row statement: room
+# under the bind cap for a driver's own parameters.
 _STATEMENT_BIND_RESERVE: Final = 8
 
 
@@ -948,17 +709,12 @@ async def bulk_insert(session: AsyncSession, table: Table, rows: Sequence[Mappin
 # ---------------------------------------------------------------------------
 
 
-# ISO 9075's vendor catch-all: it says "look elsewhere", so classification
-# falls through to the driver errno instead of judging by it.
+# ISO 9075's vendor catch-all: it says "look elsewhere", so it classifies nothing.
 _SQLSTATE_GENERAL_ERROR: Final = "HY000"
 
-# A unique-key violation by each driver's own code: SQLite's extended codes, the MySQL family's
-# errno and python-oracledb's ORA number, the standard's SQLSTATE, and SQL Server's native numbers.
+# A unique-key violation by each driver's own code: SQLite's extended codes, and the standard's SQLSTATE.
 _SQLITE_UNIQUE_CODES: Final = frozenset({2067, 1555})
-_DRIVER_UNIQUE_CODES: Final = frozenset({1062, 1})
 _SQLSTATE_UNIQUE_VIOLATION: Final = "23505"
-_SQLSTATE_BARE_INTEGRITY: Final = "23000"
-_MSSQL_UNIQUE_NUMBERS: Final = frozenset({2627, 2601})
 
 # Exception-context links walked for a transient cause behind an unwind error.
 _UNWIND_DEPTH: Final = 4
@@ -979,16 +735,14 @@ def driver_origin(exc: BaseException) -> BaseException:
 def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     """Whether *exc* is a transient outcome a whole-method restart can clear.
 
-    Classifies by SQLite extended error code, SQLSTATE, or integer driver
-    error number — never message text. A ``HY000`` SQLSTATE carries no
-    classification by definition and defers to the driver errno (MySQL
-    ships lock-wait timeout 1205 under it). Unique violations (23505)
-    are definite exists-outcomes after arbitration and are never in any
-    profile's retryable set. An error raised while *unwinding* from a
-    retryable one is retryable too: a deadlock rolls the whole
-    transaction back on InnoDB, so the savepoint release that follows
-    fails with its own error (MariaDB's 1305), and the transient cause
-    sits one link down the exception's context chain.
+    Classifies by SQLite extended error code or SQLSTATE — never message
+    text. A ``HY000`` SQLSTATE carries no classification by definition.
+    Unique violations (23505) are definite exists-outcomes after
+    arbitration and are never in any profile's retryable set. An error
+    raised while *unwinding* from a retryable one is retryable too: a
+    deadlock aborts the whole transaction, so the savepoint release that
+    follows fails with its own error, and the transient cause sits one
+    link down the exception's context chain.
     """
     seen = 0
     current: BaseException | None = exc
@@ -1003,20 +757,14 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
 def is_unique_violation(exc: BaseException) -> bool:
     """Whether *exc* is a unique-key violation, told from every other integrity failure by the driver's code.
 
-    SQLite's extended code; else the integer code the MySQL family and
-    python-oracledb lead with, read before the SQLSTATE since aiomysql
-    gives 23000 for every integrity class; else the SQLSTATE. SQL Server's
-    driver gives that bare class and nothing else, so there alone the
-    native numbers its ODBC diagnostics carry in parentheses are read.
+    SQLite's extended code; else the SQLSTATE. A driver that reports only
+    the bare integrity class, or an integer error number, is not read as
+    one.
     """
     origin = driver_origin(exc)
     if (sqlite_code := getattr(origin, "sqlite_errorcode", None)) is not None:
         return sqlite_code in _SQLITE_UNIQUE_CODES
-    if (code := _driver_code_of(origin)) is not None:
-        return code in _DRIVER_UNIQUE_CODES
-    if (state := _sqlstate_of(origin)) != _SQLSTATE_BARE_INTEGRITY:
-        return state == _SQLSTATE_UNIQUE_VIOLATION
-    return any(int(number) in _MSSQL_UNIQUE_NUMBERS for number in re.findall(r"\((\d+)\)", str(origin)))
+    return _sqlstate_of(origin) == _SQLSTATE_UNIQUE_VIOLATION
 
 
 def _is_retryable_alone(profile: DialectProfile, exc: BaseException) -> bool:
@@ -1025,27 +773,21 @@ def _is_retryable_alone(profile: DialectProfile, exc: BaseException) -> bool:
     if sqlite_code is not None:
         return sqlite_code in profile.retryable_sqlite_codes
     state = _sqlstate_of(origin)
-    if state is not None and state != _SQLSTATE_GENERAL_ERROR:
-        return state in profile.retryable_sqlstates
-    return _driver_code_of(origin) in profile.retryable_driver_codes
+    return state is not None and state != _SQLSTATE_GENERAL_ERROR and state in profile.retryable_sqlstates
 
 
 def is_value_too_large(exc: BaseException) -> bool:
     """Whether *exc* reports one value past the engine's single-value cap.
 
     SQLite raises ``DataError`` for a string or blob over its length
-    limit; the mysql family reports a statement over
-    ``max_allowed_packet`` as error 1153; SQLSTATE class 54 is the
-    program-limit class. By code and type, never message text.
+    limit; SQLSTATE class 54 is the program-limit class. By code and
+    type, never message text.
     """
     origin = driver_origin(exc)
     if isinstance(origin, sqlite3.DataError):
         return True
     state = _sqlstate_of(origin)
-    if state is not None and state[:2] == _SQLSTATE_LIMIT_CLASS:
-        return True
-    first = next(iter(getattr(origin, "args", ())), None)
-    return first == _MYSQL_PACKET_TOO_LARGE
+    return state is not None and state[:2] == _SQLSTATE_LIMIT_CLASS
 
 
 def is_permanent_defect(exc: BaseException) -> bool:
@@ -1090,7 +832,6 @@ def is_insufficient_privilege(exc: BaseException) -> bool:
 _SQLSTATE_DEFECT_CLASSES: Final = frozenset({"42", "07"})
 _SQLSTATE_LIMIT_CLASS: Final = "54"
 _SQLSTATE_INSUFFICIENT_PRIVILEGE: Final = "42501"
-_MYSQL_PACKET_TOO_LARGE: Final = 1153
 
 
 # SQLSTATE codes are exactly five characters (ISO/IEC 9075).
@@ -1100,8 +841,9 @@ _SQLSTATE_LENGTH: Final = 5
 def _sqlstate_of(origin: object) -> str | None:
     """The SQLSTATE of a driver exception, if it carries one.
 
-    asyncpg and psycopg expose ``sqlstate``, psycopg2 ``pgcode``; pyodbc
-    puts the SQLSTATE (not text) first in ``args``.
+    asyncpg and psycopg expose ``sqlstate``, psycopg2 ``pgcode``; a
+    driver may instead put the SQLSTATE (not text) first in ``args``, as
+    pyodbc does, and that convention is read for any driver.
     """
     state = getattr(origin, "sqlstate", None) or getattr(origin, "pgcode", None)
     if isinstance(state, str):
@@ -1110,21 +852,6 @@ def _sqlstate_of(origin: object) -> str | None:
     if isinstance(first, str) and len(first) == _SQLSTATE_LENGTH:
         return first
     return None
-
-
-def _driver_code_of(origin: object) -> int | None:
-    """The integer driver error number, where the driver leads with one.
-
-    The MySQL family (PyMySQL, aiomysql, asyncmy) raises with
-    ``args = (errno, message)``; python-oracledb raises with a single
-    ``_Error`` argument whose errno lives on ``.code``. Neither exposes
-    a SQLSTATE attribute.
-    """
-    first = next(iter(getattr(origin, "args", ())), None)
-    if isinstance(first, int):
-        return first
-    code = getattr(first, "code", None)
-    return code if isinstance(code, int) else None
 
 
 def _bulk_statement(dialect: Dialect, table: Table, keys: tuple[str, ...]) -> _BulkStatement:

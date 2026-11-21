@@ -46,6 +46,7 @@ from vfs.storage.backends.database.dialects import (
     bulk_insert,
     is_permanent_defect,
     is_retryable,
+    is_unique_violation,
     is_value_too_large,
     lock_rows,
     membership_budget,
@@ -107,6 +108,19 @@ class TestDialectPolicy:
         assert profile.name == "duckdb"
         assert profile.key_byte_budget == GENERIC.key_byte_budget
         assert profile.arbitration == "catch_retry"
+
+    def test_the_tuned_profiles_are_sqlite_and_postgres_alone(self) -> None:
+        assert set(PROFILES) == {"sqlite", "postgresql"}
+
+    @pytest.mark.parametrize("name", ["mysql", "mariadb", "mssql", "oracle"])
+    def test_a_dropped_engine_is_served_by_the_floor_under_its_own_name(self, name: str) -> None:
+        assert profile_for(name) == replace(GENERIC, name=name)
+
+    def test_the_floor_keeps_the_sqlstate_arm_and_reads_no_driver_number(self) -> None:
+        """Guards the floor's SQLSTATE arm: ``args[0]`` classifies, and a bare class 23 is no unique violation."""
+        assert is_retryable(GENERIC, Exception("40001", "deadlock victim")) is True
+        assert is_unique_violation(Exception("23000", "Violation of UNIQUE KEY constraint (2627)")) is False
+        assert is_unique_violation(Exception(1062, "Duplicate entry")) is False
 
     def test_sqlite_busy_is_retryable_but_busy_snapshot_is_not(self) -> None:
         assert is_retryable(SQLITE, _SqliteError(5)) is True

@@ -25,13 +25,12 @@ exactly as a live one: one form per piece branch, on ``path``. The
 statement that joins the visible set carries the liveness term itself.
 
 Each engine's planner misreads the extra term in its own way, so the
-join keyword between the unpacked ranges and the entry table, the
-index pin, and the optimizer hints are dialect facts
-(:class:`~vfs.storage.backends.database.dialects.DialectProfile`); the
-spellings here follow the five-engine measurement. Statements that read
-chunk-side tables join the result as a derived table on ``entry_id``.
-``entry_id IN (...)`` over the same union plans badly on some engines
-(seconds on MariaDB), so it is not offered.
+join keyword between the unpacked ranges and the entry table is a
+dialect fact
+(:class:`~vfs.storage.backends.database.dialects.DialectProfile`).
+Statements that read chunk-side tables join the result as a derived
+table on ``entry_id``; ``entry_id IN (...)`` over the same union was
+measured to plan badly, so it is not offered.
 
     visible = visible_entries(entry, rights.ranges(), rights.need, profile)
     stmt = select(func.count()).select_from(docs.join(visible, visible.c.entry_id == docs.c.entry_id))
@@ -44,13 +43,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     ARRAY,
-    CLOB,
-    LargeBinary,
-    String,
     Text,
     and_,
     bindparam,
-    cast,
     collate,
     func,
     literal,
@@ -62,11 +57,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql import Join
-from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
 
-from vfs.models.rows import MSSQL_UTF8_COLLATION
-from vfs.paths import MAX_PATH_LENGTH, ROOT
+from vfs.paths import ROOT
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -80,10 +73,7 @@ if TYPE_CHECKING:
 VISIBLE_ALIAS = "visible"
 """The derived table's name in rendered SQL; its one column is ``entry_id``."""
 
-# Bound rows are typed this wide: no lawful path is longer in bytes, nor in characters.
-_BOUND = f"({MAX_PATH_LENGTH})"
-
-# The unpacked pieces' aliases: fixed, so a hint can name them.
+# The unpacked pieces' aliases: fixed, so the statement text never changes with the grants.
 _POINTS_ALIAS = "pts"
 _OPENS_ALIAS = "rng"
 
@@ -113,11 +103,6 @@ def visible_entries(
     within = _scoped(entry, scope)
     unholed = hole_free(entry.c.path, ranges.holes, profile)
     everyone = select(entry.c.entry_id).where(entry.c.everyone_level >= need, unholed, *within)
-    hint = profile.range_hints.everyone
-    if hint:
-        everyone = everyone.prefix_with(
-            hint.format(entry=entry.name, index=_index_name(entry, "everyone_level", "path")), dialect=profile.name
-        )
     column = entry.c.path
     below = [entry.c.everyone_level < need, *within]
     holed = [entry.c.everyone_level >= need, *within]
@@ -161,24 +146,14 @@ def hole_free(path: ColumnElement[Any], holes: Pieces, profile: DialectProfile) 
 def range_counts(entry: Table, opens: Sequence[Open], profile: DialectProfile) -> Select[Any]:
     """``(lo, hi, rows)`` for every open range of *opens* — the ranges drive, one seek each.
 
-    A relabel sizes its chunks from this before it writes. The bounds
-    come back in the range source's own form, so a mysql-family caller
-    reads bytes.
+    A relabel sizes its chunks from this before it writes.
     """
     source = profile.range_source
     assert source is not None, "the generic floor counts one range at a time"
     rows, lo, hi = open_rows(opens, source)
     on = and_(entry.c.path > lo, entry.c.path < hi)
-    stmt = _range_select(entry, rows, on, profile, _OPENS_ALIAS, len(opens), lo, hi, func.count())
+    stmt = _range_select(entry, rows, on, profile, lo, hi, func.count())
     return stmt.group_by(lo, hi)
-
-
-def derived_hint(profile: DialectProfile, table: Table, *columns: str) -> str | None:
-    """The hint a statement joining the visible set to *table* on its index over *columns* carries, if needed."""
-    template = profile.range_hints.derived
-    if not template:
-        return None
-    return template.format(visible=VISIBLE_ALIAS, table=table.name, index=_index_name(table, *columns))
 
 
 # ---------------------------------------------------------------------------
@@ -186,43 +161,8 @@ def derived_hint(profile: DialectProfile, table: Table, *columns: str) -> str | 
 # ---------------------------------------------------------------------------
 
 
-class _OpenJsonPairs(FunctionElement[Any]):
-    """SQL Server: a JSON array of ``[lo, hi]`` pairs as rows of ``lo`` and ``hi``."""
-
-    name = "openjson_pairs"
-    inherit_cache = True
-
-
-class _JsonTableValues(FunctionElement[Any]):
-    """MariaDB: a JSON array of strings as rows of ``value``."""
-
-    name = "json_table_values"
-    inherit_cache = True
-
-
-class _JsonTablePairs(FunctionElement[Any]):
-    """MariaDB: a JSON array of ``[lo, hi]`` pairs as rows of ``lo`` and ``hi``."""
-
-    name = "json_table_pairs"
-    inherit_cache = True
-
-
-class _JsonTableClobValues(FunctionElement[Any]):
-    """Oracle: a JSON array of strings, bound as a CLOB, as rows of ``value``."""
-
-    name = "json_table_clob_values"
-    inherit_cache = True
-
-
-class _JsonTableClobPairs(FunctionElement[Any]):
-    """Oracle: a JSON array of ``[lo, hi]`` pairs, bound as a CLOB, as rows of ``lo`` and ``hi``."""
-
-    name = "json_table_clob_pairs"
-    inherit_cache = True
-
-
 class _RangeJoin(Join):
-    """A join whose keyword the profile declares — ``CROSS JOIN``, ``STRAIGHT_JOIN``, ``INNER LOOP JOIN``."""
+    """A join whose keyword the profile declares — ``CROSS JOIN`` on SQLite, ``JOIN`` elsewhere."""
 
     # The keyword joins the cache key: two profiles on one dialect never share a compiled statement.
     _traverse_internals = [*Join._traverse_internals, ("keyword", InternalTraversal.dp_string)]  # noqa: RUF012
@@ -230,35 +170,6 @@ class _RangeJoin(Join):
     def __init__(self, left: FromClause, right: FromClause, onclause: ColumnElement[bool], keyword: str) -> None:
         super().__init__(left, right, onclause)
         self.keyword = keyword
-
-
-@compiles(_OpenJsonPairs)
-def _render_openjson_pairs(element: _OpenJsonPairs, compiler: SQLCompiler, **kw: Any) -> str:
-    pairs = "lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]'"
-    return f"OPENJSON({compiler.process(element.clauses, **kw)}) WITH ({pairs})"
-
-
-@compiles(_JsonTableValues)
-def _render_json_table_values(element: _JsonTableValues, compiler: SQLCompiler, **kw: Any) -> str:
-    return f"JSON_TABLE({compiler.process(element.clauses, **kw)}, '$[*]' COLUMNS (value VARCHAR{_BOUND} PATH '$'))"
-
-
-@compiles(_JsonTablePairs)
-def _render_json_table_pairs(element: _JsonTablePairs, compiler: SQLCompiler, **kw: Any) -> str:
-    pairs = f"lo VARCHAR{_BOUND} PATH '$[0]', hi VARCHAR{_BOUND} PATH '$[1]'"
-    return f"JSON_TABLE({compiler.process(element.clauses, **kw)}, '$[*]' COLUMNS ({pairs}))"
-
-
-@compiles(_JsonTableClobValues)
-def _render_json_table_clob_values(element: _JsonTableClobValues, compiler: SQLCompiler, **kw: Any) -> str:
-    columns = f"COLUMNS (value VARCHAR2{_BOUND} PATH '$')"
-    return f"JSON_TABLE({compiler.process(element.clauses, **kw)}, '$[*]' {columns})"
-
-
-@compiles(_JsonTableClobPairs)
-def _render_json_table_clob_pairs(element: _JsonTableClobPairs, compiler: SQLCompiler, **kw: Any) -> str:
-    pairs = f"lo VARCHAR2{_BOUND} PATH '$[0]', hi VARCHAR2{_BOUND} PATH '$[1]'"
-    return f"JSON_TABLE({compiler.process(element.clauses, **kw)}, '$[*]' COLUMNS ({pairs}))"
 
 
 @compiles(_RangeJoin)
@@ -281,18 +192,8 @@ def point_rows(points: Sequence[str], source: RangeSource) -> tuple[FromClause, 
         unpacked = func.unnest(bindparam(None, list(points), type_=ARRAY(Text)))
         rows = unpacked.table_valued("value", name=_POINTS_ALIAS).render_derived()
         return rows, collate(rows.c.value, "C")
-    value = json.dumps(list(points))
-    if source == "json_each":
-        rows = func.json_each(value).table_valued("value", name=_POINTS_ALIAS)
-        return rows, rows.c.value
-    if source == "openjson":
-        rows = func.openjson(value).table_valued("value", name=_POINTS_ALIAS)
-        return rows, _utf8(rows.c.value)
-    if source == "json_table_clob":
-        rows = _JsonTableClobValues(bindparam(None, value, type_=CLOB)).table_valued("value", name=_POINTS_ALIAS)
-        return rows, rows.c.value
-    rows = _JsonTableValues(value).table_valued("value", name=_POINTS_ALIAS)
-    return rows, cast(rows.c.value, LargeBinary)
+    rows = func.json_each(json.dumps(list(points))).table_valued("value", name=_POINTS_ALIAS)
+    return rows, rows.c.value
 
 
 def open_rows(opens: Sequence[Open], source: RangeSource) -> tuple[FromClause, ColumnElement[Any], ColumnElement[Any]]:
@@ -302,18 +203,8 @@ def open_rows(opens: Sequence[Open], source: RangeSource) -> tuple[FromClause, C
         highs = bindparam(None, [hi for _, hi in opens], type_=ARRAY(Text))
         rows = func.unnest(lows, highs).table_valued("lo", "hi", name=_OPENS_ALIAS).render_derived()
         return rows, collate(rows.c.lo, "C"), collate(rows.c.hi, "C")
-    value = json.dumps([list(pair) for pair in opens])
-    if source == "json_each":
-        rows = func.json_each(value).table_valued("value", name=_OPENS_ALIAS)
-        return rows, func.json_extract(rows.c.value, "$[0]"), func.json_extract(rows.c.value, "$[1]")
-    if source == "openjson":
-        rows = _OpenJsonPairs(value).table_valued("lo", "hi", name=_OPENS_ALIAS)
-        return rows, _utf8(rows.c.lo), _utf8(rows.c.hi)
-    if source == "json_table_clob":
-        rows = _JsonTableClobPairs(bindparam(None, value, type_=CLOB)).table_valued("lo", "hi", name=_OPENS_ALIAS)
-        return rows, rows.c.lo, rows.c.hi
-    rows = _JsonTablePairs(value).table_valued("lo", "hi", name=_OPENS_ALIAS)
-    return rows, cast(rows.c.lo, LargeBinary), cast(rows.c.hi, LargeBinary)
+    rows = func.json_each(json.dumps([list(pair) for pair in opens])).table_valued("value", name=_OPENS_ALIAS)
+    return rows, func.json_extract(rows.c.value, "$[0]"), func.json_extract(rows.c.value, "$[1]")
 
 
 # ---------------------------------------------------------------------------
@@ -331,17 +222,14 @@ def _branches(
     """One ``SELECT entry_id`` per non-empty piece kind, the unpacked pieces driving a seek of *column*'s index."""
     source = profile.range_source
     assert source is not None
-    kinds: list[tuple[FromClause, ColumnElement[bool], str, int]] = []
+    kinds: list[tuple[FromClause, ColumnElement[bool]]] = []
     if found.points:
         rows, value = point_rows(found.points, source)
-        kinds.append((rows, column == value, _POINTS_ALIAS, len(found.points)))
+        kinds.append((rows, column == value))
     if found.opens:
         rows, lo, hi = open_rows(found.opens, source)
-        kinds.append((rows, and_(column > lo, column < hi), _OPENS_ALIAS, len(found.opens)))
-    return [
-        _range_select(entry, rows, and_(on, *extra), profile, alias, count, entry.c.entry_id, index=column.name)
-        for rows, on, alias, count in kinds
-    ]
+        kinds.append((rows, and_(column > lo, column < hi)))
+    return [_range_select(entry, rows, and_(on, *extra), profile, entry.c.entry_id) for rows, on in kinds]
 
 
 def pinned_join(left: FromClause, right: FromClause, on: ColumnElement[bool], profile: DialectProfile) -> Join:
@@ -356,28 +244,10 @@ def pinned_join(left: FromClause, right: FromClause, on: ColumnElement[bool], pr
 
 
 def _range_select(
-    entry: Table,
-    rows: FromClause,
-    on: ColumnElement[bool],
-    profile: DialectProfile,
-    alias: str,
-    count: int,
-    *columns: ColumnElement[Any],
-    index: str = "path",
+    entry: Table, rows: FromClause, on: ColumnElement[bool], profile: DialectProfile, *columns: ColumnElement[Any]
 ) -> Select[Any]:
-    """``SELECT columns`` from the unpacked *rows* joined to *entry* on *on*, in the profile's keyword and hints.
-
-    *index* names the entry column whose index the join seeks, for the
-    dialects told which one to use.
-    """
-    stmt = select(*columns).select_from(pinned_join(rows, entry, on, profile))
-    if profile.range_entry_hint is not None:
-        hint = profile.range_entry_hint.format(index=_index_name(entry, index))
-        stmt = stmt.with_hint(entry, hint, dialect_name=profile.name)
-    if profile.range_hints.ranges:
-        hint = profile.range_hints.ranges.format(source=alias, count=count)
-        stmt = stmt.prefix_with(hint, dialect=profile.name)
-    return stmt
+    """``SELECT columns`` from the unpacked *rows* joined to *entry* on *on*, in the profile's keyword."""
+    return select(*columns).select_from(pinned_join(rows, entry, on, profile))
 
 
 def _scoped(entry: Table, scope: str | None) -> list[ColumnElement[bool]]:
@@ -386,19 +256,3 @@ def _scoped(entry: Table, scope: str | None) -> list[ColumnElement[bool]]:
         return []
     lo, hi = (ROOT, "0") if scope == ROOT else (scope + "/", scope + "0")
     return [entry.c.path > lo, entry.c.path < hi]
-
-
-def _index_name(table: Table, *columns: str) -> str:
-    """The name of *table*'s index on exactly *columns* — the schema declares one for every key asked for."""
-    found = next((i.name for i in table.indexes if tuple(c.name for c in i.columns) == columns), None)
-    assert isinstance(found, str)
-    return found
-
-
-def _utf8(column: ColumnElement[Any]) -> ColumnElement[Any]:
-    """An ``nvarchar`` bound cast into the path column's type through its UTF-8 collation.
-
-    Casting after the collation keeps non-Latin paths intact and lets
-    the comparison seek the ``varchar`` path index.
-    """
-    return cast(collate(column, MSSQL_UTF8_COLLATION), String(MAX_PATH_LENGTH))

@@ -5,10 +5,8 @@ on construction. ``VectorType`` is a SQLAlchemy ``TypeDecorator`` whose
 portable path stores a vector as **packed little-endian float32** in a
 binary column — four bytes a component on every engine, parsed by
 ``struct`` in microseconds — and whose native path (``native=True``,
-a fixed dimension) takes the engine's own vector type wherever one
-exists: pgvector's ``vector(<N>)`` on PostgreSQL, the in-tree ``VECTOR``
-on Oracle, and ``VECTOR(<N>)`` on SQL Server 2025 and MariaDB. SQLite
-keeps the packed column — sqlite-vec scores it as it is. The module
+a fixed dimension) takes pgvector's ``vector(<N>)`` on PostgreSQL.
+SQLite keeps the packed column — sqlite-vec scores it as it is. The module
 also owns the cosine top-k kernel (:func:`cosine_topk`), the referee
 every dialect's in-engine ranking is pinned against.
 
@@ -37,18 +35,15 @@ Usage::
 
 from __future__ import annotations
 
-import json
 from array import array
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from pydantic_core import core_schema
 from sqlalchemy import LargeBinary
-from sqlalchemy.dialects.oracle import VECTOR, VectorStorageFormat
 from sqlalchemy.types import TypeDecorator, TypeEngine
 
 from vfs.models.vector_codec import FLOAT32_BYTES, pack_vector, unpack_vector
-from vfs.models.vector_native import MariaDBVector, MSSQLVector
 from vfs.native import extension
 
 try:
@@ -78,7 +73,7 @@ __all__ = [
     "unpack_vector",
 ]
 
-NATIVE_VECTOR_DIALECTS: Final = frozenset({"postgresql", "oracle", "mssql", "mariadb"})
+NATIVE_VECTOR_DIALECTS: Final = frozenset({"postgresql"})
 """Dialects whose own vector column type carries a native-typed ``VectorType``."""
 
 
@@ -186,10 +181,9 @@ class VectorType(TypeDecorator[Vector]):
 
     With ``native=True`` (which requires a fixed dimension) the dialects
     in :data:`NATIVE_VECTOR_DIALECTS` take their own vector column and
-    wire form — a float list for pgvector, ``array('f')`` for Oracle,
-    JSON text for SQL Server, the packed bytes for MariaDB — and every
-    other dialect keeps the portable binary column, so one table
-    definition provisions everywhere.
+    wire form — a float list for pgvector — and every other dialect
+    keeps the portable binary column, so one table definition provisions
+    everywhere.
     """
 
     impl = LargeBinary
@@ -239,12 +233,6 @@ class VectorType(TypeDecorator[Vector]):
             raise ValueError(msg)
         if dialect_name == "postgresql":
             return self.pgvector_sqlalchemy_type()
-        if dialect_name == "oracle":
-            return cast("TypeEngine[object]", VECTOR(self.dimension, storage_format=VectorStorageFormat.FLOAT32))
-        if dialect_name == "mssql":
-            return MSSQLVector(self.dimension)
-        if dialect_name == "mariadb":
-            return MariaDBVector(self.dimension)
         msg = f"{dialect_name!r} has no native vector column type"
         raise ValueError(msg)
 
@@ -282,24 +270,16 @@ class VectorType(TypeDecorator[Vector]):
             msg = f"Vector bind: model name mismatch — column expects '{self.model_name}', got '{value._model_name}'"
             raise ValueError(msg)
         floats = [float(component) for component in value]
-        if not self.is_native_on(dialect) or dialect.name == "mariadb":
-            return pack_vector(floats)
-        if dialect.name == "oracle":
-            return array("f", floats)
-        if dialect.name == "mssql":
-            return json.dumps(floats)
-        return floats
+        return floats if self.is_native_on(dialect) else pack_vector(floats)
 
     def process_result_value(self, value: object | None, dialect: Dialect) -> Vector | None:
         if value is None:
             return None
-        if not self.is_native_on(dialect) or dialect.name == "mariadb":
+        if not self.is_native_on(dialect):
             if not isinstance(value, (bytes, bytearray, memoryview)):
                 msg = f"Vector read: expected packed float32 bytes, got {type(value).__name__}"
                 raise ValueError(msg)
             data = unpack_vector(bytes(value))
-        elif dialect.name == "mssql":
-            data = _native_floats(json.loads(value) if isinstance(value, (str, bytes, bytearray)) else value)
         else:
             data = _native_floats(value)
         if self.dimension is not None and len(data) != self.dimension:
