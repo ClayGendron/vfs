@@ -47,6 +47,7 @@ from vfs.results import ErrorKind, ResultError
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import writes as writes_module
 from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE, StaleSnapshot
+from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
@@ -164,6 +165,69 @@ class TestWriteMechanics:
         # insert — the update is attributed from its own statement, so no
         # read-back appears.
         assert len(mutations()) == 8, mutations()
+        await storage.close()
+
+    async def test_an_identical_rewrite_runs_the_snapshot_and_nothing_else(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        await storage._host.settle_statistics()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        again = await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])
+        assert [(o.status, o.version) for o in again.observations] == [("unchanged", 1)]
+        control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK")
+        own = [s for s in statements if not s.startswith(control) and not is_statistics_statement(s)]
+        # The snapshot is the whole call: no guarded update, no mint, no body read, no body replaced.
+        assert len(own) == 1 and own[0].startswith("SELECT"), own
+        versions = storage._host.tables.versions
+        async with storage._host.session_factory() as peek:
+            assert (await peek.execute(select(versions.c.entry_id))).all() == []
+        await storage.close()
+
+    async def test_an_unchanged_row_keeps_its_index_marks(self, tmp_path) -> None:
+        # A rewrite clears the marks the index passes set, which sends the
+        # file through the index again. An unchanged row must not.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        entry = storage._host.tables.entry
+        marks = select(entry.c.chunked, entry.c.encoded, entry.c.indexable).where(entry.c.path == "/a.txt")
+        async with storage._host.session_factory() as session:
+            await session.execute(update(entry).where(entry.c.path == "/a.txt").values(chunked=True, encoded=True))
+            await session.commit()
+            indexed = (await session.execute(marks)).one()
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        async with storage._host.session_factory() as peek:
+            assert (await peek.execute(marks)).one() == indexed
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")])).success is True
+        async with storage._host.session_factory() as peek:
+            assert (await peek.execute(marks)).one() != indexed
+        await storage.close()
+
+    @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
+    async def test_an_identical_batch_rewrite_writes_no_row(self, files: int, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        entries = [Entry(path=Path(f"/f{i:05}.txt"), content=f"body {i}") for i in range(files)]
+        assert (await storage.write(entries=entries)).success is True
+        await storage._host.settle_statistics()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        again = await storage.write(entries=entries)
+        assert again.success is True
+        assert {(o.status, o.version) for o in again.observations} == {("unchanged", 1)}
+        assert len(again.observations) == files
+        written = [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))]
+        assert written == [], written[:3]
         await storage.close()
 
     async def test_edit_statement_count_is_pinned_and_probes_no_misses(self, tmp_path) -> None:
@@ -595,7 +659,9 @@ class TestArbitration:
             errors = await _resolve_rows(
                 session, entry, [refused], [_entry_values(refused, root_key, None, now, 2)], overwrite=False
             )
-            assert [e.kind for e in errors] == [ErrorKind.exists]
+            assert [(e.kind, sorted((e.data or {}).keys())) for e in errors] == [
+                (ErrorKind.exists, ["content_hash", "version"])
+            ]
 
             # overwrite=True where the rival is a directory: wrong_kind.
             blocked = staged_for("/dir", "file")
@@ -1074,7 +1140,10 @@ class TestGuardedAttribution:
         won = _staged_material("/won.txt", str(ULID()))
         lost = _staged_material("/lost.txt", str(ULID()))
         # The re-probe finds the lost row present: an honest conflict.
-        double = _ReturningSession([{"entry_id": won.entry_id, "version": 2}], probed=[{"entry_id": lost.entry_id}])
+        probed: list[dict[str, object]] = [
+            {"entry_id": lost.entry_id, "path": "/lost.txt", "version": 3, "content_hash": "a rival's body"}
+        ]
+        double = _ReturningSession([{"entry_id": won.entry_id, "version": 2}], probed=probed)
         errors = await _update_materials(
             cast("AsyncSession", double),
             tables.entry,
@@ -1713,6 +1782,26 @@ class TestStagedRowsAreJudged:
         assert len(sessions) == 2
         assert [(error.kind, error.path) for error in result.errors] == [(ErrorKind.wrong_kind, "/drop/b.txt")]
 
+    async def test_a_row_that_holds_the_callers_body_is_judged_before_it_is_unchanged(self, monkeypatch) -> None:
+        """A row landed after the gate that already holds bob's body is judged before bob hears ``unchanged``.
+
+        Guards ``settle`` after ``admit_staged`` in ``_finish``: before it, bob
+        hears that alice's row holds his body, in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        act = clearing(
+            "write:before-snapshot", lambda: land(sessions[-1], tables, "/drop/x.txt", "alice", "add", body="bob")
+        )
+        with installed("write:before-snapshot", act):
+            result = await storage.write(entries=[Entry(path=Path("/drop/x.txt"), content="bob")], authority=BOB)
+        assert len(sessions) == 2
+        assert [(o.status, o.version) for o in result.observations] == [("created", 1)]
+        row = await row_at(storage, "/drop/x.txt")
+        assert row is not None and row["owner_id"] == "bob"
+
     async def test_a_revive_the_plan_stages_is_judged_at_the_restore_rung(self, monkeypatch) -> None:
         """A tombstoned row landed after the gate is revived only at ``read_write``, restore's rung.
 
@@ -1830,3 +1919,214 @@ class TestLabelCost:
                 rewrite = [Entry(path=Path(f"/p/copied-{who}.txt"), content="again")]
                 assert (await storage.write(entries=rewrite, authority=minter)).success is True
                 assert not [sql for sql in _body(statements) if _is_stamp_read(sql)]
+
+
+class TestExpectedVersion:
+    """A write that states the version it expects costs what a plain write costs, and a stale one writes nothing."""
+
+    async def test_a_stale_expected_version_runs_the_snapshot_and_no_write(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        for body in ("one", "two"):
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content=body)])).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        stale = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")], if_versions={Path("/a.txt"): 1})
+        assert [(e.kind, e.data, e.retryable) for e in stale.errors] == [(ErrorKind.conflict, {"version": 2}, False)]
+        # The snapshot is the whole call: nothing is updated, minted or replaced.
+        own = _own(statements)
+        assert len(own) == 1 and own[0].startswith("SELECT"), own
+        await storage.close()
+
+    @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
+    async def test_a_key_for_every_row_adds_no_statement(self, files: int, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        narrowed = replace(storage._host.profile, in_list_budget=1_000)
+        monkeypatch.setattr(EngineHost, "profile", property(lambda _self: narrowed))
+        plain = [Path(f"/p/f{i:05}.txt") for i in range(files)]
+        keyed = [Path(f"/k/f{i:05}.txt") for i in range(files)]
+        seeded = [Entry(path=path, content="old") for path in (*plain, *keyed)]
+        assert (await storage.write(entries=seeded, parents=True)).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        assert (await storage.write(entries=[Entry(path=path, content="new") for path in plain])).success is True
+        without = [statement.split()[0] for statement in _own(statements)]
+        statements.clear()
+        expecting = dict.fromkeys(keyed, 1)
+        written = await storage.write(
+            entries=[Entry(path=path, content="new") for path in keyed], if_versions=expecting
+        )
+        assert written.success is True, written.errors
+        assert [statement.split()[0] for statement in _own(statements)] == without
+        # One row moved on: the batch is refused whole, and no statement writes.
+        assert (await storage.write(entries=[Entry(path=keyed[0], content="rival")])).success is True
+        await storage._host.settle_statistics()
+        statements.clear()
+        stale = await storage.write(
+            entries=[Entry(path=path, content="newer") for path in keyed], if_versions=dict.fromkeys(keyed, 2)
+        )
+        assert [(e.kind, e.path, e.data) for e in stale.errors] == [(ErrorKind.conflict, keyed[0], {"version": 3})]
+        assert [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))] == []
+        await storage.close()
+
+    @pytest.mark.parametrize("keyed", [True, False], ids=["expected", "plain"])
+    async def test_a_row_that_lost_its_guard_names_the_version_it_is_at(
+        self, keyed: bool, tmp_path, monkeypatch
+    ) -> None:
+        # A second writer cannot commit inside an attempt on SQLite, so the
+        # rival's commit is staged on the attempt's own session at the seam.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        sessions = attempts(monkeypatch, storage)
+        entry = storage._host.tables.entry
+
+        async def rival() -> None:
+            moved = update(entry).where(entry.c.path == "/a.txt").values(version=5, content_hash="another body")
+            await sessions[-1].execute(moved)
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            lost = await storage.write(
+                entries=[Entry(path=Path("/a.txt"), content="two")],
+                if_versions={Path("/a.txt"): 1} if keyed else None,
+            )
+        # Only a caller that expected no version may send the same call again.
+        assert [(e.kind, e.data, e.retryable) for e in lost.errors] == [(ErrorKind.conflict, {"version": 5}, not keyed)]
+        assert len(sessions) == 1
+        await storage.close()
+
+    async def test_a_guard_lost_to_a_rival_that_wrote_the_same_body_runs_again(self) -> None:
+        tables = build_vfs_tables()
+        lost = _staged_material("/lost.txt", str(ULID()))
+        lost.content_hash = "the staged body"
+        probed: list[dict[str, object]] = [
+            {"entry_id": lost.entry_id, "path": "/lost.txt", "version": 2, "content_hash": "the staged body"}
+        ]
+        double = _ReturningSession([], probed=probed)
+        with pytest.raises(StaleSnapshot):
+            await _update_materials(
+                cast("AsyncSession", double), tables.entry, POSTGRESQL, 32_000, 900, [lost], now=datetime.now(UTC)
+            )
+
+    async def test_a_guard_lost_to_a_row_that_moved_is_a_conflict_whatever_its_body(self) -> None:
+        tables = build_vfs_tables()
+        lost = _staged_material("/lost.txt", str(ULID()))
+        lost.content_hash = "the staged body"
+        probed: list[dict[str, object]] = [
+            {"entry_id": lost.entry_id, "path": "/moved.txt", "version": 2, "content_hash": "the staged body"}
+        ]
+        double = _ReturningSession([], probed=probed)
+        errors = await _update_materials(
+            cast("AsyncSession", double), tables.entry, POSTGRESQL, 32_000, 900, [lost], now=datetime.now(UTC)
+        )
+        assert [(e.kind, e.path, e.data, e.retryable) for e in errors] == [
+            (ErrorKind.conflict, "/lost.txt", {"version": 2}, True)
+        ]
+
+
+class TestAppend:
+    """An append is a lock, a snapshot with the body in it, and then a write's statements."""
+
+    @pytest.mark.parametrize("stored", ["one\n", b"\x00one"], ids=["text", "bytes"])
+    async def test_an_append_reads_the_old_body_once(self, stored: str | bytes, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[_holding("/log", stored)])).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        grown = await storage.write(entries=[_holding("/log", stored)], append=True)
+        assert [(o.status, o.version) for o in grown.observations] == [("updated", 2)]
+        # The lock, the snapshot, the guarded update, the revision read, the version that
+        # keeps the old body, two body deletes and the new body. The mint reads nothing.
+        own = _own(statements)
+        verbs = [statement.split()[0] for statement in own]
+        assert verbs == ["SELECT", "SELECT", "UPDATE", "SELECT", "INSERT", "DELETE", "DELETE", "INSERT"], own
+        assert "vfs_versions" in own[4], own[4]
+        both = frozenset({"content", "data"})
+        row = (await storage.read(path=Path("/log"), columns=both)).one()
+        assert (row.data if isinstance(stored, bytes) else row.content) == stored * 2
+        await storage.close()
+
+    async def test_a_grown_body_is_measured_in_one_hop_at_the_threshold(self, tmp_path, monkeypatch) -> None:
+        hops: list[int] = []
+        real = writes_module.call_offloaded
+
+        async def counted(executor: Any, work: Any) -> Any:
+            hops.append(1)
+            return await real(executor, work)
+
+        monkeypatch.setattr(writes_module, "call_offloaded", counted)
+        monkeypatch.setattr(writes_module, "MEASURE_OFFLOAD_BYTES", 1_000)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        seeded = [Entry(path=Path("/big.txt"), content="a" * 499), Entry(path=Path("/small.txt"), content="a")]
+        assert (await storage.write(entries=seeded)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/big.txt"), content="b" * 500)], append=True)).success
+        assert hops == []
+        # The tail is small and is measured in place. The body it leaves is at the threshold.
+        assert (await storage.write(entries=[Entry(path=Path("/big.txt"), content="c")], append=True)).success
+        assert hops == [1]
+        assert (await storage.write(entries=[Entry(path=Path("/small.txt"), content="b")], append=True)).success
+        assert hops == [1]
+        stat = (await storage.stat(path=Path("/big.txt"))).one()
+        assert (stat.size_bytes, stat.content_hash) == (
+            1_000,
+            hashlib.sha256(b"a" * 499 + b"b" * 500 + b"c").hexdigest(),
+        )
+        await storage.close()
+
+    async def test_an_append_that_loses_its_guard_runs_again_and_lands(self, tmp_path, monkeypatch) -> None:
+        # The lock makes this unreachable between appenders. A rival that takes no lock can still reach it.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/log.txt"), content="one\n")])).success is True
+        sessions = attempts(monkeypatch, storage)
+        entry = storage._host.tables.entry
+
+        async def rival() -> None:
+            moved = update(entry).where(entry.c.path == "/log.txt").values(version=5, content_hash="another body")
+            await sessions[-1].execute(moved)
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="two\n")], append=True)
+        assert grown.success is True, grown.errors
+        assert len(sessions) == 2
+        assert (await storage.read(path=Path("/log.txt"))).one().content == "one\ntwo\n"
+        await storage.close()
+
+    async def test_an_append_that_loses_the_creation_of_its_path_runs_again(self, tmp_path, monkeypatch) -> None:
+        # Two appends to an absent path both create it, and no row is there to lock.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        sessions = attempts(monkeypatch, storage)
+
+        async def rival() -> None:
+            await land(sessions[-1], storage._host.tables, "/log.txt", "eve", "read_write", body="rival\n")
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="mine\n")], append=True)
+        # Never "exists", and never the rival's row replaced: the call ran again from a new snapshot.
+        assert grown.success is True, grown.errors
+        assert len(sessions) == 2
+        await storage.close()
+
+
+def _holding(path: str, body: str | bytes) -> Entry:
+    """A file entry at *path* that holds *body*, as text or as bytes."""
+    return Entry(path=Path(path), data=body) if isinstance(body, bytes) else Entry(path=Path(path), content=body)
+
+
+def _statements_of(storage: DatabaseStorage) -> list[str]:
+    """A list that fills with every statement *storage* sends from now on, the statistics pass's left out."""
+    statements: list[str] = []
+
+    @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        if not is_statistics_statement(statement):
+            statements.append(statement)
+
+    return statements
+
+
+def _own(statements: list[str]) -> list[str]:
+    """*statements* without the ones that open, close or configure a transaction."""
+    control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK")
+    return [statement for statement in statements if not statement.startswith(control)]

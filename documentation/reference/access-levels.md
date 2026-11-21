@@ -9,7 +9,7 @@ An access level says what a caller may do at a path and everything below it. The
 | `none` | Nothing. The path does not exist for the caller. |
 | `list` | See that files and folders exist: their names, kinds, and sizes. |
 | `read` | Read file contents, search them, and see who has access. |
-| `add` | Create new files and folders. |
+| `add` | Create new files and folders, and add to the end of a file. |
 | `contribute` | Change files that other people created. |
 | `read_write` | Delete, move, and restore files, and change who has access. |
 
@@ -29,12 +29,16 @@ The table shows each call on a file that someone else created. "Yes" means the c
 | `write` to a new path, `mkdir` | Permission denied | Permission denied | Permission denied | Yes | Yes | Yes |
 | `copy` to a new path | Not found | Permission denied | Permission denied | Yes | Yes | Yes |
 | `write` over the file | Permission denied | Permission denied | Permission denied | Permission denied | Yes | Yes |
+| `write` with `append=True` | Permission denied | Permission denied | Permission denied | Yes | Yes | Yes |
+| `write` with `if_absent=True` | Permission denied | Permission denied | Permission denied | Already exists | Already exists | Already exists |
 | `edit` | Not found | Permission denied | Permission denied | Permission denied | Yes | Yes |
 | `delete`, `move`, `restore` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 | `grant`, `revoke`, `set_posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 | `sweep` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 
 `sweep` destroys a file for good, and `delete` moves it to the trash.
+
+An append at `add` keeps every byte the file held, and the file keeps its old body as a version. Bytes that are not text turn a text file into a bytes file, and a read of it then returns no text.
 
 ## Files the Caller Created
 
