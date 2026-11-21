@@ -86,7 +86,7 @@ from vfs.models.lexical import (
     tokenize,
 )
 from vfs.offload import CONTENT_BYTE_BUDGET, call_offloaded, judge_rows, wall_truncation
-from vfs.paths import Path
+from vfs.paths import ROOT, TRASH_ROOT, Path
 from vfs.pattern_matching import PatternError, compile_gates, escape_glob
 from vfs.pattern_matching.grep import split_lines
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
@@ -160,6 +160,9 @@ SCOPE_ID_BUDGET: Final = 5_000
 
 PROBE_DEEPEN: Final = 4
 """The wide rung's second probe scores this many times the fusion depth."""
+
+HEAD_ROWS: Final = frozenset({ROOT, TRASH_ROOT})
+"""Rows in hand that name no file: the storage's root and the trash view's head, left out as directories are."""
 
 
 class _Gates(NamedTuple):
@@ -280,7 +283,10 @@ async def search_rows(
         detail = f"search query {query!r} has no searchable term after folding"
         return Result(ops=("search",), errors=[classified(ErrorKind.invalid, detail=detail)])
     if observations:
-        globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
+        held = tuple(escape_glob(str(row.path)) for row in observations if str(row.path) not in HEAD_ROWS)
+        if not held:
+            return Result(ops=("search",))
+        globs = (*globs, *held)
     try:
         admissions, trashed = trash_scope(globs, scope)
         exclusions = scope_exclusions(globs_not, trashed=trashed)

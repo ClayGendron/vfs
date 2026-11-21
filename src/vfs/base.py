@@ -1488,7 +1488,7 @@ class AsyncVirtualFileSystem:
         to the mount that holds it, and a mount that holds none of them is not asked. The call then answers as it would
         if only those rows had been given. A row that a filter drops is never ranked, never checked and never reported.
         A row that passes is ranked only if its storage can rank it. An ordinary directory or a path that is not there
-        is left out without an error. The row of a mount point or of the root makes the call fail with ``invalid``.
+        is left out without an error, and so is the row of a mount point, of the root or of the trash view's head.
         A row that passes in a mount that cannot search refuses the call with ``unsupported``.
 
         The call returns a :class:`Result`. After a merge, its ``legs`` extra says how the merge was
