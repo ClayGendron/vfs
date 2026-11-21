@@ -142,6 +142,7 @@ Reason: changing any of them changes statement text or the schema, which this sp
 
 **Kept on purpose.**
 - `membership(target, keys, profile)` keeps its `profile` parameter. It is the slot for the Postgres array-bind arm that `research.md` ranks first. Removing it would touch about 100 call sites, and the next spec would add them back.
+- `escape_like(text, profile)` keeps its `profile` parameter for the same reason as `membership`: its callers carry the profile, and the bytewise range that `research.md` ranks would read it.
 - `arbitration`, `guard_miss`, `tuple_in` and `scope_facts_beside_fan` stay. They exist only to give the floor its arm, and the floor stays.
 - `retryable_sqlstates`, `expression_depth_budget` and `relabel_rows` stay as fields, though every profile now holds the same value. Tests override them one at a time, and folding them into constants buys no behaviour.
 - `ann_honours_scope` stays. `research.md` finds it does not describe what pgvector does, and the fix is a design of its own, not a deletion.
@@ -154,7 +155,7 @@ The docs and `docker/README.md` state that vfs is tested on Postgres 17 and 18 w
 
 How the leg runs on both:
 - `docker/compose.test.yml` keeps one `postgres` service, whose image is `${VFS_PG_IMAGE:-pgvector/pgvector:pg17}`. A laptop runs 17 by default, and `VFS_PG_IMAGE=pgvector/pgvector:pg18` runs 18 from the same file.
-- The service's tmpfs moves from `/var/lib/postgresql/data` to `/var/lib/postgresql`. From version 18 the official image keeps its data under `/var/lib/postgresql/18/docker`, and the parent directory covers both layouts. This is inferred from the image's documented change and not yet run.
+- The service's tmpfs moves from `/var/lib/postgresql/data` to `/var/lib/postgresql` for 18. From version 18 the official image keeps its data under `/var/lib/postgresql/18/docker`. As built, the fallback below is taken: the tmpfs path is `${VFS_PG_DATA:-/var/lib/postgresql/data}`, the 17 leg keeps the default, and the 18 leg sets `VFS_PG_DATA=/var/lib/postgresql`, in the compose file, `docker/README.md`, the `db_test` skill and the workflow's matrix.
 - In `test-dialects.yml` the matrix row carries `image`, besides `dialect`, `env_var` and `url`. Two rows run, `postgres` with pg17 and `postgres` with pg18, under the same marker and extra.
 - The pg18 leg is run once, on a laptop or in CI, before landing 1 is called green. That run also runs `SHOW data_directory` and `df` inside the container on both images, to show that the data directory is on the tmpfs. The pg17 image declares `VOLUME /var/lib/postgresql/data`, which may sit over a tmpfs mounted at its parent. If it does, the tmpfs path comes from a second variable, `VFS_PG_DATA`, which keeps `/var/lib/postgresql/data` for 17.
 

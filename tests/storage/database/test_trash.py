@@ -1221,7 +1221,7 @@ class TestClaimRows:
 
     The default suite drives the aggregate arm on every delete and
     restore; the VALUES arm runs through the session double SQLite
-    cannot execute, and the postgres and mssql legs prove it live.
+    cannot execute, and the postgres leg proves it live.
     """
 
     @staticmethod

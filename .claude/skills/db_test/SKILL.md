@@ -47,11 +47,14 @@ docker compose -f docker/compose.test.yml down -v
 ```
 
 Then start Postgres. The image defaults to Postgres 17 with pgvector;
-`VFS_PG_IMAGE` runs 18 from the same file:
+`VFS_PG_IMAGE` runs 18 from the same file, and `VFS_PG_DATA` moves the
+tmpfs to the parent directory, since 18 keeps its data under
+`/var/lib/postgresql/18/docker`:
 
 ```sh
 docker compose -f docker/compose.test.yml up -d --wait                                   # Postgres 17
-VFS_PG_IMAGE=pgvector/pgvector:pg18 docker compose -f docker/compose.test.yml up -d --wait   # Postgres 18
+VFS_PG_IMAGE=pgvector/pgvector:pg18 VFS_PG_DATA=/var/lib/postgresql \
+  docker compose -f docker/compose.test.yml up -d --wait                                 # Postgres 18
 ```
 
 `--wait` blocks on a query-level health check, not container liveness.

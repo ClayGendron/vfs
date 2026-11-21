@@ -190,7 +190,7 @@ class TestFirstTouch:
         assert meta["schema_format_version"] == SCHEMA_FORMAT_VERSION
         assert meta["mount_identity"] == storage.mount_identity
         assert root["path"] == "/"
-        # '/' is un-typable as a real segment (Oracle folds '' to NULL).
+        # '/' is un-typable as a real segment (an engine may fold '' to NULL).
         assert root["name"] == "/"
         assert root["kind"] == "directory"
         assert root["parent_id"] is None
