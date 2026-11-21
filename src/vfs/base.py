@@ -454,8 +454,9 @@ class AsyncVirtualFileSystem:
         in the storage that holds the path above it. The delete never cascades. The empty directory goes
         to the trash like any deleted row, and retention reclaims it. Removing a mount does not close
         its storage. The returned mount carries the storage, so the caller can close the one it owns.
-        A ``close()`` of the kernel while the directory is being deleted closes an owned storage too.
-        A mount added at the path in that window is refused with a retry.
+        A ``close()`` of the kernel while the directory is being deleted closes an owned storage too, and
+        the mount returned then carries it closed. A mount at the path, or of the same storage object
+        elsewhere, is refused with a retry in that window.
 
         ``authority`` names the caller, as for :meth:`add_mount`. The caller must hold ``read_write``
         at the mount point. Removing a mount is also a write at its mount point, so the gate must allow
@@ -796,7 +797,7 @@ class AsyncVirtualFileSystem:
         require_gate_allows(self._mounts, self._permission_layers(mount.path), "mount at", mount.path, "mkdir")
         held = self._posture_writes - {id(mount.storage)} if reserved_here else self._posture_writes
         refusal = mount_table_refusal(self._mounts, self._sorted_mount_paths, mount, held, self._class_name)
-        if (refusal := refusal or self._removals.refusal(mount.path, seen)) is not None:
+        if (refusal := refusal or self._removals.refusal(mount, seen)) is not None:
             raise ValueError(refusal)
 
     def _rebuild_sorted_mounts(self) -> None:

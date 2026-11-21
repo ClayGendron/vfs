@@ -256,6 +256,47 @@ async def test_a_mount_whose_site_was_read_before_a_removal_deleted_it_is_refuse
     assert Path("/data") not in root._mounts
 
 
+async def test_a_storage_whose_removal_is_in_flight_cannot_be_mounted_again_elsewhere() -> None:
+    # Else close() would close it as the owned storage of the removal, under its new unowned mount.
+    backend = GateDeleteStorage()
+    root = AsyncVirtualFileSystem(storage=backend)
+    child = ClosingStorage("child")
+    await root.add_mount(child, "/a")
+    removal = asyncio.create_task(root.remove_mount("/a"))
+    await backend.entered.wait()
+    with pytest.raises(ValueError, match="still being removed from /a, so retry"):
+        await root.add_mount(child, "/b", owned=False)
+    backend.release.set()
+    await removal
+    await root.add_mount(child, "/b", owned=False)
+    await root.close()
+    assert child.closes == 0
+
+
+async def test_a_mount_whose_posture_write_outlasts_a_removal_at_its_path_is_refused() -> None:
+    class GatePostureStorage(InMemoryStorage):
+        def __init__(self) -> None:
+            super().__init__(name="slow")
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def set_posture(self, **kwargs: Any) -> Result:
+            self.entered.set()
+            await self.release.wait()
+            return await super().set_posture(**kwargs)
+
+    root = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    slow = GatePostureStorage()
+    adding = asyncio.create_task(root.add_mount(slow, "/data", posture="read"))
+    await slow.entered.wait()
+    await root.add_mount(InMemoryStorage(name="quick"), "/data")
+    await root.remove_mount("/data")
+    slow.release.set()
+    with pytest.raises(ValueError, match="was being removed while this one was checked, so retry"):
+        await adding
+    assert Path("/data") not in root._mounts
+
+
 async def test_a_second_close_during_a_removal_closes_its_storage_once() -> None:
     backend = GateDeleteStorage()
     root = AsyncVirtualFileSystem(storage=backend)

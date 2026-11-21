@@ -286,10 +286,18 @@ class Removals:
         """Return the count of removals at ``path``, for :meth:`refusal` to compare at the commit."""
         return self.count.get(path, 0)
 
-    def refusal(self, path: Path, seen: int) -> str | None:
-        """Return why a mount at ``path`` that read ``seen`` cannot be committed, or ``None`` when it can."""
+    def refusal(self, mount: Mount, seen: int) -> str | None:
+        """Return why ``mount``, whose attach read ``seen``, cannot be committed, or ``None`` when it can.
+
+        Its storage object must not be one whose removal is in flight, so that ``close()`` never closes it
+        as the storage of the mount being removed.
+        """
+        path = mount.path
         if path in self.inflight or self.count.get(path, 0) != seen:
             return f"Cannot mount at {path}: a mount there was being removed while this one was checked, so retry"
+        leaving = next((gone.path for gone in self.inflight.values() if gone.storage is mount.storage), None)
+        if leaving is not None:
+            return f"Cannot mount at {path}: that storage object is still being removed from {leaving}, so retry"
         return None
 
     def drain(self) -> list[Mount]:
