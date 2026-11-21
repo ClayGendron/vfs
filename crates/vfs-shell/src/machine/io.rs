@@ -103,11 +103,11 @@ impl Hub {
         }
         self.charge(bytes.len())?;
         self.progress = true;
-        if let Some((last, buffer)) = self.output.last_mut() {
-            if *last == stream {
-                buffer.extend_from_slice(bytes);
-                return Ok(());
-            }
+        if let Some((last, buffer)) = self.output.last_mut()
+            && *last == stream
+        {
+            buffer.extend_from_slice(bytes);
+            return Ok(());
         }
         self.output.push((stream, bytes.to_vec()));
         Ok(())
@@ -203,23 +203,6 @@ impl Future for Checkpoint {
         this.waited = true;
         hub.yielded = true;
         Poll::Pending
-    }
-}
-
-/// A future that is pending once: lets the other tasks of a step run.
-pub struct YieldOnce(pub bool);
-
-impl Future for YieldOnce {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
-        let this = self.get_mut();
-        if this.0 {
-            Poll::Ready(())
-        } else {
-            this.0 = true;
-            Poll::Pending
-        }
     }
 }
 

@@ -65,13 +65,13 @@ pub fn has_glob(chars: &[PatChar], extglob: bool) -> bool {
                     return true;
                 }
             }
-            '+' | '@' | '!' if extglob => {
-                if iter
-                    .peek()
-                    .is_some_and(|(next, quoted)| *next == '(' && !quoted)
-                {
-                    return true;
-                }
+            '+' | '@' | '!'
+                if extglob
+                    && iter
+                        .peek()
+                        .is_some_and(|(next, quoted)| *next == '(' && !quoted) =>
+            {
+                return true;
             }
             _ => {}
         }
@@ -127,27 +127,6 @@ impl Pattern {
         let mut pos = 0;
         let nodes = compile_seq(chars, &mut pos, extglob, false);
         Pattern { nodes }
-    }
-
-    /// A pattern that matches exactly `text`.
-    pub fn literal(text: &str) -> Pattern {
-        Pattern {
-            nodes: text.chars().map(Node::Char).collect(),
-        }
-    }
-
-    pub fn is_literal(&self) -> bool {
-        self.nodes.iter().all(|node| matches!(node, Node::Char(_)))
-    }
-
-    pub fn literal_text(&self) -> Option<String> {
-        self.nodes
-            .iter()
-            .map(|node| match node {
-                Node::Char(ch) => Some(*ch),
-                _ => None,
-            })
-            .collect()
     }
 
     pub fn matches(&self, text: &str, options: MatchOptions) -> bool {
@@ -297,24 +276,25 @@ fn compile_class(body: &[PatChar]) -> Class {
             continue;
         }
         let mut current = ch;
-        if ch == '\\' && !quoted {
-            if let Some(&(next, _)) = body.get(index.saturating_add(1)) {
-                current = next;
-                index = index.saturating_add(1);
-            }
+        if ch == '\\'
+            && !quoted
+            && let Some(&(next, _)) = body.get(index.saturating_add(1))
+        {
+            current = next;
+            index = index.saturating_add(1);
         }
         let dash = body.get(index.saturating_add(1));
         let after = body.get(index.saturating_add(2));
         if !first || ch != ']' || quoted {
             // fall through: a `]` first is a literal member
         }
-        if matches!(dash, Some(('-', false))) {
-            if let Some(&(end, _)) = after {
-                items.push(ClassItem::Range(current, end));
-                index = index.saturating_add(3);
-                first = false;
-                continue;
-            }
+        if matches!(dash, Some(('-', false)))
+            && let Some(&(end, _)) = after
+        {
+            items.push(ClassItem::Range(current, end));
+            index = index.saturating_add(3);
+            first = false;
+            continue;
         }
         items.push(ClassItem::Char(current));
         index = index.saturating_add(1);
@@ -501,20 +481,20 @@ impl Matcher<'_> {
                         } else if !one(self, from, k) {
                             continue;
                         }
-                        if let Some(seen) = reach.get_mut(k.saturating_sub(pos)) {
-                            if !*seen {
-                                *seen = true;
-                                if k != from {
-                                    frontier.push(k);
-                                }
+                        if let Some(seen) = reach.get_mut(k.saturating_sub(pos))
+                            && !*seen
+                        {
+                            *seen = true;
+                            if k != from {
+                                frontier.push(k);
                             }
                         }
                     }
                 }
-                if op == '*' {
-                    if let Some(first) = reach.first_mut() {
-                        *first = true;
-                    }
+                if op == '*'
+                    && let Some(first) = reach.first_mut()
+                {
+                    *first = true;
                 }
                 (pos..=end).any(|k| {
                     reach.get(k.saturating_sub(pos)).copied().unwrap_or(false)

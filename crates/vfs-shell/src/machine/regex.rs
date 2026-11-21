@@ -42,6 +42,13 @@ pub struct Regex {
     nocase: bool,
 }
 
+impl Regex {
+    /// How many groups the expression has, not counting the whole match.
+    pub fn groups(&self) -> usize {
+        self.groups
+    }
+}
+
 /// The groups of a match: each a character range of the text, if it took part.
 pub type Captures = Vec<Option<(usize, usize)>>;
 
@@ -68,10 +75,16 @@ impl Regex {
     /// The first match: the whole match and each group, as character ranges.
     pub fn find(&self, text: &str) -> Option<(Vec<char>, Captures)> {
         let chars: Vec<char> = text.chars().collect();
+        let captures = self.find_at(&chars, 0)?;
+        Some((chars, captures))
+    }
+
+    /// The first match that starts at or after `from`, in `chars`: group 0 is the whole match.
+    pub fn find_at(&self, chars: &[char], from: usize) -> Option<Captures> {
         let mut steps = 0u64;
-        for start in 0..=chars.len() {
+        for start in from..=chars.len() {
             let mut search = Search {
-                text: &chars,
+                text: chars,
                 nocase: self.nocase,
                 steps,
                 depth: 0,
@@ -84,7 +97,7 @@ impl Regex {
                 if let Some(first) = caps.first_mut() {
                     *first = Some((start, end));
                 }
-                return Some((chars, caps));
+                return Some(caps);
             }
             if steps > STEP_BUDGET {
                 return None;
@@ -455,4 +468,90 @@ impl Search<'_> {
 
 fn is_word(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
+}
+
+/// A POSIX basic regular expression rewritten as an extended one, with
+/// GNU's `\+`, `\?` and `\|`.
+pub fn bre_to_ere(pattern: &str) -> String {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut out = String::new();
+    let mut index = 0usize;
+    // Whether the next character starts an expression, where `*` is literal.
+    let mut at_start = true;
+    while let Some(&ch) = chars.get(index) {
+        index = index.saturating_add(1);
+        match ch {
+            '\\' => {
+                let Some(&next) = chars.get(index) else {
+                    out.push_str("\\\\");
+                    break;
+                };
+                index = index.saturating_add(1);
+                match next {
+                    '(' | ')' | '{' | '}' | '|' | '+' | '?' => {
+                        out.push(next);
+                        at_start = matches!(next, '(' | '|');
+                        continue;
+                    }
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    other => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                }
+            }
+            '(' | ')' | '{' | '}' | '|' | '+' | '?' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '*' if at_start => out.push_str("\\*"),
+            '^' if !at_start => out.push_str("\\^"),
+            '^' => {
+                out.push('^');
+                continue;
+            }
+            '$' => {
+                let at_end = index >= chars.len()
+                    || (chars.get(index) == Some(&'\\')
+                        && matches!(chars.get(index.saturating_add(1)), Some(')' | '|')));
+                if at_end {
+                    out.push('$');
+                } else {
+                    out.push_str("\\$");
+                }
+            }
+            '[' => {
+                out.push('[');
+                let mut first = true;
+                while let Some(&inner) = chars.get(index) {
+                    index = index.saturating_add(1);
+                    out.push(inner);
+                    if inner == '[' && matches!(chars.get(index), Some(':' | '.' | '=')) {
+                        let delim = chars.get(index).copied().unwrap_or(':');
+                        while let Some(&c) = chars.get(index) {
+                            index = index.saturating_add(1);
+                            out.push(c);
+                            if c == delim && chars.get(index) == Some(&']') {
+                                out.push(']');
+                                index = index.saturating_add(1);
+                                break;
+                            }
+                        }
+                        first = false;
+                        continue;
+                    }
+                    if inner == ']' && !first {
+                        break;
+                    }
+                    if !(first && inner == '^') {
+                        first = false;
+                    }
+                }
+            }
+            other => out.push(other),
+        }
+        at_start = false;
+    }
+    out
 }

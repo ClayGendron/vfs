@@ -139,11 +139,8 @@ impl Printer<'_> {
         let inner = depth.saturating_add(1);
         match compound {
             CompoundCommand::Brace(list) => {
-                if top {
-                    format!("{{ \n{}\n{pad}}}", self.list(list, inner))
-                } else {
-                    format!("{{ \n{}\n{pad}}}", self.list(list, inner))
-                }
+                let _ = top;
+                format!("{{ \n{}\n{pad}}}", self.list(list, inner))
             }
             CompoundCommand::Subshell(list) => format!("( {} )", self.inline(list)),
             CompoundCommand::If {

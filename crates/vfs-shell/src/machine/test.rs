@@ -379,7 +379,7 @@ impl Test<'_> {
                 }
                 [_, op, _] => Ok(self.fail(format!("{op}: binary operator expected"))),
                 [open, a, b, close] if open == "(" && close == ")" => {
-                    self.expression(&args[1..3]).await
+                    self.expression(args.get(1..3).unwrap_or_default()).await
                 }
                 _ => {
                     let mut pos = 0usize;
@@ -495,17 +495,16 @@ impl Test<'_> {
         if let (Some(op), Some(b)) = (
             args.get(pos.saturating_add(1)).cloned(),
             args.get(pos.saturating_add(2)).cloned(),
-        ) {
-            if is_binary(&op) {
-                *pos = pos.saturating_add(3);
-                return self.binary(&first, &op, &b).await;
-            }
+        ) && is_binary(&op)
+        {
+            *pos = pos.saturating_add(3);
+            return self.binary(&first, &op, &b).await;
         }
-        if is_unary(&first) {
-            if let Some(operand) = args.get(pos.saturating_add(1)).cloned() {
-                *pos = pos.saturating_add(2);
-                return unary(self.sh, &first, &operand).await;
-            }
+        if is_unary(&first)
+            && let Some(operand) = args.get(pos.saturating_add(1)).cloned()
+        {
+            *pos = pos.saturating_add(2);
+            return unary(self.sh, &first, &operand).await;
         }
         *pos = pos.saturating_add(1);
         Ok(!first.is_empty())

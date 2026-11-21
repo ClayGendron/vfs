@@ -222,12 +222,9 @@ programs/cp-mv-rm-mkdir-touch/cp-r-dot-contents-into-directory
 programs/cp-mv-rm-mkdir-touch/cp-r-into-existing-directory-nests
 programs/cp-mv-rm-mkdir-touch/cp-several-files-to-non-directory-fails
 programs/cp-mv-rm-mkdir-touch/mkdir-creates-a-directory
-programs/cp-mv-rm-mkdir-touch/mkdir-existing-fails-without-p
-programs/cp-mv-rm-mkdir-touch/mkdir-missing-parent-fails-without-p
 programs/cp-mv-rm-mkdir-touch/mkdir-p-makes-parents-and-tolerates-existing
 programs/cp-mv-rm-mkdir-touch/mkdir-several-operands
 programs/cp-mv-rm-mkdir-touch/mv-into-directory
-programs/cp-mv-rm-mkdir-touch/mv-missing-source-fails
 programs/cp-mv-rm-mkdir-touch/mv-overwrites-target
 programs/cp-mv-rm-mkdir-touch/mv-renames-a-directory
 programs/cp-mv-rm-mkdir-touch/mv-renames-a-file
@@ -242,7 +239,6 @@ programs/cp-mv-rm-mkdir-touch/rmdir-like-rm-r-on-empty-directory
 programs/cp-mv-rm-mkdir-touch/touch-c-does-not-create
 programs/cp-mv-rm-mkdir-touch/touch-creates-empty-file
 programs/cp-mv-rm-mkdir-touch/touch-existing-file-keeps-content
-programs/cp-mv-rm-mkdir-touch/touch-in-missing-directory-fails
 programs/cp-mv-rm-mkdir-touch/touch-several-files-and-brace-expansion
 programs/cp-mv-rm-mkdir-touch/workflow-make-copy-edit-move-remove
 programs/cut/attached-option-values
@@ -257,13 +253,10 @@ programs/cut/extract-log-levels-and-count
 programs/cut/field-past-end-is-empty
 programs/cut/field-range
 programs/cut/field-with-comma-delimiter
-programs/cut/field-zero-is-an-error
 programs/cut/fields-are-printed-in-file-order
 programs/cut/line-without-delimiter-printed-whole
 programs/cut/missing-file-fails
-programs/cut/multi-char-delimiter-is-an-error
 programs/cut/multiple-files
-programs/cut/no-list-is-an-error
 programs/cut/no-trailing-newline-gets-one
 programs/cut/open-ended-field-range
 programs/cut/output-delimiter
@@ -287,7 +280,6 @@ programs/find/maxdepth-limits-descent
 programs/find/maxdepth-zero-is-the-start-point
 programs/find/mindepth-skips-shallow-entries
 programs/find/missing-among-existing-still-searches
-programs/find/missing-start-point-fails
 programs/find/name-glob
 programs/find/name-is-matched-against-basename-only
 programs/find/name-with-space
@@ -303,7 +295,6 @@ programs/find/several-start-points
 programs/find/start-point-spelling-is-kept
 programs/find/type-d-directories-only
 programs/find/type-f-files-only
-programs/find/unknown-predicate-is-an-error
 programs/find/unquoted-glob-expands-before-find
 programs/grep/anchors-start-and-end
 programs/grep/basic-regex-alternation-needs-backslash
@@ -324,7 +315,6 @@ programs/grep/fixed-strings-with-f
 programs/grep/h-suppresses-file-names
 programs/grep/ignore-case-with-i
 programs/grep/include-glob-with-recursive
-programs/grep/invalid-regex-is-status-two
 programs/grep/invert-count
 programs/grep/invert-with-v
 programs/grep/line-numbers-with-n
@@ -484,7 +474,6 @@ programs/sed/substitute-nth-occurrence
 programs/sed/substitute-on-matching-lines-only
 programs/sed/substitute-p-flag-with-n
 programs/sed/tab-escape-in-regex-and-replacement
-programs/sed/unknown-command-is-an-error
 programs/sed/unterminated-s-is-an-error
 programs/sed/w-flag-writes-matches-to-file
 programs/sed/y-transliterates-characters
@@ -566,9 +555,7 @@ programs/tr/delete-newlines
 programs/tr/delete-with-d
 programs/tr/digit-and-space-classes
 programs/tr/escapes-tab-and-backslash
-programs/tr/extra-operand-is-an-error
 programs/tr/lowercase-to-uppercase-range
-programs/tr/missing-operand-is-an-error
 programs/tr/newline-to-space
 programs/tr/octal-escape
 programs/tr/repeat-construct-in-set2
@@ -576,7 +563,6 @@ programs/tr/rot13
 programs/tr/short-set2-repeats-last-character
 programs/tr/squeeze-spaces
 programs/tr/squeeze-with-s
-programs/tr/tr-reads-only-stdin-not-files
 programs/tr/translate-characters
 programs/tr/truncate-set1-with-t
 programs/uniq/after-sort-removes-all-duplicates
@@ -590,7 +576,6 @@ programs/uniq/count-with-c
 programs/uniq/empty-input
 programs/uniq/frequency-table-sorted-by-count
 programs/uniq/ignore-case-with-i
-programs/uniq/missing-input-file-fails
 programs/uniq/no-trailing-newline-last-line
 programs/uniq/only-repeated-with-d
 programs/uniq/only-unique-with-u

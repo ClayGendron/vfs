@@ -7,15 +7,15 @@
 mod arith;
 mod builtins;
 mod deparse;
-mod exec;
+pub(crate) mod exec;
 mod expand;
-mod files;
-mod io;
-mod pattern;
+pub(crate) mod files;
+pub(crate) mod io;
+pub mod pattern;
 mod printf;
 mod quote;
-mod regex;
-mod shell;
+pub mod regex;
+pub(crate) mod shell;
 mod test;
 mod vars;
 

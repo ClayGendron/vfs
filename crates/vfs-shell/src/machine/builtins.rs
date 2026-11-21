@@ -386,7 +386,7 @@ async fn echo(sh: &mut Shell, args: &[String]) -> Status {
                     _ => escapes = false,
                 }
             }
-            index += 1;
+            index = index.saturating_add(1);
         }
     }
     let mut bytes = Vec::new();
@@ -662,7 +662,7 @@ async fn read(sh: &mut Shell, args: &[String]) -> Status {
     let mut names = Vec::new();
     let mut index = 0;
     while let Some(arg) = args.get(index) {
-        index += 1;
+        index = index.saturating_add(1);
         if names.is_empty() && arg.starts_with('-') && arg.len() > 1 && arg != "--" {
             let mut flags = arg.chars().skip(1);
             while let Some(flag) = flags.next() {
@@ -670,7 +670,7 @@ async fn read(sh: &mut Shell, args: &[String]) -> Status {
                 let mut value = || -> Option<String> {
                     if rest.is_empty() {
                         let v = args.get(index).cloned();
-                        index += 1;
+                        index = index.saturating_add(1);
                         v
                     } else {
                         Some(rest.clone())
@@ -827,8 +827,7 @@ async fn read(sh: &mut Shell, args: &[String]) -> Status {
             var.attrs &= !vars::ASSOC;
         }
     } else if names.is_empty() {
-        let value = if exact || raw && false { line } else { line };
-        assign_scalar(sh, "REPLY", value, false).await?;
+        assign_scalar(sh, "REPLY", line, false).await?;
     } else if exact {
         let mut names_iter = names.iter();
         if let Some(first) = names_iter.next() {
@@ -907,10 +906,10 @@ async fn mapfile(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, args: &[String]) -> 
     let mut target = "MAPFILE".to_owned();
     let mut index = 0;
     while let Some(arg) = args.get(index) {
-        index += 1;
+        index = index.saturating_add(1);
         let mut value = || {
             let v = args.get(index).cloned().unwrap_or_default();
-            index += 1;
+            index = index.saturating_add(1);
             v
         };
         match arg.as_str() {
@@ -952,33 +951,33 @@ async fn mapfile(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, args: &[String]) -> 
             break;
         }
         if skipped < skip {
-            skipped += 1;
+            skipped = skipped.saturating_add(1);
             continue;
         }
         let mut line = String::from_utf8_lossy(&record.bytes).into_owned();
         if record.delimited && !trim {
             line.push(char::from(delimiter));
         }
-        if let Some(callback) = &callback {
-            if read_lines % quantum == 0 && read_lines > 0 || quantum == 1 {
-                let words = vec![callback.clone(), next.to_string(), line.clone()];
-                let call: Vec<String> = callback
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .chain(words.into_iter().skip(1))
-                    .collect();
-                if let Some(def) = sh
-                    .functions
-                    .get(call.first().map_or("", String::as_str))
-                    .cloned()
-                {
-                    call_function(ctx, sh, &def, call).await?;
-                }
+        if let Some(callback) = &callback
+            && (read_lines.is_multiple_of(quantum) && read_lines > 0 || quantum == 1)
+        {
+            let words = vec![callback.clone(), next.to_string(), line.clone()];
+            let call: Vec<String> = callback
+                .split_whitespace()
+                .map(str::to_owned)
+                .chain(words.into_iter().skip(1))
+                .collect();
+            if let Some(def) = sh
+                .functions
+                .get(call.first().map_or("", String::as_str))
+                .cloned()
+            {
+                call_function(ctx, sh, &def, call).await?;
             }
         }
         map.insert(next, line);
         next = next.saturating_add(1);
-        read_lines += 1;
+        read_lines = read_lines.saturating_add(1);
         if !record.delimited {
             break;
         }
@@ -1050,22 +1049,21 @@ async fn cd(sh: &mut Shell, args: &[String]) -> Status {
         && !target.starts_with("../")
         && target != "."
         && target != ".."
+        && let Some(cdpath) = sh.get_var("CDPATH")
     {
-        if let Some(cdpath) = sh.get_var("CDPATH") {
-            for entry in cdpath.split(':') {
-                let candidate = if entry.is_empty() {
-                    format!("{}/{}", sh.cwd, target)
-                } else {
-                    format!("{entry}/{target}")
-                };
-                let full = absolute(sh, &candidate);
-                if is_directory(sh, &full).await? == Some(true) {
-                    if !entry.is_empty() {
-                        print = true;
-                    }
-                    destination = Some(full);
-                    break;
+        for entry in cdpath.split(':') {
+            let candidate = if entry.is_empty() {
+                format!("{}/{}", sh.cwd, target)
+            } else {
+                format!("{entry}/{target}")
+            };
+            let full = absolute(sh, &candidate);
+            if is_directory(sh, &full).await? == Some(true) {
+                if !entry.is_empty() {
+                    print = true;
                 }
+                destination = Some(full);
+                break;
             }
         }
     }
@@ -1288,15 +1286,14 @@ async fn declare(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, args: Vec<Expanded>)
         if local {
             let current = sh.vars.get(&base).cloned();
             let here = sh.vars.is_local_here(&base);
-            if let Some(var) = sh.vars.local(&base) {
-                if !here {
-                    if let Some(current) = current {
-                        if sh.options.shopt("localvar_inherit") {
-                            *var = current;
-                        } else {
-                            var.attrs = current.attrs & (vars::EXPORT);
-                        }
-                    }
+            if let Some(var) = sh.vars.local(&base)
+                && !here
+                && let Some(current) = current
+            {
+                if sh.options.shopt("localvar_inherit") {
+                    *var = current;
+                } else {
+                    var.attrs = current.attrs & (vars::EXPORT);
                 }
             }
         } else if global && sh.vars.get(&base).is_none() {
@@ -1324,20 +1321,20 @@ async fn declare(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, args: Vec<Expanded>)
             if set_attrs & vars::ASSOC != 0 && var.value.is_none() {
                 var.value = None;
             }
-            if set_attrs & vars::INDEXED != 0 {
-                if let Some(Value::Scalar(text)) = var.value.clone() {
-                    var.value = Some(Value::Indexed(BTreeMap::from([(0, text)])));
-                }
+            if set_attrs & vars::INDEXED != 0
+                && let Some(Value::Scalar(text)) = var.value.clone()
+            {
+                var.value = Some(Value::Indexed(BTreeMap::from([(0, text)])));
             }
-            if set_attrs & vars::LOWER != 0 || set_attrs & vars::UPPER != 0 {
-                if let Some(Value::Scalar(text)) = &var.value {
-                    let changed = if set_attrs & vars::LOWER != 0 {
-                        text.to_lowercase()
-                    } else {
-                        text.to_uppercase()
-                    };
-                    var.value = Some(Value::Scalar(changed));
-                }
+            if (set_attrs & vars::LOWER != 0 || set_attrs & vars::UPPER != 0)
+                && let Some(Value::Scalar(text)) = &var.value
+            {
+                let changed = if set_attrs & vars::LOWER != 0 {
+                    text.to_lowercase()
+                } else {
+                    text.to_uppercase()
+                };
+                var.value = Some(Value::Scalar(changed));
             }
         }
         match value {
@@ -1380,10 +1377,10 @@ async fn declare(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, args: Vec<Expanded>)
                 }
             }
         }
-        if set_attrs & vars::READONLY != 0 {
-            if let Some(var) = sh.vars.get_mut(&base) {
-                var.attrs |= vars::READONLY;
-            }
+        if set_attrs & vars::READONLY != 0
+            && let Some(var) = sh.vars.get_mut(&base)
+        {
+            var.attrs |= vars::READONLY;
         }
     }
     Ok(status)
@@ -1470,17 +1467,17 @@ async fn unset(sh: &mut Shell, args: &[String]) -> Status {
         match parse_target(arg) {
             Some((base, Some(sub))) => {
                 let base = resolve_nameref(sh, &base);
-                if let Some(var) = sh.vars.get(&base) {
-                    if var.has(vars::READONLY) {
-                        err(
-                            sh,
-                            "unset",
-                            &format!("{base}: cannot unset: readonly variable"),
-                        )
-                        .await?;
-                        status = 1;
-                        continue;
-                    }
+                if let Some(var) = sh.vars.get(&base)
+                    && var.has(vars::READONLY)
+                {
+                    err(
+                        sh,
+                        "unset",
+                        &format!("{base}: cannot unset: readonly variable"),
+                    )
+                    .await?;
+                    status = 1;
+                    continue;
                 }
                 let is_assoc = sh.vars.get(&base).is_some_and(Var::is_assoc);
                 if sub == "@" || sub == "*" {
@@ -1708,10 +1705,10 @@ async fn set(sh: &mut Shell, args: &[String]) -> Status {
     if args.is_empty() {
         let mut lines = String::new();
         for name in sh.vars.names() {
-            if let Some(var) = sh.vars.get(&name) {
-                if let Some(Value::Scalar(text)) = &var.value {
-                    lines.push_str(&format!("{}={}\n", name, quote::trace(text)));
-                }
+            if let Some(var) = sh.vars.get(&name)
+                && let Some(Value::Scalar(text)) = &var.value
+            {
+                lines.push_str(&format!("{}={}\n", name, quote::trace(text)));
             }
         }
         out(sh, &lines).await?;
@@ -1719,7 +1716,7 @@ async fn set(sh: &mut Shell, args: &[String]) -> Status {
     }
     let mut index = 0;
     while let Some(arg) = args.get(index) {
-        index += 1;
+        index = index.saturating_add(1);
         if arg == "--" {
             sh.positional = args.get(index..).unwrap_or_default().to_vec();
             return Ok(0);
@@ -1749,7 +1746,7 @@ async fn set(sh: &mut Shell, args: &[String]) -> Status {
             if flag == 'o' {
                 match args.get(index) {
                     Some(name) => {
-                        index += 1;
+                        index = index.saturating_add(1);
                         match sh.options.set_option(name) {
                             Some(slot) => *slot = on,
                             None => {
@@ -1869,7 +1866,7 @@ async fn shopt(sh: &mut Shell, args: &[String]) -> Status {
             }
             None => {
                 let on = sh.options.shopt(known);
-                if names.is_empty() && print == false && quiet {
+                if names.is_empty() && !print && quiet {
                     continue;
                 }
                 if !quiet {
@@ -1939,21 +1936,21 @@ async fn type_builtin(sh: &mut Shell, args: &[String]) -> Status {
                 continue;
             }
         }
-        if let Some(def) = sh.functions.get(&name).cloned() {
-            if !path_only {
-                let text = if terse {
-                    "function\n".to_owned()
-                } else {
-                    format!(
-                        "{name} is a function\n{}\n",
-                        super::deparse::function(&def, &sh.source)
-                    )
-                };
-                out(sh, &text).await?;
-                found = true;
-                if !all {
-                    continue;
-                }
+        if let Some(def) = sh.functions.get(&name).cloned()
+            && !path_only
+        {
+            let text = if terse {
+                "function\n".to_owned()
+            } else {
+                format!(
+                    "{name} is a function\n{}\n",
+                    super::deparse::function(&def, &sh.source)
+                )
+            };
+            out(sh, &text).await?;
+            found = true;
+            if !all {
+                continue;
             }
         }
         if is_builtin(&name) && !path_only {
@@ -2002,12 +1999,12 @@ async fn command(ctx: &Ctx<'_>, sh: &mut Shell, args: &[String]) -> Status {
             "-V" => describe = Some(true),
             "-p" => {}
             "--" => {
-                index += 1;
+                index = index.saturating_add(1);
                 break;
             }
             _ => break,
         }
-        index += 1;
+        index = index.saturating_add(1);
     }
     let rest: Vec<String> = args.get(index..).unwrap_or_default().to_vec();
     if let Some(verbose) = describe {
@@ -2071,13 +2068,13 @@ async fn wait(sh: &mut Shell, args: &[String]) -> Status {
     let mut store: Option<String> = None;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
-        index += 1;
+        index = index.saturating_add(1);
         match arg.as_str() {
             "-n" => any = true,
             "-f" => {}
             "-p" => {
                 store = args.get(index).cloned();
-                index += 1;
+                index = index.saturating_add(1);
             }
             other => targets.push(other.to_owned()),
         }

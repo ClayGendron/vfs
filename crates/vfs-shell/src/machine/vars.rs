@@ -137,14 +137,14 @@ impl Vars {
     /// The variable `name`, created where an assignment would put it.
     pub fn entry(&mut self, name: &str) -> &mut Var {
         let slot = self.slot(name);
-        if let Slot::Local(index) = slot {
-            if let Some(scope) = self.scopes.get_mut(index) {
-                let entry = scope.vars.entry(name.to_owned()).or_insert(None);
-                return entry.get_or_insert_with(|| Var {
-                    value: None,
-                    attrs: 0,
-                });
-            }
+        if let Slot::Local(index) = slot
+            && let Some(scope) = self.scopes.get_mut(index)
+        {
+            let entry = scope.vars.entry(name.to_owned()).or_insert(None);
+            return entry.get_or_insert_with(|| Var {
+                value: None,
+                attrs: 0,
+            });
         }
         self.global.entry(name.to_owned()).or_insert(Var {
             value: None,
@@ -251,11 +251,11 @@ impl AssocMap {
 
     pub fn insert(&mut self, key: String, value: String) {
         let index = self.bucket_of(&key);
-        if let Some(bucket) = self.buckets.get_mut(index) {
-            if let Some(slot) = bucket.iter_mut().find(|(k, _)| *k == key) {
-                slot.1 = value;
-                return;
-            }
+        if let Some(bucket) = self.buckets.get_mut(index)
+            && let Some(slot) = bucket.iter_mut().find(|(k, _)| *k == key)
+        {
+            slot.1 = value;
+            return;
         }
         if self.len >= self.buckets.len().saturating_mul(GROW_FACTOR) {
             self.grow();

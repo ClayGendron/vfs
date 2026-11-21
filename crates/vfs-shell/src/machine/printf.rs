@@ -105,11 +105,11 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
                 );
             }
         }
-        if let Some(w) = width {
-            if w < 0 {
-                flags.push('-');
-                width = Some(w.saturating_neg());
-            }
+        if let Some(w) = width
+            && w < 0
+        {
+            flags.push('-');
+            width = Some(w.saturating_neg());
         }
         // Length modifiers are accepted and ignored.
         while format.get(index).is_some_and(|b| b"hlLqjzt".contains(b)) {
@@ -402,10 +402,9 @@ fn float(arg: &str, out: &mut Printed) -> f64 {
     if let Some(hex) = trimmed
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
+        && let Ok(v) = u64::from_str_radix(hex, 16)
     {
-        if let Ok(v) = u64::from_str_radix(hex, 16) {
-            return v as f64;
-        }
+        return v as f64;
     }
     match trimmed.parse::<f64>() {
         Ok(value) => value,
@@ -622,6 +621,8 @@ pub fn expand_b(text: &[u8]) -> (Vec<u8>, usize, bool) {
 }
 
 /// A small `strftime` in UTC.
+// Calendar arithmetic on epoch seconds: every intermediate fits an i64 by far.
+#[allow(clippy::arithmetic_side_effects)]
 pub fn strftime(format: &str, seconds: i64) -> String {
     let days = seconds.div_euclid(86_400);
     let secs = seconds.rem_euclid(86_400);
@@ -718,6 +719,8 @@ pub fn strftime(format: &str, seconds: i64) -> String {
     out
 }
 
+// Calendar arithmetic on epoch seconds: every intermediate fits an i64 by far.
+#[allow(clippy::arithmetic_side_effects)]
 fn civil(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -731,6 +734,8 @@ fn civil(days: i64) -> (i64, i64, i64) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+// Calendar arithmetic on epoch seconds: every intermediate fits an i64 by far.
+#[allow(clippy::arithmetic_side_effects)]
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
     let era = y.div_euclid(400);

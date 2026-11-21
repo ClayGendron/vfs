@@ -246,13 +246,13 @@ pub fn ansi_decode(text: &str) -> String {
             }
             b'x' => {
                 let mut value = 0u32;
-                let mut count = 0;
+                let mut count = 0usize;
                 while count < 2 {
                     match bytes.get(index).and_then(|b| char::from(*b).to_digit(16)) {
                         Some(d) => {
                             value = value.saturating_mul(16).saturating_add(d);
                             index = index.saturating_add(1);
-                            count += 1;
+                            count = count.saturating_add(1);
                         }
                         None => break,
                     }

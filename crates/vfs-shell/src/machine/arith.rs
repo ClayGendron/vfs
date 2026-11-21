@@ -193,14 +193,13 @@ impl Evaluator<'_> {
         if trimmed.is_empty() {
             return Ok(0);
         }
-        if let Ok(value) = parse_number(trimmed) {
-            if trimmed
+        if let Ok(value) = parse_number(trimmed)
+            && trimmed
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'#' || b == b'@' || b == b'_')
-                && trimmed.bytes().next().is_some_and(|b| b.is_ascii_digit())
-            {
-                return Ok(value);
-            }
+            && trimmed.bytes().next().is_some_and(|b| b.is_ascii_digit())
+        {
+            return Ok(value);
         }
         let _ = source;
         self.text(&text)
@@ -317,9 +316,9 @@ fn binary(op: BinaryOp, a: i64, b: i64, source: &str) -> Result<i64, ArithFailur
                 )));
             }
             if op == BinaryOp::Div {
-                a.wrapping_div(b)
+                a.checked_div(b).unwrap_or(a.wrapping_neg())
             } else {
-                a.wrapping_rem(b)
+                a.checked_rem(b).unwrap_or(0)
             }
         }
         BinaryOp::Pow => {

@@ -426,16 +426,16 @@ async fn run_stages(ctx: &Ctx<'_>, sh: &mut Shell, pipeline: &Pipeline) -> Statu
             let mut done: Option<Status> = None;
             let mut finished: Option<Vec<Status>> = None;
             std::future::poll_fn(|cx| {
-                if let Some(task) = main.as_mut() {
-                    if let Poll::Ready(result) = task.as_mut().poll(cx) {
-                        done = Some(result);
-                        main = None;
-                    }
+                if let Some(task) = main.as_mut()
+                    && let Poll::Ready(result) = task.as_mut().poll(cx)
+                {
+                    done = Some(result);
+                    main = None;
                 }
-                if finished.is_none() {
-                    if let Poll::Ready(results) = Pin::new(&mut joined).poll(cx) {
-                        finished = Some(results);
-                    }
+                if finished.is_none()
+                    && let Poll::Ready(results) = Pin::new(&mut joined).poll(cx)
+                {
+                    finished = Some(results);
                 }
                 if main.is_none() && finished.is_some() {
                     Poll::Ready(())
@@ -470,10 +470,10 @@ fn finish_pipeline(sh: &mut Shell, results: Vec<Status>, last: Option<Status>) -
         statuses.push(last?);
     }
     let mut status = statuses.last().copied().unwrap_or(0);
-    if sh.options.pipefail {
-        if let Some(failed) = statuses.iter().rev().find(|s| **s != 0) {
-            status = *failed;
-        }
+    if sh.options.pipefail
+        && let Some(failed) = statuses.iter().rev().find(|s| **s != 0)
+    {
+        status = *failed;
     }
     sh.pipestatus = statuses;
     Ok(status)
@@ -914,7 +914,12 @@ async fn exec_simple_inner(ctx: &Ctx<'_>, sh: &mut Shell, simple: &SimpleCommand
         line.extend(words.iter().map(|w| quote::trace(w)));
         trace(sh, &line.join(" ")).await?;
     }
-    let result = dispatch(ctx, sh, &name, words, args).await;
+    let mut result = dispatch(ctx, sh, &name, words, args).await;
+    if !sh.pending_outputs.is_empty()
+        && let Err(flow) = run_pending_outputs(ctx, sh).await
+    {
+        result = Err(flow);
+    }
     let restored = restore(sh, saved).await;
     if temporary {
         sh.vars.scopes.pop();
@@ -949,10 +954,10 @@ async fn dispatch(
     words: Vec<String>,
     args: Vec<Expanded>,
 ) -> Status {
-    if let Some(def) = sh.functions.get(name).cloned() {
-        if !builtins::is_special(name) || !sh.options.posix {
-            return call_function(ctx, sh, &def, words).await;
-        }
+    if let Some(def) = sh.functions.get(name).cloned()
+        && (!builtins::is_special(name) || !sh.options.posix)
+    {
+        return call_function(ctx, sh, &def, words).await;
     }
     if builtins::is_builtin(name) {
         return builtins::run(ctx, sh, name, words, args).await;
@@ -969,10 +974,10 @@ pub async fn run_program(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, words: Vec<S
         .await?;
         return Ok(127);
     }
-    if sh.programs.contains_key(name) {
-        if let Some(status) = programs::run(ctx, sh, name, words).await? {
-            return Ok(status);
-        }
+    if sh.programs.contains_key(name)
+        && let Some(status) = programs::run(ctx, sh, name, words).await?
+    {
+        return Ok(status);
     }
     sh.error_text(&format!(
         "bash: line {}: {}: command not found\n",
@@ -998,15 +1003,14 @@ pub async fn call_function(
         .get_var("FUNCNEST")
         .and_then(|v| v.parse::<u32>().ok())
         .filter(|n| *n > 0)
+        && sh.function_depth >= limit
     {
-        if sh.function_depth >= limit {
-            sh.error_text(&format!(
-                "bash: line {}: {}: maximum function nesting level exceeded ({})\n",
-                sh.lineno, def.name, limit
-            ))
-            .await?;
-            return Err(Flow::Exit(1));
-        }
+        sh.error_text(&format!(
+            "bash: line {}: {}: maximum function nesting level exceeded ({})\n",
+            sh.lineno, def.name, limit
+        ))
+        .await?;
+        return Err(Flow::Exit(1));
     }
     let mut args = words.into_iter();
     args.next();
@@ -1164,15 +1168,15 @@ async fn perform_assignment(
                 }
                 None => {
                     if temporary {
-                        if let Some(var) = sh.vars.get(&name) {
-                            if var.has(vars::READONLY) {
-                                sh.error_text(&format!(
-                                    "bash: line {}: {}: readonly variable\n",
-                                    sh.lineno, name
-                                ))
-                                .await?;
-                                return Err(Flow::CommandFailed(0));
-                            }
+                        if let Some(var) = sh.vars.get(&name)
+                            && var.has(vars::READONLY)
+                        {
+                            sh.error_text(&format!(
+                                "bash: line {}: {}: readonly variable\n",
+                                sh.lineno, name
+                            ))
+                            .await?;
+                            return Err(Flow::CommandFailed(0));
                         }
                         let current = sh.vars.get(&name).cloned();
                         let local = sh.vars.local(&name);
@@ -1399,10 +1403,10 @@ pub async fn assign_scalar(
         }
         _ => set_value(sh, &name, Value::Scalar(value))?,
     }
-    if sh.options.allexport {
-        if let Some(var) = sh.vars.get_mut(&name) {
-            var.attrs |= vars::EXPORT;
-        }
+    if sh.options.allexport
+        && let Some(var) = sh.vars.get_mut(&name)
+    {
+        var.attrs |= vars::EXPORT;
     }
     Ok(())
 }
@@ -1545,17 +1549,17 @@ pub async fn capture(ctx: &Ctx<'_>, sh: &mut Shell, list: &List) -> Result<Strin
         let mut status = None;
         let mut bytes = None;
         std::future::poll_fn(|cx| {
-            if let Some(task) = run.as_mut() {
-                if let Poll::Ready(result) = task.as_mut().poll(cx) {
-                    status = Some(result);
-                    run = None;
-                }
+            if let Some(task) = run.as_mut()
+                && let Poll::Ready(result) = task.as_mut().poll(cx)
+            {
+                status = Some(result);
+                run = None;
             }
-            if let Some(task) = read.as_mut() {
-                if let Poll::Ready(result) = task.as_mut().poll(cx) {
-                    bytes = Some(result);
-                    read = None;
-                }
+            if let Some(task) = read.as_mut()
+                && let Poll::Ready(result) = task.as_mut().poll(cx)
+            {
+                bytes = Some(result);
+                read = None;
             }
             if run.is_none() && read.is_none() {
                 Poll::Ready(())
@@ -1675,17 +1679,17 @@ async fn capture_raw(ctx: &Ctx<'_>, sh: &mut Shell, list: &List) -> Result<Vec<u
         let mut status = None;
         let mut bytes = None;
         std::future::poll_fn(|cx| {
-            if let Some(task) = run.as_mut() {
-                if let Poll::Ready(result) = task.as_mut().poll(cx) {
-                    status = Some(result);
-                    run = None;
-                }
+            if let Some(task) = run.as_mut()
+                && let Poll::Ready(result) = task.as_mut().poll(cx)
+            {
+                status = Some(result);
+                run = None;
             }
-            if let Some(task) = read.as_mut() {
-                if let Poll::Ready(result) = task.as_mut().poll(cx) {
-                    bytes = Some(result);
-                    read = None;
-                }
+            if let Some(task) = read.as_mut()
+                && let Poll::Ready(result) = task.as_mut().poll(cx)
+            {
+                bytes = Some(result);
+                read = None;
             }
             if run.is_none() && read.is_none() {
                 Poll::Ready(())

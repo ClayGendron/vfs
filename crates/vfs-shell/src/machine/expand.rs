@@ -347,7 +347,7 @@ fn sequence_count(inner: &[Token<'_>]) -> Option<u64> {
     let b: i64 = to.parse().ok()?;
     let step: i64 = step.parse().ok()?;
     let step = step.unsigned_abs().max(1);
-    Some(a.abs_diff(b) / step)
+    a.abs_diff(b).checked_div(step)
 }
 
 fn sequence_items(inner: &[Token<'_>]) -> Option<Vec<String>> {
@@ -761,14 +761,15 @@ pub fn split_read(text: &str, ifs: &str, max: usize) -> Vec<String> {
             let trimmed: String = rest.trim_end_matches(|c: char| is_space(c)).to_owned();
             rest = trimmed;
             let mut tail: Vec<char> = rest.chars().collect();
-            if let Some(last) = tail.last().copied() {
-                if is_ifs(last) && !is_space(last) {
-                    let before = tail.len().checked_sub(2).and_then(|i| tail.get(i)).copied();
-                    if before.is_none_or(|b| !is_ifs(b) || is_space(b)) {
+            if let Some(last) = tail.last().copied()
+                && is_ifs(last)
+                && !is_space(last)
+            {
+                let before = tail.len().checked_sub(2).and_then(|i| tail.get(i)).copied();
+                if before.is_none_or(|b| !is_ifs(b) || is_space(b)) {
+                    tail.pop();
+                    while tail.last().is_some_and(|c| is_space(*c)) {
                         tail.pop();
-                        while tail.last().is_some_and(|c| is_space(*c)) {
-                            tail.pop();
-                        }
                     }
                 }
             }
@@ -1165,10 +1166,10 @@ fn parse_param_ref(text: &str) -> Option<Param> {
             Param::Positional(number)
         });
     }
-    if let [c] = text.chars().collect::<Vec<char>>().as_slice() {
-        if "@*#?-$!".contains(*c) {
-            return Some(Param::Special(*c));
-        }
+    if let [c] = text.chars().collect::<Vec<char>>().as_slice()
+        && "@*#?-$!".contains(*c)
+    {
+        return Some(Param::Special(*c));
     }
     let open = text.find('[')?;
     let name = text.get(..open)?;
@@ -1201,13 +1202,13 @@ async fn lookup(ctx: &Ctx<'_>, sh: &mut Shell, param: &Param) -> Result<Got, Flo
     match param {
         Param::Element(name, sub) => {
             let name = super::exec::resolve_nameref(sh, name);
-            if let Some(text) = sub.as_literal() {
-                if text == "@" || text == "*" {
-                    if !sh.vars.get(&name).is_some_and(|v| v.value.is_some()) {
-                        return Ok(Got::List(Vec::new(), text == "@"));
-                    }
-                    return Ok(Got::List(array_values(sh, &name), text == "@"));
+            if let Some(text) = sub.as_literal()
+                && (text == "@" || text == "*")
+            {
+                if !sh.vars.get(&name).is_some_and(|v| v.value.is_some()) {
+                    return Ok(Got::List(Vec::new(), text == "@"));
                 }
+                return Ok(Got::List(array_values(sh, &name), text == "@"));
             }
             let index = super::exec::subscript(ctx, sh, &name, sub).await?;
             Ok(element(sh, &name, &index))
@@ -1396,12 +1397,12 @@ fn replace(
         let mut index = 0;
         while let Some(&(ch, quoted)) = replacement.get(index) {
             if ch == '\\' && !quoted {
-                if let Some(&(next, _)) = replacement.get(index.saturating_add(1)) {
-                    if next == '&' || next == '\\' {
-                        out.push(next);
-                        index = index.saturating_add(2);
-                        continue;
-                    }
+                if let Some(&(next, _)) = replacement.get(index.saturating_add(1))
+                    && (next == '&' || next == '\\')
+                {
+                    out.push(next);
+                    index = index.saturating_add(2);
+                    continue;
                 }
                 out.push('\\');
             } else if ch == '&' && !quoted && ampersand {
@@ -1596,15 +1597,15 @@ async fn substring(
             if offset < 0 && start < 0 {
                 return Ok(got_fields(sh, Got::List(Vec::new(), at), quoted));
             }
-            if let Some(n) = length {
-                if n < 0 {
-                    sh.error_text(&format!(
-                        "bash: line {}: {}: substring expression < 0\n",
-                        sh.lineno, n
-                    ))
-                    .await?;
-                    return Err(Flow::CommandFailed(1));
-                }
+            if let Some(n) = length
+                && n < 0
+            {
+                sh.error_text(&format!(
+                    "bash: line {}: {}: substring expression < 0\n",
+                    sh.lineno, n
+                ))
+                .await?;
+                return Err(Flow::CommandFailed(1));
             }
             let mut selected: Vec<String> = entries
                 .into_iter()
@@ -1634,7 +1635,7 @@ async fn transform(
     };
     match op {
         'Q' => Ok(map_got(sh, got, quoted, quote::single)),
-        'E' => Ok(map_got(sh, got, quoted, |text| quote::ansi_decode(text))),
+        'E' => Ok(map_got(sh, got, quoted, quote::ansi_decode)),
         'P' => Ok(map_got(sh, got, quoted, str::to_owned)),
         'U' => Ok(map_got(sh, got, quoted, |text| text.to_uppercase())),
         'u' => Ok(map_got(sh, got, quoted, |text| {
@@ -1645,7 +1646,7 @@ async fn transform(
             let attrs = sh
                 .vars
                 .get(&name)
-                .map(|var| quote::attr_letters(var))
+                .map(quote::attr_letters)
                 .unwrap_or_default();
             let items = match &got {
                 Got::List(items, at) => {
@@ -1893,17 +1894,15 @@ async fn glob(
             if dot_pattern || options.dotglob {
                 let skip_dots =
                     sh.options.shopt("globskipdots") && !dot_pattern_explicit(component);
-                if !skip_dots || dot_pattern {
-                    if !sh.options.shopt("globskipdots") {
-                        names.push(Entry {
-                            name: ".".to_owned(),
-                            kind: EntryKind::Directory,
-                        });
-                        names.push(Entry {
-                            name: "..".to_owned(),
-                            kind: EntryKind::Directory,
-                        });
-                    }
+                if (!skip_dots || dot_pattern) && !sh.options.shopt("globskipdots") {
+                    names.push(Entry {
+                        name: ".".to_owned(),
+                        kind: EntryKind::Directory,
+                    });
+                    names.push(Entry {
+                        name: "..".to_owned(),
+                        kind: EntryKind::Directory,
+                    });
                 }
             }
             for entry in names {
