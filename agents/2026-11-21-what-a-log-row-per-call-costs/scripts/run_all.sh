@@ -18,7 +18,7 @@ step() {  # step <deadline seconds> <script> <args...>: the outer timeout backs 
 }
 
 for engine in sqlite postgres; do
-  step 3000 scripts/measure_calls.py --engine "$engine" --concurrent-calls 6
+  step "$([ "$engine" = postgres ] && echo 5400 || echo 3000)" scripts/measure_calls.py --engine "$engine" --concurrent-calls 6
   step 900 scripts/measure_waits.py --engine "$engine"
   step 1200 scripts/measure_growth.py --engine "$engine"
   step 600 scripts/measure_pool.py --engine "$engine"

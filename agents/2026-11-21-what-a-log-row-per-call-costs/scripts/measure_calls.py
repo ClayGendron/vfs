@@ -9,7 +9,8 @@ no mode always runs first on a cold machine.
     VFS_TEST_POSTGRES_URL=postgresql+asyncpg://vfs:vfs@localhost:54320/vfs L0_SCRATCH=... \
         uv run python scripts/measure_calls.py --engine postgres
 
-The script writes ``results/calls-<engine>.json`` and stops everything it started when ``--deadline`` passes.
+The script writes ``results/calls-<engine>.json`` after each whole repeat and at the end, and stops everything it
+started when ``--deadline`` passes; the file then holds the repeats that finished.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ from harness import agent as authority_of
 from sqlalchemy import func, select
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from vfs import AsyncSession
 
 AGENT_VERBS = ("read", "grep", "write")
@@ -128,10 +131,12 @@ async def finish(bench: Bench, expected_rows: int) -> dict[str, Any]:
     return facts
 
 
-async def run(args: argparse.Namespace) -> dict[str, Any]:
+async def run(args: argparse.Namespace, save: Callable[[dict[str, Any], bool], None]) -> dict[str, Any]:
     raw: dict[str, list[dict[str, Any]]] = defaultdict(list)
     closing: list[dict[str, Any]] = []
     for repeat in range(args.repeats):
+        if repeat:
+            save({"cells": summarize(raw), "closing": closing, "repeats_completed": repeat}, False)
         order = MODES[repeat % 3 :] + MODES[: repeat % 3]
         for mode in order:
             bench = await open_bench(args.engine, mode, label=f"calls-{mode}-{repeat}")
@@ -159,7 +164,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     {"mode": mode, "repeat": repeat, "kind": f"batch{sessions}", **await finish(bench, sessions)}
                 )
                 print(f"repeat {repeat} {mode}: batch x{sessions} done", file=sys.stderr, flush=True)
-    return {"cells": summarize(raw), "closing": closing}
+    return {"cells": summarize(raw), "closing": closing, "repeats_completed": args.repeats}
 
 
 def summarize(raw: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -212,19 +217,24 @@ async def main() -> None:
     env = environment()
     if args.engine == "postgres":
         env["postgres"] = await postgres_version()
+
+    def save(body: dict[str, Any], complete: bool) -> None:
+        payload = {
+            "script": "scripts/measure_calls.py",
+            "arguments": vars(args),
+            "environment": env,
+            "seconds": round(time.perf_counter() - started, 1),
+            "complete": complete,
+            **body,
+        }
+        out = write_results(f"calls-{args.engine}.json", payload)
+        print(f"wrote {out}{'' if complete else ' (partial)'}", file=sys.stderr, flush=True)
+
     try:
-        body = await asyncio.wait_for(run(args), timeout=args.deadline)
+        body = await asyncio.wait_for(run(args, save), timeout=args.deadline)
     except TimeoutError:
-        raise SystemExit(f"deadline of {args.deadline:.0f} s passed; nothing written") from None
-    payload = {
-        "script": "scripts/measure_calls.py",
-        "arguments": vars(args),
-        "environment": env,
-        "seconds": round(time.perf_counter() - started, 1),
-        **body,
-    }
-    out = write_results(f"calls-{args.engine}.json", payload)
-    print(f"wrote {out}", file=sys.stderr)
+        raise SystemExit(f"deadline of {args.deadline:.0f} s passed; the last whole repeat is what was saved") from None
+    save(body, True)
 
 
 if __name__ == "__main__":
