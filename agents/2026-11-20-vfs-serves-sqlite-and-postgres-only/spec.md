@@ -359,6 +359,16 @@ A second reading on 2026-11-21 found every finding closed, except M5 in part, an
 - Postgres 18 on the engine leg, and the tmpfs at `/var/lib/postgresql`. Neither has run.
 - Whether `scripts/docs.sh check` passes after the docstring edits.
 
+## The statement diff of landing 1
+
+Run on 2026-11-21, before the change at `5dfdcc79` and after it at `704e7e8a`, with `-n 0` and a recorder that keeps each test's distinct statement texts with every bind, literal, savepoint, schema name and expanded `IN` list replaced by one marker. The statistics pass runs in the background and lands on whichever test is running, so its statements are kept as one set for the whole run; two runs of the unchanged code gave equal records only with that rule.
+
+- **Postgres 17 leg** (`-m postgres`, 506 tests): 507 records before and 507 after, none in only one run, none differing. `test_races.py` equal over the whole run.
+- **SQLite file leg** (`TestSqliteConformance` and `tests/storage/database/`, about 2,020 tests): no record that exists in both runs differs, and `test_races.py` is equal over the whole run. Five records exist only before: the three value-cap tests landing 1 deletes, and the old names of two re-pointed tests. Two exist only after: those two new names. `test_a_wide_ext_filter_beside_the_widest_group_stays_inside_a_tight_budget` sends the same set as its old name. `test_a_partial_read_issues_the_profiles_range_settings` sends the same set less one comment, `/* visible vfs_lex_docs ix_vfs_lex_docs_entry */`, a derived hint the old test put on the profile and that no profile declares.
+- Two tests of `TestWhereAnAttemptRuns` fail under the recorder in both runs and pass without it: they count an engine's listeners, and the recorder adds one.
+
+The Postgres server was a container started again, not created fresh, for both runs; the comparison is between two runs on that one server.
+
 ## Choices to confirm
 
 Confirmed on 2026-11-21: choices 1, 2 and 4 stand as written. Choice 3 is not yet confirmed.
