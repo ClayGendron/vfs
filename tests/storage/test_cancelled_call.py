@@ -26,14 +26,19 @@ import pytest
 from sqlalchemy import event, text
 
 from tests.support.cancelled_callers import (
+    CONNECTING,
     HOSTS,
     Connections,
     HeldRoundTrip,
     Host,
+    cancel_if_held,
     cancel_while_held,
     collect_what_was_dropped,
+    first_of_kind,
     first_statement_of_a_transaction,
+    kinds,
     left_of_a_checkout,
+    number,
     reads_entries,
     reports_of_the_loop,
     starts_with,
@@ -315,6 +320,135 @@ class TestACancelledWrite:
         # The round trip that was held is the last statement of the call ahead: the write behind sent none.
         assert round_trip.statements_after_the_cut() == []
         assert (await fs.read("/a.txt")).one().content == "old"
+
+
+@pytest.mark.slow
+class TestACallCancelledAtOneRoundTripAfterAnother:
+    """One storage takes every cut of a sweep, so each cut also proves that the cut before it left the storage whole.
+
+    The built in-memory host is cut at every round trip of each call. The
+    other three are cut at the first round trip of each kind: the driver
+    function and the first two words of the statement it carries.
+    """
+
+    @ON_EVERY_HOST
+    @pytest.mark.parametrize("call", CALLS)
+    async def test_a_storage_keeps_its_rows_and_its_connections_and_is_sent_nothing_more(
+        self, fs: AsyncVirtualFileSystem, host: Host, round_trip: HeldRoundTrip, call: str
+    ) -> None:
+        cuts = await every_cut_of(CALLS[call], fs, host, round_trip)
+        expected = await content_and_version(fs)
+        connections = Connections(host.engine)
+        landed = 0
+        for cut in cuts:
+            await host.storage._host.settle_statistics()
+            round_trip.again()
+            round_trip.hold(cut)
+            if await cancel_if_held(CALLS[call](fs), round_trip) is None:
+                # A write sends fewer round trips once the host knows which of its tables have an index,
+                # so a cut of the traced write may not come: the write then ran to its end, and landed.
+                assert call == "write"
+                expected = ("new", (expected[1] or 0) + 1)
+                continue
+            seen, held_at = list(round_trip.seen), round_trip.held_at
+            assert held_at is not None
+            where = f"{call} cancelled at round trip {held_at}, {seen[held_at]!r}"
+            assert round_trip.statements_after_the_cut() == left_of_a_checkout(seen, held_at), where
+            assert connections.lost_to_a_cancellation() == (0, 0), where
+            # Nothing before the commit and all of it from the commit on, on every host alike.
+            if "commit" in seen[: held_at + 1]:
+                landed += 1
+                expected = ("new", (expected[1] or 0) + 1)
+            else:
+                assert "commit" not in seen, where
+            assert await content_and_version(fs) == expected, where
+            assert (await fs.write(path="/b.txt", content=where)).success, where
+        # A write is cut on both sides of its commit: at the commit, and at the rollback that returns the connection.
+        assert landed == (2 if call == "write" else 0)
+
+    @ON_EVERY_HOST
+    @pytest.mark.parametrize("sent", CONNECTING)
+    async def test_a_first_call_cancelled_while_its_connection_is_made_leaves_the_storage_whole(
+        self, host: Host, round_trip: HeldRoundTrip, sent: str
+    ) -> None:
+        """The first call of all makes the connection. Its round trips come once, so each cut has its own storage."""
+        kernel = AsyncVirtualFileSystem(storage=host.storage, default_authority=SYSTEM)
+        connections = Connections(host.engine)
+        round_trip.again()
+        round_trip.hold(starts_with(sent))
+        await cancel_while_held(kernel.write(path="/a.txt", content="one"), round_trip)
+        seen, held_at = list(round_trip.seen), round_trip.held_at
+        assert held_at is not None
+        assert round_trip.statements_after_the_cut() == left_of_a_checkout(seen, held_at)
+        assert (len(connections.opened), connections.invalidated, "commit" in seen) == (1, [], False)
+        assert (await kernel.write(path="/b.txt", content="more")).success
+        await host.storage._host.settle_statistics()
+        assert [str(row.path) for row in (await kernel.ls("/")).observations] == ["/b.txt"]
+
+    @ON_EVERY_HOST
+    async def test_the_first_touch_of_a_fresh_storage_is_sent_nothing_more_and_runs_again(
+        self, host: Host, round_trip: HeldRoundTrip, tmp_path: pathlib.Path
+    ) -> None:
+        """A cancelled first touch is rolled back whole, so the storage is as fresh for the next cut as before."""
+        traced = Host(host.name, tmp_path / "traced")
+        try:
+            names = await first_call_after_one_was_cancelled(traced, round_trip)
+        finally:
+            await traced.close()
+        # The first commit is the first touch's, and the second is the write's.
+        assert names.count("commit") == 2
+        assert not [name for name in names if name.startswith(CONNECTING)], "the traced call made its connection"
+        kernel = AsyncVirtualFileSystem(storage=host.storage, default_authority=SYSTEM)
+        connections = Connections(host.engine)
+        for wanted in ["execute BEGIN IMMEDIATE", *kinds(names[: names.index("commit") + 1])]:
+            assert host.storage._host._ready is False
+            round_trip.again()
+            round_trip.hold(first_of_kind(wanted))
+            await cancel_while_held(kernel.write(path="/a.txt", content="one"), round_trip)
+            seen, held_at = list(round_trip.seen), round_trip.held_at
+            assert held_at is not None
+            where = f"the first call cancelled at round trip {held_at}, {seen[held_at]!r}"
+            assert round_trip.statements_after_the_cut() == left_of_a_checkout(seen, held_at), where
+            assert (len(connections.opened) <= 1, connections.invalidated) == (True, []), where
+            assert ("commit" in seen) == (wanted == "commit"), where
+        # The last cut was at the commit of the first touch, which landed; the write after it never began.
+        assert (await kernel.write(path="/b.txt", content="more")).success
+        await host.storage._host.settle_statistics()
+        assert [str(row.path) for row in (await kernel.ls("/")).observations] == ["/b.txt"]
+
+
+async def every_cut_of(
+    call: Callable[[AsyncVirtualFileSystem], Awaitable[Any]],
+    kernel: AsyncVirtualFileSystem,
+    host: Host,
+    round_trip: HeldRoundTrip,
+) -> list[Callable[[str], bool]]:
+    """The cuts of one sweep of *call*, from a trace nothing cancels: all on the first host, the kinds elsewhere."""
+    await host.storage._host.settle_statistics()
+    round_trip.again()
+    await call(kernel)
+    names = list(round_trip.seen)
+    assert names, "the call was traced as no round trip at all"
+    await host.storage._host.settle_statistics()
+    if host.name == HOSTS[0]:
+        return [number(cut) for cut in range(len(names))]
+    return [first_of_kind(wanted) for wanted in kinds(names)]
+
+
+async def first_call_after_one_was_cancelled(host: Host, round_trip: HeldRoundTrip) -> list[str]:
+    """The round trips of the first call on *host* once an earlier first call was cancelled at its first change.
+
+    A cancelled first touch leaves no table, but it leaves the connection
+    open with its extension loaded, so the next first call is the one a
+    sweep on one storage repeats.
+    """
+    kernel = AsyncVirtualFileSystem(storage=host.storage, default_authority=SYSTEM)
+    round_trip.again()
+    round_trip.hold(first_of_kind("execute BEGIN IMMEDIATE"))
+    await cancel_while_held(kernel.write(path="/a.txt", content="one"), round_trip)
+    round_trip.again()
+    assert (await kernel.write(path="/a.txt", content="one")).success
+    return list(round_trip.seen)
 
 
 class TestACancelledWriteOnADatabaseInAFile:
