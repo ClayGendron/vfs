@@ -2863,6 +2863,15 @@ class StorageContract:
             body += tail if isinstance(tail, bytes) else tail.encode()
             assert (stat.content_hash, stat.size_bytes) == (measure_bytes(body).content_hash, len(body))
 
+    @needs("write", "stat")
+    async def test_an_append_keeps_the_rows_declared_type(self, storage: ConformanceBackend) -> None:
+        typed = Entry(path=Path("/log.txt"), content="one\n", mime_type="text/x-log")
+        assert (await storage.write(entries=[typed])).success is True
+        tail = Entry(path=Path("/log.txt"), content="two\n", mime_type="text/plain")
+        assert (await storage.write(entries=[tail], append=True)).success is True
+        stat = (await storage.stat(path=Path("/log.txt"))).observations[0]
+        assert (stat.mime_type, stat.version) == ("text/x-log", 2)
+
     @needs("write", "mkdir", "delete", "read")
     async def test_an_append_judges_its_target_as_a_write_does(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/d"))

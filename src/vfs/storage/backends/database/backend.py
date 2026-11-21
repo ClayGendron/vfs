@@ -718,6 +718,7 @@ class DatabaseStorage:
                     parents=parents,
                     authority=self._named(authority),
                     executor=offload_pool(),
+                    primary=needs.primary,
                     value_cap=host.value_cap,
                 )
             return await write_rows(

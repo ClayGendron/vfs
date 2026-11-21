@@ -38,6 +38,8 @@ The table shows each call on a file that someone else created. "Yes" means the c
 
 `sweep` destroys a file for good, and `delete` moves it to the trash.
 
+An append at `add` keeps every byte the file held, and the file keeps its old body as a version. Bytes that are not text turn a text file into a bytes file, and a read of it then returns no text.
+
 ## Files the Caller Created
 
 A named caller owns each file it creates. **An owner may always read, overwrite, edit, and delete their own file**, whatever level they hold at its path, including `none`.

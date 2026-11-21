@@ -1,6 +1,6 @@
 # Write takes preconditions and an append
 
-This spec is built, on the branch `write-takes-preconditions-and-an-append`, in four landings on 2026-11-20. It has had no review. Lint, format, types and the tests pass on SQLite, the slow tier included. `scripts/ci.sh`, `scripts/docs.sh check` and the server engine legs have not run. It replaces the draft at `context/specifications/active/174-write-preconditions-and-the-guarded-append/spec.md`, which was cut on 2026-10-24 against commit `ba77449`. The design is the draft's. Every fact in it was checked against `dev` at `93f3d297` on 2026-11-20, and its probes were run again that day. What moved since the draft is listed under "What changed since the draft", and what was settled while it was built under "Decided while it was built".
+This spec is built, on the branch `write-takes-preconditions-and-an-append`, in four landings on 2026-11-20. Its code review is `context/reviews/2026-11-20-write-takes-preconditions-and-an-append-code-review.md`. `scripts/ci.sh`, `scripts/docs.sh check` and the Postgres leg ran green on `c42dccd4`, and `scripts/ci.sh` and the Postgres leg again after the review's fixes. The MariaDB, SQL Server and Oracle legs were not run for the review, because those dialects are being dropped; under "Not checked" is what they showed earlier that day. It replaces the draft at `context/specifications/active/174-write-preconditions-and-the-guarded-append/spec.md`, which was cut on 2026-10-24 against commit `ba77449`. The design is the draft's. Every fact in it was checked against `dev` at `93f3d297` on 2026-11-20, and its probes were run again that day. What moved since the draft is listed under "What changed since the draft", and what was settled while it was built under "Decided while it was built".
 
 ## The outcome wanted
 
@@ -263,7 +263,9 @@ Costed against the reference deployment in the working agreement.
 
 **A stale precondition.** One read and no mutation statement, at any batch size. A 10,000-row batch with one stale key writes nothing.
 
-**An append.** One more statement than a write of the same file, the locking read. It issues 8 at the seam, where a write issues 8: the locking read is added and the mint's read of the old body is gone. Counted on SQLite, for a text row and a bytes row.
+**An append.** The statements of a write of the same file, 8 at the seam: the locking read is added and the mint's read of the old body is gone. Counted on SQLite, for a text row and a bytes row.
+
+**The bytes of an append.** An append reads the whole stored body, writes the whole joined body, and keeps the whole body it replaced as a version. Its cost grows with the file, not the tail. N appends to one file keep N full copies in its history, and nothing but the trash sweep removes the versions of a live row. Measured on SQLite: 200 appends of 10 bytes to a 10,001-byte file left 200 version rows that hold 2,199,200 bytes. On the reference deployment, a shared 1 MB log appended to 1,000 times a day keeps about 1 GB of history a day. A caller who holds `add` can grow the history of another's file this way. The direction is a version that keeps only what an append added. It is not built, and no cap is declared.
 
 **Memory.** An append holds the file's old body and its composed body in memory, as `edit` does for a file today. No cap is declared.
 
@@ -384,15 +386,16 @@ Pages, each changed: the docstring of `AsyncVirtualFileSystem.write`, which is t
 - **`unchanged` is said after the rights check.** It tells a caller that its body equals the stored one, which is a way to test a guess at a file's contents.
 - **A lost guard reruns only for a row still at its path.** A row that moved keeps its `conflict`, as before, whatever its body.
 - **The names inside `writes.py` stay.** `write_rows` and the helpers beneath it keep `overwrite`. The storage's `write` turns `if_absent` into it.
+- **`if_versions` names a path once.** Two keys that resolve to one path, such as `/a/f.txt` and `/a//f.txt`, are refused `invalid`, and so is any key in a call with no entries. Before this, the last key silently replaced the first.
+- **An append at `add` keeps a full version of another's file.** The bytes it costs are under "Cost". The alternative, a non-owner's append that keeps only what it added, waits for a version shaped that way.
+- **An append at `add` may turn another's text file into a bytes file.** A tail that is not text makes the joined body bytes, and readers of the file then get no text. The old body is kept as a version, so the owner can restore it. `documentation/reference/access-levels.md` says so. The alternative is to refuse a non-owner's append that would change the row's source.
 
 ## Not checked
 
-- The server engines. Every probe and every test ran on SQLite. Four tests run only on an engine leg and have never run: the two in `TestExpectedVersionRivals` and the one in `TestAppendLock`, in `tests/storage/database/test_races.py`, and every new row of the storage contract on Postgres, MariaDB, SQL Server and Oracle.
-- Whether an engine-leg test that has a rival write the same body as its victim still passes. Such a write is now `unchanged`, and a lost guard against the same body now reruns. One such call is in `test_races.py`, in a test that counts successes.
-- On Postgres at REPEATABLE READ, a rival's commit inside the window can end the guarded `UPDATE` with a serialization failure and a rerun, and not with a guard that matches no row. Both roads are read to end at the same answer. Neither was run.
-- Twenty appenders on a server engine. The lock is read to queue them. The count of reruns for an absent path is not known.
-- SQL Server with `READ_COMMITTED_SNAPSHOT` off. No code under `src/vfs` reads that setting.
-- `scripts/ci.sh`, with its coverage gate, and `scripts/docs.sh check`. The tests under `tests/ranking` were left out of the last run.
+- MariaDB, SQL Server and Oracle after the review. Those dialects are being dropped, and their legs were not run again. Earlier on 2026-11-20 the MariaDB leg passed 496 with 8 skipped and the Oracle leg passed 500. The SQL Server leg hung when 20 contract callers waited on one row lock and the driver's threads ran out, which plain writes do on that engine too.
+- On Postgres at REPEATABLE READ, a rival's commit inside the window can end the guarded `UPDATE` with a serialization failure and a rerun, and not with a guard that matches no row. Both roads are read to end at the same answer. The Postgres rival tests pass, and which road each took was not recorded.
+- The count of reruns when twenty appenders create one absent path on Postgres. All twenty land.
+- An append racing a `delete` or a `move` of its own file on a server engine, and a deadlock search between an append that revives a row and a directory move.
 - The share of a nightly batch that is unchanged.
 
 ## One line

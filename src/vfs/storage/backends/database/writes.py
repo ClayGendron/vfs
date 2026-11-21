@@ -61,7 +61,6 @@ from vfs.models import (
 )
 from vfs.models.rows import ULIDKey
 from vfs.offload import call_offloaded
-from vfs.ops import ADDITIVE_WRITE
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.authorized import admit_landed, admit_staged, admit_targets
 from vfs.storage.backends.database.descent import (
@@ -164,11 +163,7 @@ async def measured_entries(entries: list[Entry], executor: Executor) -> tuple[li
     if refused:
         return [], refused
     bodies = [(index, body) for index, entry in enumerate(snapshots) if (body := _body(entry)) is not None]
-    total = sum(len(body) for _, body in bodies)
-    if total < MEASURE_OFFLOAD_BYTES:
-        metrics = [_measure(body) for _, body in bodies]
-    else:
-        metrics = await call_offloaded(executor, lambda: [_measure(body) for _, body in bodies])
+    metrics = await _measured([body for _, body in bodies], executor)
     measured = list(snapshots)
     for (index, _), found in zip(bodies, metrics, strict=True):
         measured[index] = snapshots[index].model_copy(update=found._asdict())
@@ -195,9 +190,11 @@ async def write_rows(
     ladder — key-byte budget, POSIX parent rule, site check — against
     committed-plus-staged state, so entries may rely on parents minted
     earlier in the same batch. Directories route through ``put_dir``
-    (an existing directory is "unchanged", a file at the site is
-    ``wrong_kind``); files route through ``put_file`` (a directory at
-    the site is ``wrong_kind``; an occupied site needs ``overwrite``).
+    (an existing directory is "unchanged", or ``exists`` when
+    ``overwrite`` is false; a file at the site is ``wrong_kind``);
+    files route through ``put_file`` (an occupied site is ``exists``
+    when ``overwrite`` is false, whatever its kind; otherwise a
+    directory at the site is ``wrong_kind``).
     A file that already holds its entry's body is "unchanged" and is
     not written. Any error fails the whole batch before a statement runs. Its
     entries are already measured by :func:`measured_entries`; it stores
@@ -329,6 +326,7 @@ async def append_rows(
     parents: bool,
     authority: Authority | None,
     executor: Executor,
+    primary: Rung,
     value_cap: ValueCap | None = None,
 ) -> Result:
     """Add *entry*'s body to the end of the file at its path, in the caller's transaction.
@@ -348,6 +346,14 @@ async def append_rows(
     both create an absent path. The loser raises :class:`StaleSnapshot`,
     so its call runs again and appends to the row the winner made. It
     never answers ``exists``, and it never replaces the winner's row.
+    A staged update of another's row is judged at *primary*, the rung
+    the caller's gate was judged at.
+
+    The cost grows with the file, not the tail: each append reads the
+    whole stored body, writes the whole joined body, and the version
+    mint keeps the whole body it replaced. N appends to one file keep
+    N full copies in its history, which only the trash sweep removes.
+    The direction is a version that keeps only what an append added.
     """
     target, rows = entry.path, tables.entry
     await session.execute(locked_lookup(rows, rows.c.path, [str(target)], [rows.c.entry_id], profile))
@@ -362,7 +368,7 @@ async def append_rows(
         stored = (row["data"] or b"") if row["source"] == "bytes" else (row["content"] or "")
         body = appended(stored, body)
         kind, mime_type = row["kind"], row["mime_type"]
-        metrics = await _measured(body, executor)
+        (metrics,) = await _measured([body], executor)
     text = isinstance(body, str)
     status = plan.put_file(
         target,
@@ -391,7 +397,7 @@ async def append_rows(
         plan,
         op="write",
         overwrite=False,
-        primary=ADDITIVE_WRITE.primary,
+        primary=primary,
     )
     if any(
         error.kind == ErrorKind.exists or (error.kind == ErrorKind.conflict and error.retryable)
@@ -1381,11 +1387,11 @@ def _measure(body: str | bytes) -> BodyMetrics:
     return measure_text(body) if isinstance(body, str) else measure_bytes(body)
 
 
-async def _measured(body: str | bytes, executor: Executor) -> BodyMetrics:
-    """*body* measured where a write's body is: inline when small, in one offloaded hop at the threshold."""
-    if len(body) < MEASURE_OFFLOAD_BYTES:
-        return _measure(body)
-    return await call_offloaded(executor, lambda: _measure(body))
+async def _measured(bodies: list[str | bytes], executor: Executor) -> list[BodyMetrics]:
+    """Each of *bodies* measured: inline below ``MEASURE_OFFLOAD_BYTES`` in all, in one offloaded hop at it."""
+    if sum(len(body) for body in bodies) < MEASURE_OFFLOAD_BYTES:
+        return [_measure(body) for body in bodies]
+    return await call_offloaded(executor, lambda: [_measure(body) for body in bodies])
 
 
 def _stage_edits(

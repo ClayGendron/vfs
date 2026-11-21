@@ -659,7 +659,9 @@ class TestArbitration:
             errors = await _resolve_rows(
                 session, entry, [refused], [_entry_values(refused, root_key, None, now, 2)], overwrite=False
             )
-            assert [e.kind for e in errors] == [ErrorKind.exists]
+            assert [(e.kind, sorted((e.data or {}).keys())) for e in errors] == [
+                (ErrorKind.exists, ["content_hash", "version"])
+            ]
 
             # overwrite=True where the rival is a directory: wrong_kind.
             blocked = staged_for("/dir", "file")
@@ -1779,6 +1781,26 @@ class TestStagedRowsAreJudged:
             result = await storage.write(entries=entries, authority=BOB)
         assert len(sessions) == 2
         assert [(error.kind, error.path) for error in result.errors] == [(ErrorKind.wrong_kind, "/drop/b.txt")]
+
+    async def test_a_row_that_holds_the_callers_body_is_judged_before_it_is_unchanged(self, monkeypatch) -> None:
+        """A row landed after the gate that already holds bob's body is judged before bob hears ``unchanged``.
+
+        Guards ``settle`` after ``admit_staged`` in ``_finish``: before it, bob
+        hears that alice's row holds his body, in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        act = clearing(
+            "write:before-snapshot", lambda: land(sessions[-1], tables, "/drop/x.txt", "alice", "add", body="bob")
+        )
+        with installed("write:before-snapshot", act):
+            result = await storage.write(entries=[Entry(path=Path("/drop/x.txt"), content="bob")], authority=BOB)
+        assert len(sessions) == 2
+        assert [(o.status, o.version) for o in result.observations] == [("created", 1)]
+        row = await row_at(storage, "/drop/x.txt")
+        assert row is not None and row["owner_id"] == "bob"
 
     async def test_a_revive_the_plan_stages_is_judged_at_the_restore_rung(self, monkeypatch) -> None:
         """A tombstoned row landed after the gate is revived only at ``read_write``, restore's rung.

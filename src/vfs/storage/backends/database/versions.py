@@ -19,8 +19,8 @@ and before the bodies are replaced, so it reads the pre-image under the
 same lock that guards the write. The pre-image's metrics are measured
 from the body itself, never copied from the entry row: an arbitration
 clobber has already overwritten that row's columns by the time the mint
-runs. A row whose snapshot already joined its text body (an edit's)
-mints from that copy: the guarded update proved the row unchanged since
+runs. A row whose snapshot already joined its body (an edit's text,
+or an append's text or bytes) mints from that copy: the guarded update proved the row unchanged since
 the snapshot, so the copy is the pre-image and a second read would
 fetch the same bytes. The rest are read one page at a time — a page is
 bounded by the blob page's bytes, metered by each replaced body's size
