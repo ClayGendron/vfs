@@ -399,6 +399,7 @@ Out: every write. A read of one mount. A batch. The storage protocol. Statement 
 - `timeout` on a mount and `mount_timeout` on the kernel are seconds, and `None` waits without limit.
 - A storage built with stage budgets longer than the default needs a mount `timeout` of at least three of its own budgets.
 - A call that was late is cancelled. On some engines the statement may still run for a while on the server.
+- A How-to page, on putting a time limit on a call, says what a caller may count on after a cancelled call: a write cancelled before its commit has begun changes nothing, and one cancelled at its commit or after has landed whole. `documentation/maintainers/cancellation.md` is the page for people who change VFS, and this one is for people who use it.
 
 Pages: `documentation/maintainers/mounts.md`, whose last section says a listing waits with no time limit; the Mount term in the glossary; the docstrings of the kernel class, `add_mount`, `update_mount`, `close`, `Mount`, `MountPayload`, `gather_settled`, and of `ls`, `tree`, `glob`, `grep` and `search`.
 
