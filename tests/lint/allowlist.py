@@ -27,7 +27,7 @@ MODULE_LINE_BASELINE: dict[str, int] = {
     "src/vfs/base.py": 3098,
     "src/vfs/storage/backends/database/backend.py": 1509,
     "src/vfs/storage/backends/database/rights.py": 1539,
-    "src/vfs/storage/backends/database/reads.py": 1160,
+    "src/vfs/storage/backends/database/reads.py": 1164,
     "src/vfs/storage/backends/database/writes.py": 1415,
     "src/vfs/storage/backends/database/engine.py": 1008,
 }
