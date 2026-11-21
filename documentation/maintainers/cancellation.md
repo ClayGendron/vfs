@@ -8,7 +8,7 @@ A cancelled call leaves its [storage](../reference/glossary.md#storage) whole. E
 
 A cancelled write has changed nothing or has landed whole. A write that is cancelled before its commit has begun changes nothing, and one that is cancelled at its commit or after has landed. The caller cannot know which of the two happened, and that is so on every database engine.
 
-The caller is raised the cancellation it was cancelled with. It is the same exception object, and not a new one.
+The caller is raised a cancellation it was cancelled with. It is the same exception object, and not a new one.
 
 On SQLite there is one rule more. A cancelled call ends the statement in flight and sends no other. Its transaction is then rolled back, and only then is the caller's cancellation raised.
 
@@ -34,9 +34,11 @@ A database server has neither problem, because its database does not live inside
 
 `run_out_of_reach`, in `storage/backends/database/attempts.py`, is the whole of it. It starts the attempt in a task and waits for the task. Each cancellation that arrives during the wait is caught, the attempt is marked, and the wait goes on. A second cancellation does not cut the wait short.
 
-When the attempt has ended, the function raises the first cancellation it caught, and not a new one. The reason is anyio, which knows its own cancellation by the message on the exception. An earlier build raised a new and empty `CancelledError`, and `anyio.move_on_after` and `anyio.fail_after` then let the error escape their blocks. Starlette, FastAPI, httpx and the MCP SDK are built on anyio, so a server that cancels a request when its client goes away would have been broken by it.
+When the attempt has ended, the function raises a cancellation it caught, and not a new one. The reason is anyio, which knows its own cancellation by the message on the exception. An earlier build raised a new and empty `CancelledError`, and `anyio.move_on_after` and `anyio.fail_after` then let the error escape their blocks. Starlette, FastAPI, httpx and the MCP SDK are built on anyio, so a server that cancels a request when its client goes away would have been broken by it.
 
-A caller can have two cancellers, such as an `asyncio.timeout` inside a cancel scope of anyio. The timeout's cancellation carries no message, so when it comes first the scope does not find its own message on the error that is raised. The function therefore keeps one cancellation for each message it has seen. It raises the first, and each later one is the `__context__` of the one before it, which is where anyio looks next. A scope cancels its task again on every turn of the loop, always with the same message, so the chain holds one error for each canceller and not one for each turn.
+A caller can have two cancellers, such as an `asyncio.timeout` inside a cancel scope of anyio, and each must know its own cancellation in the one error that is raised. They know it in different ways. anyio reads the message on the error. asyncio's own cancellers, a time limit and a task group, do not read the message at all. So the function keeps one cancellation for each message it has seen, and raises the first that carries a message, or the first of all when none does. The others are behind it as its `__context__`, in the order they came, which is where anyio looks next. A scope cancels its task again on every turn of the loop, always with the same message, so the chain holds one error for each canceller and not one for each turn.
+
+What is behind the error does not always arrive. Python replaces the `__context__` of an error that leaves a block which is handling another error. So when a call is awaited inside an `except` block, only the error itself is sure to arrive, and that is why the one with a message is raised. One limit remains. Of two cancellers that both read a message, around a call awaited inside an `except` block, the second does not find its own.
 
 Before it raises, the function reads what the dropped attempt raised. A refused attempt ends with an exception that nobody wants, and an exception that is never read is reported by the event loop as never retrieved.
 
