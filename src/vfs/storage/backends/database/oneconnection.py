@@ -5,9 +5,8 @@ open. Two rules follow from that, and this module holds both.
 
 Calls take turns. One connection cannot run two transactions at once, so
 each session holds a lock from the moment it is entered until it is left.
-An attempt that was marked while it waited for its turn is refused by the
-session inside this one as it enters, so it sends nothing and gives its
-turn up.
+An attempt that was marked while it waited for its turn is refused at
+the first use of its session, so it sends nothing and gives its turn up.
 
 A second connection is a new database. When the pool opens one, the
 host is told, so that its next call provisions the schema again.
@@ -36,9 +35,8 @@ class SerializedSession:
     """One session that holds the host lock from the moment it is entered until it is left.
 
     A session that is never entered takes no lock. Every other attribute is
-    the attribute of the session it wraps. If entering that session fails,
-    as it does for an attempt that was marked while it waited, the lock is
-    given back.
+    the attribute of the session it wraps. The lock is given back if that
+    session fails to enter, and when it has been left, whatever it raised.
     """
 
     def __init__(self, session: AsyncSession, lock: asyncio.Lock) -> None:

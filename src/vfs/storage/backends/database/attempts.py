@@ -8,33 +8,38 @@ connection can be thrown away with a cursor still open, and it then
 keeps its write lock until the collector runs, which locks the next
 writer out.
 
-So on every SQLite storage each attempt runs in a task of its own, and a
-caller that is cancelled waits for its attempt to end before its
-cancellation is raised. The storage may have built its engine or been
-handed its sessions, and its database may be in memory or in a file.
+So on SQLite each attempt runs in a task of its own, and a caller that
+is cancelled waits for its attempt to end before its cancellation is
+raised.
 
 An attempt whose caller was cancelled is marked, and a marked attempt
 stops. The statement in flight ends, and no other is sent: the next one
 is refused before it reaches the database, the ``BEGIN`` of a
-transaction among them, as is the entry of a session, and the commit.
-The transaction is then rolled back. So a write that is cancelled before its
-commit has begun changes nothing, and one that is cancelled later has
-landed whole. A caller cannot know which, and that is so on every engine.
+transaction among them, as is the first use of a session, before a
+connection is checked out, and the commit. The transaction is then
+rolled back. So a write that is cancelled before its commit has begun
+changes nothing, and one that is cancelled later has landed whole. A
+caller cannot know which, and that is so on every engine.
 
 Two things are still sent after a mark. A connection that the pool is
-checking out has its settings stamped in the pool's own listener, and a
-refusal raised there would cost the connection, so a checkout that has
-begun sends all its statements. And every rollback is sent, to a
-savepoint or of the whole transaction, because the rollbacks are what
-unwind the attempt and leave the connection clean.
+making or checking out has its settings stamped in the pool's own
+listener, and a refusal raised there would cost the connection, so a
+checkout that has begun sends all its statements. And every rollback is
+sent, to a savepoint or of the whole transaction, because the rollbacks
+are what unwind the attempt and leave the connection clean.
 
-The refusals belong to the sessions a host takes for its attempts, and
-nothing is left on what outlives them. Such a session is bound to a view
-of its engine that carries an option, and the host's own listener at the
-begin of a transaction tells this module of each connection that carries
-it. The engine, its pool and a session the application makes for itself
-are given no listener, and that session is refused nothing, even inside
-a marked attempt.
+A mark does not end a wait. An attempt that is waiting for a connection
+from its pool, or for its turn on a database that lives in one
+connection, is refused when it gets one, and its caller is back then and
+not before. On a pool that is the pool's timeout at the latest. An
+attempt that waits on a worker thread, as a grep does, ends when the
+thread has.
+
+The refusals are two listeners, each put in place once. One is on the
+storage's own engine and reads the mark before each statement. The other
+is on the class of the storage's sessions and reads it at a session's
+first use and at its commit. Outside an attempt there is no mark, so the
+statistics pass, which runs in a task of the storage, is refused nothing.
 
 A task copies the context it is started in, so one started inside an
 attempt carries that attempt's mark for as long as it runs: a task that
@@ -47,25 +52,22 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar
 
-from sqlalchemy import Engine, event
+from sqlalchemy import event
 from sqlalchemy.exc import InvalidRequestError
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from sqlalchemy import Engine
     from sqlalchemy.engine import Connection
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.orm import Session
 
 T = TypeVar("T")
 
 CANCELLED_ATTEMPT = "the caller of this attempt was cancelled, so the attempt sends nothing more"
 """What a marked attempt is refused with."""
-
-ATTEMPT = "vfs_attempt"
-"""The execution option on every connection of a session that a host took for an attempt."""
 
 
 class _Mark:
@@ -132,72 +134,26 @@ def refuse_a_marked_attempt() -> None:
         raise InvalidRequestError(CANCELLED_ATTEMPT)
 
 
-def attempt_begins(connection: Connection) -> None:
-    """Refuse each statement that *connection* is asked to send once its attempt is marked.
+def refuse_statements_of_marked_attempts(engine: Engine) -> None:
+    """Have *engine* refuse each statement that a marked attempt asks one of its connections to send.
 
-    The host calls this from its own listener at the begin of every
-    transaction on its engine, before it sends the ``BEGIN``, so the
-    ``BEGIN`` of a marked attempt is refused as well. Only a connection
-    of a session the host took carries ``ATTEMPT``, and only inside an
-    attempt is there a mark to watch, so any other connection is left as
-    it is. The watch is a listener on the connection alone, which ends
-    with its transaction.
+    The ``BEGIN`` that opens a transaction and the statements of a
+    savepoint are refused with the rest. A rollback is let through. The
+    statements a pool sends as it makes or checks out a connection do not
+    pass this way, and are sent.
     """
-    mark = _MARK.get()
-    if mark is None or not connection.get_execution_options().get(ATTEMPT):
-        return
-
-    def before_each_statement(_connection: Connection, _cursor: object, statement: str, *_sent: object) -> None:
-        # A rollback is let through: it is what unwinds the refused attempt and leaves the connection clean.
-        if mark.cancelled and not statement.startswith(_ROLLBACK):
-            raise InvalidRequestError(CANCELLED_ATTEMPT)
-
-    event.listen(connection, "before_cursor_execute", before_each_statement)
+    event.listen(engine, "before_cursor_execute", _before_statement)
 
 
-class AttemptSession:
-    """One session that a host took for an attempt.
+class AttemptSession(Session):
+    """A session that a marked attempt cannot begin to use, and cannot commit.
 
-    Entering it refuses a marked attempt before a connection is checked
-    out, binds the session to the host's view of its engine, so that each
-    of its transactions is told to ``attempt_begins``, and has its commit
-    refused once the attempt is marked. Every other attribute is the
-    attribute of the session it wraps.
+    The refusal at its first use comes before a connection is checked
+    out, so an attempt that was marked before it used its session sends
+    nothing. The refusal at the commit is its own because a commit is a
+    call of the driver and not a statement. Both raise
+    ``InvalidRequestError``.
     """
-
-    def __init__(self, session: AsyncSession, views: dict[Engine, Engine]) -> None:
-        self._session = session
-        self._views = views
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._session, name)
-
-    async def __aenter__(self) -> AsyncSession:
-        refuse_a_marked_attempt()
-        session = self._session.sync_session
-        bind = session.bind
-        if isinstance(bind, Engine):
-            # One view for each engine, made once: the same pool, and the option on each connection.
-            view = self._views.get(bind)
-            if view is None:
-                view = self._views[bind] = bind.execution_options(**{ATTEMPT: True})
-            session.bind = view
-        event.listen(session, "before_commit", _before_commit)
-        return await self._session.__aenter__()
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        await self._session.__aexit__(*exc_info)
-
-
-class AttemptSessions:
-    """A session factory whose sessions are ``AttemptSession``, over the factory a host built or was handed."""
-
-    def __init__(self, factory: Callable[[], AsyncSession]) -> None:
-        self._factory = factory
-        self._views: dict[Engine, Engine] = {}
-
-    def __call__(self) -> AsyncSession:
-        return cast("AsyncSession", AttemptSession(self._factory(), self._views))
 
 
 # ---------------------------------------------------------------------------
@@ -205,5 +161,17 @@ class AttemptSessions:
 # ---------------------------------------------------------------------------
 
 
+def _before_statement(_connection: Connection, _cursor: object, statement: str, *_sent: object) -> None:
+    # A rollback is let through: it is what unwinds the refused attempt and leaves the connection clean.
+    if not statement.startswith(_ROLLBACK):
+        refuse_a_marked_attempt()
+
+
+@event.listens_for(AttemptSession, "after_transaction_create")
+def _at_first_use(_session: Session, _transaction: object) -> None:
+    refuse_a_marked_attempt()
+
+
+@event.listens_for(AttemptSession, "before_commit")
 def _before_commit(_session: Session) -> None:
     refuse_a_marked_attempt()

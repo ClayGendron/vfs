@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from tests.support.cancelled_callers import turns_of_the_loop
 from vfs.paths import Path
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.attempts import CANCELLED_ATTEMPT, AttemptSessions, run_out_of_reach
+from vfs.storage.backends.database.attempts import CANCELLED_ATTEMPT, AttemptSession, run_out_of_reach
 from vfs.storage.backends.database.oneconnection import (
     SerializedSession,
     SerializedSessions,
@@ -86,6 +86,20 @@ class TestCallsTakeTurns:
         assert held_as_the_exit_ended == [True]
         assert lock.locked() is False
 
+    async def test_a_session_whose_exit_fails_still_gives_the_lock_back(self, one_connection: AsyncEngine) -> None:
+        """Guards the ``finally`` of ``__aexit__``: without it one failed exit locks every later call out."""
+
+        class _Unleavable(AsyncSession):
+            async def __aexit__(self, type_: Any, value: Any, traceback: Any) -> None:
+                await super().__aexit__(type_, value, traceback)
+                raise LookupError("no way out")
+
+        lock = asyncio.Lock()
+        with pytest.raises(LookupError, match="no way out"):
+            async with SerializedSession(_Unleavable(one_connection), lock):
+                assert lock.locked() is True
+        assert lock.locked() is False
+
     async def test_a_second_session_of_one_factory_waits_for_the_first_to_leave(
         self, one_connection: AsyncEngine
     ) -> None:
@@ -104,20 +118,18 @@ class TestCallsTakeTurns:
         await waiting
         assert order == ["the first is leaving", "the second entered"]
 
-    async def test_an_attempt_marked_while_it_waits_its_turn_enters_no_session_and_gives_the_lock_back(
+    async def test_an_attempt_marked_while_it_waits_its_turn_checks_no_connection_out_and_gives_the_lock_back(
         self, one_connection: AsyncEngine
     ) -> None:
-        """Guards ``__aenter__``: the session it wraps refuses a marked attempt, and the lock is given back then."""
-        sessions = SerializedSessions(AttemptSessions(async_sessionmaker(one_connection)))
+        """An attempt's session refuses its first use once the attempt is marked, and its exit gives the lock back."""
+        sessions = SerializedSessions(async_sessionmaker(one_connection, sync_session_class=AttemptSession))
         checked_out: list[object] = []
         event.listen(one_connection.sync_engine, "checkout", lambda *connection: checked_out.append(connection))
-        entered: list[AsyncSession] = []
         refusals: list[str] = []
 
         async def attempt() -> None:
             try:
                 async with sessions() as session:
-                    entered.append(session)
                     await session.execute(text("SELECT 1"))
             except InvalidRequestError as refusal:
                 refusals.append(str(refusal))
@@ -130,7 +142,7 @@ class TestCallsTakeTurns:
             await turns_of_the_loop()
         with pytest.raises(asyncio.CancelledError):
             await behind
-        assert (entered, checked_out, refusals) == ([], [], [CANCELLED_ATTEMPT])
+        assert (checked_out, refusals) == ([], [CANCELLED_ATTEMPT])
         assert sessions._lock.locked() is False
 
 

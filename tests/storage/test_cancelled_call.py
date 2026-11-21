@@ -6,9 +6,9 @@ its rows, and the next call must work. On a database in a file the
 connection must not be thrown away with a cursor open, which locks the
 next writer out.
 
-The same holds on each of the four SQLite hosts: a storage that built
-its engine from a URL and one that was handed a session factory, over a
-database in memory and over one in a file.
+The same holds on both SQLite hosts: a storage whose database is in
+memory, behind one connection, and one whose database is in a file,
+behind a pool.
 
 No test here reads a clock. One chosen driver round trip is held on the
 driver's worker thread until the test lets it go, and the call is
@@ -23,11 +23,13 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite.core
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event
 
 from tests.support.cancelled_callers import (
     CONNECTING,
+    FINGERPRINT,
     HOSTS,
+    STAMP,
     Connections,
     HeldRoundTrip,
     Host,
@@ -47,35 +49,16 @@ from tests.support.cancelled_callers import (
 from vfs import AsyncVirtualFileSystem, Authority
 from vfs.models import Entry
 from vfs.paths import Path
-from vfs.storage.backends.database.attempts import ATTEMPT, run_out_of_reach
 
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
-    from sqlalchemy.ext.asyncio import AsyncEngine
-    from sqlalchemy.orm import Session
-
     from vfs import DatabaseStorage
 
 SYSTEM = Authority.system()
 
-# The events of an engine, of its pool and of a session that a listener can be put on.
-ENGINE_EVENTS = (
-    *("before_execute", "after_execute", "before_cursor_execute", "after_cursor_execute", "engine_connect"),
-    *("begin", "commit", "rollback", "savepoint", "release_savepoint", "rollback_savepoint"),
-)
-POOL_EVENTS = (
-    *("connect", "first_connect", "checkout", "checkin", "reset"),
-    *("invalidate", "soft_invalidate", "close", "detach", "close_detached"),
-)
-SESSION_EVENTS = (
-    *("before_commit", "after_commit", "after_begin", "after_rollback", "after_soft_rollback"),
-    *("after_transaction_create", "after_transaction_end", "do_orm_execute", "before_flush", "after_flush"),
-)
-
-BUILT = pytest.mark.parametrize("host", HOSTS[:2], indirect=True)
-IN_A_FILE = pytest.mark.parametrize("host", ["built in a file"], indirect=True)
+IN_A_FILE = pytest.mark.parametrize("host", ["in a file"], indirect=True)
 ON_EVERY_HOST = pytest.mark.parametrize("host", HOSTS, indirect=True)
 
 
@@ -96,7 +79,7 @@ def round_trip(monkeypatch: pytest.MonkeyPatch) -> Iterator[HeldRoundTrip]:
 
 @pytest.fixture
 async def host(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> AsyncIterator[Host]:
-    """One of the four SQLite hosts: built in memory, or the one the test's parameter names."""
+    """One of the two SQLite hosts: in memory, or the one the test's parameter names."""
     made = Host(getattr(request, "param", HOSTS[0]), tmp_path / "one")
     yield made
     await made.close()
@@ -145,23 +128,27 @@ VERBS: dict[str, Callable[[AsyncVirtualFileSystem], Awaitable[Any]]] = {
     "edit": lambda kernel: kernel.edit(path="/a.txt", old="old", new="new"),
     "delete of a directory": lambda kernel: kernel.delete("/dir"),
     "move": lambda kernel: kernel.move("/dir/x.txt", "/dir/moved.txt"),
+    "grant": lambda kernel: kernel.grant("/dir", "ann", "read"),
+    "revoke": lambda kernel: kernel.revoke("/dir", "bob"),
 }
 
 
 async def a_directory(kernel: AsyncVirtualFileSystem, storage: DatabaseStorage) -> None:
-    """Add ``/dir`` with two files to *kernel*, and wait for the statistics pass of each write.
-
-    A storage that was handed an in-memory session factory has one connection
-    and no turns, so a pass that is still running would collide with the next call.
-    """
+    """Add ``/dir`` with two files and a grant to *kernel*, and wait for the statistics pass of those writes."""
     for path in ("/dir/x.txt", "/dir/y.txt"):
         assert (await kernel.write(path=path, content="old", parents=True)).success
-        await storage._host.settle_statistics()
+    assert (await kernel.grant("/dir", "bob", "read")).success
+    await storage._host.settle_statistics()
 
 
 async def everything(kernel: AsyncVirtualFileSystem) -> list[tuple[str, str | None, int | None]]:
-    """Every entry under the root as its path, content and version, in the order of the paths."""
-    found: list[tuple[str, str | None, int | None]] = []
+    """Every entry under the root as its path, content and version, and every grant on ``/dir``, in order."""
+    granted = await kernel.grants("/dir")
+    assert granted.success, granted.errors
+    found: list[tuple[str, str | None, int | None]] = [
+        (f"{grant['path_prefix']} to {grant['principal_id']}", grant["level"], None)
+        for grant in (granted.model_extra or {})["grants"]
+    ]
     waiting = ["/"]
     while waiting:
         listed = await kernel.ls(waiting.pop())
@@ -175,18 +162,6 @@ async def everything(kernel: AsyncVirtualFileSystem) -> list[tuple[str, str | No
                 assert read.success, read.errors
                 found.append((str(row.path), read.one().content, (await kernel.stat(str(row.path))).one().version))
     return sorted(found)
-
-
-def listeners_on(engine: AsyncEngine) -> dict[str, int]:
-    """How many listeners each event of *engine* and of its pool has."""
-    sync = engine.sync_engine
-    counted = {name: len(list(getattr(sync.dispatch, name))) for name in ENGINE_EVENTS}
-    return counted | {name: len(list(getattr(sync.pool.dispatch, name))) for name in POOL_EVENTS}
-
-
-def listeners_of(session: Session) -> dict[str, int]:
-    """How many listeners each event of *session* has, its class's among them."""
-    return {name: len(list(getattr(session.dispatch, name))) for name in SESSION_EVENTS}
 
 
 async def content_and_version(kernel: AsyncVirtualFileSystem) -> tuple[str | None, int | None]:
@@ -326,9 +301,9 @@ class TestACancelledWrite:
 class TestACallCancelledAtOneRoundTripAfterAnother:
     """One storage takes every cut of a sweep, so each cut also proves that the cut before it left the storage whole.
 
-    The built in-memory host is cut at every round trip of each call. The
-    other three are cut at the first round trip of each kind: the driver
-    function and the first two words of the statement it carries.
+    The in-memory host is cut at every round trip of each call. The host in
+    a file is cut at the first round trip of each kind: the driver function
+    and the first two words of the statement it carries.
     """
 
     @ON_EVERY_HOST
@@ -568,50 +543,34 @@ class TestTheCallerWaitsForItsAttempt:
         assert (await fs.read("/a.txt")).one().content == "old"
 
 
-@pytest.mark.parametrize("host", HOSTS[2:], indirect=True)
-class TestAHandedEngineIsNeverTouched:
-    """A storage that was handed a session factory puts nothing on what outlives the sessions it takes."""
-
-    async def test_cancelled_calls_leave_no_listener_on_the_engine_or_on_its_sessions(
-        self, fs: AsyncVirtualFileSystem, host: Host, round_trip: HeldRoundTrip
+class TestACallerCancelledWhileItsAttemptWaitsForAConnection:
+    async def test_it_is_back_when_the_attempt_gets_a_connection_and_begins_no_transaction(
+        self, round_trip: HeldRoundTrip, tmp_path: pathlib.Path
     ) -> None:
-        """Guards where the refusals are put: on the engine or on the session class, they would be found here."""
-        assert host.sessions is not None
-        engine = host.engine.sync_engine
-        # The first call has put the transaction control on the engine: its begin and its checkout.
-        before = listeners_on(host.engine)
-        round_trip.hold(first_statement_of_a_transaction())
-        await cancel_while_held(fs.write(path="/a.txt", content="new"), round_trip)
-        assert (await fs.read("/a.txt")).one().content == "old"
-        assert listeners_on(host.engine) == before
-        assert [before[name] for name in ("before_cursor_execute", "before_execute", "commit")] == [0, 0, 0]
-        assert engine.get_execution_options().get(ATTEMPT) is None
-        async with host.sessions() as own:
-            assert (own.sync_session.get_bind() is engine, set(listeners_of(own.sync_session).values())) == (True, {0})
+        """The wait for a connection is the pool's, and nothing ends it but a connection or the pool's own timeout.
 
-    async def test_a_session_the_application_makes_inside_a_marked_attempt_is_not_refused(
-        self, fs: AsyncVirtualFileSystem, host: Host
-    ) -> None:
-        """Guards whose transactions are refused: the mark alone would stop the application's own on this engine."""
-        assert host.sessions is not None
-        sessions = host.sessions
-        started, let_go = asyncio.Event(), asyncio.Event()
-
-        async def attempt() -> None:
-            started.set()
-            await let_go.wait()
-            async with sessions() as own:
-                await own.execute(text("CREATE TABLE own (n INTEGER)"))
-                await own.execute(text("INSERT INTO own VALUES (1)"))
-                await own.commit()
-
-        caller = asyncio.ensure_future(run_out_of_reach(attempt))
-        await started.wait()
-        caller.cancel()
-        await turns_of_the_loop()
-        let_go.set()
-        with pytest.raises(asyncio.CancelledError):
-            await caller
-        async with sessions() as own:
-            assert list((await own.execute(text("SELECT n FROM own"))).scalars()) == [1]
-        assert await content_and_version(fs) == ("old", 1)
+        Pins the wait as it is: the caller is not back while the call ahead holds the one
+        connection, and the attempt that then gets it is refused at its ``BEGIN``.
+        """
+        host = Host("in a file", tmp_path / "one", {"pool_size": 1, "max_overflow": 0})
+        kernel = await kernel_holding_a_file(host.storage)
+        try:
+            round_trip.again()
+            round_trip.hold(reads_entries)
+            ahead = asyncio.ensure_future(kernel.stat("/a.txt"))
+            await round_trip.reached.wait()
+            waiting = asyncio.ensure_future(kernel.stat("/a.txt"))
+            await turns_of_the_loop()
+            waiting.cancel("mine")
+            await turns_of_the_loop()
+            still_waiting = not waiting.done()
+            round_trip.let_go()
+            with pytest.raises(asyncio.CancelledError) as raised:
+                await waiting
+            assert (still_waiting, raised.value.args, (await ahead).success) == (True, ("mine",), True)
+            # The statement that was held is the last of the call ahead. The checkout stamps its settings after it.
+            assert round_trip.statements_after_the_cut() == [*STAMP, FINGERPRINT]
+        finally:
+            round_trip.let_go()
+            await kernel.close()
+            await host.close()

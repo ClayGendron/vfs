@@ -1,4 +1,4 @@
-"""What the tests of a cancelled caller share: a held driver round trip, the four SQLite hosts, turns of the loop.
+"""What the tests of a cancelled caller share: a held driver round trip, the two SQLite hosts, turns of the loop.
 
 A test that cancels a caller never waits on a clock. It holds one chosen
 round trip on the driver's worker thread, cancels the call while the
@@ -25,23 +25,21 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import DisconnectionError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from vfs import DatabaseStorage, InMemoryStorage
 from vfs.storage.backends.database.dialects import SQLITE, SQLITE_VEC_PROBE
-from vfs.storage.backends.database.drivers import engine_arguments
 from vfs.storage.backends.database.engine import STATISTICS_FINGERPRINT
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator
+    from collections.abc import Awaitable, Callable, Iterator, Mapping
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 IN_MEMORY = "sqlite+aiosqlite://"
 
-HOSTS = ("built in memory", "built in a file", "handed in memory", "handed in a file")
-"""A storage builds its engine from a URL or is handed a session factory, over a database in memory or in a file."""
+HOSTS = ("in memory", "in a file")
+"""Where a SQLite storage keeps its database: in its one connection, or in a file behind a pool."""
 
 # More turns than any chain of tasks these tests start needs to settle.
 TURNS = 10
@@ -49,10 +47,10 @@ TURNS = 10
 STATEMENT = "execute "
 UNDOING = "execute ROLLBACK"
 
-# What a pool checkout sends before it hands a connection out: the probe for the vector function, then the settings.
-_STAMP = [f"{STATEMENT}{SQLITE_VEC_PROBE}", *(f"{STATEMENT}{setting}" for setting in SQLITE.session_settings)]
-# What the checkout of a file engine that vfs built sends after them: the read of the planner statistics it holds.
-_FINGERPRINT = STATEMENT + STATISTICS_FINGERPRINT.format(schema='"main"')
+STAMP = [f"{STATEMENT}{SQLITE_VEC_PROBE}", *(f"{STATEMENT}{setting}" for setting in SQLITE.session_settings)]
+"""What a pool checkout sends before it hands a connection out: the probe for the vector function, then the settings."""
+FINGERPRINT = STATEMENT + STATISTICS_FINGERPRINT.format(schema='"main"')
+"""What the checkout of a database in a file sends after them: the read of the planner statistics it holds."""
 
 CONNECTING = ("create_function", f"{STATEMENT}PRAGMA read_uncommitted", "enable_load_extension", "load_extension")
 """How the round trips begin that only the making of a connection sends: its functions, its probe, the extension."""
@@ -201,7 +199,7 @@ def left_of_a_checkout(names: list[str], cut: int) -> list[str]:
 
     A checkout stamps the connection's settings in the pool's own listener.
     A refusal raised there would cost the connection, so a checkout that has
-    begun sends all its statements. A file engine that vfs built may find the
+    begun sends all its statements. A database in a file may find the
     connection's planner statistics stale and stamp a second one in its place.
     The first checkout of all makes the connection before it stamps it.
     Outside a checkout the answer is none.
@@ -211,15 +209,15 @@ def left_of_a_checkout(names: list[str], cut: int) -> list[str]:
     left: list[str] = []
     place = 0
     while place < len(statements):
-        stamp = statements[place : place + len(_STAMP)]
-        if [names[index] for index in stamp] != _STAMP:
+        stamp = statements[place : place + len(STAMP)]
+        if [names[index] for index in stamp] != STAMP:
             # A stamp that follows the one the cut is in belongs to the same checkout; anything else ends it.
             if left:
                 break
             place += 1
             continue
-        after = statements[place + len(_STAMP) : place + len(_STAMP) + 1]
-        stamp += [index for index in after if names[index] == _FINGERPRINT]
+        after = statements[place + len(STAMP) : place + len(STAMP) + 1]
+        stamp += [index for index in after if names[index] == FINGERPRINT]
         making = names[cut].startswith(CONNECTING) and all(
             name.startswith(CONNECTING) for name in names[cut : stamp[0]] if name.startswith(STATEMENT)
         )
@@ -232,41 +230,33 @@ def left_of_a_checkout(names: list[str], cut: int) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# The four hosts
+# The two hosts
 # ---------------------------------------------------------------------------
 
 
 class Host:
-    """One SQLite storage, and the engine its connections come from.
+    """One SQLite storage, kept in memory or in a file, and the engine it built.
 
-    A built storage made its engine from a URL. A handed one was given a
-    session factory over an engine the test made, as an application would.
+    *engine_arguments* size the pool of a storage in a file, as ``pool_size=1`` does.
     """
 
-    def __init__(self, name: str, file: Path) -> None:
-        url = IN_MEMORY if name.endswith("in memory") else f"sqlite+aiosqlite:///{file}.sqlite"
+    def __init__(self, name: str, file: Path, engine_arguments: Mapping[str, Any] | None = None) -> None:
         self.name = name
-        self.handed = name.startswith("handed")
-        self.sessions: async_sessionmaker[Any] | None = None
-        if self.handed:
-            self.engine: AsyncEngine = create_async_engine(url, **engine_arguments(url))
-            self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
-            self.storage = DatabaseStorage(session_factory=self.sessions)
+        if name == "in memory":
+            self.storage: DatabaseStorage = InMemoryStorage()
         else:
-            self.storage = InMemoryStorage() if url == IN_MEMORY else DatabaseStorage(url=url)
-            self.engine = self.storage._host.engine
+            self.storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{file}.sqlite", engine_arguments=engine_arguments)
+        self.engine: AsyncEngine = self.storage.engine
 
     async def close(self) -> None:
         await self.storage._host.settle_statistics()
         await self.storage.close()
-        if self.handed:
-            await self.engine.dispose()
 
 
 class Connections:
     """The connections the pool of *engine* opened and threw away, from the moment this is made.
 
-    ``replaced`` counts the ones the host replaced itself because the planner
+    ``replaced`` counts the ones the storage replaced itself because the planner
     statistics of their file had moved, which no cancellation causes.
     """
 

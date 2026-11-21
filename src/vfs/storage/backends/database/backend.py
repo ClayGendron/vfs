@@ -10,15 +10,13 @@ mkdir batches, each planned and executed as one transaction, in
 sweep in ``trash.py``, over the kit in ``serialized.py``; and
 ``mkedge``/``rmedge``, over the table of the fs mirror, in ``edges.py``.
 
-    storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
-    storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
+    storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")
 
-Built or borrowed: a backend never holds an engine it did not make.
-First touch runs at the first routed op or at ``first_touch``, on the
-caller's loop; ``close()`` disposes a built engine and never touches a
-borrowed pool. Each protocol method runs in one session under retry: a
-retryable outcome restarts it from its first read, and a driver failure
-that escapes retry returns a classified ``Result``, never an exception.
+A storage builds and owns its engine, and ``close()`` disposes it. First
+touch runs at the first routed op or at ``first_touch``, on the caller's
+loop. Each protocol method runs in one session under retry: a retryable
+outcome restarts it from its first read, and a driver failure that
+escapes retry returns a classified ``Result``, never an exception.
 """
 
 from __future__ import annotations
@@ -95,7 +93,7 @@ from vfs.storage.ranking import Ranker
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models import Edge, Entry, Observation
@@ -140,16 +138,20 @@ class DatabaseStorage:
     first touch: a mount that already exists keeps its stored posture,
     and only the ``set_posture`` verb changes it.
 
+    *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside
+    the URL: the pool's class and size, ``pool_pre_ping``, ``connect_args``,
+    ``async_creator``. One that VFS itself requires may not be changed.
+
     On SQLite a cancelled caller waits while its call ends the statement
-    in flight, sends no other and is rolled back: a cancelled write
-    changes nothing unless its commit had begun, and then it has landed.
+    in flight, or its wait for a connection, and is rolled back: a
+    cancelled write changes nothing unless its commit had begun.
     """
 
     def __init__(
         self,
         *,
-        url: str | None = None,
-        session_factory: Callable[[], AsyncSession] | None = None,
+        url: str,
+        engine_arguments: Mapping[str, Any] | None = None,
         schema: str | None = None,
         name: str = "database",
         description: str | None = None,
@@ -167,23 +169,18 @@ class DatabaseStorage:
         posture: Posture = "read_write",
     ) -> None:
         if trash_days < 0:
-            msg = f"trash_days must be non-negative, got {trash_days}"
-            raise ValueError(msg)
+            raise ValueError(f"trash_days must be non-negative, got {trash_days}")
         if grep_wall_seconds <= 0:
-            msg = f"grep_wall_seconds must be positive, got {grep_wall_seconds}"
-            raise ValueError(msg)
+            raise ValueError(f"grep_wall_seconds must be positive, got {grep_wall_seconds}")
         if glob_wall_seconds <= 0:
-            msg = f"glob_wall_seconds must be positive, got {glob_wall_seconds}"
-            raise ValueError(msg)
+            raise ValueError(f"glob_wall_seconds must be positive, got {glob_wall_seconds}")
         if embed_concurrency < 1:
-            msg = f"embed_concurrency must be at least 1, got {embed_concurrency}"
-            raise ValueError(msg)
+            raise ValueError(f"embed_concurrency must be at least 1, got {embed_concurrency}")
         if embed_timeout_seconds <= 0:
-            msg = f"embed_timeout_seconds must be positive, got {embed_timeout_seconds}"
-            raise ValueError(msg)
+            raise ValueError(f"embed_timeout_seconds must be positive, got {embed_timeout_seconds}")
         self._host = EngineHost(
             url=url,
-            session_factory=session_factory,
+            engine_arguments=engine_arguments,
             schema=schema,
             embedder=embedder,
             native_embedding=native_embedding,
@@ -201,15 +198,17 @@ class DatabaseStorage:
         # The last queries' vectors, keyed by space: a re-asked question costs no provider call.
         self._query_vectors: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         if search_wall_seconds <= 0:
-            msg = f"search_wall_seconds must be positive, got {search_wall_seconds}"
-            raise ValueError(msg)
+            raise ValueError(f"search_wall_seconds must be positive, got {search_wall_seconds}")
         self._grep_wall_seconds = grep_wall_seconds
         self._search_wall_seconds = search_wall_seconds
         self._glob_wall_seconds = glob_wall_seconds
         self.name = name
-        # Construction stays dialect-free: a borrowed host knows its
-        # dialect only at first use, so the default names the schema.
         self.description = description or (f"Database storage ({schema})" if schema else "Database storage")
+
+    @property
+    def engine(self) -> AsyncEngine:
+        """The storage's own engine, for a ``do_connect`` hook or tracing. ``close()`` disposes it, and no one else."""
+        return self._host.engine
 
     @property
     def mount_identity(self) -> str | None:

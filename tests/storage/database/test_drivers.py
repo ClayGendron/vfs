@@ -17,7 +17,7 @@ import pytest
 from vfs.models import Entry
 from vfs.paths import Path
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.drivers import ClosingConnection, ClosingCursor, engine_arguments
+from vfs.storage.backends.database.drivers import ClosingConnection, ClosingCursor, merge_engine_arguments
 
 if TYPE_CHECKING:
     import pathlib
@@ -50,17 +50,58 @@ def connection() -> Iterator[ClosingConnection]:
         yield opened
 
 
+MSSQL = "mssql+aioodbc://sa:pw@host/db"
+SQLITE = "sqlite+aiosqlite:////tmp/vfs.sqlite"
+POSTGRES = "postgresql+asyncpg://vfs:vfs@host/vfs"
+
+
 class TestTheEngineArguments:
     def test_a_sql_server_url_leaves_text_binds_as_unicode(self) -> None:
         # pyodbc's ANSI setinputsizes mangles non-Latin1 bytes, so only this URL carries the override.
-        assert engine_arguments("mssql+aioodbc://sa:pw@host/db") == {"use_setinputsizes": False}
+        assert merge_engine_arguments(MSSQL) == {"use_setinputsizes": False}
 
-    @pytest.mark.parametrize("url", ["sqlite+aiosqlite:///:memory:", "sqlite+aiosqlite:////tmp/vfs.sqlite"])
+    @pytest.mark.parametrize("url", ["sqlite+aiosqlite:///:memory:", SQLITE])
     def test_a_sqlite_url_opens_closing_connections(self, url) -> None:
-        assert engine_arguments(url) == {"connect_args": {"factory": ClosingConnection}}
+        assert merge_engine_arguments(url) == {"connect_args": {"factory": ClosingConnection}}
 
     def test_any_other_url_needs_nothing(self) -> None:
-        assert engine_arguments("postgresql+asyncpg://vfs:vfs@host/vfs") == {}
+        assert merge_engine_arguments(POSTGRES) == {}
+
+    def test_an_argument_vfs_has_no_stake_in_passes_through(self) -> None:
+        given = {"pool_size": 3, "max_overflow": 0, "pool_pre_ping": True, "connect_args": {"timeout": 9}}
+        assert merge_engine_arguments(POSTGRES, given) == given
+        assert merge_engine_arguments(MSSQL, given) == {**given, "use_setinputsizes": False}
+
+    def test_connect_arguments_are_merged_key_by_key(self) -> None:
+        """Guards the merge: the application's ``connect_args`` put in whole would drop the connection class."""
+        given = {"pool_size": 1, "connect_args": {"timeout": 9}}
+        merged = merge_engine_arguments(SQLITE, given)
+        assert merged == {"pool_size": 1, "connect_args": {"timeout": 9, "factory": ClosingConnection}}
+        # The application's own mapping is left as it was given.
+        assert given == {"pool_size": 1, "connect_args": {"timeout": 9}}
+
+    def test_the_value_vfs_requires_is_accepted_when_the_application_gives_it_too(self) -> None:
+        assert merge_engine_arguments(MSSQL, {"use_setinputsizes": False}) == {"use_setinputsizes": False}
+        given = {"connect_args": {"factory": ClosingConnection}}
+        assert merge_engine_arguments(SQLITE, given) == given
+
+    @pytest.mark.parametrize(
+        ("url", "given", "named"),
+        [
+            (MSSQL, {"use_setinputsizes": True}, r"engine_arguments\['use_setinputsizes'\]"),
+            (
+                SQLITE,
+                {"connect_args": {"factory": sqlite3.Connection}},
+                r"engine_arguments\['connect_args'\]\['factory'\]",
+            ),
+        ],
+        ids=["sql server", "sqlite"],
+    )
+    def test_another_value_for_an_argument_vfs_requires_is_refused_by_name(self, url, given, named) -> None:
+        """Guards the refusal: a required argument dropped in silence is a storage that corrupts text or leaks files."""
+        with pytest.raises(ValueError, match=named) as refused:
+            merge_engine_arguments(url, given)
+        assert "because" in str(refused.value)
 
 
 class TestACursorWhoseStatementFails:

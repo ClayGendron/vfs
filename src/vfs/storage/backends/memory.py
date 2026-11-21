@@ -19,7 +19,7 @@ rivals is exercised on the server engine legs.
 A caller that is cancelled never costs the storage its database. Its
 call runs out of reach of the cancellation, ends the statement it is in
 and sends no other, and a call that was cancelled while it waited in the
-queue sends nothing.
+queue sends nothing, though its caller is back only when its turn comes.
 """
 
 from __future__ import annotations
@@ -46,11 +46,11 @@ class InMemoryStorage(DatabaseStorage):
     A call can be cancelled at any moment, and the storage keeps every row
     afterwards. The call ends the statement it is in, sends no other, and
     its transaction is rolled back; the caller gets its ``CancelledError``
-    then. A call that waits on a worker thread, as a grep does, waits for
-    the thread first. A write that is cancelled before its commit changes
-    nothing, and a write that is cancelled later has landed whole. The
-    caller cannot tell which, so it reads the file before it writes it
-    again.
+    then. A call that waits for its turn behind another, or on a worker
+    thread as a grep does, ends that wait first. A write that is cancelled
+    before its commit changes nothing, and a write that is cancelled later
+    has landed whole. The caller cannot tell which, so it reads the file
+    before it writes it again.
     """
 
     def __init__(

@@ -1,11 +1,12 @@
 """What VFS asks of a database driver when it builds an engine from a URL.
 
-``engine_arguments`` gives the arguments for one URL. Two drivers need
-something. SQL Server through pyodbc needs its text binds left as Unicode.
-SQLite needs its connections opened as ``ClosingConnection``, whose cursors
+``merge_engine_arguments`` gives the arguments for one URL: the ones the
+application gave, and the ones VFS requires. Two drivers need something.
+SQL Server through pyodbc needs its text binds left as Unicode. SQLite
+needs its connections opened as ``ClosingConnection``, whose cursors
 close themselves when a statement fails.
 
-    create_async_engine(url, **engine_arguments(url))
+    create_async_engine(url, **merge_engine_arguments(url, given))
 
 A statement can fail for an ordinary reason. Another writer holds the
 database for longer than the wait allows, or ``close()`` stops a running
@@ -39,38 +40,47 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.engine import make_url
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 # ---------------------------------------------------------------------------
 # Engine arguments
 # ---------------------------------------------------------------------------
 
 
-def engine_arguments(url: str) -> dict[str, Any]:
-    """Return the engine arguments the driver behind ``url`` needs.
+def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Return the arguments for the engine of ``url``: what the application gave, and what VFS requires.
 
-    SQLAlchemy's pyodbc dialect declares ``String`` binds as ANSI
-    ``SQL_VARCHAR`` via setinputsizes, and the server squeezes those
-    through the database codepage before they reach a UTF-8 column —
-    mangling non-Latin1 to ``?``. Disabling setinputsizes restores
-    pyodbc's Unicode default (``SQL_WVARCHAR``), whose conversion into
-    the UTF-8 collation is lossless. pyodbc's ``fast_executemany`` is
-    deliberately *not* set: engine-wide it rewrites UPDATE executemany,
-    whose rowcount the guarded bumps verify, and as a bulk-insert mode it
-    is still one RPC per row, slower than Core's pages on wide rows —
-    SQL Server's bulk inserts take Core's pages.
+    An argument VFS has no stake in passes through as it was given: the
+    pool's class and size, ``pool_pre_ping``, ``async_creator`` and the
+    like. VFS requires two, and each always holds. Where the application
+    gives another value for one of them, a ``ValueError`` names it and
+    says why, because a storage that dropped it in silence would corrupt
+    text or leave files open. ``connect_args`` is merged key by key.
 
-    A SQLite connection is opened as a ``ClosingConnection``.
+    SQL Server needs ``use_setinputsizes`` false. SQLAlchemy's pyodbc
+    dialect declares ``String`` binds as ANSI ``SQL_VARCHAR`` via
+    setinputsizes, and the server squeezes those through the database
+    codepage before they reach a UTF-8 column — mangling non-Latin1 to
+    ``?``. Disabling setinputsizes restores pyodbc's Unicode default
+    (``SQL_WVARCHAR``), whose conversion into the UTF-8 collation is
+    lossless. pyodbc's ``fast_executemany`` is deliberately *not* set:
+    engine-wide it rewrites UPDATE executemany, whose rowcount the
+    guarded bumps verify, and as a bulk-insert mode it is still one RPC
+    per row, slower than Core's pages on wide rows — SQL Server's bulk
+    inserts take Core's pages.
 
-    A borrowed session factory carries the engine of whoever built it, and
-    that builder applies these arguments itself.
+    SQLite needs ``connect_args["factory"]`` to be ``ClosingConnection``.
     """
+    merged = dict(given or {})
     backend = make_url(url).get_backend_name()
     if backend == "mssql":
-        return {"use_setinputsizes": False}
+        _require(merged, "use_setinputsizes", False, "pyodbc then binds text as Unicode, and as ANSI it stores '?'")
     if backend == "sqlite":
-        return {"connect_args": {"factory": ClosingConnection}}
-    return {}
+        merged["connect_args"] = connect = dict(merged.get("connect_args") or {})
+        _require(
+            connect, "factory", ClosingConnection, "a cursor whose statement failed is closed at once", "connect_args"
+        )
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -132,3 +142,15 @@ class ClosingConnection(sqlite3.Connection):
     def executescript(self, *arguments: Any) -> Any:
         """Run a script of statements on a new cursor and return that cursor."""
         return self.cursor().executescript(*arguments)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _require(arguments: dict[str, Any], key: str, value: object, reason: str, within: str | None = None) -> None:
+    """Put ``value`` at ``key`` of ``arguments``, or raise if the application gave it another value."""
+    if arguments.setdefault(key, value) != value:
+        named = f"engine_arguments[{within!r}][{key!r}]" if within else f"engine_arguments[{key!r}]"
+        raise ValueError(f"{named} must be {value!r}, because {reason}; VFS sets it, so leave it out")

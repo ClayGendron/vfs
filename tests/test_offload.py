@@ -21,7 +21,6 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tests.support.database_helpers import _url
 from tests.support.loop_ticks import LoopTicker
@@ -674,14 +673,6 @@ async def test_close_leaves_the_process_pool_alone(tmp_path: Any, fresh_process_
     pool = offload_module._pool
     assert pool is not None
     await built.close()
-    assert offload_pool() is pool
-    assert pool.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
-
-    engine = create_async_engine(_url(tmp_path))
-    borrowed = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-    assert len((await borrowed.grep(pattern="needle", allow_scan=True)).observations) == 1
-    await borrowed.close()
-    await engine.dispose()
     assert offload_pool() is pool
     assert pool.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
 
