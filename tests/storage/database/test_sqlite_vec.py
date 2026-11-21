@@ -18,6 +18,7 @@ from tests.support.server_schemas import server_storage
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import drivers as drivers_module
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import (
     GENERIC,
@@ -79,7 +80,7 @@ class TestSqliteVec:
     ) -> None:
         # The URL helper provisions this worker's template on first use; take it before the patch.
         url = _url(tmp_path)
-        monkeypatch.setattr(engine_module, "_EXTENSIONS_LOADABLE", False)
+        monkeypatch.setattr(drivers_module, "_EXTENSIONS_LOADABLE", False)
         storage = DatabaseStorage(url=url)
         result = await storage.first_touch()
         assert result.success is False
@@ -89,7 +90,7 @@ class TestSqliteVec:
         await storage.close()
 
     def test_the_loader_ignores_a_connection_it_does_not_recognise(self) -> None:
-        engine_module._load_sqlite_vec(object())  # no aiosqlite inner connection: nothing to load
+        drivers_module.load_sqlite_vec(object())  # no aiosqlite inner connection: nothing to load
 
 
 class TestVectorProbe:

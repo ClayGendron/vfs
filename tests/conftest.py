@@ -20,6 +20,7 @@ import os
 import signal
 import threading
 from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, Final, NamedTuple
 
@@ -84,6 +85,7 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
     original = DatabaseStorage.__init__
     stop = aiosqlite.Connection.stop
 
+    @wraps(original)
     def tracking(self: DatabaseStorage, *args: Any, **kwargs: Any) -> None:
         original(self, *args, **kwargs)
         created.append(self)
