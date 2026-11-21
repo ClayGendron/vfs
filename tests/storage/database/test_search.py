@@ -1052,11 +1052,12 @@ class TestBudgets:
             return OverlayPostings(counted.postings, 1, counted.total_dl, False)
 
         monkeypatch.setattr(search_module, "overlay_postings", stopping)
+        # A clock that stands still: only the kernel's own stop ends the call, however slow the machine.
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 0.0)
         result = await storage.search(query="tokens")
         assert result.success is True
         # The hop's budget is the wall's remainder cut at worker start, never unbounded.
-        [budget] = budgets
-        assert budget is not None and 0.0 <= budget <= WALL_TIME_BUDGET
+        assert budgets == [WALL_TIME_BUDGET]
         [wall] = _walls(result)
         assert (wall.kind, wall.severity, wall.data) == (ErrorKind.truncated, Severity.warning, None)
         indexed = {"/notes.txt", "/src/lexer.py", "/src/parser.py", "/docs/tokens.md"}
@@ -1071,17 +1072,14 @@ class TestBudgets:
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
         storage = await _fresh(tmp_path, files, search_wall_seconds=WALL_TIME_BUDGET)
         monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
-        real_clock, real_kernel = deadline_module.monotonic, search_module.overlay_postings
-        skew = {"seconds": 0.0}
-
-        def skewed_clock() -> float:
-            return real_clock() + skew["seconds"]
+        real_kernel = search_module.overlay_postings
+        now = {"seconds": 0.0}
 
         def counting_kernel(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
-            skew["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
+            now["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
             return real_kernel(docs, terms, budget=budget)
 
-        monkeypatch.setattr(deadline_module, "monotonic", skewed_clock)
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: now["seconds"])
         monkeypatch.setattr(search_module, "overlay_postings", counting_kernel)
         with _recorded(storage) as statements:
             result = await storage.search(query="tokens")

@@ -148,26 +148,29 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
     await asyncio.gather(*(future for future in stopped if future.get_loop() is loop), return_exceptions=True)
 
 
-@pytest.fixture(autouse=True)
-def _unbounded_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(scope="session", autouse=True)
+def _unbounded_budgets() -> Iterator[None]:
     """Leave every budget a test does not name unbounded: each storage and router stage wall, a render, a close.
 
     A shipped budget of seconds fires on a machine slow enough, in a test
     that tests no budget, and fails it for the machine's speed. A test of a
     budget names its own, by argument or by patching the module's constant,
-    and the run's deadline bounds every other wait.
+    and the run's deadline bounds every other wait. Set for the session, so
+    a storage a module-scoped fixture builds is unbounded too.
     """
-    for init in _BUDGETED_INITS:
-        defaults = init.__kwdefaults__
-        for name in UNBOUNDED_ARGUMENTS & defaults.keys():
-            monkeypatch.setitem(defaults, name, math.inf)
-    for module in _STAGE_MODULES:
-        monkeypatch.setattr(module, "WALL_TIME_BUDGET", math.inf)
-    render = RenderLimits.__init__
-    shipped = render.__defaults__
-    assert shipped is not None
-    limits = {field.name: default for field, default in zip(dataclasses.fields(RenderLimits), shipped, strict=True)}
-    monkeypatch.setattr(render, "__defaults__", tuple({**limits, "seconds": math.inf}.values()))
+    with pytest.MonkeyPatch.context() as patch:
+        for init in _BUDGETED_INITS:
+            defaults = init.__kwdefaults__
+            for name in UNBOUNDED_ARGUMENTS & defaults.keys():
+                patch.setitem(defaults, name, math.inf)
+        for module in _STAGE_MODULES:
+            patch.setattr(module, "WALL_TIME_BUDGET", math.inf)
+        render = RenderLimits.__init__
+        shipped = render.__defaults__
+        assert shipped is not None
+        limits = {field.name: value for field, value in zip(dataclasses.fields(RenderLimits), shipped, strict=True)}
+        patch.setattr(render, "__defaults__", tuple({**limits, "seconds": math.inf}.values()))
+        yield
 
 
 @pytest.fixture
