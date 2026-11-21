@@ -29,6 +29,7 @@ from sqlalchemy.pool import QueuePool
 
 from tests.support.database_helpers import _fresh_url, _url
 from tests.support.plan_store import (
+    PATH_INDEXES,
     PLAN_ARMS,
     PLAN_EXTENSIONS,
     chunk_entries,
@@ -396,7 +397,9 @@ class TestPlannerStatistics:
             details = await _plan(storage, statement, parameters)
             searches += [detail for detail in details if detail.startswith("SEARCH vfs_entries")]
             assert not any("SCAN vfs_entries" in detail for detail in details), details
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
+        assert searches and all(any(f"INDEX {name} " in detail for name in PATH_INDEXES) for detail in searches), (
+            searches
+        )
         assert not any("ix_vfs_entries_deleted_at" in detail or "ix_vfs_entries_kind" in detail for detail in searches)
         await storage.close()
 
@@ -497,7 +500,9 @@ class TestPlannerStatistics:
             for detail in await _plan(y, statement, parameters)
             if detail.startswith("SEARCH")
         ]
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
+        assert searches and all(any(f"INDEX {name} " in detail for name in PATH_INDEXES) for detail in searches), (
+            searches
+        )
         for index in range(100):
             assert (await y.stat(path=Path(f"/d{index % CROSSING_ROOTS:05d}/a/f00.py"))).success is True
         assert len(invalidations) == 1
