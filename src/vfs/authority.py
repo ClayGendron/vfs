@@ -268,10 +268,13 @@ def owner_refusal(declared: str | None) -> str | None:
 
     ``*`` names everyone and a ``group:`` name names a group. Both name grant rows and never a
     principal. ``anon`` and ``system`` name the two principals who own nothing. A row owned by any
-    of them would be owned by no one real. ``None`` declares no owner, and it is admitted.
+    of them would be owned by no one real. A blank name is refused for the same reason, because no
+    :class:`Principal` carries one. ``None`` declares no owner, and it is admitted.
     """
     if declared is None:
         return None
+    if not declared.strip():
+        return f"owner_id {declared!r} is blank and can own no row"
     if declared == EVERYONE_NAME or declared.startswith(GROUP_NAME_PREFIX) or declared in _RESERVED_NAMES:
         return f"owner_id {declared!r} is reserved and can own no row"
     return None

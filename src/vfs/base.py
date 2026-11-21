@@ -932,7 +932,7 @@ class AsyncVirtualFileSystem:
 
         The call returns a :class:`Result`. Every entry passes the gate before any storage is called,
         so a path that is not valid, or a mount that is read-only there, refuses the whole call. So does
-        an ``owner_id`` that names no one: ``*``, ``anon``, ``system`` or a ``group:`` name. Each
+        an ``owner_id`` that names no one: ``*``, ``anon``, ``system``, a ``group:`` name or a blank. Each
         mount then writes its own entries, so one mount can succeed where another fails. An exception
         that the ``entries`` iterable raises while it is read reaches the caller unchanged, and nothing
         has been written at that point.

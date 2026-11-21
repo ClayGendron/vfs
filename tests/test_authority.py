@@ -20,7 +20,7 @@ from vfs.authority import (
     warn_if_system_default,
 )
 
-RESERVED_OWNERS = ("*", "anon", "system", "group:eng")
+RESERVED_OWNERS = ("*", "anon", "system", "group:eng", "", "   ")
 
 ALICE = Principal("alice")
 BOB = Principal("bob")

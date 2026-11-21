@@ -202,7 +202,7 @@ async def test_the_authority_is_threaded_not_cached() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("owner", ["*", "anon", "system", "group:eng"])
+@pytest.mark.parametrize("owner", ["*", "anon", "system", "group:eng", "", "   "])
 @pytest.mark.parametrize("authority", [SYSTEM, ALICE, None], ids=["system", "alice", "none"])
 async def test_a_reserved_owner_refuses_the_whole_write_before_any_storage(
     owner: str, authority: Authority | None

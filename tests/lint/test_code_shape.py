@@ -570,12 +570,12 @@ def test_vfs_prints_nothing_and_each_logger_is_its_modules_own() -> None:
     assert not errors, "\n".join(errors)
 
 
-def test_get_started_names_the_three_engine_extras_and_no_other() -> None:
-    """The install lines stay few: the base package and one extra per server engine, each one pyproject declares."""
+def test_get_started_names_the_postgres_extra_and_no_other() -> None:
+    """The install lines stay few: the base package, which serves SQLite, and the Postgres extra pyproject declares."""
     page = (REPO / "documentation" / "get-started.md").read_text()
     named = {name.strip() for group in re.findall(r"vfs-py\[([^\]]*)\]", page) for name in group.split(",")}
     declared = set(tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"])
-    assert named == {"postgres", "mssql", "oracle"}
+    assert named == {"postgres"}
     assert named <= declared, f"the page names extras pyproject.toml does not declare: {sorted(named - declared)}"
 
 
