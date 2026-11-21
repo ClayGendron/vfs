@@ -15,11 +15,9 @@ of all and for the system actor too: the everyone stamp, read again
 under a shared lock (:func:`~vfs.storage.backends.database.labels.hold_postures`).
 
 The commit point, per engine: where each statement reads the latest
-commit (every SQL Server and Oracle verb, and the topology verbs on
-Postgres and MariaDB), it is the fence; where vfs pins a repeatable
-snapshot for writes (Postgres and MariaDB, with MariaDB's
-``innodb_snapshot_isolation`` on), it is that snapshot, and the fence
-agrees by construction; on SQLite, whose writers take the write lock at
+commit (the topology verbs on Postgres), it is the fence; where vfs pins
+a repeatable snapshot for writes (Postgres), it is that snapshot, and
+the fence agrees by construction; on SQLite, whose writers take the write lock at
 their first statement, it is that statement. The same code runs on every
 engine with no branch.
 

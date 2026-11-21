@@ -22,7 +22,7 @@ landing when the tip commits are one change split into pieces, and
 state the resolved SHAs in the report. "The diff" below always means
 this resolved surface. **Commit messages are contract material**: each
 scoped commit's message enters the register in step 1 — its claims
-("ran red on real MSSQL", "X is deleted", "all legs pass") are
+("ran red on real Postgres", "X is deleted", "all legs pass") are
 promises to verify like any docstring.
 
 The core insight: most review defects hide in the gap between what the

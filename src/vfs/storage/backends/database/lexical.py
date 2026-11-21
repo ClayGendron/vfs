@@ -47,7 +47,6 @@ from vfs.native import extension
 from vfs.offload import call_offloaded
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
 from vfs.storage.backends.database.membership import live_chunks, membership
-from vfs.storage.backends.database.ranges import derived_hint
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
 if TYPE_CHECKING:
@@ -571,8 +570,7 @@ async def _visible_corpus(
     """``(chunk count, total length)`` over the live set's chunks whose entry the view admits.
 
     One aggregate over the chunks joined to the visible entries where the
-    dialect joins a range list, hinted where its planner would otherwise
-    drive the join from the chunks; otherwise one aggregate when the
+    dialect joins a range list; otherwise one aggregate when the
     predicate fits one statement, or each clause's rows read and
     deduplicated here, since clauses overlap and a per-clause count
     would double one. Each runs once per slice of the live set, summed.
@@ -583,14 +581,12 @@ async def _visible_corpus(
     joined = docs.join(entry, entry.c.entry_id == docs.c.entry_id)
     clauses = view.clauses() or []
     fields = (docs.c.chunk_id, docs.c.dl, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
-    hint = derived_hint(profile, docs, "epoch", "entry_id")
     count, total, lengths = 0, 0, {}
     for epochs in chunked(list(live), membership_budget):
         in_live = membership(docs.c.epoch, epochs, profile)
         if visible is not None:
             on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
             stmt = select(*aggregate).select_from(on_visible).where(in_live)
-            stmt = stmt if hint is None else stmt.prefix_with(hint, dialect=profile.name)
         elif len(clauses) == 1:
             stmt = select(*aggregate).select_from(joined).where(in_live, clauses[0].predicate)
         else:

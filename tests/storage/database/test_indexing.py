@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 import pytest
 from sqlalchemy import event, func, insert, select, update
-from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 
 from tests.support.database_helpers import _url
 from tests.support.documents import pdf_bytes
@@ -35,7 +35,7 @@ from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import flags as flags_module
 from vfs.storage.backends.database import maintenance as maintenance_module
-from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE
+from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL, SQLITE
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.protocol import ResolvedPair
@@ -801,10 +801,10 @@ async def _seed_built_epoch(storage: DatabaseStorage, epoch: int, *, with_finger
 
 
 class TestStatementLegality:
-    async def test_pending_probe_is_row_presence_not_bare_exists_on_tsql(self, tmp_path) -> None:
+    async def test_pending_probe_is_row_presence_not_bare_exists(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         tables = storage._host.tables
-        sql = str(indexing._pending_probe(tables.entry).compile(dialect=mssql.dialect())).upper()
+        sql = str(indexing._pending_probe(tables.entry).compile(dialect=postgresql.dialect())).upper()
         assert not sql.startswith("SELECT EXISTS")
         assert "WHERE" in sql and "INDEXABLE" in sql
         await storage.close()
@@ -1179,9 +1179,7 @@ class TestSliceSizeRead:
         engines = (
             (SQLITE, sqlite.dialect(), "limit", "length("),
             (POSTGRESQL, postgresql.dialect(), "limit", "octet_length("),
-            (MARIADB, mysql.dialect(), "limit", "length("),
-            (MSSQL, mssql.dialect(), "top", "datalength("),
-            (ORACLE, oracle.dialect(), "fetch first", "length("),
+            (GENERIC, postgresql.dialect(), "limit", "length("),
         )
         for profile, dialect, limit, function in engines:
             read = indexing._size_read(tables, profile, terms, past=1_000, wanted=17)
@@ -1291,7 +1289,7 @@ class TestPostingBatches:
 
     async def test_flag_flips_are_set_based_not_per_row(self, tmp_path) -> None:
         # One statement flips many (entry, version) pairs: executemany
-        # degrades to a round trip per row on the MySQL family and MSSQL.
+        # degrades to a round trip per row on some drivers.
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
         assert (await storage.write(entries=entries)).success is True
@@ -1770,7 +1768,7 @@ class TestIndexLease:
             state = indexing.RebuildState(token="THE-TOKEN", previous_epoch=previous, epoch=4)
             await indexing.publish_epoch(cast("AsyncSession", session), tables, SQLITE, 2_000, 1_000, state)
             [(cas, _params)] = session.calls
-            for dialect in (sqlite.dialect(), postgresql.dialect(), mysql.dialect(), mssql.dialect(), oracle.dialect()):
+            for dialect in (sqlite.dialect(), postgresql.dialect()):
                 compiled = cas.compile(dialect=dialect)
                 assert "lease_holder IS NULL" not in str(compiled), (dialect.name, compiled)
                 assert "THE-TOKEN" in compiled.params.values(), (dialect.name, compiled.params)
@@ -2172,9 +2170,7 @@ class TestRareTerm:
         for profile, dialect, expected in (
             (SQLITE, sqlite.dialect(), "unlikely(vfs_entries.encoded = 0) AND vfs_entries.indexable = 0"),
             (POSTGRESQL, postgresql.dialect(), "AND NOT vfs_entries.encoded AND NOT vfs_entries.indexable"),
-            (MSSQL, mssql.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
-            (MARIADB, mysql.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
-            (ORACLE, oracle.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
+            (GENERIC, postgresql.dialect(), "AND NOT vfs_entries.encoded AND NOT vfs_entries.indexable"),
         ):
             read = indexing._size_read(tables, profile, terms, past=0, wanted=4, seek=True)
             sql = " ".join(str(read.compile(dialect=dialect)).split())

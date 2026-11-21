@@ -14,11 +14,12 @@ import re
 import threading
 from collections import Counter
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, func, select, true
-from sqlalchemy.dialects import mssql, sqlite
+from sqlalchemy.dialects import sqlite
 
 from tests.support.database_helpers import _url
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
@@ -44,7 +45,7 @@ from vfs.storage.backends.database import lexical as lexical_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
-from vfs.storage.backends.database.dialects import MSSQL, SQLITE, membership_budget
+from vfs.storage.backends.database.dialects import SQLITE, membership_budget
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.reads import AdmittedScope
@@ -68,6 +69,9 @@ if TYPE_CHECKING:
 # The overlay's three SQL legs as SQLite spells them: the body fetch (the
 # preview fetch takes the same shape), the surrogate-id fetch and the
 # path-ordered nominee fetch.
+# A profile with no row constructors in IN, so the tail fetch takes its OR arms over SQLite's compiler.
+NO_TUPLES = replace(SQLITE, tuple_in=False)
+
 _BODY_FETCH = re.compile(r"\bFROM vfs_content\b")
 _SURROGATE_FETCH = re.compile(r"^SELECT vfs_entries\.entry_id, vfs_entries\.id\s+FROM vfs_entries\b")
 _NOMINEE_FETCH = re.compile(r"\bFROM vfs_entries\b.*\bORDER BY vfs_entries\.path\b", re.S)
@@ -568,20 +572,20 @@ class TestProbes:
         assert [binds // 3 for _, binds in tuple_form] == [2, 2, 2, 1]
         assert all("IN (VALUES" in text and " OR " not in text for text, _ in tuple_form)
         # The arms pack under the membership budget, which nets the reserve, never the whole parameter budget.
-        arms = compiled(MSSQL, mssql.dialect(), 8)
+        arms = compiled(NO_TUPLES, sqlite.dialect(), 8)
         assert [binds for _, binds in arms] == [5, 6]
         assert all(" OR " not in text and "VALUES" not in text for text, _ in arms)
-        [(packed, binds)] = compiled(MSSQL, mssql.dialect(), 16)
+        [(packed, binds)] = compiled(NO_TUPLES, sqlite.dialect(), 16)
         assert binds == 11 and " OR " in packed and "VALUES" not in packed
 
-    def test_the_tail_fetch_keeps_the_reserve_on_sql_server(self) -> None:
+    def test_the_tail_fetch_keeps_the_reserve_under_a_tight_budget(self) -> None:
         """Guards: the ``OR`` arms packed to the whole parameter budget, leaving the driver's reserve no room."""
         postings = build_vfs_tables().lex_postings
         wanted = {(epoch, term): list(range(40)) for epoch in range(1, 97) for term in ("heron", "kestrel")}
-        budget = membership_budget(MSSQL, 2_099)
-        statements = lexical_module.tail_block_statements(postings, wanted, MSSQL, budget)
+        budget = membership_budget(NO_TUPLES, 2_099)
+        statements = lexical_module.tail_block_statements(postings, wanted, NO_TUPLES, budget)
         compile_kwargs = {"render_postcompile": True}
-        binds = [len(s.compile(dialect=mssql.dialect(), compile_kwargs=compile_kwargs).params) for s in statements]
+        binds = [len(s.compile(dialect=sqlite.dialect(), compile_kwargs=compile_kwargs).params) for s in statements]
         assert sum(binds) == 96 * 2 * 42 and all(count <= budget for count in binds), (budget, binds)
 
 
@@ -1115,7 +1119,7 @@ async def _partial_store(tmp_path: Any = None) -> DatabaseStorage:
 
 
 def _read_committed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Model an engine whose read statements each see the latest commit, as SQL Server and Oracle do.
+    """Model an engine whose read statements each see the latest commit, as one at READ COMMITTED does.
 
     A read op's connection is told to issue no ``BEGIN``, so SQLite takes
     no snapshot for the call and a rival committed at a seam is seen by

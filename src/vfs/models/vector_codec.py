@@ -1,7 +1,7 @@
 """The portable vector bytes: packed little-endian float32, four bytes a component.
 
 The one codec every column type and kernel shares — ``vector.py`` binds
-it on the portable path, the MariaDB native type reuses it, and the
+it on the portable path, sqlite-vec scores it as it is, and the
 engine's cosine kernel reads the same bytes straight off a fetched page.
 """
 

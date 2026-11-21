@@ -75,7 +75,6 @@ from vfs.storage.backends.database.dialects import (
     SQLITE_VEC_PROBE,
     DialectProfile,
     StaleSnapshot,
-    ValueCap,
     VectorFunction,
     driver_origin,
     is_insufficient_privilege,
@@ -194,9 +193,6 @@ class EngineHost:
         # The distance function's version where the profile's probe reports
         # one (pgvector's, sqlite-vec's); the ANN tier's iterative-scan gate.
         self.vector_version: tuple[int, ...] | None = None
-        # The engine's single-value cap where it is a server setting (the
-        # MySQL family's packet); read at first touch, ``None`` elsewhere.
-        self.value_cap: ValueCap | None = None
         # The engine is the host's own: an application puts listeners on it, and opens no connection or session.
         self.engine: AsyncEngine = create_async_engine(url, **merge_engine_arguments(url, engine_arguments))
         bind = self.engine.sync_engine
@@ -566,8 +562,6 @@ class EngineHost:
             if self._replaces and (self.in_memory or not self.statistics_enabled):
                 event.remove(self.engine.sync_engine, "checkout", self._replace_stale)
                 self._replaces = False
-        if profile.value_cap_query is not None and profile.value_cap_setting is not None:
-            self.value_cap = await self._read_value_cap(profile.value_cap_query, profile.value_cap_setting)
         if profile.vector_function is not None:
             refusal = await self._probe_vector_function(profile.vector_function)
             if refusal is not None:
@@ -576,13 +570,6 @@ class EngineHost:
         if refusal is None:
             self._ready = True
         return refusal
-
-    async def _read_value_cap(self, query: str, setting: str) -> ValueCap:
-        """The server's single-value cap, so an oversized body is refused before it is sent."""
-        async with self.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_no_begin": True})
-            limit = (await conn.exec_driver_sql(query)).scalar_one()
-        return ValueCap(int(limit), setting)
 
     async def _apply_file_settings(self, profile: DialectProfile) -> None:
         # Database-file state (WAL, page_size) cannot run inside a
@@ -694,8 +681,8 @@ class EngineHost:
                 entry_id=str(ULID()),
                 parent_id=None,
                 path="/",
-                # "/" is un-typable as a segment name; Oracle folds '' to
-                # NULL, which the NOT NULL name column rightly refuses.
+                # "/" is un-typable as a segment name; an engine that folds '' to
+                # NULL would see the NOT NULL name column rightly refuse it.
                 name="/",
                 kind="directory",
                 version=1,

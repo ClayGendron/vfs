@@ -317,9 +317,7 @@ async def entries_for_scan(
     group's terms, and the deadline, read before each statement, does
     not interrupt one in flight; a predicate over a bound list of the
     caller's spans is the direction that stops that work growing with
-    the caller's grants. SQL Server scans the table instead, for every
-    caller, a whole one included, once about one row in a hundred
-    awaits the index.
+    the caller's grants.
     """
     entry = tables.entry
     kinds = kind_membership(entry)

@@ -1334,8 +1334,8 @@ def _units(entry: Table, rights: Rights, bind_cap: int) -> list[Clause]:
 def _piece_units(column: ColumnElement[Any], found: Pieces) -> list[Clause]:
     """One clause per piece on *column*: an exact path spends one bind, an open range two.
 
-    Each bound binds through the column's own type, so the mysql family
-    compares bytes and SQL Server keeps the UTF-8 collation.
+    Each bound binds through the column's own type, so it compares in
+    the column's collation.
     """
     points = [Clause(column == point, 1) for point in found.points]
     opens = [Clause(and_(column > lo, column < hi), 2) for lo, hi in found.opens]

@@ -574,7 +574,7 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
     host = storage._host
     async with host.session_factory() as session:
         committed = await _fetch_committed(session, host.tables, host.profile, host.membership_budget, {entry.path})
-    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, value_cap=host.value_cap)
+    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
     staged = plan.put_file(
         entry.path,
         kind=entry.kind,
@@ -1221,7 +1221,7 @@ class TestClaimRows:
 
     The default suite drives the aggregate arm on every delete and
     restore; the VALUES arm runs through the session double SQLite
-    cannot execute, and the postgres and mssql legs prove it live.
+    cannot execute, and the postgres leg proves it live.
     """
 
     @staticmethod

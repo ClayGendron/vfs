@@ -34,7 +34,7 @@ from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose,
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.attempts import AttemptSession
-from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, ValueCap, profile_for
+from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, profile_for
 from vfs.storage.backends.database.drivers import ClosingConnection
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.grants import LEVEL_RANK
@@ -190,7 +190,7 @@ class TestFirstTouch:
         assert meta["schema_format_version"] == SCHEMA_FORMAT_VERSION
         assert meta["mount_identity"] == storage.mount_identity
         assert root["path"] == "/"
-        # '/' is un-typable as a real segment (Oracle folds '' to NULL).
+        # '/' is un-typable as a real segment (an engine may fold '' to NULL).
         assert root["name"] == "/"
         assert root["kind"] == "directory"
         assert root["parent_id"] is None
@@ -545,27 +545,6 @@ class TestPoolExhaustion:
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.unavailable
         assert result.errors[0].retryable is True
-        await storage.close()
-
-
-class TestValueCap:
-    async def test_the_cap_is_read_from_the_server_and_sqlite_declares_none(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_fresh_url(tmp_path))
-        assert (await storage.first_touch()).success is True
-        host = storage._host
-        assert host.value_cap is None
-        cap = await host._read_value_cap("SELECT 16777216", "max_allowed_packet")
-        assert cap == ValueCap(16777216, "max_allowed_packet")
-        await storage.close()
-
-
-class TestValueCapAtFirstTouch:
-    async def test_a_profile_that_declares_the_cap_query_reads_it_at_first_touch(self, tmp_path, monkeypatch) -> None:
-        declared = replace(SQLITE, value_cap_query="SELECT 4096", value_cap_setting="max_allowed_packet")
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
-        storage = DatabaseStorage(url=_fresh_url(tmp_path))
-        assert (await storage.first_touch()).success is True
-        assert storage._host.value_cap == ValueCap(4096, "max_allowed_packet")
         await storage.close()
 
 

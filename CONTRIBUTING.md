@@ -82,7 +82,7 @@ Tests live in `tests/` and use pytest with `pytest-asyncio` (async mode is set t
 
 - Test files mirror the source structure: `src/vfs/storage/backends/database/reads.py` is tested in `tests/storage/database/test_reads.py`.
 - Shared fixtures are in `tests/conftest.py`.
-- Prefer in-memory SQLite (`DatabaseStorage` over `:memory:`) for unit tests; the real-engine legs (Postgres, MySQL, MSSQL, Oracle) run in Docker via the conformance suite.
+- Prefer in-memory SQLite (`DatabaseStorage` over `:memory:`) for unit tests; the real-engine leg (Postgres) runs in Docker via the conformance suite.
 - Assert on `Result` fields directly; see `context/standards/testing.md` for the house conventions.
 
 ### Commit messages

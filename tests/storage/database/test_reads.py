@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, insert, select, text, update
-from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import DBAPIError
 from ulid import ULID
 
@@ -1173,7 +1172,7 @@ class TestScopeChannel:
     async def test_every_scope_statement_fits_the_budget(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: the root clause's binds charged per statement instead of per
         root, or the facts' binds left out of the budget."""
-        budget = mssql.dialect().insertmanyvalues_max_parameters
+        budget = 2_099  # a tight parameter budget, so the scope's statements must chunk
         monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: budget))
         storage = DatabaseStorage(url=_url(tmp_path), glob_wall_seconds=math.inf)
         await _seed(storage, [("/d00042/mb.py", "file", "x")])

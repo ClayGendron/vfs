@@ -73,13 +73,11 @@ from vfs.storage.backends.database.descent import (
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     StaleSnapshot,
-    ValueCap,
     bulk_insert,
     chunked,
     rows_per_statement,
     statement_budget,
     supports_values_update,
-    wire_bytes,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
@@ -181,7 +179,6 @@ async def write_rows(
     overwrite: bool,
     parents: bool,
     authority: Authority | None,
-    value_cap: ValueCap | None = None,
     if_versions: Mapping[Path, int] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
@@ -206,7 +203,7 @@ async def write_rows(
     whatever its version.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     expected = if_versions or {}
     for entry in entries:
         if entry.kind == "directory":
@@ -327,7 +324,6 @@ async def append_rows(
     authority: Authority | None,
     executor: Executor,
     primary: Rung,
-    value_cap: ValueCap | None = None,
 ) -> Result:
     """Add *entry*'s body to the end of the file at its path, in the caller's transaction.
 
@@ -356,9 +352,9 @@ async def append_rows(
     The direction is a version that keeps only what an append added.
     """
     target, rows = entry.path, tables.entry
-    await session.execute(locked_lookup(rows, rows.c.path, [str(target)], [rows.c.entry_id], profile))
+    await session.execute(locked_lookup(rows.c.path, [str(target)], [rows.c.entry_id], profile))
     committed = await _fetch_committed(session, tables, profile, membership_budget, {target}, with_data=True)
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     body = _body(entry)
     assert body is not None  # measured_entries refused a file with no body
     kind, mime_type = entry.kind, entry.mime_type
@@ -553,8 +549,6 @@ async def _apply(
     ]
     await mint_versions(session, tables, profile, membership_budget, replaced, authority=plan.authority, now=now)
     page = _BlobPage(BLOB_PAGE_BYTES, _blob_row_size)
-    if plan.value_cap is not None:
-        page = _BlobPage(min(BLOB_PAGE_BYTES, plan.value_cap.limit), _blob_wire_size)
     fresh_ids = frozenset(staged.entry_id for staged in fresh)
     await _replace_bodies(session, tables, profile, membership_budget, ordered, now, page, fresh_ids=fresh_ids)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
@@ -1170,13 +1164,6 @@ def _blob_row_size(row: Mapping[str, object]) -> int:
     data = row["data"]
     assert isinstance(data, bytes)
     return len(data)
-
-
-def _blob_wire_size(row: Mapping[str, object]) -> int:
-    """A blob row as the MySQL family sends it: the packet cap's meter."""
-    data = row["data"]
-    assert isinstance(data, bytes)
-    return wire_bytes(data)
 
 
 def _binary_target(target: Path) -> ResultError:

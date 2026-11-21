@@ -1,126 +1,82 @@
-# Real database engines for the storage conformance suite.
+# The real Postgres servers for the storage conformance suite, one service per supported version.
 #
-# Postgres has no profile and starts by default; the heavier engines sit
-# behind profiles so `up` never pays for what you aren't testing. Naming
-# a service explicitly activates its profile, so both of these work:
+#   docker compose -f docker/compose.test.yml up -d --wait     # Postgres 19, the one a laptop runs
 #
-#   docker compose -f docker/compose.test.yml up -d --wait            # postgres only
-#   docker compose -f docker/compose.test.yml up -d --wait mariadb    # + mariadb
+# A laptop tests on the newest version alone: `postgres`, Postgres 19, on
+# 54320, which starts by default. CI tests every version the PostgreSQL
+# project supports, one matrix row each (.github/workflows/test-dialects.yml);
+# the older ones sit behind the `every-version` profile, each on its own
+# port, and naming one service starts it alone.
 #
-# Every service carries a healthcheck so `--wait` blocks until the
-# engine accepts queries, not merely until the container runs. CI uses
-# this same file (.github/workflows/test-dialects.yml) — images, env,
-# and health probes stay identical between a laptop and a runner.
+# Every service carries a healthcheck so `--wait` blocks until the server
+# accepts queries, not merely until the container runs. CI uses this same
+# file, so images, env and health probes stay identical between a laptop
+# and a runner.
 #
-# Apple Silicon: postgres, mariadb, and gvenzl/oracle-free publish native
-# arm64 images. SQL Server does not — its service pins linux/amd64 and
-# needs Rosetta emulation enabled in Docker Desktop (Settings > General
-# > "Use Rosetta for x86_64/amd64 emulation") or OrbStack (on by
-# default). See docker/README.md for the full macOS setup.
-#
-# Host ports are offset (engine default + a leading digit) so the
-# containers never collide with a Homebrew/Postgres.app/local install
-# already holding the default port.
+# Host ports are offset from 5432 so a container never collides with a
+# Homebrew/Postgres.app/local install already holding the default port.
 
 name: vfs-test
 
+# One service's shape; each version names its image, port and data directory.
+# The pgvector image is a superset of the plain one, which cannot CREATE EXTENSION vector.
+x-postgres: &postgres
+  environment:
+    POSTGRES_USER: vfs
+    POSTGRES_PASSWORD: vfs
+    POSTGRES_DB: vfs
+  # Installs pgvector once at first start: vfs proves the extension, never creates it.
+  volumes:
+    - ./initdb/postgres:/docker-entrypoint-initdb.d:ro
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U vfs -d vfs"]
+    interval: 2s
+    timeout: 3s
+    retries: 15
+
 services:
   postgres:
-    # The pgvector image is a superset of postgres:17 — the plain image
-    # cannot CREATE EXTENSION vector, which the native vector column needs.
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_USER: vfs
-      POSTGRES_PASSWORD: vfs
-      POSTGRES_DB: vfs
+    <<: *postgres
+    image: pgvector/pgvector:pg19
     ports:
       - "54320:5432"
     # Disposable test data; tmpfs skips disk I/O and leaves nothing behind.
+    # From 18 the image keeps its data under /var/lib/postgresql/<version>/docker.
+    tmpfs:
+      - /var/lib/postgresql
+
+  postgres15:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg15
+    ports:
+      - "54315:5432"
     tmpfs:
       - /var/lib/postgresql/data
-    # Installs pgvector once at first start: vfs proves the extension, never creates it.
-    volumes:
-      - ./initdb/postgres:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vfs -d vfs"]
-      interval: 2s
-      timeout: 3s
-      retries: 15
 
-  mariadb:
-    profiles: [mariadb]
-    # 11.8 is the first LTS with VECTOR(n) and VEC_DISTANCE_COSINE.
-    image: mariadb:11.8
-    environment:
-      MARIADB_USER: vfs
-      MARIADB_PASSWORD: vfs
-      MARIADB_DATABASE: vfs
-      MARIADB_ROOT_PASSWORD: vfs-root
+  postgres16:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg16
     ports:
-      # not 33060 — a local MySQL claims that for its X-protocol listener
-      - "33062:3306"
+      - "54316:5432"
     tmpfs:
-      - /var/lib/mysql
-    # Lets the app user create and drop the per-test databases.
-    volumes:
-      - ./initdb/mariadb:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 3s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
+      - /var/lib/postgresql/data
 
-  mssql:
-    profiles: [mssql]
-    # 2025 brings the native VECTOR(n) type and VECTOR_DISTANCE.
-    image: mcr.microsoft.com/mssql/server:2025-latest
-    # No arm64 image exists; Rosetta emulation covers this on Apple Silicon.
-    platform: linux/amd64
-    # Emulated checkpoint+shutdown routinely outlives compose's 10s default
-    # grace; SIGKILL (exit 137) has corrupted the daemon's container store.
-    stop_grace_period: 60s
-    # PID 1 signal forwarding/reaping, so `stop` reaches sqlservr promptly.
-    init: true
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "vfsStr0ngPassw0rd"
-      MSSQL_PID: Developer
-      # Bound the engine's memory appetite inside the fixed-size VM;
-      # unbounded growth is the other route to an OOM SIGKILL (exit 137).
-      MSSQL_MEMORY_LIMIT_MB: "2048"
+  postgres17:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg17
     ports:
-      - "14330:1433"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa
-          -P "$$MSSQL_SA_PASSWORD" -C -l 2 -b -Q "SELECT 1"
-      interval: 5s
-      timeout: 6s
-      retries: 30
-      # Emulated first boot is legitimately slow; a short start_period
-      # lets health flapping restart a server that was coming up fine.
-      start_period: 60s
+      - "54317:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
 
-  oracle:
-    profiles: [oracle]
-    # 23ai Free ships native arm64 images; -slim halves the pull.
-    image: gvenzl/oracle-free:23-slim
-    environment:
-      ORACLE_PASSWORD: vfs-sys
-      APP_USER: vfs
-      APP_USER_PASSWORD: vfs
+  postgres18:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg18
     ports:
-      - "15210:1521"
-    # Lets the app user create and drop the per-test schema users.
-    volumes:
-      - ./initdb/oracle:/container-entrypoint-initdb.d:ro
-    # healthcheck.sh ships in the image and probes the pluggable DB's OPEN state.
-    healthcheck:
-      test: ["CMD", "healthcheck.sh"]
-      interval: 10s
-      timeout: 10s
-      retries: 40
-      start_period: 30s
+      - "54318:5432"
+    tmpfs:
+      - /var/lib/postgresql

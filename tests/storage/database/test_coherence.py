@@ -7,13 +7,14 @@ guard that owns that window either aborts the batch or refuses the row.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import Select, delete, insert, select, update
-from sqlalchemy.dialects import mssql, postgresql
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
@@ -27,7 +28,6 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
     GENERIC,
-    MARIADB,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -60,6 +60,9 @@ from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+# A profile whose zero-row guard redrives, as the floor's does, over the live SQLite session.
+REDRIVE = replace(SQLITE, guard_miss="redrive")
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +428,7 @@ class TestWriteVsTopologyCoherence:
         await storage.close()
 
     async def test_bump_values_arm_is_a_guarded_join_and_verifies_the_count(self) -> None:
-        # The set-based arm SQLite cannot execute (postgres/mssql): the
+        # The set-based arm SQLite cannot execute (postgres): the
         # statement joins (entry_id, path) and the RETURNING count is the
         # proof — one short row raises for the whole batch.
         tables = build_vfs_tables()
@@ -439,16 +442,14 @@ class TestWriteVsTopologyCoherence:
         assert "RETURNING" in sql
 
     async def test_guard_miss_mode_is_declared_per_dialect(self) -> None:
-        assert PROFILES["mariadb"].guard_miss == "redrive"
-        assert PROFILES["mariadb"].guard_miss == "redrive"
         assert GENERIC.guard_miss == "redrive"
-        for name in ("sqlite", "postgresql", "mssql", "oracle"):
+        for name in ("sqlite", "postgresql"):
             assert PROFILES[name].guard_miss == "reprobe"
         # Unknown dialects inherit the conservative floor.
         assert profile_for("exotic").guard_miss == "redrive"
 
     async def test_redrive_mode_raises_instead_of_classifying_off_the_probe(self, tmp_path) -> None:
-        # The mysql-family declaration through the live aggregate arm: a
+        # The redrive declaration through the live aggregate arm: a
         # zero-row guard must not be blamed off a probe the isolation
         # level would falsify — the whole method retries instead.
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -473,7 +474,7 @@ class TestWriteVsTopologyCoherence:
                 await _update_materials(
                     session,
                     entry,
-                    MARIADB,  # redrive-mode profile over the live sqlite session
+                    REDRIVE,
                     host.parameter_budget,
                     host.membership_budget,
                     [stale],
@@ -701,7 +702,7 @@ class TestWriteVsTopologyCoherence:
         staged = _staged_material("/x.txt", str(ULID()))
         double = _ReturningSession([])
         with pytest.raises(StaleSnapshot):
-            await _classify_guard_misses(cast("AsyncSession", double), tables.entry, MARIADB, 900, [staged])
+            await _classify_guard_misses(cast("AsyncSession", double), tables.entry, REDRIVE, 900, [staged])
 
     async def test_bump_parents_dispatches_by_declared_capability(self) -> None:
         tables = build_vfs_tables()
@@ -1094,7 +1095,7 @@ class TestWriteVsTopologyCoherence:
         tables = build_vfs_tables()
         entry = tables.entry
         pair = ("A" * 26, "/a")
-        dialect = mssql.dialect()
+        dialect = postgresql.dialect()
         rows = statement_budget(
             lambda probe: _bump_values_stmt(entry, probe),
             pair,
@@ -1140,7 +1141,7 @@ class TestWriteVsTopologyCoherence:
         # regardless, or a mixed batch overflows the engine cap mid-run.
         tables = build_vfs_tables()
         entry = tables.entry
-        dialect = mssql.dialect()
+        dialect = postgresql.dialect()
         width = len(_CLOBBER_COLUMNS) + 4
         now = datetime.now(UTC)
         # The eight render-state columns ride between the flags and the stamps.

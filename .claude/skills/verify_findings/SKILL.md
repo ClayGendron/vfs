@@ -94,8 +94,8 @@ Exactly one of:
 
 Hedged verdicts are banned. If you cannot decide within reasonable
 effort, that is itself information: downgrade to a question and name
-the specific unknown that blocked you (e.g. "requires a live Oracle
-instance to observe the cap"). "Probably a bug" reaching the reader is
+the specific unknown that blocked you (e.g. "requires a live Postgres
+server to observe the lock"). "Probably a bug" reaching the reader is
 the exact failure this gate exists to prevent.
 
 ### 4. Meet the evidence standard

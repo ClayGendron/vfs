@@ -109,18 +109,17 @@ class PendingRow(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-async def serialize(session: AsyncSession, profile: DialectProfile, lock: Table) -> None:
+async def serialize(session: AsyncSession, lock: Table) -> None:
     """Take the serialization point — always the verb's first statement.
 
     One locking read of the mount's single lock row, held to the end of
     the transaction: rival serialized verbs queue on it, and nothing
     else ever reads that row, so no write, read or rights compile waits
-    behind a verb on any engine. Spelled as the kit's locking read —
-    ``FOR UPDATE`` wherever the compiler renders it, the profile's hint
-    on T-SQL; on SQLite, whose writer transaction is the lock, the read
-    is inert.
+    behind a verb on any engine. Spelled as the kit's locking read,
+    ``FOR UPDATE``; on SQLite, whose writer transaction is the lock, the
+    read is inert.
     """
-    await session.execute(lock_rows(select(lock.c.id).where(lock.c.id == 1), lock, profile))
+    await session.execute(lock_rows(select(lock.c.id).where(lock.c.id == 1)))
 
 
 async def claim(

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.dialects import mssql, mysql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 
 from tests.support.oracles import graph_walk, meeting_subgraph
 from tests.support.statements import is_statistics_statement
@@ -245,8 +245,7 @@ class TestStatements:
         request = GraphRequest("outbound", 1, (), (), False, None, frozenset({"path", "kind"}))
         for name, dialect, keyword in (
             ("sqlite", sqlite.dialect(), "CROSS JOIN"),
-            ("mssql", mssql.dialect(), "INNER LOOP JOIN"),
-            ("mariadb", mysql.dialect(), "STRAIGHT_JOIN"),
+            ("postgresql", postgresql.dialect(), "JOIN"),
         ):
             site = Site(tables, PROFILES[name], 1_000)
             stmt = hop_statement(site, request, "outbound", ["x", "y"], [tables.entry.c.path, tables.entry.c.kind])

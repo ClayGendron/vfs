@@ -292,11 +292,8 @@ async def test_without_a_range_source_the_arms_answer_as_the_join_did(
         await storage.close()
 
 
-async def test_a_partial_read_issues_the_profiles_range_settings_and_derived_hint(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The settings run once per partial read, in its transaction; the hint
-    # rides the visible-corpus count. Both spelled so SQLite accepts them.
+async def test_a_partial_read_issues_the_profiles_range_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The settings run once per partial read, in its transaction, spelled so SQLite accepts them.
     storage = InMemoryStorage()
     try:
         entries = [Entry(path=Path(f"/d/{n}.md"), content="lantern") for n in range(3)]
@@ -305,8 +302,7 @@ async def test_a_partial_read_issues_the_profiles_range_settings_and_derived_hin
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
         host = storage._host
-        hints = host.profile.range_hints._replace(derived="/* {visible} {table} {index} */")
-        pinned = replace(host.profile, range_settings=("PRAGMA query_only = 0",), range_hints=hints)
+        pinned = replace(host.profile, range_settings=("PRAGMA query_only = 0",))
         monkeypatch.setattr(EngineHost, "profile", property(lambda _self: pinned))
         bob = Authority.of(Principal("bob"))
         searched = await storage.search(query="lantern", authority=bob)

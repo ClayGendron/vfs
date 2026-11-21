@@ -212,7 +212,7 @@ async def repair_segment_drift(
     ids = sorted([delta.entry_id for delta in state.deltas] + list(state.orphans))
     current: dict[str, str] = {}
     for chunk in chunked(ids, membership_budget):
-        guard = locked_lookup(entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.path], profile)
+        guard = locked_lookup(entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.path], profile)
         current.update({row.entry_id: row.path for row in await session.execute(guard)})
     confirmed = [delta for delta in state.deltas if current.get(delta.entry_id) == delta.path]
     orphaned = {entry_id: held for entry_id, held in state.orphans.items() if entry_id not in current}

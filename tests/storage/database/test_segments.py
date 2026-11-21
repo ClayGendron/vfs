@@ -352,9 +352,9 @@ class TestSegmentRebuild:
         seen: list[list[str]] = []
         real = segments_module.locked_lookup
 
-        def spy(table, column, chunk, columns, profile):
+        def spy(column, chunk, columns, profile):
             seen.append(list(chunk))
-            return real(table, column, chunk, columns, profile)
+            return real(column, chunk, columns, profile)
 
         monkeypatch.setattr(segments_module, "locked_lookup", spy)
         async with storage._host.session_factory() as session:

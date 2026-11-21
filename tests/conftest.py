@@ -63,9 +63,6 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
 
 ENGINE_URLS: Final = {
     "postgres": ("VFS_TEST_POSTGRES_URL",),
-    "mariadb": ("VFS_TEST_MARIADB_URL", "VFS_TEST_MYSQL_URL"),
-    "mssql": ("VFS_TEST_MSSQL_URL",),
-    "oracle": ("VFS_TEST_ORACLE_URL",),
 }
 """Each engine marker and the URL variables that make its leg runnable."""
 

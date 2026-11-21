@@ -20,9 +20,8 @@ from sqlalchemy import (
     inspect,
     select,
 )
-from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
-from sqlalchemy.dialects.mssql import pymssql
-from sqlalchemy.dialects.mysql import LONGBLOB, mariadb
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.mysql import mariadb
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import ColumnDefault, CreateIndex, CreateTable
 from ulid import ULID
@@ -240,35 +239,20 @@ class TestBuildVFSTables:
             assert isinstance(kind, BytewiseString)
             postgres = kind.load_dialect_impl(postgresql.dialect())
             assert isinstance(postgres, String) and postgres.collation == "C"
-            # UTF-8 binary collation: Unicode-safe VARCHAR whose byte order
-            # matches SQLite/Postgres-C; plain _BIN2 was a code-page VARCHAR.
-            ms = kind.load_dialect_impl(mssql.dialect())
-            assert isinstance(ms, String) and ms.collation == "Latin1_General_100_BIN2_UTF8"
 
-    def test_oracle_and_generic_take_the_unpinned_string_fallback(self, tables: VFSTables) -> None:
-        # The accepted degradation, pinned so it stays deliberate: Oracle and
-        # unmeasured engines get plain String — no collation, char-typed.
+    def test_sqlite_and_any_other_engine_take_the_unpinned_string(self, tables: VFSTables) -> None:
+        # SQLite's BINARY collation is bytewise already; any other engine gets plain String,
+        # an accepted degradation pinned so it stays deliberate.
         kind = tables.entry.c.path.type
         assert isinstance(kind, BytewiseString)
-        fallback = kind.load_dialect_impl(oracle.dialect())
+        fallback = kind.load_dialect_impl(sqlite.dialect())
         assert isinstance(fallback, String) and fallback.collation is None
-        assert kind.compile(dialect=oracle.dialect()) == f"VARCHAR2({MAX_PATH_LENGTH} CHAR)"
+        assert kind.compile(dialect=sqlite.dialect()) == f"VARCHAR({MAX_PATH_LENGTH})"
 
-    def test_mysql_family_key_columns_are_byte_typed(self, tables: VFSTables) -> None:
-        # utf8mb4 VARCHAR keys cost 4 bytes/char against InnoDB's 3,072-byte
-        # cap; VARBINARY keys cost their own bytes, so the DDL provisions.
-        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
-            ddl = str(CreateTable(tables.entry).compile(dialect=dialect))
-            assert f"VARBINARY({MAX_PATH_LENGTH})" in ddl
-            assert f"VARBINARY({MAX_SEGMENT_LENGTH})" in ddl
-
-    def test_bytewise_string_round_trips_utf8_on_the_mysql_family(self) -> None:
+    def test_a_bytewise_string_reads_text_and_bytes_as_text(self) -> None:
         kind = BytewiseString(MAX_PATH_LENGTH)
-        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
-            assert kind.process_bind_param("/é.txt", dialect) == "/é.txt".encode()
-            assert kind.process_result_value("/é.txt".encode(), dialect) == "/é.txt"
-        assert kind.process_bind_param("/é.txt", sqlite.dialect()) == "/é.txt"
         assert kind.process_result_value("/é.txt", sqlite.dialect()) == "/é.txt"
+        assert kind.process_result_value("/é.txt".encode(), sqlite.dialect()) == "/é.txt"
 
     def test_bodies_live_outside_entries_and_sit_last(self, tables: VFSTables) -> None:
         assert "content" not in tables.entry.c
@@ -304,12 +288,12 @@ class TestBuildVFSTables:
         fs_parent = by_name["uq_vfs_edges_fs_parent"]
         assert fs_parent.unique
         assert [c.name for c in fs_parent.columns] == ["target_id"]
-        for dialect_name in ("sqlite", "postgresql", "mssql"):
+        for dialect_name in ("sqlite", "postgresql"):
             assert str(fs_parent.dialect_options[dialect_name]["where"]) == "edge_type = 'fs'"
 
     @pytest.mark.parametrize(
         ("url", "emitted"),
-        [("sqlite://", True), ("postgresql://", True), ("mssql://", True), ("mariadb://", False), ("oracle://", False)],
+        [("sqlite://", True), ("postgresql://", True), ("mssql://", False), ("mariadb://", False)],
     )
     def test_single_parent_index_emission_per_dialect(self, url: str, emitted: bool) -> None:
         tables = build_vfs_tables()
@@ -353,7 +337,6 @@ class TestBuildVFSTables:
             tables.lex_stats.c.b,
         ):
             assert isinstance(column.type, Double)
-        # Blobs take the mysql-family LONGBLOB variant: a bare BLOB truncates at 64 KB.
         blobs = (
             tables.lex_postings.c.doc_ids,
             tables.lex_postings.c.tfs,
@@ -362,7 +345,6 @@ class TestBuildVFSTables:
         )
         for column in blobs:
             assert isinstance(column.type, LargeBinary)
-            assert isinstance(column.type.dialect_impl(mysql.dialect()), LONGBLOB)
         for table in (tables.lex_docs, tables.lex_postings, tables.lex_df, tables.lex_stats):
             assert table.kwargs["sqlite_with_rowid"] is False
         assert "WITHOUT ROWID" in str(CreateTable(tables.lex_postings).compile(dialect=sqlite.dialect()))
@@ -471,31 +453,17 @@ class TestULIDKey:
             name: key.compile(dialect=dialect)
             for name, dialect in (
                 ("postgresql", postgresql.dialect()),
-                ("mssql", mssql.dialect()),
-                ("oracle", oracle.dialect()),
-                ("mysql", mysql.dialect()),
                 ("sqlite", sqlite.dialect()),
-                # Non-default dialects whose supports_native_uuid flag lies
-                # about sort order: the allow-list must hold them to bytes.
+                # A dialect served by the floor whose supports_native_uuid flag
+                # lies about sort order: the allow-list must hold it to bytes.
                 ("mariadb", mariadb.MariaDBDialect()),
-                ("mssql+pymssql", pymssql.MSDialect_pymssql()),
             )
         }
-        # mssql is deliberately not UNIQUEIDENTIFIER: its sort order would
-        # forfeit the ULID's time-ordered index locality.
-        assert forms == {
-            "postgresql": "UUID",
-            "mssql": "BINARY(16)",
-            "oracle": "RAW(16)",
-            "mysql": "BINARY(16)",
-            "sqlite": "BINARY(16)",
-            "mariadb": "BINARY(16)",
-            "mssql+pymssql": "BINARY(16)",
-        }
+        assert forms == {"postgresql": "UUID", "sqlite": "BINARY(16)", "mariadb": "BINARY(16)"}
 
     def test_bytes_arm_round_trips_and_sorts_like_the_string(self) -> None:
         key = ULIDKey()
-        dialect = mssql.dialect()
+        dialect = sqlite.dialect()
         ulids = sorted(str(ULID()) for _ in range(64))
         bound = [key.process_bind_param(u, dialect) for u in ulids]
         assert all(isinstance(b, bytes) and len(b) == 16 for b in bound)
@@ -553,58 +521,27 @@ class TestDDL:
         tables.metadata.create_all(engine)
         assert set(inspect(engine).get_table_names()) == set(tables.metadata.tables)
 
-    def test_body_columns_compile_to_longtext_on_the_mysql_family(self, tables: VFSTables) -> None:
-        # Plain TEXT caps bodies at 64KB, and SQLAlchemy resolves variants
-        # strictly by dialect name — the pin must hold on BOTH family names.
-        bodies = (
-            tables.content.c.content,
-            tables.versions.c.content,
-            tables.versions.c.version_diff,
-            tables.chunks.c.content,
-        )
-        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
-            assert [column.type.compile(dialect=dialect) for column in bodies] == ["LONGTEXT"] * 4
-
-    def test_posting_blobs_compile_to_longblob_on_the_mysql_family(self, tables: VFSTables) -> None:
-        # Bare BLOB silently truncates at 64KB; a hot gram's doclist
-        # blob routinely exceeds it.
-        postings = tables.posting_list.c.postings
-        for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
-            assert postings.type.compile(dialect=dialect) == "LONGBLOB"
-
     def test_every_instant_keeps_sub_second_precision_and_its_zone_on_every_engine(self, tables: VFSTables) -> None:
-        # A bare zoned DateTime is DATE on Oracle — whole seconds — so a
-        # trash_days=0 sweep in the deleting second purged nothing there.
         columns = [column for table in tables.metadata.tables.values() for column in table.columns]
         instants = [column for column in columns if isinstance(column.type, DateTime)]
         assert {column.name for column in instants} >= {"created_at", "updated_at", "deleted_at", "granted_at"}
         compiled = {
             (dialect.name, column.type.compile(dialect=dialect))
             for column in instants
-            for dialect in (oracle.dialect(), mssql.dialect(), postgresql.dialect(), sqlite.dialect(), mysql.dialect())
+            for dialect in (postgresql.dialect(), sqlite.dialect())
         }
-        # MSSQL stays DATETIMEOFFSET: its TIMESTAMP is the rowversion type, so the variant is Oracle's alone.
-        assert compiled == {
-            ("oracle", "TIMESTAMP WITH TIME ZONE"),
-            ("mssql", "DATETIMEOFFSET"),
-            ("postgresql", "TIMESTAMP WITH TIME ZONE"),
-            ("sqlite", "DATETIME"),
-            ("mysql", "DATETIME"),
-        }
+        assert compiled == {("postgresql", "TIMESTAMP WITH TIME ZONE"), ("sqlite", "DATETIME")}
 
     def test_id_keys_declare_identity_in_ddl(self, tables: VFSTables) -> None:
-        # Oracle generates nothing for a bare autoincrement PK (ORA-01400 on
-        # insert); Postgres moved off BIGSERIAL — both must render IDENTITY.
-        for module in (oracle, postgresql):
-            for table in (tables.entry, tables.chunks, tables.edges):
-                ddl = str(CreateTable(table).compile(dialect=module.dialect()))
-                assert "GENERATED BY DEFAULT AS IDENTITY" in ddl
-            assert "BIGSERIAL" not in str(CreateTable(tables.entry).compile(dialect=postgresql.dialect()))
+        # Postgres moved off BIGSERIAL: the id keys render IDENTITY.
+        for table in (tables.entry, tables.chunks, tables.edges):
+            ddl = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+            assert "GENERATED BY DEFAULT AS IDENTITY" in ddl
+        assert "BIGSERIAL" not in str(CreateTable(tables.entry).compile(dialect=postgresql.dialect()))
 
     def test_whole_family_ddl_compiles_on_every_dialect(self, tables: VFSTables) -> None:
-        # Served, not refused: no column type may fail DDL compile on any
-        # engine class — MySQL once refused the unbounded String() bodies.
-        for module in (postgresql, mssql, oracle, mysql, sqlite):
+        # No column type may fail DDL compile on either engine.
+        for module in (postgresql, sqlite):
             dialect = module.dialect()
             for table in tables.metadata.tables.values():
                 CreateTable(table).compile(dialect=dialect)

@@ -4,9 +4,9 @@ One scan reads the chunk table a page at a time under an entry filter,
 the embed step's: ``id > last ORDER BY id LIMIT n``, each page fetched
 whole before the caller acts on it. Pages, never a streaming cursor: the
 caller writes between pages on the same connection, and a driver without
-multiple active result sets (SQL Server over ODBC) refuses a write while
-a cursor is open. Each page keeps only the chunks whose entry is covered
-— chunked and live — and the terms that say so live on the entry row.
+multiple active result sets refuses a write while a cursor is open.
+Each page keeps only the chunks whose entry is covered — chunked and
+live — and the terms that say so live on the entry row.
 The index build's scan pages the chunk table alone and reads no entry.
 
 The natural spelling of that filter is a join to the entry table, and on
