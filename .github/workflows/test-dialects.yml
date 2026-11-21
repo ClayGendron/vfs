@@ -31,6 +31,8 @@ jobs:
     # The ODBC step installs from Microsoft's Ubuntu 24.04 feed; the runner
     # is pinned to the same release so the two never drift apart.
     runs-on: ubuntu-24.04
+    # A backstop for a hang: the slowest leg takes about 17 minutes.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

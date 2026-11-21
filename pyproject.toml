@@ -152,6 +152,9 @@ testpaths = ["tests"]
 # One worker per core, stealing work so the heavy tail does not run alone at the end;
 # the real-engine legs are selected in tests/conftest.py.
 addopts = "-n auto --dist worksteal"
+# A hang guard, never an assertion: a test stuck this long fails with every thread's stack, not the run.
+timeout = 600
+timeout_method = "thread"
 asyncio_mode = "auto"
 norecursedirs = ["tests/fixtures"]
 markers = [
