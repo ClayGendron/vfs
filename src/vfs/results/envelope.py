@@ -348,6 +348,12 @@ class Result(BaseModel):
     - Enrichment: ``.sort()``, ``.top()``, ``.filter()``, ``.kinds()``.
     - Routing: ``.with_mount()`` / ``.without_mount()`` rebase every row
       and error across a mount boundary and stamp error provenance.
+    - Paging: ``next_after`` is the path of the last row of a listing
+      page, passed back as ``after=`` for the next one, and ``None`` when
+      the listing is done. Enrichment and ``model_copy`` keep it, because
+      the listing's position is unchanged. Set algebra, ``merge`` and
+      ``merge_branches`` clear it, because two listings have no one
+      position. The rebase pair moves it like a row path.
     - Serialization: ``.to_payload()`` / ``.from_payload()`` (open,
       per-item-lenient wire dict), ``.to_json()``, ``.to_str()``.
     """
@@ -357,6 +363,7 @@ class Result(BaseModel):
     ops: tuple[str, ...] = ()
     observations: list[Observation] = []
     errors: list[ResultError] = []
+    next_after: Path | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -614,7 +621,7 @@ class Result(BaseModel):
     def _demoted(self) -> Result:
         """Copy with every fatal entry demoted to warning severity."""
         errors = [e.model_copy(update={"severity": Severity.warning}) if e.is_fatal else e for e in self.errors]
-        return Result(ops=self.ops, observations=self.observations, errors=errors)
+        return Result(ops=self.ops, observations=self.observations, errors=errors, next_after=self.next_after)
 
     # -------------------------------------------------------------------
     # Enrichment chains (local, no backend call)
@@ -626,6 +633,7 @@ class Result(BaseModel):
             ops=self.ops,
             observations=observations,
             errors=self.errors,
+            next_after=self.next_after,
         )
 
     def sort(
@@ -679,7 +687,10 @@ class Result(BaseModel):
         ``vfs.unaddressable`` **warning** — the row exists but is not
         addressable through this mount; loss on record, envelope still
         successful. Its locus is ``source`` plus the append-once
-        ``data["vfs.overflow"]`` local path. Pure — the original is
+        ``data["vfs.overflow"]`` local path. A listing key rebases like a
+        row; one that would overflow ends the listing loudly: the key
+        becomes ``None`` and the warning for it carries
+        ``data["vfs.overflow"]["next_after"]``. Pure — the original is
         untouched.
         """
         if not mount:
@@ -688,25 +699,29 @@ class Result(BaseModel):
         errors = [e.with_mount(mount) for e in self.errors]
         extras = self.model_extra or {}
         if mount == "/":
-            return Result(ops=self.ops, observations=self.observations, errors=errors, **extras)
+            return Result(
+                ops=self.ops, observations=self.observations, errors=errors, next_after=self.next_after, **extras
+            )
         observations: list[Observation] = []
+        overflowed: dict[str, int] = {}
         for o in self.observations:
             if rebase_overflows(mount, o.path):
-                errors.append(
-                    ResultError(
-                        kind=ErrorKind.unaddressable,
-                        message=(
-                            f"Unaddressable: the path exceeds {MAX_PATH_LENGTH} bytes when rebased "
-                            "under this mount and cannot be addressed through it"
-                        ),
-                        severity=Severity.warning,
-                        source=mount,
-                        data={"vfs.overflow": {"local_path": str(o.path)}},
-                    )
-                )
+                overflowed[o.path] = len(errors)
+                errors.append(_unaddressable(mount, {"local_path": str(o.path)}))
                 continue
             observations.append(o.with_mount(mount))
-        return Result(ops=self.ops, observations=observations, errors=errors, **extras)
+        key = self.next_after
+        if key is not None and rebase_overflows(mount, key):
+            # The listing ends loudly: the row the key names was dropped above, or never shown.
+            index = overflowed.get(key)
+            if index is None:
+                errors.append(_unaddressable(mount, {"next_after": str(key)}))
+            else:
+                errors[index] = _unaddressable(mount, {"local_path": str(key), "next_after": str(key)})
+            key = None
+        elif key is not None:
+            key = key.with_mount(mount)
+        return Result(ops=self.ops, observations=observations, errors=errors, next_after=key, **extras)
 
     def without_mount(self, mount: str) -> Result:
         """New result with the *mount* prefix stripped from every row and error.
@@ -720,6 +735,7 @@ class Result(BaseModel):
             ops=self.ops,
             observations=[o.without_mount(mount) for o in self.observations],
             errors=[e.without_mount(mount) for e in self.errors],
+            next_after=None if self.next_after is None else self.next_after.without_mount(mount),
             **(self.model_extra or {}),
         )
 
@@ -751,6 +767,7 @@ class Result(BaseModel):
                 ops=self.ops,
                 observations=self.observations,
                 errors=self._rolled_errors(),
+                next_after=self.next_after,
             )
         payload = json.loads(target.model_dump_json(exclude_none=exclude_none))
         payload.pop("success", None)
@@ -887,6 +904,20 @@ class Result(BaseModel):
 # ---------------------------------------------------------------------------
 
 _QUARANTINE_CLIP = 512  # bound raw peer junk carried in quarantine records
+
+
+def _unaddressable(mount: Path, overflow: dict[str, str]) -> ResultError:
+    """The warning for a row or a listing key whose path is too long to rebase under ``mount``."""
+    return ResultError(
+        kind=ErrorKind.unaddressable,
+        message=(
+            f"Unaddressable: the path exceeds {MAX_PATH_LENGTH} bytes when rebased "
+            "under this mount and cannot be addressed through it"
+        ),
+        severity=Severity.warning,
+        source=mount,
+        data={"vfs.overflow": overflow},
+    )
 
 
 def _quarantine(item: Any, exc: Exception, severity: Severity, what: str) -> ResultError:

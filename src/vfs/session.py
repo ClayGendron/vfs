@@ -120,22 +120,30 @@ class AsyncSession:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("ls")) is not None:
             return refusal
-        return await self._fs.ls(path, observations, columns=columns, authority=self._authority)
+        return await self._fs.ls(
+            path, observations, after=after, limit=limit, columns=columns, authority=self._authority
+        )
 
     async def tree(
         self,
         path: str,
         max_depth: int | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("tree")) is not None:
             return refusal
-        return await self._fs.tree(path, max_depth, columns=columns, authority=self._authority)
+        return await self._fs.tree(
+            path, max_depth, after=after, limit=limit, columns=columns, authority=self._authority
+        )
 
     # -------------------------------------------------------------------
     # mutations
@@ -281,6 +289,8 @@ class AsyncSession:
         globs_not: tuple[str, ...] = (),
         kind: ObjectKind | None = None,
         max_count: int | None = None,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("glob")) is not None:
@@ -294,6 +304,8 @@ class AsyncSession:
             globs_not=globs_not,
             kind=kind,
             max_count=max_count,
+            after=after,
+            limit=limit,
             columns=columns,
             authority=self._authority,
         )

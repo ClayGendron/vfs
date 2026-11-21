@@ -76,7 +76,14 @@ if TYPE_CHECKING:
 # which verbs it serves (that is ``capabilities()``). An absent key means
 # the trait is not declared, never a default.
 TraitKey = Literal[
-    "grep_tier", "grep_staleness", "search_signals", "search_staleness", "version_encoding", "durability", "arbitration"
+    "grep_tier",
+    "grep_staleness",
+    "search_signals",
+    "search_staleness",
+    "version_encoding",
+    "durability",
+    "arbitration",
+    "listing_cursor",
 ]
 TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
@@ -88,6 +95,7 @@ TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "version_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
+    "listing_cursor": frozenset({"keyset"}),
 }
 """Per-key value vocabulary; the traits drift test pins declarations to it."""
 

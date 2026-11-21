@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.mounts import AskStorage, Location, Mount
     from vfs.ops import Op
+    from vfs.pattern_matching import GlobGates
 
 # The fields of a bare row, which says only that a directory is there.
 BARE_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind"})
@@ -46,6 +47,9 @@ _DENIALS: Final = frozenset({ErrorKind.not_found, ErrorKind.permission_denied, E
 
 # What shrinks a ``glob`` that could not judge every mount point in time.
 _POINTS_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions"
+
+# What shrinks a search over several mounts whose root probe or root admission ran out of time.
+SCOPED_REFINE_GUIDANCE: Final = "narrow the patterns, or scope with fewer paths"
 
 # ---------------------------------------------------------------------------
 # What a listing shows at a mount point
@@ -470,6 +474,62 @@ class MountListing:
                 continue
             grouped.setdefault(mount.path, (mount, []))[1].append(root.without_mount(mount.path))
         return grouped, unverifiable
+
+    def root_probes(
+        self,
+        ask: AskStorage,
+        roots: tuple[Path, ...],
+        gates: GlobGates | None,
+        kind: str | None,
+        columns: frozenset[str] | None,
+        authority: Authority | None,
+    ) -> tuple[list[Coroutine[Any, Any, Result]], list[ResultError]]:
+        """Build one probe for each :term:`mount` that holds roots the caller named.
+
+        The call returns the probes, and a warning for each root that cannot be checked, as
+        :meth:`probed` groups them. ``gates`` judge the roots' own rows, on the process pool. With
+        ``None``, no row is returned.
+        """
+        grouped, unverifiable = self.probed(roots)
+        coros = [
+            self._root_probe(ask, mount, rels, gates, kind, columns, authority) for mount, rels in grouped.values()
+        ]
+        return coros, unverifiable
+
+    async def _root_probe(
+        self,
+        ask: AskStorage,
+        mount: Mount,
+        rels: list[Path],
+        gates: GlobGates | None,
+        kind: str | None,
+        columns: frozenset[str] | None,
+        authority: Authority | None,
+    ) -> Result:
+        """Check the roots that one :term:`mount` holds, with one ``stat`` of all of them.
+
+        The ``stat`` takes no hop of the call's budget, because the search holds one already. A root
+        that is not there is reported as an error by the storage itself. ``gates`` decide whether the
+        row of a root that is there joins the result. For ``glob`` it joins when a name arm matches and no
+        exclusion, extension filter or ``kind`` drops it. A root is tested like any other row and is
+        never let through untested. For ``grep``, ``gates`` is ``None`` and no row joins, because
+        only a storage can test content. The rows are judged in one hop, within a time budget that
+        starts when the judging starts. If the hop does not finish, only the rows it judged are
+        returned, with one warning.
+        """
+        probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
+        result = await self.listed(ask, mount, "stat", observations=probe, columns=columns, authority=authority)
+        kept: list[Observation] = []
+        records: list[ResultError] = []
+        if gates is not None:
+            deadline = Deadline.after(WALL_TIME_BUDGET)
+            judged, completed = await judge_in_hand(gates, list(result.observations), deadline)
+            kept = [row for row in judged if kind is None or row.kind == kind]
+            if not completed:
+                records.append(wall_truncation(SCOPED_REFINE_GUIDANCE))
+        # The probe answers for the caller's verb, not as a verb of its own:
+        # an op-less envelope merges without leaking ``stat`` into the result.
+        return result.model_copy(update={"ops": (), "observations": kept, "errors": [*result.errors, *records]})
 
     async def _heads(
         self,

@@ -139,6 +139,10 @@ _OBSERVATIONS: Final = ParamSpec("observations", "observations", doc="row-addres
 _SCOPE_PATHS: Final = ParamSpec(
     "paths", "str_seq", nullable=False, default=(), doc="scope paths; empty means every entry"
 )
+_AFTER: Final = ParamSpec("after", "path", doc="resume after this row's path: the previous page's next_after")
+_LIMIT: Final = ParamSpec(
+    "limit", "int", minimum=1, maximum=INT_CEILING, doc="most rows on one page; None lists every row"
+)
 _PRINCIPAL: Final = ParamSpec("principal", "str", required=True, doc="a user's sub or a group:<name> id")
 _GROUP: Final = ParamSpec("group", "str", required=True, doc="the group id, group:<name>")
 _MEMBER: Final = ParamSpec("member", "str", required=True, doc="a user's sub or a nested group:<name> id")
@@ -162,12 +166,16 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "ls": (
         ParamSpec("path", "path", doc="the directory to list"),
         _OBSERVATIONS,
+        _AFTER,
+        _LIMIT,
         _COLUMNS,
         _AUTHORITY,
     ),
     "tree": (
         ParamSpec("path", "path", required=True, doc="the region root"),
         ParamSpec("max_depth", "int", minimum=1, maximum=INT_CEILING, doc="depth budget; None is unbounded"),
+        _AFTER,
+        _LIMIT,
         _COLUMNS,
         _AUTHORITY,
     ),
@@ -272,6 +280,8 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("globs_not", "str_seq", nullable=False, default=(), doc="drop paths matching these globs"),
         ParamSpec("kind", "str", choices=OBJECT_KINDS, doc="keep only rows of this kind; None keeps both"),
         ParamSpec("max_count", "int", minimum=1, maximum=INT_CEILING, doc="bound per entry and on the merged result"),
+        _AFTER,
+        _LIMIT,
         _COLUMNS,
         _AUTHORITY,
     ),
@@ -420,13 +430,19 @@ _ONE_TARGET: Final = ShapeRule(
     msg_both="Exactly one of path or observations must be provided",
     msg_missing="Exactly one of path or observations must be provided",
 )
+# A cursor pages one listing in path order: one directory, one subtree, or one search.
+_ONE_LISTING: Final = ShapeRule(
+    (("after", "limit"), ("observations",)),
+    exactly_one=False,
+    msg_both="after and limit page one listing; they take no observations",
+)
 # Each form of write has its own spelling of the expected version.
 _VERSION_FORMS: Final = "write takes if_version with path, and if_versions with entries"
 
 RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "read": (_ONE_TARGET,),
     "stat": (_ONE_TARGET,),
-    "ls": (_ONE_TARGET,),
+    "ls": (_ONE_TARGET, _ONE_LISTING),
     "delete": (_ONE_TARGET,),
     "restore": (_ONE_TARGET,),
     "traverse": (_ONE_TARGET,),
@@ -474,6 +490,12 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             (("paths",), ("observations",)),
             exactly_one=False,
             msg_both="glob takes paths or observations, not both",
+        ),
+        _ONE_LISTING,
+        ShapeRule(
+            (("after", "limit"), ("max_count",)),
+            exactly_one=False,
+            msg_both="glob takes a page (after and limit) or max_count, not both",
         ),
     ),
     "grep": (
