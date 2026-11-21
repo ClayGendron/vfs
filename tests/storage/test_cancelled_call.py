@@ -609,6 +609,37 @@ class TestACallerCancelledByATimeLimitAndByACancelScope:
         assert (await fs.read("/a.txt")).one().content == "old"
 
     @ON_EVERY_HOST
+    async def test_a_cancellation_from_outside_is_lost_when_a_scope_inside_is_cancelled_in_the_same_wait(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+    ) -> None:
+        """Pins a loss as it is: the scope takes the error, and the canceller outside it gets nothing.
+
+        A plain await ends the task cancelled when the outside cancellation lands first. If this fails,
+        the outside canceller is being served, and the docstring of ``run_out_of_reach`` is to say so.
+        """
+        round_trip.hold(reads_entries)
+        scopes: list[anyio.CancelScope] = []
+
+        async def handler() -> tuple[bool, str, int]:
+            with anyio.CancelScope() as scope:
+                scopes.append(scope)
+                await fs.stat("/a.txt")
+            # The next await is not cancelled, though the outside request is still counted on the task.
+            await asyncio.sleep(0)
+            task = asyncio.current_task()
+            assert task is not None
+            return scope.cancelled_caught, "ran on to its end", task.cancelling()
+
+        handled = asyncio.ensure_future(handler())
+        await round_trip.reached.wait()
+        handled.cancel()
+        await turns_of_the_loop()
+        scopes[0].cancel()
+        await turns_of_the_loop()
+        round_trip.let_go()
+        assert await handled == (True, "ran on to its end", 1)
+
+    @ON_EVERY_HOST
     async def test_a_scope_inside_the_time_limit_takes_the_cancellation_and_no_timeout_is_raised(
         self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
     ) -> None:

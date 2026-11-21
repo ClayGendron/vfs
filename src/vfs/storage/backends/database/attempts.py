@@ -12,8 +12,10 @@ So on SQLite each attempt runs in a task of its own, and a caller that
 is cancelled waits for its attempt to end before its cancellation is
 raised. A caller with more than one canceller is raised the first
 cancellation that carries a message, with the others behind it as its
-``__context__``. A canceller that knows its own cancellation by its
-message, as a cancel scope does, then finds it on the error raised.
+``__context__``. The first canceller that gave a message, as a cancel
+scope does, then finds its cancellation on the error raised. A later
+one finds its own only behind that error, where it does not always
+arrive, and ``run_out_of_reach`` says which cancellers are not served.
 
 An attempt whose caller was cancelled is marked, and a marked attempt
 stops. The statement in flight ends, and no other is sent: the next one
@@ -104,18 +106,29 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
 
     A caller can have two cancellers, such as a time limit and a cancel
     scope. The cancellation raised is the first that carries a message,
-    or the first of all when none does. Only a canceller that knows its
-    cancellation by its message needs to see it on the error itself, and
-    asyncio's own cancellers, a time limit and a task group, do not read
-    the message. One cancellation is kept for each message, and the
-    others are behind the one raised as its ``__context__``, in the order
-    they came.
+    or the first of all when none does. A canceller that knows its
+    cancellation by its message, as a cancel scope does, must see it on
+    the error itself, and asyncio's own cancellers, a time limit and a
+    task group, do not read the message. One cancellation is kept for
+    each message, and the others are behind the one raised as its
+    ``__context__``, in the order they came.
 
-    What is behind the error raised does not always arrive. Python
-    replaces it when the caller awaits inside a block that is handling
-    another error. So of two cancellers that both know their cancellation
-    by a message, a caller that awaits inside an ``except`` block is
-    raised the first, and the second does not find its own.
+    Two cancellers are not always both served. A cancel scope takes any
+    error that has its message on it or behind it, whatever else is
+    pending on the task, and this function cannot know which of two
+    cancellers is the outer one. So when a task is cancelled from
+    outside, or by a time limit around the scope, and a scope inside it
+    is cancelled in the same wait, the scope takes the error and the
+    outer canceller gets nothing. The task runs on to its end with
+    ``Task.cancelling()`` still 1, and no ``TimeoutError`` is raised,
+    where a plain await would have ended the task cancelled.
+
+    What is behind the error raised does not always arrive either.
+    Python replaces it when the caller awaits inside a block that is
+    handling another error. There only the first cancellation with a
+    message is found: a scope that is cancelled after a canceller that
+    gave a message of its own does not find its cancellation, and the
+    task ends cancelled.
     """
     mark = _Mark()
     cancellations: list[asyncio.CancelledError] = []
