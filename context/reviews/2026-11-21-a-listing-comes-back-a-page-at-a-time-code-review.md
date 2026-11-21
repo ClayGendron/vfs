@@ -220,6 +220,8 @@ L6, found on the re-read of `2cebab0`: a write-in with its fix text; no round.
 
 L6 fixed in the commit after `2cebab0` that this line arrives in, by the fix text given: the sentence is in the paging paragraph of `AsyncVirtualFileSystem.glob`; `base.py`'s line entry rises from 3,098 to 3,100, below the 3,103 on `dev`.
 
+Reviewer on L6: Confirmed (READ, the diff of `cdf3704`). The two sentences in `AsyncVirtualFileSystem.glob`'s paging paragraph are the fix text word for word, and the commit changes nothing else under `src/`. The raise of `base.py`'s entry from 3,098 to 3,100 matches `wc -l` (EXECUTED), and the landing still lowers it from the 3,103 at `d618bbb`, so it is not a finding. From the logs (READ): `ci11.log` shows every step PASS at 100.00% coverage, exit 0; `docs5.log` shows `scripts/docs.sh check` passing, exit 0.
+
 ## Verdict
 
 Does not land yet: H1 (a drained `tree` under a view is not the whole `tree`), H2 (a `glob` page rebuilds its fan per stream, quadratic in patterns and roots), H3 (the SQLite `tree` page leaves the live index once statistics predate a mass delete) and H4 (the gate is red at 99.94% coverage); and M1, M2 and M3, which close by the evidence each names or a Disposition reason I confirm.
@@ -231,3 +233,5 @@ Does not land yet: H1 (a drained `tree` under a view is not the whole `tree`), H
 2026-11-21, re-read on `4fe99bf`: Does not land yet: H6 and H7. H6: a `glob` page whose live and trash-view arms share a fan statement loses the unjudged rows of the cut side, 5 of 60 in the repro, with a warning on one mid-listing page. H7: the gate is red, because `reads.py` grew to 1,164 lines past its 1,160 entry. They close with the fix and the pin H6 names, and with `scripts/ci.sh` green. Confirmed: M4 for the cases it reported. For the record, the author reports that `scripts/docs.sh check` passed at `a88e736`. I did not run it, and `4fe99bf` changes no public docstring (READ, the diff).
 
 2026-11-21, re-read on `2cebab0`: Lands. No High or Medium stands. H1 to H7, M2, M3 and M4 are confirmed fixed or answered, and M1 is closed by H5, M4 and H6. A glob page cut by its time budget now drains whole wherever a row was judged, and ends loudly where none was. The gate is green at `2cebab0` (`ci10.log`, exit 0). L1 to L6 are write-ins; L6's fix text is open for the author.
+
+2026-11-21, re-read on `cdf3704`: Lands. The one commit past `2cebab0` applies L6's fix text to a docstring and raises `base.py`'s line entry by its two lines, still under the 3,103 on `dev`. Both gates are green at `cdf3704` (`ci11.log` and `docs5.log`, exit 0), and no High or Medium stands.

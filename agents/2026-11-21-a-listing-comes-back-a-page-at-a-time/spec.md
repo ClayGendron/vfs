@@ -79,6 +79,8 @@ Out: the fronts, by decision 5; a cursor on `grep`, `search` or `traverse`; one 
 
 Built on 2026-11-21 in an autonomous pass, on the branch `a-listing-comes-back-a-page-at-a-time`, in two commits: `702d961` (slice A) and `f36595f` (slice B).
 
+The code review is [`context/reviews/2026-11-21-a-listing-comes-back-a-page-at-a-time-code-review.md`](../../context/reviews/2026-11-21-a-listing-comes-back-a-page-at-a-time-code-review.md). It is one fresh reviewer's reading with five re-reads of the fixes, and its standing verdict at `cdf3704` is "Lands".
+
 ### How the three choices were taken
 
 The three choices had no answer from the developer, so the recommended answer was taken for each, and each is open to reversal in review.
