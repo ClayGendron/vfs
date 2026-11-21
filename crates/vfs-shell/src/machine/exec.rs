@@ -1003,11 +1003,37 @@ pub async fn run_program(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, words: Vec<S
         .await?;
         return Ok(127);
     }
-    if sh.programs.contains_key(name)
-        && let Some(status) = programs::run(ctx, sh, name, words).await?
-    {
-        return Ok(status);
+    if sh.programs.contains_key(name) {
+        if let Some(status) = programs::run(ctx, sh, name, words).await? {
+            return Ok(status);
+        }
+        return not_found(sh, name).await;
     }
+    let key = sh.key();
+    let start = Request::Start {
+        name: name.to_owned(),
+        args: words.iter().skip(1).cloned().collect(),
+        cwd: sh.cwd.clone(),
+    };
+    match io::host_call(&sh.hub, key.clone(), start).await? {
+        Reply::Library => match programs::run(ctx, sh, name, words).await? {
+            Some(status) => Ok(status),
+            None => not_found(sh, name).await,
+        },
+        Reply::Started => programs::run_host(sh, name, key).await,
+        Reply::Refused { status, message } => {
+            sh.error_text(&format!(
+                "bash: line {}: {}: {}\n",
+                sh.lineno, name, message
+            ))
+            .await?;
+            Ok(status)
+        }
+        _ => not_found(sh, name).await,
+    }
+}
+
+async fn not_found(sh: &mut Shell, name: &str) -> Status {
     sh.error_text(&format!(
         "bash: line {}: {}: command not found\n",
         sh.lineno, name

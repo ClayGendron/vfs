@@ -2,7 +2,7 @@
 
 ## Step in hand
 
-The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done in this commit); the host-resolved program request; one write per redirection; the differential fuzzer; a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
+The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done); the host-resolved program request (done in this commit); one write per redirection; the differential fuzzer; a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
 
 ## Score
 
@@ -18,6 +18,7 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - **Steps 3 to 5.** The machine: async Rust polled inside `step`, keyed requests, pipes, jobs, every expansion, the builtins, the counted memory, the slice, and cancel. The programs: `cat`, `cp`, `cut`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `tee`, `touch`, `tr`, `uniq` and `wc`. The laws and the machine fuzz target are in `crates/vfs-shell/tests/laws.rs`. The module is `crates/vfs-shell-wasm`; its laws run under `wasmi` in `crates/vfs-shell-wasm/tests/module_laws.rs`.
 - **Step 6.** `vfs.shell.run_line`, the binding `ShellMachine` in `vfs-core`, and `cli` on `AsyncVirtualFileSystem`, `AsyncSession`, `VirtualFileSystem` and `Session`, returning `vfs.LineResult`. Each request is one public verb with the admitted authority, a spied test holds it, and the system actor is refused.
 - **The runtime carried.** `vfs-core` links `wasmtime` 51 and embeds the module its build script compiles. `ShellMachine` runs each line in a fresh instance: fuel is the line's instruction budget, an epoch thread ticking every 10 ms ends a slice at the deadline or a cancel, a resource limiter holds the module's memory, and a fault is a trap that ends the line. The host runs every slice on the offload pool with the interpreter lock released. Measured through `fs.cli` on the review's lines: the 160-deep recursion ends on the nesting budget, the replace loop and a 2⁴⁰ call tree end on fuel, the busy loop on its iteration budget, the print loop on the output budget, and a 200,000-`touch` loop on the deadline; the process lives, and a 50 ms heartbeat beside each line missed none of its beats.
+- **The program request.** A name that is no builtin, no function and no library program the host mounted is a `Start` request: the host answers that the library runs it, that the host runs it, a refusal with its status and message, or not found. A program the host runs is given its standard input a chunk at a time by `Feed` requests, each answered with what it wrote since and its status once it exits. `MemoryHost` runs plain-function programs and refuses names; the vfs host runs `search` as one call of the `search` verb, refuses `curl` and `wget` with 126 and the network hint, and answers `git`, `sudo`, `python3`, `python` and `perl` with 127 and a hint. The wire carries both directions, and a roundtrip test holds every request and reply.
 - **Step 7.** `documentation/reference/shell.md`, and `LineResult` on the results reference page.
 
 ## Decided inside the laws
@@ -39,7 +40,8 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 ## Reported and not taken
 
 - `cli` takes no `limits`, `fuel` or `deadline`, so a caller cannot lower a budget; `run_line` takes all three. Adding them to the public method changes its signature.
-- `grep -r` and `find` walk through `list` and `read` instead of the indexed verbs; the program request, next, is what lets the host serve them.
+- `grep -r` and `find` walk through `list` and `read` instead of the indexed verbs. The program request now lets the vfs host serve them itself, as it serves `search`; doing so means printing what GNU grep and find print from the verbs' rows, which is not built.
+- `traverse`, `grant` and the other verbs with no Unix name are not programs yet; each is one more entry beside `search`.
 - The Oils spec-suite rate is not measured. The prior-art memo ran 468 Oils cases against the crate: 363 agree, 39 differ, 66 were skipped; its section 6 lists the differences not in the corpus.
 - The weighted sample's run rate is 72%, below the 85% the spec names. Every line that does not run names a program the roadmap says never runs.
 - Roadmap F1 (removing `SupportsRun`), `move(replace=)` and `glob(case_mode=)` are not built.
@@ -49,4 +51,4 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 
 ## Next
 
-The host-resolved program request, then one write per redirection, the differential fuzzer, and the review of steps 3 to 7.
+One write per redirection, then the differential fuzzer, and the review of steps 3 to 7.

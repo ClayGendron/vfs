@@ -201,6 +201,20 @@ pub enum Request {
     Value {
         name: String,
     },
+    /// Run the program `name`, which is no builtin, function or mounted library program. The host
+    /// resolves it: its own program, the library's, a refusal, or not found.
+    Start {
+        name: String,
+        args: Vec<String>,
+        cwd: String,
+    },
+    /// Give a program the host runs the next bytes of its standard input, `eof` once they end,
+    /// and take what it has written since. `program` is the key of its `Start`.
+    Feed {
+        program: RequestKey,
+        data: Vec<u8>,
+        eof: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -239,12 +253,34 @@ impl HostError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
-    Data { bytes: Vec<u8>, eof: bool },
+    Data {
+        bytes: Vec<u8>,
+        eof: bool,
+    },
     Done,
-    Stat { kind: EntryKind, size: u64 },
+    Stat {
+        kind: EntryKind,
+        size: u64,
+    },
     Entries(Vec<Entry>),
     Text(String),
     Error(HostError),
+    /// To a `Start`: run the library's program of that name.
+    Library,
+    /// To a `Start`: the host runs the program; feed it.
+    Started,
+    /// To a `Feed`: what the program wrote since, and its status once it has exited.
+    Output {
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        status: Option<i32>,
+    },
+    /// To a `Start`: the host will not run the program. The line prints the message and the
+    /// command exits with the status, 126 for a program the host knows and cannot run.
+    Refused {
+        status: i32,
+        message: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

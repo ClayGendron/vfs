@@ -10,10 +10,11 @@ mod text;
 
 use std::collections::BTreeMap;
 
+use crate::machine::exec::Status;
 use crate::machine::exec::{absolute, read_whole, sync_path, write_or_die};
 use crate::machine::files::FileReader;
 use crate::machine::shell::Fd;
-use crate::machine::{Ctx, Flow, HostError, Reply, Request, Shell, io};
+use crate::machine::{Ctx, Flow, HostError, Reply, Request, RequestKey, Shell, io};
 
 /// Every program name the library implements.
 pub const NAMES: &[&str] = &[
@@ -56,6 +57,50 @@ pub async fn run(
         _ => return Ok(None),
     };
     Ok(Some(status))
+}
+
+/// Run a program the host runs: feed it standard input a chunk at a time, and write what it
+/// writes, until it exits. A host that answers a feed with anything else ends the program.
+pub async fn run_host(sh: &mut Shell, name: &str, program: RequestKey) -> Status {
+    let mut prog = Prog {
+        sh,
+        name: name.to_owned(),
+    };
+    let mut eof = false;
+    loop {
+        let data = if eof {
+            Vec::new()
+        } else if let Some(chunk) = prog.stdin_chunk().await? {
+            chunk
+        } else {
+            eof = true;
+            Vec::new()
+        };
+        let feed = Request::Feed {
+            program: program.clone(),
+            data,
+            eof,
+        };
+        match prog.request(feed).await? {
+            Reply::Output {
+                stdout,
+                stderr,
+                status,
+            } => {
+                prog.out(&stdout).await?;
+                if !stderr.is_empty() {
+                    write_or_die(prog.sh, 2, &stderr).await?;
+                }
+                if let Some(status) = status {
+                    return Ok(status);
+                }
+            }
+            _ => {
+                prog.err("the host ended the program").await?;
+                return Ok(1);
+            }
+        }
+    }
 }
 
 /// What a program sees of the shell: its streams and its host.

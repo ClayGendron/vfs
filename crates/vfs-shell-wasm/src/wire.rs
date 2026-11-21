@@ -207,6 +207,21 @@ pub fn decode_replies(text: &str) -> Result<Vec<(RequestKey, Reply)>, String> {
                     .unwrap_or_default()
                     .to_owned(),
             ),
+            "library" => Reply::Library,
+            "started" => Reply::Started,
+            "output" => Reply::Output {
+                stdout: item.get("stdout").map(Json::bytes).unwrap_or_default(),
+                stderr: item.get("stderr").map(Json::bytes).unwrap_or_default(),
+                status: item.get("status").and_then(Json::number).map(|n| n as i32),
+            },
+            "refused" => Reply::Refused {
+                status: i32::try_from(item.u64_or("status", 126)).unwrap_or(126),
+                message: item
+                    .get("message")
+                    .and_then(Json::text)
+                    .unwrap_or_default()
+                    .to_owned(),
+            },
             _ => Reply::Error(error_of(
                 item.get("error").and_then(Json::text).unwrap_or_default(),
             )),
@@ -318,6 +333,20 @@ pub fn encode_request(key: &RequestKey, request: &Request) -> String {
             "{{\"key\":{key},\"op\":\"value\",\"name\":{}}}",
             quote(name)
         ),
+        Request::Start { name, args, cwd } => {
+            let args: Vec<String> = args.iter().map(|a| quote(a)).collect();
+            format!(
+                "{{\"key\":{key},\"op\":\"start\",\"name\":{},\"args\":[{}],\"cwd\":{}}}",
+                quote(name),
+                args.join(","),
+                quote(cwd)
+            )
+        }
+        Request::Feed { program, data, eof } => format!(
+            "{{\"key\":{key},\"op\":\"feed\",\"program\":{},\"data\":\"{}\",\"eof\":{eof}}}",
+            quote(&program.to_string()),
+            base64_encode(data)
+        ),
     }
 }
 
@@ -426,6 +455,22 @@ pub fn encode_replies(replies: &[(RequestKey, Reply)]) -> String {
                 Reply::Error(error) => format!(
                     "{{\"key\":{key},\"reply\":\"error\",\"error\":\"{}\"}}",
                     error_name(*error)
+                ),
+                Reply::Library => format!("{{\"key\":{key},\"reply\":\"library\"}}"),
+                Reply::Started => format!("{{\"key\":{key},\"reply\":\"started\"}}"),
+                Reply::Output {
+                    stdout,
+                    stderr,
+                    status,
+                } => format!(
+                    "{{\"key\":{key},\"reply\":\"output\",\"stdout\":\"{}\",\"stderr\":\"{}\",\"status\":{}}}",
+                    base64_encode(stdout),
+                    base64_encode(stderr),
+                    status.map_or_else(|| "null".to_owned(), |s| s.to_string())
+                ),
+                Reply::Refused { status, message } => format!(
+                    "{{\"key\":{key},\"reply\":\"refused\",\"status\":{status},\"message\":{}}}",
+                    quote(message)
                 ),
             }
         })
@@ -538,6 +583,22 @@ pub fn decode_request(item: &Json) -> Option<(RequestKey, Request)> {
         },
         "value" => Request::Value {
             name: text("name")?,
+        },
+        "start" => Request::Start {
+            name: text("name")?,
+            args: item
+                .get("args")
+                .map(Json::list)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|a| a.text().map(str::to_owned))
+                .collect(),
+            cwd: text("cwd")?,
+        },
+        "feed" => Request::Feed {
+            program: parse_key(&text("program")?)?,
+            data: item.get("data").map(Json::bytes).unwrap_or_default(),
+            eof: flag("eof"),
         },
         _ => return None,
     };

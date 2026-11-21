@@ -245,6 +245,60 @@ fn a_regex_search_that_spends_its_budget_fails_and_never_answers_no_match() {
 }
 
 // ---------------------------------------------------------------------------
+// Programs the host resolves
+// ---------------------------------------------------------------------------
+
+fn shout(args: &[String], input: &[u8]) -> (Vec<u8>, Vec<u8>, i32) {
+    let mut out = input.to_ascii_uppercase();
+    for arg in args {
+        out.extend_from_slice(arg.as_bytes());
+        out.push(b'\n');
+    }
+    (out, b"shout: done\n".to_vec(), 3)
+}
+
+#[test]
+fn a_name_the_host_resolves_runs_as_the_host_answers() {
+    let line = "printf 'a\\nb\\n' | shout x y; echo $?; x=$(printf %070000d 0); echo $x | shout | wc -c; \
+        curl http://example.com; echo $?; nosuch; echo $?";
+    let outcome = run(line, Limits::default(), |host| {
+        host.add_program("shout", shout);
+        host.refuse_program("curl", 126, "network access is not available here");
+    });
+    assert_eq!(
+        String::from_utf8_lossy(&outcome.stdout),
+        "A\nB\nx\ny\n3\n70001\n126\n127\n"
+    );
+    let stderr = String::from_utf8_lossy(&outcome.stderr);
+    assert!(stderr.contains("shout: done"), "{stderr}");
+    assert!(
+        stderr.contains("bash: line 1: curl: network access is not available here"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("bash: line 1: nosuch: command not found"),
+        "{stderr}"
+    );
+    let feeds = outcome
+        .requests
+        .iter()
+        .filter(|r| r.contains("Feed"))
+        .count();
+    assert!(
+        feeds >= 3,
+        "a program's input is fed a chunk at a time: {feeds} feeds"
+    );
+    assert_eq!(
+        outcome
+            .requests
+            .iter()
+            .filter(|r| r.contains("Start"))
+            .count(),
+        4
+    );
+}
+
+// ---------------------------------------------------------------------------
 // The slice and cancel
 // ---------------------------------------------------------------------------
 

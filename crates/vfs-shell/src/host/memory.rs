@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use crate::machine::{
-    Config, Entry, EntryKind, HostError, Machine, ProgramKind, Reply, Request, Status, Stream,
-    WriteMode,
+    Config, Entry, EntryKind, HostError, Machine, ProgramKind, Reply, Request, RequestKey, Status,
+    Stream, WriteMode,
 };
 use crate::programs;
 
@@ -29,10 +29,20 @@ pub struct Outcome {
     pub ended: Option<String>,
 }
 
+/// A program the host runs itself: its arguments and the whole of its standard input in, and
+/// its standard output, its standard error and its status out.
+pub type HostProgram = fn(&[String], &[u8]) -> (Vec<u8>, Vec<u8>, i32);
+
 #[derive(Clone, Debug)]
 pub struct MemoryHost {
     nodes: BTreeMap<String, Node>,
     random: u64,
+    /// The programs this host runs itself, by name.
+    programs: BTreeMap<String, HostProgram>,
+    /// The names this host refuses to run: the status and the message the line prints.
+    refusals: BTreeMap<String, (i32, String)>,
+    /// Each running program by the key of its start: its program, its arguments, its input so far.
+    running: BTreeMap<RequestKey, (HostProgram, Vec<String>, Vec<u8>)>,
     /// The most bytes one read answers with, to move chunk boundaries.
     pub read_chunk: Option<u64>,
     /// Answer each step's requests last first, to move arrival order.
@@ -52,9 +62,23 @@ impl MemoryHost {
         MemoryHost {
             nodes,
             random: 12345,
+            programs: BTreeMap::new(),
+            refusals: BTreeMap::new(),
+            running: BTreeMap::new(),
             read_chunk: None,
             reverse_replies: false,
         }
+    }
+
+    /// Run `name` as this host's own program.
+    pub fn add_program(&mut self, name: &str, program: HostProgram) {
+        self.programs.insert(name.to_owned(), program);
+    }
+
+    /// Refuse to run `name`: the line prints `message` and the command exits with `status`.
+    pub fn refuse_program(&mut self, name: &str, status: i32, message: &str) {
+        self.refusals
+            .insert(name.to_owned(), (status, message.to_owned()));
     }
 
     /// Add a directory and its parents.
@@ -122,7 +146,8 @@ impl MemoryHost {
             }
             for (key, request) in step.requests {
                 outcome.requests.push(format!("{key} {request:?}"));
-                replies.push((key, self.answer(&request)));
+                let reply = self.answer_keyed(&key, &request);
+                replies.push((key, reply));
             }
             if self.reverse_replies {
                 replies.reverse();
@@ -190,16 +215,57 @@ impl MemoryHost {
         keys
     }
 
-    /// Answer one request.
+    /// Answer one request that starts no program.
     pub fn answer(&mut self, request: &Request) -> Reply {
-        match self.answer_inner(request) {
+        self.answer_keyed(
+            &RequestKey {
+                task: Vec::new(),
+                ordinal: 0,
+            },
+            request,
+        )
+    }
+
+    /// Answer one request, given its key, which names a program it starts.
+    pub fn answer_keyed(&mut self, key: &RequestKey, request: &Request) -> Reply {
+        match self.answer_inner(key, request) {
             Ok(reply) => reply,
             Err(error) => Reply::Error(error),
         }
     }
 
-    fn answer_inner(&mut self, request: &Request) -> Result<Reply, HostError> {
+    fn answer_inner(&mut self, key: &RequestKey, request: &Request) -> Result<Reply, HostError> {
         match request {
+            Request::Start { name, args, .. } => {
+                if let Some((status, message)) = self.refusals.get(name) {
+                    return Ok(Reply::Refused {
+                        status: *status,
+                        message: message.clone(),
+                    });
+                }
+                let program = self.programs.get(name).ok_or(HostError::NotFound)?;
+                self.running
+                    .insert(key.clone(), (*program, args.clone(), Vec::new()));
+                Ok(Reply::Started)
+            }
+            Request::Feed { program, data, eof } => {
+                let (_, _, input) = self.running.get_mut(program).ok_or(HostError::Invalid)?;
+                input.extend_from_slice(data);
+                if !*eof {
+                    return Ok(Reply::Output {
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                        status: None,
+                    });
+                }
+                let (run, args, input) = self.running.remove(program).ok_or(HostError::Invalid)?;
+                let (stdout, stderr, status) = run(&args, &input);
+                Ok(Reply::Output {
+                    stdout,
+                    stderr,
+                    status: Some(status),
+                })
+            }
             Request::Read {
                 path,
                 offset,

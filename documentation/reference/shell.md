@@ -45,7 +45,15 @@ These words are refused, because they have no meaning inside one call:
 
 ## The Programs
 
-These programs run inside the shell and print what GNU coreutils, grep, sed and findutils print: `cat`, `cp`, `cut`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `tee`, `touch`, `tr`, `uniq` and `wc`. Any other name exits 127 with `command not found`.
+These programs run inside the shell and print what GNU coreutils, grep, sed and findutils print: `cat`, `cp`, `cut`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `tee`, `touch`, `tr`, `uniq` and `wc`.
+
+The interpreter runs no other program itself. It asks vfs for every other name, and vfs answers in one of three ways:
+
+| Name | What happens |
+|---|---|
+| `search [-n LIMIT] QUERY [PATH...]` | vfs runs it: one call of `search` as the caller, printing the paths it ranks first, one a line. It exits 1 when nothing is found. |
+| `curl`, `wget` | Refused, exit 126: the line prints that network access is not available. |
+| `git`, `sudo`, `python3`, `python`, `perl`, and any other name | Exit 127, `command not found`. For the first five, a hint follows at what does the work here. |
 
 ## Exit Statuses
 
@@ -54,6 +62,7 @@ These programs run inside the shell and print what GNU coreutils, grep, sed and 
 | 0 | The last command succeeded. |
 | 1 to 125 | The last command's own status. |
 | 2 | The line did not parse, or it holds a refused word. |
+| 126 | vfs knows the program and will not run it. |
 | 127 | A command was not found. |
 | 124 | The line's deadline passed. |
 | 130 | The line was cancelled. |

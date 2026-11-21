@@ -17,6 +17,7 @@ in chunks is one ``read``; any write, move, copy or delete forgets them.
 from __future__ import annotations
 
 import asyncio
+import posixpath
 import random
 import time
 from functools import partial
@@ -28,7 +29,7 @@ from vfs.offload import call_offloaded, offload_pool
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from vfs.authority import Authority
     from vfs.base import AsyncVirtualFileSystem
@@ -65,6 +66,23 @@ _HOST_ERROR: Final[dict[str, str]] = {
     ErrorKind.unsupported: "unsupported",
 }
 """The host error a router refusal reads as; ``wrong_kind`` reads by the kind it names."""
+
+NETWORK_REFUSAL: Final = (
+    "network access is not available inside vfs; read a file with cat, or find one with grep or search"
+)
+"""What a line prints for a network program: vfs knows it and does not run it, so it exits 126."""
+
+REFUSED_PROGRAMS: Final[dict[str, str]] = {"curl": NETWORK_REFUSAL, "wget": NETWORK_REFUSAL}
+"""Programs vfs knows and will not run, each with what the line prints; the command exits 126."""
+
+UNKNOWN_PROGRAMS: Final[dict[str, str]] = {
+    "git": "command not found; vfs keeps versions itself: stat shows a version, /.vfs/trash holds deleted files",
+    "sudo": "command not found; a line runs with its caller's rights and no others",
+    "python3": "command not found; vfs runs no interpreter inside a line",
+    "python": "command not found; vfs runs no interpreter inside a line",
+    "perl": "command not found; sed -i edits a file in place",
+}
+"""Names vfs never runs, each with a hint at what does the work here; the command exits 127."""
 
 _FAILURE_KIND: Final[dict[str, ErrorKind]] = {
     "syntax": ErrorKind.invalid,
@@ -163,7 +181,7 @@ async def run_line(
             )
             for stream, chunk in output:
                 (stdout if stream == 1 else stderr).extend(chunk)
-            replies = [(key, *await host.answer(op, args)) for key, op, args in requests]
+            replies = [(key, *await host.answer(op, {**args, "key": key})) for key, op, args in requests]
             if state != "running":
                 break
     except asyncio.CancelledError:
@@ -204,6 +222,7 @@ class _Host:
         self._fs = fs
         self._authority = authority
         self._bodies: dict[str, bytes] = {}
+        self._running: dict[str, tuple[str, list[str], str]] = {}
         self.evidence: list[ResultError] = []
 
     async def answer(self, op: str, args: dict[str, Any]) -> tuple[str, object]:
@@ -216,6 +235,10 @@ class _Host:
             return await self._list(args["path"])
         if op == "value":
             return _value(args["name"])
+        if op == "start":
+            return self._start(args)
+        if op == "feed":
+            return await self._feed(args)
         self._bodies.clear()
         return await self._mutate(op, args)
 
@@ -251,6 +274,40 @@ class _Host:
         ]
         return "entries", entries
 
+    def _start(self, args: dict[str, Any]) -> tuple[str, object]:
+        """Resolve a program name: vfs's own program, a refusal, or not found."""
+        name = args["name"]
+        if name in REFUSED_PROGRAMS:
+            return "refused", (126, REFUSED_PROGRAMS[name])
+        if name in UNKNOWN_PROGRAMS:
+            return "refused", (127, UNKNOWN_PROGRAMS[name])
+        if name not in _PROGRAMS:
+            return "error", "not_found"
+        self._running[args["key"]] = (name, args["args"], args["cwd"])
+        return "started", None
+
+    async def _feed(self, args: dict[str, Any]) -> tuple[str, object]:
+        """Run a vfs program at its first feed: none of them reads its standard input."""
+        name, words, cwd = self._running.pop(args["program"])
+        stdout, stderr, status = await _PROGRAMS[name](self, words, cwd)
+        return "output", (stdout, stderr, status)
+
+    async def search(self, words: list[str], cwd: str) -> tuple[bytes, bytes, int]:
+        """``search [-n LIMIT] QUERY [PATH...]``: the paths :meth:`search` ranks first, one a line."""
+        limit, rest = 10, list(words)
+        if len(rest) >= 2 and rest[0] == "-n" and rest[1].isdigit():
+            limit, rest = int(rest[1]), rest[2:]
+        if not rest:
+            return b"", b"search: usage: search [-n LIMIT] QUERY [PATH...]\n", 2
+        query, roots = rest[0], tuple(posixpath.normpath(posixpath.join(cwd, p)) for p in rest[1:])
+        result = await self._fs.search(query, limit=limit, paths=roots, authority=self._authority)
+        if not result.success:
+            fact = result.failures[0]
+            self.evidence.append(fact.model_copy(update={"severity": Severity.warning}))
+            return b"", f"search: {fact.message}\n".encode(), 1
+        lines = "".join(f"{row.path}\n" for row in result.observations)
+        return lines.encode(), b"", 0 if lines else 1
+
     async def _mutate(self, op: str, args: dict[str, Any]) -> tuple[str, object]:
         fs, who = self._fs, self._authority
         if op == "write":
@@ -284,6 +341,12 @@ class _Host:
             named = (fact.data or {}).get("kind")
             return "error", "is_a_directory" if named == "directory" else "not_a_directory"
         return "error", _HOST_ERROR.get(fact.kind, "invalid")
+
+
+_PROGRAMS: Final[dict[str, Callable[[_Host, list[str], str], Awaitable[tuple[bytes, bytes, int]]]]] = {
+    "search": _Host.search,
+}
+"""The programs vfs runs itself, by name."""
 
 
 def _body(data: bytes) -> dict[str, Any]:

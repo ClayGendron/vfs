@@ -224,66 +224,15 @@ fn run(source: &str, fuel: u64, slice: u64, memory_limit: usize, limits: &str) -
     }
 }
 
-/// Answer one request from the in-memory host, as JSON.
+/// Answer one request from the in-memory host, as JSON, through the wire's own codec.
 fn answer(host: &mut MemoryHost, request: &Json) -> String {
-    let key = wire::quote(request.get("key").and_then(Json::text).unwrap());
-    let path = request
-        .get("path")
-        .and_then(Json::text)
-        .unwrap_or_default()
-        .to_owned();
-    let reply = match request.get("op").and_then(Json::text).unwrap_or_default() {
-        "read" => host.answer(&shell::machine::Request::Read {
-            path,
-            offset: request.get("offset").and_then(Json::number).unwrap_or(0.0) as u64,
-            length: request.get("length").and_then(Json::number).unwrap_or(0.0) as u64,
-        }),
-        "stat" => host.answer(&shell::machine::Request::Stat { path }),
-        "list" => host.answer(&shell::machine::Request::List { path }),
-        "value" => shell::machine::Reply::Text("1700000000".to_owned()),
-        _ => shell::machine::Reply::Error(shell::machine::HostError::Unsupported),
-    };
-    match reply {
-        shell::machine::Reply::Data { bytes, eof } => {
-            format!(
-                "{{\"key\":{key},\"reply\":\"data\",\"bytes\":\"{}\",\"eof\":{eof}}}",
-                wire::base64_encode(&bytes)
-            )
-        }
-        shell::machine::Reply::Stat { kind, size } => {
-            let kind = if kind == shell::machine::EntryKind::Directory {
-                "directory"
-            } else {
-                "file"
-            };
-            format!("{{\"key\":{key},\"reply\":\"stat\",\"kind\":\"{kind}\",\"size\":{size}}}")
-        }
-        shell::machine::Reply::Entries(entries) => {
-            let items: Vec<String> = entries
-                .iter()
-                .map(|e| {
-                    let kind = if e.kind == shell::machine::EntryKind::Directory {
-                        "directory"
-                    } else {
-                        "file"
-                    };
-                    format!("{{\"name\":{},\"kind\":\"{kind}\"}}", wire::quote(&e.name))
-                })
-                .collect();
-            format!(
-                "{{\"key\":{key},\"reply\":\"entries\",\"entries\":[{}]}}",
-                items.join(",")
-            )
-        }
-        shell::machine::Reply::Text(text) => format!(
-            "{{\"key\":{key},\"reply\":\"text\",\"text\":{}}}",
-            wire::quote(&text)
-        ),
-        shell::machine::Reply::Done => format!("{{\"key\":{key},\"reply\":\"done\"}}"),
-        shell::machine::Reply::Error(_) => {
-            format!("{{\"key\":{key},\"reply\":\"error\",\"error\":\"not_found\"}}")
-        }
-    }
+    let (key, request) = wire::decode_request(request).expect("a request the host can read");
+    let reply = host.answer_keyed(&key, &request);
+    let text = wire::encode_replies(&[(key, reply)]);
+    text.strip_prefix('[')
+        .and_then(|t| t.strip_suffix(']'))
+        .unwrap()
+        .to_owned()
 }
 
 const PLENTY: u64 = 50_000_000_000;

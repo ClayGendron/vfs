@@ -186,6 +186,50 @@ async def test_the_system_actor_is_refused_named_or_by_default() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Program names vfs resolves
+# ---------------------------------------------------------------------------
+
+
+async def test_a_name_vfs_resolves_runs_refuses_or_is_not_found() -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/docs/a.md", content="alpha beta", parents=True, authority=SYSTEM))
+    ok(await fs.write(path="/docs/b.md", content="gamma delta", parents=True, authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+    line = "search alpha /docs; echo $?; cd /docs; search -n 1 gamma .; curl http://x; echo $?; git log; echo $?"
+    line += "; nosuch; echo $?"
+    result = await fs.cli(line, authority=ADA)
+    assert result.stdout == "/docs/a.md\n0\n/docs/b.md\n126\n127\n127\n"
+    assert "curl: network access is not available inside vfs" in result.stderr
+    assert "git: command not found; vfs keeps versions itself" in result.stderr
+    assert "nosuch: command not found" in result.stderr
+    assert result.success is True
+
+
+async def test_search_is_the_search_verb_called_as_the_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    calls: list[tuple[str, Authority | None]] = []
+    real_search = fs.search
+
+    async def spy(query: str, **kwargs: Any) -> Result:
+        calls.append((query, kwargs.get("authority")))
+        return await real_search(query, **kwargs)
+
+    monkeypatch.setattr(fs, "search", spy)
+    result = await fs.cli("search nothing-here; echo $?; search", authority=ADA)
+    assert calls == [("nothing-here", ADA)]
+    assert result.stdout == "1\n"
+    assert "usage: search" in result.stderr
+
+
+async def test_a_refused_search_reads_as_its_message_and_is_kept_as_a_warning() -> None:
+    fs = AsyncVirtualFileSystem()
+    result = await fs.cli("search alpha /no/such/root; echo $?", authority=ADA)
+    assert result.stdout.endswith("1\n")
+    assert result.stderr.startswith("search: ")
+    assert [e.severity for e in result.errors] == [Severity.warning]
+
+
+# ---------------------------------------------------------------------------
 # Lines that cannot run, and lines a budget ends
 # ---------------------------------------------------------------------------
 
@@ -341,18 +385,29 @@ def test_one_line_spends_the_same_fuel_twice() -> None:
 
 def test_a_step_already_running_refuses_a_second() -> None:
     machine = _machine("while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15)
-    worker = threading.Thread(target=lambda: machine.step([]))
-    worker.start()
-    try:
-        for _ in range(1000):
-            try:
-                machine.step([])
-            except RuntimeError as error:
-                assert "already running" in str(error)
-                break
-    finally:
-        machine.cancel()
+    together = threading.Barrier(2)
+    refused: list[str] = []
+    ended: list[str] = []
+
+    def step() -> None:
+        together.wait()
+        try:
+            ended.append(machine.step([])[2][0])
+        except RuntimeError as error:
+            refused.append(str(error))
+
+    workers = [threading.Thread(target=step) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for _ in range(100_000):
+        if refused:
+            break
+        threading.Event().wait(0.001)
+    machine.cancel()
+    for worker in workers:
         worker.join()
+    assert refused == ["a step of this line is already running"]
+    assert ended == ["ended"]
 
 
 @pytest.mark.parametrize(

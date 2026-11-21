@@ -576,6 +576,20 @@ fn decode_reply(kind: &str, value: &Bound<'_, PyAny>) -> PyResult<Reply> {
         }
         "text" => Reply::Text(value.extract()?),
         "error" => Reply::Error(error_of(&value.extract::<String>()?)),
+        "library" => Reply::Library,
+        "started" => Reply::Started,
+        "output" => {
+            let (stdout, stderr, status): (Vec<u8>, Vec<u8>, Option<i32>) = value.extract()?;
+            Reply::Output {
+                stdout,
+                stderr,
+                status,
+            }
+        }
+        "refused" => {
+            let (status, message): (i32, String) = value.extract()?;
+            Reply::Refused { status, message }
+        }
         other => return Err(PyValueError::new_err(format!("not a reply kind: {other}"))),
     })
 }
@@ -649,6 +663,22 @@ fn encode_request<'py>(
         Request::Value { name } => {
             args.set_item("name", name)?;
             "value"
+        }
+        Request::Start {
+            name,
+            args: words,
+            cwd,
+        } => {
+            args.set_item("name", name)?;
+            args.set_item("args", words)?;
+            args.set_item("cwd", cwd)?;
+            "start"
+        }
+        Request::Feed { program, data, eof } => {
+            args.set_item("program", program.to_string())?;
+            args.set_item("data", PyBytes::new(py, data))?;
+            args.set_item("eof", eof)?;
+            "feed"
         }
     };
     Ok((op, args))
