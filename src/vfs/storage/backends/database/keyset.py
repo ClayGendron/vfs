@@ -62,7 +62,7 @@ async def filled(
     *,
     after: str | None,
     limit: int | None,
-    cut: Callable[[], bool] = lambda: False,
+    cut: Callable[[], str | None] = lambda: None,
 ) -> Filled:
     """Fetch from ``streams`` until ``limit + 1`` shown rows lie at or before the frontier, or none has more.
 
@@ -71,13 +71,13 @@ async def filled(
     ``limit=None`` each stream is read whole in one statement. The
     frontier is the last path the slowest unfinished stream fetched;
     every row at or before it is in hand. A fill after the first batch
-    asks only the streams at the frontier. ``cut`` says whether the batch
-    ``emit`` last handled was cut short, as when its judge ran out of
-    time. Once one is, the fill ends with the round: a stream whose batch
-    was cut stands at the last row it showed, every other is finished or
-    stands where it last read, as with no cut, and the frontier is the
-    least of them, so the next page reads again what was not judged and
-    loses no row of another stream. A stop that leaves no row past ``after`` safe ends the fill
+    asks only the streams at the frontier. ``cut`` names the first path
+    the batch ``emit`` last handled left unjudged, as when its judge ran
+    out of time, or ``None``. Once a batch is cut, the fill ends with the
+    round: its stream stands at the last row it showed before that path,
+    every other is finished or stands where it last read, as with no cut,
+    and the frontier is the least of them, so the next page reads again
+    what was not judged and loses no row of another stream. A stop that leaves no row past ``after`` safe ends the fill
     with no row and no frontier, and the caller's warning says the
     listing was cut short.
     """
@@ -95,10 +95,10 @@ async def filled(
             got = await emit(rows)
             for row in got:
                 shown.setdefault(row.path, row)
-            if cut():
-                # Rows a cut batch left unjudged lie after its last shown row; that is where its stream stands.
+            if (unjudged := cut()) is not None:
+                # The stream stands before the first row its batch left unjudged; the next page reads on from there.
                 halted = True
-                positions[index] = max((row.path for row in got), default=positions[index])
+                positions[index] = max((row.path for row in got if row.path < unjudged), default=positions[index])
             elif batch is None or len(rows) < batch:
                 unfinished.remove(index)
             else:
@@ -127,6 +127,16 @@ def _held(
     if frontier is None or (after is not None and frontier <= after):
         return Filled([], None)
     return Filled([shown[path] for path in sorted(shown) if path <= frontier], frontier)
+
+
+def first_unjudged(cut: str | None, rows: Sequence[RowMapping], verdicts: Sequence[int | None]) -> str | None:
+    """The least of ``cut`` and the path of the first of ``rows`` its judge left unjudged, a ``None`` verdict.
+
+    One batch is judged a side of the tombstone at a time, so its cut is
+    the least such path over both calls.
+    """
+    first = next((row["path"] for row, verdict in zip(rows, verdicts, strict=True) if verdict is None), None)
+    return cut if first is None else first if cut is None else min(cut, first)
 
 
 def keyed(

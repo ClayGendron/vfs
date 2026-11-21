@@ -74,7 +74,7 @@ from vfs.storage.backends.database.descent import (
     targets_with_ancestors,
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
-from vfs.storage.backends.database.keyset import filled, keyed
+from vfs.storage.backends.database.keyset import filled, first_unjudged, keyed
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied
@@ -456,12 +456,12 @@ async def glob_rows(
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
     queried = fetched | ROW_GATE_FIELDS | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
     finished = [True]
-    # Whether the batch judged last was cut short by the wall: what a page's fill stops on.
-    cut = [False]
+    # The first path the batch judged last left unjudged at the wall, on either side: where a page's fill stops.
+    cut: list[str | None] = [None]
 
     async def judged(candidates: Sequence[RowMapping]) -> list[Observation]:
         """The candidates the compiled patterns and the view admit, in path order, roads included."""
-        cut[0] = False
+        cut[0] = None
         matched: dict[str, RowMapping] = {}
         hidden: dict[bool, list[str]] = {False: [], True: []}
         for trashed, gates in sides.items():
@@ -471,7 +471,7 @@ async def glob_rows(
             rows = [(mapping["path"], mapping["name"]) for mapping in side]
             verdicts, completed = await judge_rows(executor, gates, rows, deadline=deadline)
             finished[0] = finished[0] and completed
-            cut[0] = cut[0] or not completed
+            cut[0] = first_unjudged(cut[0], side, verdicts)
             for mapping, verdict in zip(side, verdicts, strict=True):
                 if not gates.admits(verdict, mapping["ext"], marked_only=_under_meta_root(mapping["path"])):
                     continue

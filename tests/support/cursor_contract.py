@@ -115,6 +115,11 @@ async def plan_of(storage: DatabaseStorage, sql: str, parameters: Any) -> tuple[
     return {node["Index Name"] for node in nodes if "Index Name" in node}, visited
 
 
+def _cut_after(verdicts: list[Any], judged: int) -> list[Any]:
+    """The verdicts of a judge that reached its wall after ``judged`` rows: the rest unjudged, as ``None``."""
+    return [*verdicts[:judged], *([None] * max(0, len(verdicts) - judged))]
+
+
 def _scans(node: dict[str, Any]) -> list[dict[str, Any]]:
     found = [node] if "Scan" in node["Node Type"] else []
     for child in node.get("Plans", []):
@@ -372,7 +377,7 @@ class CursorContract:
 
         async def short(*args: Any, **kwargs: Any) -> Any:
             verdicts, _completed = await real(*args, **kwargs)
-            return verdicts, False
+            return _cut_after(verdicts, 10), False
 
         monkeypatch.setattr(reads_module, "judge_rows", short)
         with recorded(storage) as seen:
@@ -396,7 +401,7 @@ class CursorContract:
         async def first_incomplete(*args: Any, **kwargs: Any) -> Any:
             verdicts, completed = await real(*args, **kwargs)
             calls[0] += 1
-            return verdicts, completed and calls[0] != 1
+            return (_cut_after(verdicts, 5), False) if calls[0] == 1 else (verdicts, completed)
 
         monkeypatch.setattr(reads_module, "judge_rows", first_incomplete)
         rows, pages = await drain(storage, storage.glob, 10, patterns=tuple(names), authority=SYSTEM)
@@ -420,9 +425,31 @@ class CursorContract:
         async def one_cut(*args: Any, **kwargs: Any) -> Any:
             verdicts, completed = await real(*args, **kwargs)
             calls[0] += 1
-            return verdicts, completed and calls[0] != cut_at
+            return (_cut_after(verdicts, 5), False) if calls[0] == cut_at else (verdicts, completed)
 
         monkeypatch.setattr(reads_module, "judge_rows", one_cut)
+        rows, _pages = await drain(storage, storage.glob, 10, patterns=patterns, authority=SYSTEM)
+        assert rows == sorted(whole)
+
+    @pytest.mark.parametrize("cut_at", [1, 2])
+    async def test_a_wall_on_one_side_of_the_tombstone_loses_no_row_of_the_other(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch, cut_at: int
+    ) -> None:
+        # One fan statement holds the live and the trash-view arm, and a batch is judged a side at a time.
+        ok(await storage.write(entries=files("/t", 60), parents=True, authority=SYSTEM))
+        ok(await storage.delete(observations=[Observation(path=Path(f"/t/f{i:05d}.txt")) for i in range(0, 60, 2)]))
+        patterns = ("/t/*.txt", "/.vfs/trash/t/*.txt")
+        whole = list(ok(await storage.glob(patterns=patterns, authority=SYSTEM)).paths)
+        assert len(whole) == 60
+        real = reads_module.judge_rows
+        calls = [0]
+
+        async def one_side_cut(*args: Any, **kwargs: Any) -> Any:
+            verdicts, completed = await real(*args, **kwargs)
+            calls[0] += 1
+            return (_cut_after(verdicts, 2), False) if calls[0] == cut_at else (verdicts, completed)
+
+        monkeypatch.setattr(reads_module, "judge_rows", one_side_cut)
         rows, _pages = await drain(storage, storage.glob, 10, patterns=patterns, authority=SYSTEM)
         assert rows == sorted(whole)
 
