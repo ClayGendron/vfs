@@ -363,6 +363,7 @@ fn the_machine_counts_its_bytes_before_the_runtime_limit_is_reached() {
 #[test]
 fn the_runtime_memory_limit_ends_the_call_and_not_the_process() {
     let line = "x=a; while :; do x=$x$x; done";
-    let run = run(line, PLENTY, SLICE, 8 << 20, "\"memory_bytes\":1073741824");
+    // Past the module's first memory, which holds its 8 MiB stack, and short of what the line asks for.
+    let run = run(line, PLENTY, SLICE, 32 << 20, "\"memory_bytes\":1073741824");
     assert!(matches!(&run.end, End::Trapped(_)), "{:?}", run.end);
 }
