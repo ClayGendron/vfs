@@ -113,10 +113,28 @@ async def kernel_holding_a_file(storage: DatabaseStorage) -> AsyncVirtualFileSys
     return kernel
 
 
+class FreshWrites:
+    """Writes ``/a.txt`` with a body no earlier call sent, so no write of a sweep is ``unchanged``."""
+
+    def __init__(self) -> None:
+        self.sent = 0
+
+    @property
+    def body(self) -> str:
+        """The body of the latest call."""
+        return f"new {self.sent}"
+
+    def __call__(self, kernel: AsyncVirtualFileSystem) -> Awaitable[Any]:
+        self.sent += 1
+        return kernel.write(path="/a.txt", content=self.body)
+
+
+WRITE = FreshWrites()
+
 CALLS: dict[str, Callable[[AsyncVirtualFileSystem], Awaitable[Any]]] = {
     "stat": lambda kernel: kernel.stat("/"),
     "read": lambda kernel: kernel.read("/a.txt"),
-    "write": lambda kernel: kernel.write(path="/a.txt", content="new"),
+    "write": WRITE,
 }
 
 # One call of each shape a verb's transaction takes, over the files of ``a_directory``.
@@ -322,6 +340,24 @@ class TestACancelledWrite:
         assert (await fs.read("/a.txt")).one().content == "old"
 
 
+@pytest.mark.timeout(60)
+async def test_a_cut_a_call_ends_before_holds_no_round_trip_of_the_next_call(
+    fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+) -> None:
+    """Guards the withdrawn hold: a cut left armed counts on into the next call and holds its round trip for good.
+
+    The sweep's statistics pass between two cuts was held that way, and the sweep hung where a write ended early.
+    """
+    round_trip.again()
+    await fs.stat("/a.txt")
+    sent = len(round_trip.seen)
+    round_trip.again()
+    round_trip.hold(number(sent))
+    assert await cancel_if_held(fs.stat("/a.txt"), round_trip) is None
+    assert (await fs.stat("/a.txt")).success
+    assert round_trip.held_at is None
+
+
 @pytest.mark.slow
 class TestACallCancelledAtOneRoundTripAfterAnother:
     """One storage takes every cut of a sweep, so each cut also proves that the cut before it left the storage whole.
@@ -348,7 +384,7 @@ class TestACallCancelledAtOneRoundTripAfterAnother:
                 # A write sends fewer round trips once the host knows which of its tables have an index,
                 # so a cut of the traced write may not come: the write then ran to its end, and landed.
                 assert call == "write"
-                expected = ("new", (expected[1] or 0) + 1)
+                expected = (WRITE.body, (expected[1] or 0) + 1)
                 continue
             seen, held_at = list(round_trip.seen), round_trip.held_at
             assert held_at is not None
@@ -358,7 +394,7 @@ class TestACallCancelledAtOneRoundTripAfterAnother:
             # Nothing before the commit and all of it from the commit on, on every host alike.
             if "commit" in seen[: held_at + 1]:
                 landed += 1
-                expected = ("new", (expected[1] or 0) + 1)
+                expected = (WRITE.body, (expected[1] or 0) + 1)
             else:
                 assert "commit" not in seen, where
             assert await content_and_version(fs) == expected, where
