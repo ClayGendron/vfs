@@ -49,6 +49,12 @@ Nothing of the shell is built. The earlier spec designed a bash subset with a Py
 
 15. **The crate builds for WebAssembly as well as natively.** Because the machine does no IO and has one entry, it compiles to `wasm32-unknown-unknown` with no change, and the gate builds that target from the first crate commit. Run natively, the walls of decisions 6 to 9 are held by the crate's own counting and lints. Run inside a WebAssembly runtime, the runtime adds a second wall from outside: its own instruction count, a hard memory limit, a deadline it can enforce mid-step, and a trap in place of a process abort on a stack overflow or a failed allocation. The machine's own fuel and byte counts stay in both, because they give the classified error and do not change with the compiler. Which of the two the vfs host runs is a choice to confirm, after step 0 measures it.
 
+16. **A deliberate difference from bash is listed, with its reason.** Where the shell differs on purpose (a refused construct, `ls -l` without mode bits), the case keeps bash's record and gains a second record of the shell's own answer. `tests/shell/deltas.txt` names each such case with a one-line reason, and a test holds that the list is exhaustive. A delta is not a known failure: it passes against its own record.
+
+17. **The budgets have declared defaults a host may lower.** They are the roadmap's: 1 MiB of source, 100,000 tokens, a depth of 200, 64 stages in a pipeline, 1,000,000 loop iterations, a function depth of 256. Fuel, bytes and the slice get their defaults in step 3, each as a named constant with the count that justified it.
+
+18. **The fuzz targets need no special toolchain.** Each is an ordinary test driven by a seeded generator, run for a declared number of iterations on the stable compiler.
+
 ## Tests
 
 The suite is built before the interpreter. It has five layers.
@@ -74,6 +80,20 @@ The order of work. Each step ends with the gate green and the score printed.
 
 Out of scope here: the durable run itself, tools and guests, `awk` and `jq`, and job control past the call.
 
+How the work is run, so that it can run unattended from the first step to the last.
+
+- **Each step is one pull request to `dev`.** It is opened when the step's gate is green and its code review says it lands. The next step starts from that tip and does not wait for the merge; `dev` is merged in when it moves.
+- **The gate grows with the work.** Step 1 adds the corpus runner and the score to `scripts/ci.sh` and the workflows. Step 2 adds `cargo test -p vfs-shell`, the clippy denials and the `wasm32-unknown-unknown` build. Step 6 brings the Python under the 100% coverage gate and runs the Postgres leg. The wheel budget and a line ratchet are raised only by a named entry with its reason.
+- **`progress.md` in this work directory is rewritten at every commit.** It holds the step in hand, the score, what was decided inside the laws, what was reported and not taken, and what is next. A session that starts cold reads this spec and that file, and needs nothing else.
+- **Inside the laws, the design is free.** The request types, the shape of the AST, the module layout and the order of cases within a step are decided as the work goes. A change to a decision above, to what a budget means, to a public name of vfs, or to a rule of `AGENTS.md` is reported and not taken.
+- **What the work needs on the machine.** Docker, for the recorder in step 1 and for the Postgres leg in step 6. The stable Rust toolchain with the `wasm32-unknown-unknown` target. `uv`. The recorder pins its image by digest and writes the digest into every record.
+
+Done when, step by step.
+
+- Step 1: at least 2,000 own cases recorded, the vendored suite in place with its licence record, every case listed as failing, and the score printed by one command.
+- Steps 2 to 5: no language-tier case of the own corpus is left in the known-failures list, the laws hold, and both fuzz targets pass their declared iterations.
+- Steps 6 and 7: no own case is left in the known-failures list, the measured sample runs at 85% or more, every failing vendored case is named with its reason, and the acceptance of the roadmap's stories F1 to F4 and F7 is met or reported as not met with the reason.
+
 ## Not checked
 
 - No prior-art clone's source was read for this spec; the five research questions are open work, not findings. Of `../wasi_python`, only the README's account of its limits was read: instructions, time, memory, output and open files each have a cap, and the result says which one ended a call. The host's limits here follow that vocabulary.
@@ -87,7 +107,10 @@ Out of scope here: the durable run itself, tools and guests, `awk` and `jq`, and
 - Whether the vfs host runs the machine natively or inside a WebAssembly runtime. Natively costs nothing at install or per call, and a missed depth check or a missed byte count ends the host process. Inside a runtime, those become a trap, and the runtime joins the base install and the latency of every `cli` call.
 - The crate's name, should it be published apart.
 - The bash version pinned as referee: 5.3 is taken here.
-- Whether the dependency list of the crate is empty or a short declared list (a regular-expression engine for `=~` is the first candidate).
+- Whether the dependency list of the crate is empty or a short declared list (a regular-expression engine for `=~` is the first candidate). It is taken as empty until a case needs one, and each addition is reported.
+- Whether an unattended run may push this branch and open its pull requests without asking each time. `AGENTS.md` asks before every push, so the grant is stated in the run's starting prompt or the run stops at its first push.
+
+None of these stops steps 0 to 5: the native build under `cargo test` serves them all.
 
 ## One line
 
