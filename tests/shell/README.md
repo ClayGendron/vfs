@@ -30,6 +30,7 @@ The working directory is `/work`. The environment is exactly `HOME=/home/agent`,
 - **No version.** Nothing prints `$BASH_VERSION`, `$BASH_VERSINFO` or `$MACHTYPE`.
 - **A language case runs no program.** In place of `cat`, read with `while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done`, or with `mapfile`.
 - **A syntax error runs nothing before it.** Bash runs a script command by command, and this shell parses the whole script first. A case about a syntax error has the error in its first command, so bash also runs nothing.
+- **A name in lower case.** No two paths may differ only by letter case, since macOS and Windows keep one of the two; `tests/shell/test_corpus_shape.py` holds it.
 - **Small.** Most cases are 2 to 15 lines, and none prints more than a few KB.
 
 ## What a differential run found

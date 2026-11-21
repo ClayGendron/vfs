@@ -484,9 +484,11 @@ def test_a_deep_line_ends_on_its_budget_on_a_thread_with_a_small_stack() -> None
     assert ended == [("ended", 137, 'Budget("nesting", 1000)')]
 
 
-def test_a_start_that_spends_its_fuel_is_a_budget_and_a_far_deadline_is_none() -> None:
+@pytest.mark.parametrize("fuel", [0, 1000])
+def test_a_start_that_spends_its_fuel_is_a_budget_and_a_far_deadline_is_none(fuel: int) -> None:
+    # The fuel may run out while the instance is made or while the line parses; either is the budget.
     with pytest.raises(ValueError, match="fuel") as raised:
-        _machine("echo hi", fuel=0)
+        _machine("echo hi", fuel=fuel)
     assert raised.value.args[0] == "budget"
     machine = _machine("echo hi", deadline=1e300)
     assert machine.step([])[2] == ("done", 0, None)
@@ -498,11 +500,16 @@ def test_a_forked_child_ends_a_line_at_its_deadline() -> None:
     _machine("echo warm").step([])
     child = os.fork()
     if child == 0:  # pragma: no cover - runs in the forked child, which reports by its exit code
-        signal.alarm(30)
-        endless = _machine(
-            "while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15, deadline=0.2
-        )
-        os._exit(0 if endless.step([])[2][1] == 124 else 1)
+        # Whatever happens here, the child ends here: it must never go on as a second test run.
+        code = 2
+        try:
+            signal.alarm(30)
+            endless = _machine(
+                "while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15, deadline=0.2
+            )
+            code = 0 if endless.step([])[2][1] == 124 else 1
+        finally:
+            os._exit(code)
     _, status = os.waitpid(child, 0)
     assert os.waitstatus_to_exitcode(status) == 0, "the child has an epoch thread of its own"
 

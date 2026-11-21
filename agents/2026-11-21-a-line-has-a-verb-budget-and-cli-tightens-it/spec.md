@@ -15,6 +15,7 @@ The budgets of `vfs.shell.run_line` (`LIMITS`, `fuel`, `deadline`) and the machi
 - Requests and bytes written are bounded only by the 30-second deadline: the prior-art memo ran 100,000 `touch` and 400,000 `cat` calls in under a second on memory storage.
 - `cli` takes no budget, and a parameter that took the same names as `run_line` would let a caller raise its own fuel.
 - Nothing bounds how many lines run at once on one router, and each may hold 256 MiB of module memory, 64 MiB of bodies and 16 MiB of output.
+- One caller's lines can make another caller's lines wait. Measured by the second structural review (`agents/2026-11-21-the-shell-speaks-bash/reviews/structural-review-2.md`): 32 lines at once, each in a slow pattern match, made a concurrent `echo hi` wait 6.0 seconds, while reads and writes beside them stayed under 150 ms. A pattern match cannot yield, so its slice holds a worker of the shared offload pool, one thread a core, until its fuel runs out.
 
 ## Decisions
 
@@ -22,6 +23,7 @@ The budgets of `vfs.shell.run_line` (`LIMITS`, `fuel`, `deadline`) and the machi
 2. `AsyncVirtualFileSystem(shell_budgets=…)` sets the budgets for every line on that router.
 3. `cli(…, limits=…)` may lower any of them; a higher value is `invalid`.
 4. A bound on concurrent lines per router, with a declared default, and a line that waits for its turn under its own deadline.
+5. The shell's slices run on a pool of their own, beside the offload pool, so a line can delay only other lines and never another caller's verbs.
 
 ## Tests
 

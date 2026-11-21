@@ -2,7 +2,7 @@
 
 ## Step in hand
 
-The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done); the host-resolved program request (done); one write per redirection (done); the differential fuzzer (done in this commit); a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
+The second structural review ([reviews/structural-review-2.md](reviews/structural-review-2.md)) read the branch at `046ac73` on macOS and found what blocks the pull request: `cli` in a process forked after the runtime started, and the test of it that hung the suite; a line started with too little fuel read as internal; two case files that differ only by letter case; and a review not yet signed again. The first three are fixed in this commit; a fresh reviewer signs next, and then the pull request opens. The first structural review's five items ([reviews/structural-review.md](reviews/structural-review.md)) are done.
 
 ## Score
 
@@ -54,6 +54,8 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - The regular-expression engine backtracks, with no back-references, and fails a search past 4,000 characters of depth; a Pike-style engine would be linear. Glob and extglob matching backtrack too: `*a*a*a*a*b` over 100,000 characters spends the line's fuel where bash answers in milliseconds.
 - The module's boundary is JSON with every byte in base64. Its decoder looked each character up by a scan of the alphabet; with a reverse table (`2512f14`) `cat` of 1 MB spends 269 million instructions (642 million before), `wc -c <` 356 million (729 million) and `grep -c` 1.13 billion (1.50 billion), so a line reads about 70 MB under the default fuel. A binary wire is `agents/2026-11-21-the-shell-crosses-its-boundary-in-binary/spec.md`, and serving `grep -r` and `find` from the indexed verbs moves the heavy case off the boundary.
 - The roadmap's one write per redirection holds for a command that only prints; a group, a loop or a program has its file opened by a write first, since only a write can learn that the caller may not write the file, and bash refuses the redirection before the command runs.
+- The Rust toolchain is not pinned, so the module, and the instructions a line spends, differ between wheel builds. The first line in each process compiles the module, about 260 ms and 180 MB of peak memory on macOS. Both are in the boundary spec.
+- A line in a slow pattern match holds a worker of the shared offload pool until its fuel runs out, so many such lines delay other callers; a pool of the shell's own and a bound on concurrent lines are in the budget spec.
 - The building of a wheel from the sdist now needs the `wasm32-unknown-unknown` target beside the Rust toolchain.
 
 ## Next

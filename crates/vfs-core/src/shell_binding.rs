@@ -118,8 +118,7 @@ impl ShellMachine {
         let (instance, answer) = py
             .detach(move || {
                 on_slice_thread(move || -> Result<(Instance, String), Ended> {
-                    let mut instance = Instance::new(fuel, slice, memory, deadline, watched)
-                        .map_err(|message| Ended(message, 1))?;
+                    let mut instance = Instance::new(fuel, slice, memory, deadline, watched)?;
                     let answer = instance.call(Export::Start, start.as_bytes())?;
                     Ok((instance, answer))
                 })
@@ -275,6 +274,8 @@ fn runtime() -> Result<&'static Runtime, String> {
         .get_or_init(|| {
             let mut config = wasmtime::Config::new();
             config.consume_fuel(true);
+            // Unix signals, not Mach ports, catch a trap on macOS, so a forked child can run a line.
+            config.macos_use_mach_ports(false);
             config.epoch_interruption(true);
             config.async_stack_size(WASM_STACK_BYTES);
             config.max_wasm_stack(WASM_STACK_BYTES);
@@ -410,8 +411,9 @@ impl Instance {
         memory_limit: usize,
         deadline: Option<Instant>,
         cancelled: Arc<AtomicBool>,
-    ) -> Result<Instance, String> {
-        let runtime = runtime()?;
+    ) -> Result<Instance, Ended> {
+        let internal = |message: String| Ended(format!("Internal({message:?})"), 1);
+        let runtime = runtime().map_err(internal)?;
         let data = Data {
             memory_limit,
             memory_refused: false,
@@ -423,7 +425,7 @@ impl Instance {
         };
         let mut store = Store::new(&runtime.engine, data);
         store.limiter(|data| data);
-        store.set_fuel(fuel).map_err(|e| e.to_string())?;
+        store.set_fuel(fuel).map_err(|e| internal(e.to_string()))?;
         store.set_epoch_deadline(1);
         store.epoch_deadline_callback(|mut state| {
             let data = state.data_mut();
@@ -444,24 +446,28 @@ impl Instance {
                 let data = caller.data();
                 i32::from(data.step_start.saturating_sub(left) >= data.slice)
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| internal(e.to_string()))?;
+        // Instantiating runs the module's own start-up, which spends fuel like any other call.
         let instance = linker
             .instantiate(&mut store, &runtime.module)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| match e.downcast_ref::<Trap>() {
+                Some(Trap::OutOfFuel) => Ended(format!("Budget(\"fuel\", {fuel})"), BUDGET_STATUS),
+                _ => internal(e.to_string()),
+            })?;
         let memory = instance
             .get_memory(&mut store, "memory")
-            .ok_or("the module exports no memory")?;
+            .ok_or_else(|| internal("the module exports no memory".to_owned()))?;
         let typed = |store: &mut Store<Data>, name: &str| {
             instance
                 .get_typed_func::<u32, u32>(store, name)
-                .map_err(|e| e.to_string())
+                .map_err(|e| internal(e.to_string()))
         };
         let buffer = typed(&mut store, "buffer")?;
         let start = typed(&mut store, "start")?;
         let step = typed(&mut store, "step")?;
         let buffer_address = instance
             .get_typed_func::<(), u32>(&mut store, "buffer_address")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| internal(e.to_string()))?;
         Ok(Instance {
             store,
             memory,
