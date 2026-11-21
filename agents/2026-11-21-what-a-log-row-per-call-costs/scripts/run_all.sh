@@ -23,4 +23,7 @@ for engine in sqlite postgres; do
   step 1200 scripts/measure_growth.py --engine "$engine"
   step 600 scripts/measure_pool.py --engine "$engine"
 done
-rm -rf "${L0_SCRATCH:?}"/*
+uv run python scripts/measure_build.py
+# Only the databases these scripts made; anything else in the scratch directory is left alone.
+find "${L0_SCRATCH:?}" -mindepth 1 -maxdepth 1 -type d \
+  \( -name 'calls-*' -o -name 'batch-*' -o -name 'waits-*' -o -name 'growth-*' -o -name 'pool-*' \) -exec rm -rf {} +

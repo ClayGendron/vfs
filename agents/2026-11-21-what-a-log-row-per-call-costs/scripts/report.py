@@ -92,11 +92,12 @@ def waits_table(engine: str, data: dict[str, Any]) -> list[str]:
         f"#### Reads and writes while a 10,000-entry write runs, {engine} (`results/waits-{engine}.json`)",
         "",
         f"{data['readers']} reader sessions back to back and one one-file writer, in a quiet window and then while "
-        "one more session writes 10,000 entries. Milliseconds; each cell is the median over the repeats.",
+        "one more session writes 10,000 entries. Milliseconds. Latencies are the median over the repeats; "
+        "batch seconds are their median; refusals, failures and flushes are sums over every repeat.",
         "",
         "| mode | batch, s | read median quiet → during | read p95 quiet → during | read max during "
         "| reads failed | one-file write median during | write max during | writes failed "
-        "| log writes failed | flushes failed / run | slowest flush, s | buffer high water |",
+        "| log writes failed | flushes failed / all | slowest flush, s | buffer high water |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     modes: dict[str, list[dict[str, Any]]] = {}
@@ -172,13 +173,8 @@ def pool_table(engine: str, data: dict[str, Any]) -> list[str]:
 
 def environment_lines() -> list[str]:
     out = ["#### Where every figure was measured", ""]
-    seen = set()
     for name in sorted(RESULTS_DIR.glob("*.json")):
         env = json.loads(name.read_text())["environment"]
-        key = (env["commit"], env.get("postgres"))
-        if key in seen:
-            continue
-        seen.add(key)
         out.append(
             f"- `{name.name}`: commit `{env['commit']}` (src dirty: {env['src_dirty']}), {env['date']}, "
             f"Python {env['python']}, SQLite {env['sqlite']}, {env['cpu']}, {env['cores']} cores, "

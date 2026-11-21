@@ -499,7 +499,7 @@ def body(seed: str, lines: int = BODY_LINES, needle_every: int = 0) -> str:
 
 
 async def seed_corpus(fs: AsyncVirtualFileSystem) -> None:
-    """2,000 files of about 4 KB; in each directory, every fourth file carries the pattern three times."""
+    """2,000 files of about 4 KB; in each directory, every fourth file carries the pattern on four lines."""
     entries = [
         Entry(
             path=f"/corpus/d{d:02d}/f{f:03d}.md",

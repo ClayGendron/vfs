@@ -17,7 +17,7 @@ Each fact is marked run or read.
 
 - **A one-file write beside a batch waits about 20 s and can be refused.** With no log at all, a session writing one 4 KB file at a time beside a 10,000-entry write saw a maximum of 20.5 s, 20.6 s and 20.8 s in three repeats, and in each repeat one write was refused `vfs.conflict: write kept losing to concurrent changes: a retryable engine conflict outlived 4 attempts`. Run.
 - **Twenty seconds is four attempts of the 5 s `busy_timeout`.** The SQLite profile sets `PRAGMA busy_timeout = 5000`, and the host's retry loop in `engine.py` gives a write four attempts before it raises `StaleSnapshot` with that message. Read.
-- **The batch holds the writer for most of its length.** The same batch took 5.5 to 6 s alone and about 28 s beside eight reader sessions in one process, and the one-file writer completed four to six writes in that window. Run.
+- **The batch holds the writer for long stretches.** The same batch took 5.7 to 6.3 s alone and about 28 s beside eight reader sessions in one process. The one-file writer completed four to six writes in that window, so the batch does not hold the writer throughout; how long it holds it at a stretch is inferred from the 20 s waits, not measured. Run, then inferred.
 - **32 batches at once lose three in four.** With 32 sessions each writing 10,000 entries at once, 48 of 64 batches over two repeats were refused with the same `vfs.conflict`, with no log. Run.
 - **Reads do not wait.** WAL serves readers beside the writer, and read latency during the batch was unchanged. Run.
 
