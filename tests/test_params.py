@@ -70,7 +70,7 @@ def test_every_int_channel_enforces_the_shared_ceiling() -> None:
             assert at_max is None or spec.name not in at_max, (op, spec.name, at_max)
             over = param_violation(op, {spec.name: INT_CEILING + 1})
             assert over is not None and spec.name in over and str(INT_CEILING) in over
-    assert swept == 8
+    assert swept == 9
 
 
 def test_violation_messages_name_the_parameter() -> None:
@@ -85,6 +85,22 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("run", {"path": "/t", "arguments": 5}) == "run arguments must be a dict, got int"
     assert param_violation("write", {"path": "/f", "data": "x"}) == "write data must be bytes, got str"
     assert param_violation("write", {"path": "/f", "data": b"x"}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "if_version": 0}) == (
+        "write if_version must be an integer >= 1 and <= 2147483647, got 0"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": {"/f": 0}}) == (
+        "write if_versions values must be integers >= 1 and <= 2147483647, got 0"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": {7: 1}}) == (
+        "write if_versions keys must be strings, got int"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": ["/f"]}) == (
+        "write if_versions must be a mapping of paths to versions, got list"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": {"/f": INT_CEILING}}) is None
+    assert param_violation("write", {"entries": [], "if_version": 1}) == (
+        "write takes if_version with path, and if_versions with entries"
+    )
 
 
 # ----------------------------------------------------------------------
@@ -108,6 +124,15 @@ GARBAGE = [
     ("write-content-and-data", lambda fs: fs.write(path="/f.txt", content="x", data=b"y")),
     ("write-both-forms", lambda fs: fs.write(entries=[], path="/f.txt", content="x")),
     ("write-entries-and-data", lambda fs: fs.write(entries=[], data=b"y")),
+    ("write-zero-version", lambda fs: fs.write(path="/f.txt", content="x", if_version=0)),
+    ("write-bool-version", lambda fs: fs.write(path="/f.txt", content="x", if_version=True)),
+    ("write-str-version", lambda fs: fs.write(path="/f.txt", content="x", if_version="2")),
+    ("write-version-with-entries", lambda fs: fs.write(entries=[], if_version=1)),
+    ("write-versions-with-path", lambda fs: fs.write(path="/f.txt", content="x", if_versions={"/f.txt": 1})),
+    ("write-versions-not-a-mapping", lambda fs: fs.write(entries=[], if_versions=[("/f.txt", 1)])),
+    ("write-versions-non-str-key", lambda fs: fs.write(entries=[], if_versions={1: 1})),
+    ("write-versions-zero", lambda fs: fs.write(entries=[], if_versions={"/f.txt": 0})),
+    ("write-versions-bool", lambda fs: fs.write(entries=[], if_versions={"/f.txt": True})),
     ("write-truthy-overwrite", lambda fs: fs.write(path="/f.txt", content="x", overwrite="yes")),
     ("write-truthy-parents", lambda fs: fs.write(path="/f.txt", content="x", parents=1)),
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),

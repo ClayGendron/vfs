@@ -114,7 +114,7 @@ Each is refused with `invalid`, names the argument, and is judged before any sto
 | `if_version` goes with the single form only, and `if_versions` with `entries` only | two shape rules |
 | `if_absent=True` with `if_version` or `if_versions` | a rule: an absent row has no version |
 | `if_absent=True` with `append=True` | a rule: an append to an absent path already creates |
-| every key of `if_versions` names a file entry of the batch, once it is resolved as the entry paths are | `_route_entry_batch` in `base.py` |
+| every key of `if_versions` names a file entry of the batch, once it is resolved as the entry paths are | `_route_entry_batch` in `base.py`. A storage called at the seam ignores a key that names none of its entries. |
 | under `append=True` every entry is a file | `_route_entry_batch` |
 
 The kernel resolves each key as it resolves each entry path, matches keys to entries, and hands each mount the keys of its own entries with the mount prefix taken off. A batch over two mounts stays whole on each mount and not across them, which is today's rule for any refusal.
@@ -164,7 +164,7 @@ Reason for the rule: it is what makes `if_version` safe to send twice. A caller 
 
 A rival inside the window:
 
-- Where a miss is probed, the probe in `_classify_guard_misses` also selects `version` and `content_hash`. A missed row whose current hash is the staged hash raises `StaleSnapshot`, and the rerun settles `unchanged`: the rival wrote the same body. Every other miss is a `conflict` that carries the current version. It is not retryable for a row with an expected version, and stays retryable for a row without one.
+- Where a miss is probed, the probe in `_classify_guard_misses` also selects `path`, `version` and `content_hash`. A missed row that is still at its path and whose current hash is the staged hash raises `StaleSnapshot`, and the rerun settles `unchanged`: the rival wrote the same body. A row that moved keeps its `conflict` whatever its body, as today. Every other miss is a `conflict` that carries the current version. It is not retryable for a row with an expected version, and stays retryable for a row without one.
 - Where a miss reruns the call, the new snapshot holds the rival's version and settle gives the same two answers.
 
 A replay of one's own write: body X with `if_version=1` lands as version 2, the reply is lost, and the call is sent again. Settle checks `unchanged` before the version, so the answer is `unchanged` at version 2. This is safe. The harm a precondition prevents is erasing a rival's change, and an `unchanged` answer writes nothing.

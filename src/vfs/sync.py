@@ -37,7 +37,7 @@ from vfs.results import ErrorKind, Result, classified
 from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterable, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
     from concurrent.futures import Future
     from types import TracebackType
 
@@ -309,6 +309,8 @@ class VirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
         overwrite: bool = True,
         parents: bool = False,
         authority: Authority | None = None,
@@ -320,6 +322,8 @@ class VirtualFileSystem:
             path=path,
             content=content,
             data=data,
+            if_version=if_version,
+            if_versions=if_versions,
             overwrite=overwrite,
             parents=parents,
             authority=authority,
@@ -799,6 +803,8 @@ class Session:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
         overwrite: bool = True,
         parents: bool = False,
     ) -> Result:
@@ -809,6 +815,8 @@ class Session:
             path=path,
             content=content,
             data=data,
+            if_version=if_version,
+            if_versions=if_versions,
             overwrite=overwrite,
             parents=parents,
         )

@@ -230,6 +230,13 @@ class _Dispatches(NamedTuple):
     settle: Callable[[list[Result], list[tuple[Path, Result]]], Coroutine[Any, Any, list[Result]]] | None = None
 
 
+class _FileSite(NamedTuple):
+    """Where one file of a write batch goes: the path of its mount, and its own path as that mount's storage sees it."""
+
+    mount: Path
+    local: Path
+
+
 async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
     """Build the :term:`entry` that a write to one path makes.
 
@@ -911,6 +918,8 @@ class AsyncVirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
         overwrite: bool = True,
         parents: bool = False,
         authority: Authority | None = None,
@@ -930,6 +939,15 @@ class AsyncVirtualFileSystem:
         A write of the body a file already holds changes nothing. Its row comes back with the status
         ``unchanged``, and the file keeps its version.
 
+        ``if_version`` is the version the caller expects to replace, as a read of the file returned
+        it. If the file is at another version, the write is refused with ``conflict``, nothing is
+        written, and the error carries the version the file is at now in ``data["version"]``. Use it
+        to read a file, change it and write it back without erasing a change made in between. A
+        file that is missing or deleted is refused with ``not_found``, and is not made. ``if_versions``
+        is the same for a batch: it maps a path to the version expected there. Each key must be the
+        path of a file in ``entries``, and a file with no key is replaced whatever its version. One
+        stale file refuses every entry that goes to the same mount.
+
         If ``overwrite`` is false, a write to a path that already holds a file is refused. If
         ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
         missing parents are made, as ``mkdir -p`` makes them. Both apply to every entry in the call.
@@ -946,6 +964,8 @@ class AsyncVirtualFileSystem:
             path=path,
             content=content,
             data=data,
+            if_version=if_version,
+            if_versions=if_versions,
             overwrite=overwrite,
             parents=parents,
             authority=authority,
@@ -953,7 +973,9 @@ class AsyncVirtualFileSystem:
         if refusal is not None:
             return refusal
         if entries is not None:
-            return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, authority=authority)
+            return await self._route_entry_batch(
+                entries, if_versions=if_versions, overwrite=overwrite, parents=parents, authority=authority
+            )
         if path is None or (content is None and data is None):
             return self._error(
                 ErrorKind.invalid, op="write", detail="write requires path and content or data, or entries"
@@ -965,7 +987,10 @@ class AsyncVirtualFileSystem:
             entry = await _authored_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
-        return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, authority=authority)
+        expected = None if if_version is None else {path: if_version}
+        return await self._route_entry_batch(
+            [entry], if_versions=expected, overwrite=overwrite, parents=parents, authority=authority
+        )
 
     async def edit(
         self,
@@ -2398,6 +2423,7 @@ class AsyncVirtualFileSystem:
         self,
         entries: Iterable[Entry],
         *,
+        if_versions: Mapping[str, int] | None = None,
         overwrite: bool = True,
         parents: bool = False,
         authority: Authority | None = None,
@@ -2406,6 +2432,9 @@ class AsyncVirtualFileSystem:
 
         Every :term:`entry` has its path checked and passes the gate before any storage is called. Each
         entry is then rewritten as its mount's storage sees it, through :meth:`Entry.without_mount`.
+
+        Each key of ``if_versions`` is checked as an entry's path is, and must be the path of a file in
+        the batch. A mount receives the keys of its own files, as its storage sees them.
 
         Each :term:`mount` receives its entries sorted so that a parent comes before its child. A
         storage can then judge the batch as a set, and the caller does not have to order it. A
@@ -2422,6 +2451,7 @@ class AsyncVirtualFileSystem:
             return Result(ops=("write",))
 
         groups: dict[Path, tuple[Mount, list[Entry]]] = {}
+        files: dict[Path, _FileSite] = {}
         for entry in rows:
             if not isinstance(entry, Entry):
                 detail = f"write entries must be Entry instances, got {type(entry).__name__}"
@@ -2434,13 +2464,26 @@ class AsyncVirtualFileSystem:
             if err is not None:
                 return err
             _b, entry_group = groups.setdefault(terminal.mount.path, (terminal.mount, []))
-            entry_group.append(entry.without_mount(terminal.mount.path))
+            local = entry.without_mount(terminal.mount.path)
+            entry_group.append(local)
+            if entry.kind != "directory":
+                files[resolved.path] = _FileSite(terminal.mount.path, local.path)
+
+        expected: dict[Path, dict[Path, int]] = {}
+        for key, version in (if_versions or {}).items():
+            resolved = resolve_path(key, mutation=True)
+            site = files.get(resolved.path) if resolved.path is not None else None
+            if site is None:
+                detail = "each key of if_versions must be the path of a file in entries"
+                return self._error(ErrorKind.invalid, op="write", detail=detail, data={"raw": str(key)})
+            expected.setdefault(site.mount, {})[site.local] = version
 
         results = await gather_settled(
             self._dispatch_entry(
                 mount,
                 "write",
                 entries=sorted(group, key=lambda e: e.path.depth),
+                if_versions=expected.get(mount.path),
                 overwrite=overwrite,
                 parents=parents,
                 authority=authority,

@@ -86,7 +86,7 @@ from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
-from vfs.storage.backends.database.staging import StagedEntry, WritePlan
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan, stale_version
 from vfs.storage.backends.database.versions import mint_versions
 from vfs.storage.editing import edited_entry
 
@@ -185,6 +185,7 @@ async def write_rows(
     parents: bool,
     authority: Authority | None,
     value_cap: ValueCap | None = None,
+    if_versions: Mapping[Path, int] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
 
@@ -199,9 +200,15 @@ async def write_rows(
     not written. Any error fails the whole batch before a statement runs. Its
     entries are already measured by :func:`measured_entries`; it stores
     the metrics it is handed.
+
+    *if_versions* maps a file's path to the version its caller expects
+    to replace. A file at another version is ``conflict``, judged from
+    the snapshot at no statement, and a path with no key is replaced
+    whatever its version.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
+    expected = if_versions or {}
     for entry in entries:
         if entry.kind == "directory":
             status = plan.put_dir(entry.path, parents=parents)
@@ -219,6 +226,7 @@ async def write_rows(
                 owner_id=entry.owner_id,
                 data=entry.data,
                 source=entry.source,
+                expected=expected.get(entry.path),
             )
         if status is not None:
             plan.pending.append((entry.path, status))
@@ -952,22 +960,29 @@ async def _classify_guard_misses(
     ``redrive``: the probe would lie about current state, so the whole
     method retries from a fresh snapshot. ``reprobe``: one chunked
     re-probe by id splits honest ``not_found`` (the row is gone) from
-    ``conflict`` (the row moved past the snapshot — version or address).
+    ``conflict`` (the row moved past the snapshot — version or address),
+    which names the version the row is at now. A row still at its path
+    that already holds the staged body retries too: the rival wrote
+    the same body, and the fresh plan answers ``unchanged``.
     """
     if not missed:
         return []
     if profile.guard_miss == "redrive":
         raise StaleSnapshot(f"{len(missed)} guarded update(s) missed their snapshot")
-    present: set[str] = set()
+    present: dict[str, Any] = {}
+    columns = (entry.c.entry_id, entry.c.path, entry.c.version, entry.c.content_hash)
     for chunk in chunked([s.entry_id for s in missed], membership_budget):
-        found = await session.execute(select(entry.c.entry_id).where(membership(entry.c.entry_id, chunk, profile)))
-        present.update(row.entry_id for row in found)
+        found = await session.execute(select(*columns).where(membership(entry.c.entry_id, chunk, profile)))
+        present.update((row.entry_id, row) for row in found)
     errors: list[ResultError] = []
     for staged in missed:
-        if staged.entry_id in present:
-            errors.append(_conflict(staged))
-        else:
+        current = present.get(staged.entry_id)
+        if current is None:
             errors.append(classified(ErrorKind.not_found, staged.path))
+        elif current.path == str(staged.path) and current.content_hash == staged.content_hash:
+            raise StaleSnapshot(f"a rival wrote the body staged for {staged.path}")
+        else:
+            errors.append(_conflict(staged, current.version))
     return errors
 
 
@@ -995,10 +1010,14 @@ def _guarded_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
     return _update_params(staged, now) | guard
 
 
-def _conflict(staged: StagedEntry) -> ResultError:
-    # Retryable by declaration: an identical immediate retry adjudicates
-    # against the rival's committed state and resolves honestly.
-    return classified(ErrorKind.conflict, staged.path, retryable=True, detail="concurrent modification")
+def _conflict(staged: StagedEntry, current: int) -> ResultError:
+    """The ``conflict`` of a row that lost its guard to a rival, naming the version the row is at now."""
+    if staged.expected_version is not None:
+        return stale_version(staged.path, current)
+    # Retryable where the caller expected no version: an identical retry
+    # is judged against the rival's committed state and resolves honestly.
+    detail = "concurrent modification"
+    return classified(ErrorKind.conflict, staged.path, retryable=True, detail=detail, data={"version": current})
 
 
 async def _replace_bodies(

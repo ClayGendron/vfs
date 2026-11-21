@@ -173,6 +173,7 @@ class SupportsMutation(Protocol):
         self,
         *,
         entries: list[Entry],
+        if_versions: Mapping[Path, int] | None = None,
         overwrite: bool = True,
         parents: bool = False,
         authority: Authority | None = None,

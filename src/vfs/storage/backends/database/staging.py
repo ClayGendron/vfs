@@ -80,6 +80,7 @@ class StagedEntry:
     base_content: str | None = None  # the replaced text body, when the snapshot joined it; the mint keeps it unread
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
     revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
+    expected_version: int | None = None  # the version the caller said it replaces; settle refuses any other
 
     def __post_init__(self) -> None:
         self.ext = self.path.ext
@@ -281,6 +282,7 @@ class WritePlan:
         owner_id: str | None = None,
         data: bytes | None = None,
         source: Source = "text",
+        expected: int | None = None,
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended.
 
@@ -288,12 +290,17 @@ class WritePlan:
         the row's identity, whatever ``overwrite`` says, since no live row
         occupies the path. A tombstoned directory refuses ``wrong_kind``
         with the trashed hint, as a live one refuses without it.
+
+        *expected* is the version the caller says it replaces. A row
+        that is expected exists, so nothing is made for it: no parent,
+        no file, and no revive of a deleted one. Whether the version is
+        the row's is judged later, by :meth:`settle`.
         """
         if not self.within_namespace(target) or not self.within_budget(target):
             return None
         if not self.within_value_cap(target, data if data is not None else content):
             return None
-        if not self.parent_gate(target, parents=parents, target=target):
+        if not self.parent_gate(target, parents=parents and expected is None, target=target):
             return None
         occupant = self.kind_of(target)
         tombstone = self.tombstone_of(target) if occupant is None else None
@@ -306,6 +313,9 @@ class WritePlan:
             return None
         if occupant is not None and not overwrite:
             self.errors.append(already_exists(target))
+            return None
+        if expected is not None and occupant is None:
+            self.errors.append(tombstone_miss(target, None if tombstone is None else tombstone["deleted_at"]))
             return None
         self.mint_chain(target)
         stage = self.stage_create if occupant is None and tombstone is None else self.stage_update
@@ -323,6 +333,7 @@ class WritePlan:
         )
         if tombstone is not None:
             self.staged[target].revive = True
+        self.staged[target].expected_version = expected
         return "created" if occupant is None and tombstone is None else "updated"
 
     def put_dir(self, target: Path, *, parents: bool) -> Status | None:
@@ -448,13 +459,17 @@ class WritePlan:
         )
 
     def settle(self) -> None:
-        """Drop each staged update that would leave its row as it is, and report it ``unchanged``.
+        """Drop each staged update that would leave its row as it is, then refuse each stale expected version.
 
         It runs once, after every entry is staged, so a path written twice
         is judged on its last body. A revive is a change whatever its
         body, since it clears a tombstone, and a create has no row to
-        equal. A dropped row writes nothing: its version, its stamps and
-        its index marks stay as they were.
+        equal. A dropped row reports ``unchanged`` and writes nothing: its
+        version, its stamps and its index marks stay as they were.
+
+        The drop comes first, so a call sent twice meets its own body and
+        hears ``unchanged``, whatever version it expected. Every row left
+        whose expected version is not the committed one is a ``conflict``.
         """
         same = frozenset(
             path
@@ -463,11 +478,16 @@ class WritePlan:
             and not staged.revive
             and _same_material(staged, self.committed[str(path)])
         )
-        if not same:
-            return
         for path in same:
             del self.staged[path]
-        self.pending = [(path, "unchanged" if path in same else status) for path, status in self.pending]
+        if same:
+            self.pending = [(path, "unchanged" if path in same else status) for path, status in self.pending]
+        for path, staged in self.staged.items():
+            if staged.expected_version is None:
+                continue
+            current = self.committed[str(path)]["version"]
+            if staged.expected_version != current:
+                self.errors.append(stale_version(path, current))
 
     def derive_bumps(self) -> dict[str, str]:
         """The directories whose membership this batch changes: path → entry_id.
@@ -493,6 +513,21 @@ class WritePlan:
             elif parent.persistence != "insert":
                 bumps[str(parent.path)] = parent.entry_id
         return bumps
+
+
+# ---------------------------------------------------------------------------
+# Refusals
+# ---------------------------------------------------------------------------
+
+
+def stale_version(path: Path, current: int) -> ResultError:
+    """The ``conflict`` of a write whose expected version is not the row's, naming the version there now.
+
+    It is not retryable: the same call would carry the same stale
+    version, so the caller reads the file again first.
+    """
+    detail = "the version expected is not the version stored"
+    return classified(ErrorKind.conflict, path, detail=detail, data={"version": current})
 
 
 # ---------------------------------------------------------------------------

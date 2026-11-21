@@ -410,6 +410,51 @@ class TestAncestorMintConvergence:
 
 
 # ---------------------------------------------------------------------------
+# An expected version against a rival that commits inside the window
+# ---------------------------------------------------------------------------
+
+
+class TestExpectedVersionRivals:
+    """A rival commits between the snapshot and the update, and the answer is the same on every engine.
+
+    An engine that probes a missed guard answers from the probe. An
+    engine that runs the call again answers from the new snapshot.
+    """
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_with_another_body_is_a_conflict_that_names_its_version(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="rival")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.write(entries=[Entry(path=target, content="mine")], if_versions={target: 1})
+            assert rivals and rivals[0].success is True
+            assert [(e.kind, e.path, e.data, e.retryable) for e in victim.errors] == [
+                (ErrorKind.conflict, "/a.txt", {"version": 2}, False)
+            ]
+            assert (await storage.read(path=target)).observations[0].content == "rival"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_with_the_same_body_leaves_the_write_unchanged(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="same")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.write(entries=[Entry(path=target, content="same")], if_versions={target: 1})
+            assert rivals and rivals[0].success is True
+            assert victim.success is True, victim.errors
+            assert [(o.status, o.version) for o in victim.observations] == [("unchanged", 2)]
+            await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
 # Observation honesty — edit/overwrite under ancestor relocation
 # ---------------------------------------------------------------------------
 

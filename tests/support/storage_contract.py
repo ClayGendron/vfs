@@ -2674,6 +2674,95 @@ class StorageContract:
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "body"
 
     # ------------------------------------------------------------------
+    # A write that states the version it expects to replace
+    # ------------------------------------------------------------------
+
+    @needs("write", "stat", "read")
+    async def test_a_stale_expected_version_is_conflict_and_writes_nothing(self, storage: ConformanceBackend) -> None:
+        for body in ("one", "two"):
+            assert (await storage.write(entries=[_file("/a.txt", body)])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "three")], if_versions={Path("/a.txt"): 1})
+        assert result.success is False and result.observations == []
+        (error,) = result.errors
+        assert (error.kind, error.path, error.data, error.retryable) == (
+            ErrorKind.conflict,
+            "/a.txt",
+            {"version": 2},
+            False,
+        )
+        assert await _revision_of(storage, "/a.txt") == 2
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
+
+    @needs("write", "stat", "read")
+    async def test_a_matching_expected_version_updates(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "two")], if_versions={Path("/a.txt"): 1})
+        assert result.success is True, result.errors
+        assert [(o.status, o.version) for o in result.observations] == [("updated", 2)]
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
+
+    @needs("write", "stat")
+    async def test_a_write_with_an_expected_version_sent_twice_is_unchanged(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        expecting_one = {Path("/a.txt"): 1}
+        assert (await storage.write(entries=[_file("/a.txt", "two")], if_versions=expecting_one)).success is True
+        # The reply was lost and the call is sent again: it meets its own body.
+        replay = await storage.write(entries=[_file("/a.txt", "two")], if_versions=expecting_one)
+        assert replay.success is True, replay.errors
+        assert [(o.status, o.version) for o in replay.observations] == [("unchanged", 2)]
+        other = await storage.write(entries=[_file("/a.txt", "three")], if_versions=expecting_one)
+        assert [(e.kind, e.data) for e in other.errors] == [(ErrorKind.conflict, {"version": 2})]
+
+    @needs("write", "delete", "stat")
+    async def test_an_expected_version_on_no_live_row_is_not_found(self, storage: ConformanceBackend) -> None:
+        absent = await storage.write(entries=[_file("/nope.txt", "x")], if_versions={Path("/nope.txt"): 1})
+        assert [(e.kind, e.path) for e in absent.errors] == [(ErrorKind.not_found, "/nope.txt")]
+        # A row that is expected to exist has its parents, so the parents are never made for it.
+        orphan = await storage.write(
+            entries=[_file("/no/dir/f.txt", "x")], if_versions={Path("/no/dir/f.txt"): 1}, parents=True
+        )
+        assert [(e.kind, e.path) for e in orphan.errors] == [(ErrorKind.not_found, "/no")]
+        assert (await storage.stat(path=Path("/no"))).success is False
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        deleted = (await storage.stat(path=Path("/.vfs/trash/a.txt"))).observations[0].version
+        assert deleted is not None
+        for expected in (1, deleted):
+            gone = await storage.write(entries=[_file("/a.txt", "two")], if_versions={Path("/a.txt"): expected})
+            (error,) = gone.errors
+            assert (error.kind, error.path) == (ErrorKind.not_found, "/a.txt")
+            assert (error.data or {}).get("vfs.trashed") is True
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+
+    @needs("write", "stat", "read")
+    async def test_stale_keys_refuse_the_whole_batch_and_each_is_named(self, storage: ConformanceBackend) -> None:
+        paths = ["/a.txt", "/b.txt", "/c.txt", "/d.txt"]
+        assert (await storage.write(entries=[_file(path, "old") for path in paths])).success is True
+        moved_on = [_file("/b.txt", "rival"), _file("/d.txt", "rival")]
+        assert (await storage.write(entries=moved_on)).success is True
+        result = await storage.write(
+            entries=[_file(path, "new") for path in paths], if_versions={Path(path): 1 for path in paths}
+        )
+        assert result.success is False and result.observations == []
+        assert sorted((e.kind, e.path, (e.data or {}).get("version")) for e in result.errors) == [
+            (ErrorKind.conflict, "/b.txt", 2),
+            (ErrorKind.conflict, "/d.txt", 2),
+        ]
+        bodies = [(await storage.read(path=Path(path))).observations[0].content for path in paths]
+        assert bodies == ["old", "rival", "old", "rival"]
+
+    @needs("write", "stat")
+    async def test_a_key_covers_its_own_row_and_no_other(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "old"), _file("/b.txt", "old")])).success is True
+        assert (await storage.write(entries=[_file("/b.txt", "rival")])).success is True
+        # /b.txt moved on, and no key names it: it is replaced, as a plain write replaces.
+        result = await storage.write(
+            entries=[_file("/a.txt", "new"), _file("/b.txt", "new")], if_versions={Path("/a.txt"): 1}
+        )
+        assert result.success is True, result.errors
+        assert [(o.status, o.version) for o in result.observations] == [("updated", 2), ("updated", 3)]
+
+    # ------------------------------------------------------------------
     # Batch observations reflect committed state, never a mid-batch one
     # ------------------------------------------------------------------
     # A version value is never observable before the state it stamps: a

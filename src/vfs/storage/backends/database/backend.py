@@ -682,6 +682,7 @@ class DatabaseStorage:
         self,
         *,
         entries: list[Entry],
+        if_versions: Mapping[Path, int] | None = None,
         overwrite: bool = True,
         parents: bool = False,
         authority: Authority | None = None,
@@ -708,6 +709,7 @@ class DatabaseStorage:
                 parents=parents,
                 authority=self._named(authority),
                 value_cap=host.value_cap,
+                if_versions=if_versions,
             )
 
         return await self._execute_write("write", run)

@@ -47,6 +47,7 @@ from vfs.results import ErrorKind, ResultError
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import writes as writes_module
 from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE, StaleSnapshot
+from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
@@ -1137,7 +1138,10 @@ class TestGuardedAttribution:
         won = _staged_material("/won.txt", str(ULID()))
         lost = _staged_material("/lost.txt", str(ULID()))
         # The re-probe finds the lost row present: an honest conflict.
-        double = _ReturningSession([{"entry_id": won.entry_id, "version": 2}], probed=[{"entry_id": lost.entry_id}])
+        probed: list[dict[str, object]] = [
+            {"entry_id": lost.entry_id, "path": "/lost.txt", "version": 3, "content_hash": "a rival's body"}
+        ]
+        double = _ReturningSession([{"entry_id": won.entry_id, "version": 2}], probed=probed)
         errors = await _update_materials(
             cast("AsyncSession", double),
             tables.entry,
@@ -1893,3 +1897,124 @@ class TestLabelCost:
                 rewrite = [Entry(path=Path(f"/p/copied-{who}.txt"), content="again")]
                 assert (await storage.write(entries=rewrite, authority=minter)).success is True
                 assert not [sql for sql in _body(statements) if _is_stamp_read(sql)]
+
+
+class TestExpectedVersion:
+    """A write that states the version it expects costs what a plain write costs, and a stale one writes nothing."""
+
+    async def test_a_stale_expected_version_runs_the_snapshot_and_no_write(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        for body in ("one", "two"):
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content=body)])).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        stale = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")], if_versions={Path("/a.txt"): 1})
+        assert [(e.kind, e.data, e.retryable) for e in stale.errors] == [(ErrorKind.conflict, {"version": 2}, False)]
+        # The snapshot is the whole call: nothing is updated, minted or replaced.
+        own = _own(statements)
+        assert len(own) == 1 and own[0].startswith("SELECT"), own
+        await storage.close()
+
+    @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
+    async def test_a_key_for_every_row_adds_no_statement(self, files: int, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        narrowed = replace(storage._host.profile, in_list_budget=1_000)
+        monkeypatch.setattr(EngineHost, "profile", property(lambda _self: narrowed))
+        plain = [Path(f"/p/f{i:05}.txt") for i in range(files)]
+        keyed = [Path(f"/k/f{i:05}.txt") for i in range(files)]
+        seeded = [Entry(path=path, content="old") for path in (*plain, *keyed)]
+        assert (await storage.write(entries=seeded, parents=True)).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        assert (await storage.write(entries=[Entry(path=path, content="new") for path in plain])).success is True
+        without = [statement.split()[0] for statement in _own(statements)]
+        statements.clear()
+        expecting = dict.fromkeys(keyed, 1)
+        written = await storage.write(
+            entries=[Entry(path=path, content="new") for path in keyed], if_versions=expecting
+        )
+        assert written.success is True, written.errors
+        assert [statement.split()[0] for statement in _own(statements)] == without
+        # One row moved on: the batch is refused whole, and no statement writes.
+        assert (await storage.write(entries=[Entry(path=keyed[0], content="rival")])).success is True
+        await storage._host.settle_statistics()
+        statements.clear()
+        stale = await storage.write(
+            entries=[Entry(path=path, content="newer") for path in keyed], if_versions=dict.fromkeys(keyed, 2)
+        )
+        assert [(e.kind, e.path, e.data) for e in stale.errors] == [(ErrorKind.conflict, keyed[0], {"version": 3})]
+        assert [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))] == []
+        await storage.close()
+
+    @pytest.mark.parametrize("keyed", [True, False], ids=["expected", "plain"])
+    async def test_a_row_that_lost_its_guard_names_the_version_it_is_at(
+        self, keyed: bool, tmp_path, monkeypatch
+    ) -> None:
+        # A second writer cannot commit inside an attempt on SQLite, so the
+        # rival's commit is staged on the attempt's own session at the seam.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        sessions = attempts(monkeypatch, storage)
+        entry = storage._host.tables.entry
+
+        async def rival() -> None:
+            moved = update(entry).where(entry.c.path == "/a.txt").values(version=5, content_hash="another body")
+            await sessions[-1].execute(moved)
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            lost = await storage.write(
+                entries=[Entry(path=Path("/a.txt"), content="two")],
+                if_versions={Path("/a.txt"): 1} if keyed else None,
+            )
+        # Only a caller that expected no version may send the same call again.
+        assert [(e.kind, e.data, e.retryable) for e in lost.errors] == [(ErrorKind.conflict, {"version": 5}, not keyed)]
+        assert len(sessions) == 1
+        await storage.close()
+
+    async def test_a_guard_lost_to_a_rival_that_wrote_the_same_body_runs_again(self) -> None:
+        tables = build_vfs_tables()
+        lost = _staged_material("/lost.txt", str(ULID()))
+        lost.content_hash = "the staged body"
+        probed: list[dict[str, object]] = [
+            {"entry_id": lost.entry_id, "path": "/lost.txt", "version": 2, "content_hash": "the staged body"}
+        ]
+        double = _ReturningSession([], probed=probed)
+        with pytest.raises(StaleSnapshot):
+            await _update_materials(
+                cast("AsyncSession", double), tables.entry, POSTGRESQL, 32_000, 900, [lost], now=datetime.now(UTC)
+            )
+
+    async def test_a_guard_lost_to_a_row_that_moved_is_a_conflict_whatever_its_body(self) -> None:
+        tables = build_vfs_tables()
+        lost = _staged_material("/lost.txt", str(ULID()))
+        lost.content_hash = "the staged body"
+        probed: list[dict[str, object]] = [
+            {"entry_id": lost.entry_id, "path": "/moved.txt", "version": 2, "content_hash": "the staged body"}
+        ]
+        double = _ReturningSession([], probed=probed)
+        errors = await _update_materials(
+            cast("AsyncSession", double), tables.entry, POSTGRESQL, 32_000, 900, [lost], now=datetime.now(UTC)
+        )
+        assert [(e.kind, e.path, e.data, e.retryable) for e in errors] == [
+            (ErrorKind.conflict, "/lost.txt", {"version": 2}, True)
+        ]
+
+
+def _statements_of(storage: DatabaseStorage) -> list[str]:
+    """A list that fills with every statement *storage* sends from now on, the statistics pass's left out."""
+    statements: list[str] = []
+
+    @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        if not is_statistics_statement(statement):
+            statements.append(statement)
+
+    return statements
+
+
+def _own(statements: list[str]) -> list[str]:
+    """*statements* without the ones that open, close or configure a transaction."""
+    control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK")
+    return [statement for statement in statements if not statement.startswith(control)]

@@ -1173,6 +1173,45 @@ async def test_write_entries_batch_groups_and_localizes() -> None:
     assert a.calls[0][1]["overwrite"] is True
 
 
+async def test_write_if_version_reaches_the_storage_keyed_by_its_own_path() -> None:
+    root = AsyncVirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    await root.write(path="/m/f.txt", content="x", if_version=3)
+    assert child.calls[0][1]["if_versions"] == {Path("/f.txt"): 3}
+    await root.write(path="/m/f.txt", content="x")
+    assert child.calls[1][1]["if_versions"] is None
+
+
+async def test_write_if_versions_go_to_the_mount_of_each_key() -> None:
+    root = AsyncVirtualFileSystem()
+    a, b, c = RecorderStorage(), RecorderStorage(), RecorderStorage()
+    for storage, path in ((a, "/a"), (b, "/b"), (c, "/c")):
+        await root.add_mount(storage, path)
+    entries = [Entry(path=Path(f"/{mount}/{name}.txt"), content="x") for mount in "abc" for name in ("f", "g")]
+    expected = {"/a/f.txt": 2, "/a/g.txt": 5, "/b/g.txt": 7}
+    assert (await root.write(entries, if_versions=expected)).success is True
+    assert a.calls[0][1]["if_versions"] == {Path("/f.txt"): 2, Path("/g.txt"): 5}
+    assert b.calls[0][1]["if_versions"] == {Path("/g.txt"): 7}
+    assert c.calls[0][1]["if_versions"] is None
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["/a/other.txt", "/a/d", "/z/f.txt", "f.txt"],
+    ids=["no-entry", "a-directory-entry", "another-mount", "not-a-path"],
+)
+async def test_write_if_versions_key_that_names_no_file_of_the_call_is_invalid(key: str) -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    entries = [Entry(path=Path("/a/f.txt"), content="x"), Entry(path=Path("/a/d"), kind="directory")]
+    result = await root.write(entries, if_versions={"/a/f.txt": 1, key: 1})
+    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert "if_versions" in result.errors[0].message
+    assert a.calls == []
+
+
 async def test_write_entries_dispatch_is_depth_sorted_and_stable() -> None:
     # Parents-before-children dispatch; same-depth entries keep caller order.
     root = AsyncVirtualFileSystem()

@@ -13,6 +13,7 @@ modules — so schema consumers never import the router.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
 from vfs.authority import Authority
@@ -21,7 +22,7 @@ from vfs.paths import ObjectKind, validate_segment
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
 
     from vfs.ops import Op
 
@@ -36,6 +37,7 @@ ParamKind = Literal[
     "int",
     "bool",
     "dict",
+    "versions",  # mapping of a path to the version expected there; each value in the spec's int domain
     "str_seq",  # tuple or list of str; str/bytes/iterables rejected
     "str_set",  # frozenset/set/tuple/list of str
     "observations",  # model kinds: declared for drift/schema, validated
@@ -166,6 +168,16 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", doc="single form: the file to write"),
         ParamSpec("content", "str", doc="single form: the file's text body"),
         ParamSpec("data", "bytes", doc="single form: the file's bytes body; its text is a rendering"),
+        ParamSpec(
+            "if_version", "int", minimum=1, maximum=INT_CEILING, doc="single form: the version the write replaces"
+        ),
+        ParamSpec(
+            "if_versions",
+            "versions",
+            minimum=1,
+            maximum=INT_CEILING,
+            doc="batch form: the version expected at each named file's path",
+        ),
         ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an existing file"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
         _AUTHORITY,
@@ -399,6 +411,8 @@ _ONE_TARGET: Final = ShapeRule(
     msg_both="Exactly one of path or observations must be provided",
     msg_missing="Exactly one of path or observations must be provided",
 )
+# Each form of write has its own spelling of the expected version.
+_VERSION_FORMS: Final = "write takes if_version with path, and if_versions with entries"
 
 RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "read": (_ONE_TARGET,),
@@ -427,6 +441,8 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             exactly_one=False,
             msg_both="write takes content or data, not both",
         ),
+        ShapeRule((("if_version",), ("entries",)), exactly_one=False, msg_both=_VERSION_FORMS),
+        ShapeRule((("if_versions",), ("path", "content", "data")), exactly_one=False, msg_both=_VERSION_FORMS),
     ),
     "move": (
         ShapeRule(
@@ -560,18 +576,8 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
             return f"{op} {spec.name} must be bytes, got {type(value).__name__}"
         return None
     if kind == "int":
-        in_range = (
-            not isinstance(value, bool)
-            and isinstance(value, int)
-            and (spec.minimum is None or value >= spec.minimum)
-            and (spec.maximum is None or value <= spec.maximum)
-        )
-        if not in_range:
-            bounds = [f">= {spec.minimum}"] if spec.minimum is not None else []
-            if spec.maximum is not None:
-                bounds.append(f"<= {spec.maximum}")
-            suffix = f" {' and '.join(bounds)}" if bounds else ""
-            return f"{op} {spec.name} must be an integer{suffix}, got {value!r}"
+        if not _in_int_domain(spec, value):
+            return f"{op} {spec.name} must be an integer{_int_bounds(spec)}, got {value!r}"
         return None
     if kind == "bool":
         if not isinstance(value, bool):
@@ -581,6 +587,8 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
         if not isinstance(value, dict):
             return f"{op} {spec.name} must be a dict, got {type(value).__name__}"
         return None
+    if kind == "versions":
+        return _check_versions(op, spec, value)
     if kind == "str_seq":
         if not isinstance(value, (tuple, list)):
             return f"{op} {spec.name} must be a tuple of strings, got {type(value).__name__}"
@@ -588,6 +596,36 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
     if not isinstance(value, (frozenset, set, tuple, list)):  # str_set
         return f"{op} {spec.name} must be a set of strings, got {type(value).__name__}"
     return _check_items(op, spec, value)
+
+
+def _check_versions(op: Op, spec: ParamSpec, value: object) -> str | None:
+    """A mapping whose keys are text and whose values are versions inside the spec's bounds."""
+    if not isinstance(value, Mapping):
+        return f"{op} {spec.name} must be a mapping of paths to versions, got {type(value).__name__}"
+    for key, version in value.items():
+        if not isinstance(key, str):
+            return f"{op} {spec.name} keys must be strings, got {type(key).__name__}"
+        if not _in_int_domain(spec, version):
+            return f"{op} {spec.name} values must be integers{_int_bounds(spec)}, got {version!r}"
+    return None
+
+
+def _in_int_domain(spec: ParamSpec, value: object) -> bool:
+    """Whether *value* is an integer, and no bool, inside the bounds *spec* declares."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int)
+        and (spec.minimum is None or value >= spec.minimum)
+        and (spec.maximum is None or value <= spec.maximum)
+    )
+
+
+def _int_bounds(spec: ParamSpec) -> str:
+    """The bounds *spec* declares as a refusal words them, with a leading space, or nothing."""
+    bounds = [f">= {spec.minimum}"] if spec.minimum is not None else []
+    if spec.maximum is not None:
+        bounds.append(f"<= {spec.maximum}")
+    return f" {' and '.join(bounds)}" if bounds else ""
 
 
 def _check_items(op: Op, spec: ParamSpec, value: Iterable[object]) -> str | None:
