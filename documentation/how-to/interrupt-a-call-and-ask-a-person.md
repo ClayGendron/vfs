@@ -2,7 +2,9 @@
 
 This guide shows how to stop a call before it changes anything, show a person what it would do, and let it continue once they approve. Use it when an AI agent works on files that matter, and some of its changes should wait for a person.
 
-**VFS never asks a person anything, and it never waits for one.** It stops the call, describes what the call would do, and returns. Your application asks the person in whatever way it likes. When the person has answered, your application tells VFS, and the call goes through. A call that is stopped this way is called an interrupt.
+**VFS never asks a person anything, and it never waits for one.** It stops the call, describes what the call would do, and returns. Your application asks the person in whatever way it likes. When the person has answered, your application tells VFS, and the call goes through. A call that is stopped this way has been interrupted, and what the person must answer is called an interrupt.
+
+This guide covers the interrupt that asks for approval. A tool can also interrupt a shell line to ask a person a question, which [Write a Tool an Agent Can Run](write-a-tool-an-agent-can-run.md) covers. Both are answered and continued with the two calls taught here.
 
 ## Before You Begin
 
@@ -30,7 +32,7 @@ This policy interrupts every call that would change something under `/contracts`
 
 | Attribute | What it holds |
 |---|---|
-| `call.op` | The name of the operation, such as `"edit"` or `"delete"` |
+| `call.op` | The name of the operation, such as `"edit"`, `"delete"`, or `"run"` for a tool |
 | `call.paths` | Every path the call names |
 | `call.mutates` | `True` when the call would change something |
 | `call.arguments` | The arguments of the call, by name |
@@ -96,19 +98,19 @@ result.success, result.interrupted
 A stopped call carries one interrupt for each thing a person must answer. Take the first.
 
 ```python
-interrupt = result.interrupts[0]
+stopped = result.interrupts[0]
 
-interrupt.reason
+stopped.kind, stopped.message
 ```
 
 ```text
-'A change to a contract needs a person.'
+('approval', 'A change to a contract needs a person.')
 ```
 
 An interrupt for a change also carries a preview, which is the change as it would land.
 
 ```python
-interrupt.preview
+stopped.preview
 ```
 
 ```text
@@ -123,13 +125,15 @@ edit would change: 1 file
 
 | Attribute | What it holds |
 |---|---|
-| `interrupt.id` | The id you answer |
-| `interrupt.reason` | The reason your policy gave |
-| `interrupt.op` | The operation that was stopped |
-| `interrupt.paths` | The paths it names |
-| `interrupt.preview` | What the call would change, or `None` for a call that changes nothing |
-| `interrupt.asked_by` | Who made the call |
-| `interrupt.expires_at` | When the interrupt lapses |
+| `id` | The id you answer |
+| `kind` | `"approval"` for a call that needs a yes or a no, or `"question"` for a tool that asks for a value |
+| `message` | The text to show the person |
+| `op` | The operation that was stopped |
+| `paths` | The paths it names |
+| `preview` | What the call would change, or `None` when VFS cannot work that out |
+| `asked_by` | Who made the call |
+| `expires_at` | When the interrupt lapses |
+| `run_id` | The run to resume, when a shell line was stopped |
 
 ## Step 4: Answer the Interrupt
 
@@ -138,7 +142,7 @@ Your application now asks the person. How it asks is yours to decide: a button i
 ```python
 ada = Authority.of(Principal("ada"))
 
-fs.answer(interrupt.id, allow=True, authority=ada)
+fs.answer(stopped.id, allow=True, authority=ada)
 ```
 
 ```text
@@ -181,9 +185,9 @@ Have Scout try to delete the contract.
 
 ```python
 result = scout.delete("/contracts/acme.md")
-interrupt = result.interrupts[0]
+stopped = result.interrupts[0]
 
-interrupt.preview
+stopped.preview
 ```
 
 ```text
@@ -196,7 +200,7 @@ This time Ada says no.
 
 ```python
 fs.answer(
-    interrupt.id,
+    stopped.id,
     allow=False,
     reason="This contract is still in force.",
     authority=ada,
@@ -253,10 +257,10 @@ The first command ran, so the note is written. The second was interrupted. The t
 A line that stops is a run, and every interrupt it raises carries the run's id. Answer the interrupt as before, then resume the run.
 
 ```python
-interrupt = result.interrupts[0]
+stopped = result.interrupts[0]
 
-fs.answer(interrupt.id, allow=True, authority=ada)
-result = scout.resume(interrupt.run_id)
+fs.answer(stopped.id, allow=True, authority=ada)
+result = scout.resume(stopped.run_id)
 result.success
 ```
 
@@ -264,7 +268,7 @@ result.success
 True
 ```
 
-The line continued where it stopped. The contract was replaced and the draft was removed. **Nothing ran twice:** the note was written once.
+The line continued where it stopped. The contract was replaced and the draft was removed. VFS saved the line as it stood when it stopped, with its variables and its place, and carried on from there. **Nothing ran twice:** the note was written once.
 
 ```python
 fs.read("/notes.md", authority=system)
@@ -285,17 +289,17 @@ The loop that handles every case is short.
 ```python
 result = scout.cli(line)
 while result.interrupted:
-    for interrupt in result.interrupts:
-        allow = ask_a_person(interrupt)
-        fs.answer(interrupt.id, allow=allow, authority=ada)
-    result = scout.resume(result.interrupts[0].run_id)
+    for stopped in result.interrupts:
+        allow = ask_a_person(stopped)
+        fs.answer(stopped.id, allow=allow, authority=ada)
+    result = scout.resume(stopped.run_id)
 ```
 
 Here `ask_a_person` stands for your own code.
 
 ## Use a Ready-Made Policy
 
-VFS ships one policy, named `review`. It allows every call that only reads, and it interrupts every call that would change something. Name it when you create the file system.
+VFS ships one policy, named `review`. It allows every call that only reads, and it interrupts every call that would change something and every run of a tool. Name it when you create the file system.
 
 ```python
 fs = VirtualFileSystem(policy="review")
@@ -347,18 +351,18 @@ fs.interrupts(authority=system)
 ```
 
 ```text
-| id       | op     | path               | asked_by | reason                                  | expires_at                |
-| -------- | ------ | ------------------ | -------- | --------------------------------------- | ------------------------- |
-| 91aa3c57 | edit   | /contracts/acme.md | scout    | A change to a contract needs a person.  | 2026-11-22 15:04:11+00:00 |
+| id       | kind     | op   | path               | asked_by | message                                | expires_at                |
+| -------- | -------- | ---- | ------------------ | -------- | -------------------------------------- | ------------------------- |
+| 91aa3c57 | approval | edit | /contracts/acme.md | scout    | A change to a contract needs a person. | 2026-11-22 15:04:11+00:00 |
 ```
 
-The result's `interrupts` attribute holds the same `Interrupt` values a stopped call carries, so an approval screen is built from this one call. Called with a person's authority, it lists only the interrupts that person may answer.
+The result's `interrupts` attribute holds the same values a stopped call carries, so an approval screen is built from this one call. Called with a person's authority, it lists only the interrupts that person may answer.
 
 A file system that keeps its files in memory keeps its interrupts in memory too, and they end with the program. To answer from another process, create the file system on a database, as shown in [Keep Your Files in a Database](../tutorials/keep-your-files-in-a-database.md).
 
 ## Who May Answer, and for How Long
 
-A person may answer an interrupt when they have `write` access to every path it names. Anyone else is refused, and nothing is recorded. The `system` authority may always answer.
+A person may answer an approval when they have `write` access to every path it names. A person may answer a tool's question when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may always answer.
 
 An interrupt lapses 24 hours after it is raised. A call made after that is interrupted again, with a new id. Change the time when you create the file system.
 
@@ -366,9 +370,9 @@ An interrupt lapses 24 hours after it is raised. A call made after that is inter
 fs = VirtualFileSystem(policy=policy, interrupt_hours=72)
 ```
 
-## Use It with LangGraph
+## Use It Inside a LangGraph Application
 
-LangGraph has its own `interrupt()` and `Command(resume=...)`. The two fit together, because LangGraph runs a node again from the top when it resumes, and VFS expects the same call to be made again.
+An application built on LangGraph has its own `interrupt()` and `Command(resume=...)`. The two fit together, because LangGraph runs a node again from the top when it resumes, and VFS expects the same call to be made again.
 
 ```python
 from langgraph.types import interrupt as ask
@@ -377,14 +381,14 @@ def change_contract(state):
     result = scout.edit(state["path"], old=state["old"], new=state["new"])
     if result.interrupted:
         stopped = result.interrupts[0]
-        approved = ask({"reason": stopped.reason, "preview": str(stopped.preview)})
+        approved = ask({"message": stopped.message, "preview": str(stopped.preview)})
         fs.answer(stopped.id, allow=approved, authority=ada)
         result = scout.edit(state["path"], old=state["old"], new=state["new"])
     return {"outcome": str(result)}
 ```
 
-The first time the node runs, the edit is interrupted, and `ask` stops the graph with the reason and the preview. When your application resumes the graph with `Command(resume=True)`, the node runs again from the top. The edit is interrupted again and returns the same interrupt, because it is still waiting. This time `ask` returns the person's answer, the answer is recorded, and the edit goes through.
+The first time the node runs, the edit is interrupted, and `ask` stops the graph with the message and the preview. When your application resumes the graph with `Command(resume=True)`, the node runs again from the top. The edit is interrupted again and returns the same interrupt, because it is still waiting. This time `ask` returns the person's answer, the answer is recorded, and the edit goes through.
 
 ## What to Remember
 
-VFS stops a call and describes it. Your application asks the person and records the answer. The same call then runs once, as the caller, against the file the person saw.
+VFS stops a call and describes it. Your application asks the person and records the answer. A single call is then made again and runs once, as the caller, against the file the person saw. A shell line is resumed and carries on from where it stopped.

@@ -1,0 +1,11 @@
+[package]
+name = "snapshot-spike"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+vfs-shell = { path = "/Users/claygendron/Git/Repos/vfs/crates/vfs-shell" }
+vfs-shell-wasm = { path = "/Users/claygendron/Git/Repos/vfs/crates/vfs-shell-wasm" }
+wasmi = "2.0.2"
+
+[workspace]

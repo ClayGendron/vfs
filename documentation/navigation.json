@@ -33,7 +33,7 @@
       "groups": [
         {
           "title": null,
-          "pages": ["/how-to/load-a-folder-of-files", "/how-to/interrupt-a-call-and-ask-a-person", "/how-to/add-a-tool-an-agent-can-run"]
+          "pages": ["/how-to/load-a-folder-of-files", "/how-to/interrupt-a-call-and-ask-a-person", "/how-to/write-a-tool-an-agent-can-run"]
         }
       ]
     },
