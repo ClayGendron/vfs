@@ -24,8 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from sqlalchemy import Table, func, select
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import func, select
 
 from vfs.models.rows import LIVE_CHILDREN_INDEX, LIVE_PATH_INDEX
 from vfs.paths import METADATA_ROOT, TRASH_ROOT, Path, address_of
@@ -53,10 +52,9 @@ from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy import ColumnElement, Select
+    from sqlalchemy import ColumnElement, Select, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.sql.compiler import SQLCompiler
 
     from vfs.models import Observation
     from vfs.models.rows import EntryId, VFSTables
@@ -435,18 +433,6 @@ def _pinned(stmt: Select[Any], entry: Table, profile: DialectProfile, address: A
     if profile.live_index_hint is None or address.trashed:
         return stmt
     return stmt.with_hint(entry, profile.live_index_hint.format(index=index), profile.name)
-
-
-@compiles(Table, "sqlite")
-def _hinted_table(element: Table, compiler: SQLCompiler, **kw: Any) -> str:
-    """A table in a FROM clause with the hint a statement declares for it on SQLite, which SQLAlchemy drops there.
-
-    SQLAlchemy hands each table its hint and the SQLite compiler renders
-    none, so a table with no hint renders exactly as before.
-    """
-    text = compiler.visit_table(element, **kw)
-    hint = (kw.get("fromhints") or {}).get(element)
-    return f"{text} {hint}" if hint and kw.get("asfrom") else text
 
 
 def _after(stmt: Select[Any], entry: Table, position: str | None, batch: int | None) -> Select[Any]:

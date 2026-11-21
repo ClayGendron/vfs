@@ -72,8 +72,13 @@ async def filled(
     frontier is the last path the slowest unfinished stream fetched;
     every row at or before it is in hand. A fill after the first batch
     asks only the streams at the frontier. Once ``stopped`` says so after a
-    batch, as when its judge ran out of time, the fill ends at the last
-    row it showed, so the next page reads again what it did not judge.
+    batch, as when its judge ran out of time, the fill ends with the
+    round: each stream read from then on stands at the last row it
+    showed, every other where it last read, and the frontier is the least
+    of them, so the next page reads again what was not judged and loses no
+    row of another stream. A stop that leaves no row past ``after`` safe ends the fill
+    with no row and no frontier, and the caller's warning says the
+    listing was cut short.
     """
     positions: list[str | None] = [after] * len(streams)
     unfinished = list(range(len(streams)))
@@ -85,14 +90,18 @@ async def filled(
     while due:
         for index in due:
             rows = await streams[index](positions[index], batch)
-            for row in await emit(rows):
+            got = await emit(rows)
+            for row in got:
                 shown.setdefault(row.path, row)
-            if batch is None or len(rows) < batch:
+            if stopped():
+                # Rows a batch left unjudged lie after its last shown row; once stopped, that is where it stands.
+                positions[index] = max((row.path for row in got), default=positions[index])
+            elif batch is None or len(rows) < batch:
                 unfinished.remove(index)
             else:
                 positions[index] = rows[-1]["path"]
-            if stopped():
-                return Filled([shown[path] for path in sorted(shown)], max(shown, default=None))
+        if stopped():
+            return _held(shown, positions, unfinished, after)
         frontier = min((position for index in unfinished if (position := positions[index]) is not None), default=None)
         if wanted is None or batch is None or frontier is None or sum(path <= frontier for path in shown) >= wanted:
             break
@@ -100,6 +109,21 @@ async def filled(
         # Only the streams at the frontier hold it back; one further ahead has nothing to add yet.
         due = [index for index in unfinished if positions[index] == frontier]
     return Filled([shown[path] for path in sorted(shown)], frontier if unfinished else None)
+
+
+def _held(
+    shown: dict[str, Observation], positions: list[str | None], unfinished: list[int], after: str | None
+) -> Filled:
+    """The rows a stopped fill can serve: those at or before the least position of every stream with rows left.
+
+    The stream whose batch stopped the fill is among them. When that least
+    position is no further than ``after``, nothing can be served safely.
+    """
+    bounds = [positions[index] for index in unfinished]
+    frontier = None if None in bounds else min(bound for bound in bounds if bound is not None)
+    if frontier is None or (after is not None and frontier <= after):
+        return Filled([], None)
+    return Filled([shown[path] for path in sorted(shown) if path <= frontier], frontier)
 
 
 def keyed(

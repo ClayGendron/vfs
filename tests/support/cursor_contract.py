@@ -382,6 +382,42 @@ class CursorContract:
         assert [error.kind for error in page.warnings] == [ErrorKind.truncated]
         assert len([sql for sql, _parameters in seen if "LIMIT" in sql.upper()]) == 1
 
+    async def test_a_wall_in_one_fan_statement_loses_no_row_of_another(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        names = [f"/z/f{i:03d}.txt" for i in range(200)] + [f"/a/f{i:03d}.txt" for i in range(100)]
+        ok(await storage.write(entries=[Entry(path=Path(p), content="x") for p in names], parents=True))
+        # Two fan statements: the /z arms first, the /a arms second.
+        monkeypatch.setattr(reads_module, "arm_budget", lambda *args, **kwargs: 200)
+        whole = list(ok(await storage.glob(patterns=tuple(names), authority=SYSTEM)).paths)
+        real = reads_module.judge_rows
+        calls = [0]
+
+        async def first_incomplete(*args: Any, **kwargs: Any) -> Any:
+            verdicts, completed = await real(*args, **kwargs)
+            calls[0] += 1
+            return verdicts, completed and calls[0] != 1
+
+        monkeypatch.setattr(reads_module, "judge_rows", first_incomplete)
+        rows, pages = await drain(storage, storage.glob, 10, patterns=tuple(names), authority=SYSTEM)
+        assert rows == sorted(whole)
+        assert sum(len(page.result.warnings) for page in pages) == 1
+
+    async def test_a_page_whose_wall_judges_nothing_ends_the_listing_loudly(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ok(await storage.write(entries=files("/g", 30), parents=True, authority=SYSTEM))
+        first = ok(await storage.glob(patterns=("/g/*.txt",), limit=10, authority=SYSTEM))
+
+        async def nothing(_executor: Any, _gates: Any, rows: Any, **_kwargs: Any) -> Any:
+            return [None] * len(rows), False
+
+        monkeypatch.setattr(reads_module, "judge_rows", nothing)
+        for after in (None, first.next_after):
+            page = ok(await storage.glob(patterns=("/g/*.txt",), after=after, limit=10, authority=SYSTEM))
+            assert (page.paths, page.next_after) == ((), None)
+            assert [error.kind for error in page.warnings] == [ErrorKind.truncated]
+
     async def test_glob_refuses_a_page_beside_max_count(self, storage: DatabaseStorage) -> None:
         refused = await storage.glob(patterns=("*",), max_count=3, limit=3, authority=SYSTEM)
         assert [error.kind for error in refused.errors] == [ErrorKind.invalid]
