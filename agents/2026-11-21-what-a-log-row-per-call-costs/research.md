@@ -107,27 +107,27 @@ What the table says, engine by engine.
 
 ## Growth and reclaim
 
-From `results/growth-sqlite.json` and `results/growth-postgres.json` (`scripts/measure_growth.py`). The table holds the 15 columns and both indexes.
+From `results/growth-sqlite.json` and `results/growth-postgres.json` (`scripts/measure_growth.py`). The table holds the 15 columns and both indexes. A MB here is 2²⁰ bytes.
 
 | | SQLite | Postgres |
 |---|---|---|
-| bytes per row, heap and indexes | 572 | ⟨pg_bpr⟩ |
-| after 1 day, 150,000 rows | 82 MB (68 heap, 14 index) | ⟨pg_1⟩ |
-| after 30 days, 4,500,000 rows | 2.4 GB (2.0 heap, 0.4 index) | ⟨pg_30⟩ |
-| one day reclaimed in chunks of 5,000 | 31 statements, 1.2 s; a chunk 21 ms median, 202 ms max | ⟨pg_reclaim⟩ |
-| what the delete freed | 81 MB to the file's free list; the next day's rows reused it and the file grew by 0.4 MB | ⟨pg_free⟩ |
+| bytes per row, heap and indexes | 572 | 604 after one day, 620 after thirty |
+| after 1 day, 150,000 rows | 82 MB (68 heap, 14 index) | 87 MB (72 heap, 15 index) |
+| after 30 days, 4,500,000 rows | 2.4 GB (2.0 heap, 0.4 index) | 2.6 GB (2.2 heap, 0.4 index) |
+| one day reclaimed in chunks of 5,000 | 31 statements, 1.2 s; a chunk 21 ms median, 202 ms max | 31 statements, 2.0 s; a chunk 67 ms median, 110 ms max |
+| what the delete freed | 81 MB to the file's free list; the next day's rows reused it and the file grew by 0.4 MB | nothing returned: the dead rows stayed in the heap until `VACUUM` marked them reusable; the next day's rows then grew the heap by 2.5 MB and the indexes by 17.5 MB |
 
-Bytes per row did not move between one day and thirty (570.6 and 571.6 on SQLite), so the size is linear in rows, and a 30-day retention holds the table at about 30 days of rows. At the reference deployment that is about 2.4 GB on SQLite and ⟨pg_30_short⟩ on Postgres. Both are small beside the corpus itself, which holds 3 to 7 TB of bodies.
+Bytes per row barely moved between one day and thirty: 570.6 and 571.6 on SQLite, and 604 and 620 on Postgres, where the first day was written in flush-sized inserts and the rest by `COPY`. So the size is linear in rows, and a 30-day retention holds the table at about 30 days of rows. At the reference deployment that is about 2.4 GB on SQLite and 2.6 GB on Postgres. Both are small beside the corpus itself, which holds 3 to 7 TB of bodies.
 
 The reclaim is cheap and waits on nothing that matters:
 
 | probe, during the delete | SQLite median, max | Postgres median, max |
 |---|---|---|
-| `read` (leaned) | 67 ms, 112 ms (quiet 69, 147) | ⟨pg_read⟩ |
-| one-file `write` (leaned) | 242 ms, 320 ms (quiet 176, 320) | ⟨pg_write⟩ |
-| one log row, inserted alone | 41 ms, 983 ms (quiet 112, 185) | ⟨pg_row⟩ |
+| `read` (leaned) | 67 ms, 112 ms (quiet 69, 147) | 17 ms, 105 ms (quiet 19, 251) |
+| one-file `write` (leaned) | 242 ms, 320 ms (quiet 176, 320) | 122 ms, 248 ms (quiet 158, 417) |
+| one log row, inserted alone | 41 ms, 983 ms (quiet 112, 185) | 12 ms, 29 ms (quiet 14, 202) |
 
-On SQLite a chunk holds the writer for about 20 ms and at most about 200 ms, so a log row inserted beside it waited up to a second once. A read did not wait at all. That is the same reason as above for a log file of its own on SQLite: the reclaim, the flush and the claims then share a writer only with each other.
+On SQLite a chunk holds the writer for about 20 ms and at most about 200 ms, so a log row inserted beside it waited up to a second once. A read did not wait at all. On Postgres nothing waited: a chunk took 67 ms and locked only the rows it deleted. That is the same reason as above for a log file of its own on SQLite: the reclaim, the flush and the claims then share a writer only with each other.
 
 ## The pool
 
@@ -135,8 +135,8 @@ From `results/pool-sqlite.json` and `results/pool-postgres.json` (`scripts/measu
 
 | | SQLite default | SQLite 32 | Postgres default | Postgres 32 |
 |---|---|---|---|---|
-| `read` median, ms | 167 to 270 | 210 to 228 | ⟨pgpool_rd⟩ | ⟨pgpool_r32⟩ |
-| `grep`, calls a second | 8.4 to 9.0 | 8.7 to 9.7 | ⟨pgpool_gd⟩ | ⟨pgpool_g32⟩ |
+| `read` median, ms | 167 to 270 | 210 to 228 | 41 to 65 | 43 to 47 |
+| `grep`, calls a second | 8.4 to 9.0 | 8.7 to 9.7 | 76 to 78 | 73 to 80 |
 
 For agent-sized reads the default pool is enough on both engines: a pool of 32 moved nothing beyond the spread. It is not enough for 32 concurrent batches on Postgres, where batches waited 30 s for a connection and were refused. The log's own engine is a second pool of the same size, and under 32 writing sessions it is where the leaned effect's +151 ms on Postgres queued.
 
@@ -162,7 +162,7 @@ These are not the log's costs, but the study met them, and each is a spec of its
 
 - `agents/2026-11-21-a-write-beside-a-batch-on-sqlite-is-refused-after-twenty-seconds/spec.md`: on SQLite a one-file write that arrives during a batch waits four 5-second lock timeouts and is then refused `vfs.conflict`; 32 batches at once lose three in four.
 - `agents/2026-11-21-concurrent-writes-on-postgres-outlive-their-retries/spec.md`: on Postgres about one in seventy concurrent one-file writes into directories of their own is refused `vfs.conflict`; 32 batches at once lose most to conflicts and to a 30-second pool checkout.
-- `agents/2026-11-21-a-grep-under-many-sessions-on-sqlite-serves-fewer-calls-than-one-session/spec.md`: on SQLite 32 sessions of `grep` serve about 9 calls a second, where one session alone serves about 50 and Postgres under 32 sessions about ⟨pg_grep_rate⟩.
+- `agents/2026-11-21-a-grep-under-many-sessions-on-sqlite-serves-fewer-calls-than-one-session/spec.md`: on SQLite 32 sessions of `grep` serve about 9 calls a second, where one session alone serves about 50 and Postgres under 32 sessions about 77.
 
 ## Not checked
 

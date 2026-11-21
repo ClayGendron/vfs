@@ -18,8 +18,8 @@ Each fact is marked run or read.
 - **One session: about 50 greps a second.** A `grep` for `MFA` under one directory of 20 files of about 4 KB, in a corpus of 2,000 files that is not indexed, took a median of 18.9 ms from one session. Run.
 - **32 sessions: about 9 greps a second.** The same grep from 32 sessions at once took a median of 3.5 to 4.0 s, and the window served 8.4 to 9.7 calls a second over six runs. Run.
 - **The pool is not the cause.** A pool of 32 connections with no overflow served 8.7 to 9.7 calls a second, the same as the default 5 and 10. Run.
-- **Postgres is not slowed the same way.** The same 32 sessions on Postgres served ⟨pg_grep_rate⟩ greps a second. Run.
-- **`read` is not slowed the same way.** 32 sessions of `read` on SQLite served 115 to 174 calls a second, where one session serves about 250. Run.
+- **Postgres is not slowed the same way.** The same 32 sessions on Postgres served 77 greps a second. Run.
+- **`read` is slowed far less.** 32 sessions of `read` on SQLite served 115 to 174 calls a second, where one session serves about 250. Run.
 - **The machine was not idle.** During the SQLite runs the process used about 180% of a CPU with about a third of it in system time, which points at threads contending, not at a busy disk. Run once, by `top`, and not recorded in a result file.
 - **What grep runs over an unindexed corpus.** The scan tier fetches the scoped rows' bodies and verifies them on the process's offload pool, a `ThreadPoolExecutor` of `OFFLOAD_WORKERS`; each SQLite connection is an aiosqlite thread of its own. Read.
 
