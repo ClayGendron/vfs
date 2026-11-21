@@ -199,9 +199,14 @@ pub async fn run(
             let count = match rest.first() {
                 Some(text) => match text.parse::<i64>() {
                     Ok(n) if n >= 1 => u32::try_from(n).unwrap_or(u32::MAX),
+                    // Bash says the count is out of range, and leaves the loop as `break 1` would.
                     Ok(_) => {
                         err(sh, name, &format!("{text}: loop count out of range")).await?;
-                        return Err(Flow::Exit(1));
+                        if sh.loop_depth == 0 {
+                            return Ok(1);
+                        }
+                        sh.break_status = Some(1);
+                        return Err(Flow::Break(1));
                     }
                     Err(_) => {
                         err(sh, name, &format!("{text}: numeric argument required")).await?;

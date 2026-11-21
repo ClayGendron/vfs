@@ -14,6 +14,8 @@ const PARSE_DEPTH: u32 = 1024;
 pub enum ArithFailure {
     /// Bash's message, ready to print after the line prefix.
     Error(String),
+    /// An unbound variable under `set -u`: bash's message, and the shell exits.
+    Unbound(String),
     Flow(Flow),
 }
 
@@ -185,7 +187,7 @@ impl Evaluator<'_> {
         };
         let Some(text) = text else {
             if self.sh.options.nounset {
-                return Err(ArithFailure::Error(format!("{name}: unbound variable")));
+                return Err(ArithFailure::Unbound(format!("{name}: unbound variable")));
             }
             return Ok(0);
         };

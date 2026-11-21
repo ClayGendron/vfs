@@ -1817,6 +1817,11 @@ pub async fn eval_arith(ctx: &Ctx<'_>, sh: &mut Shell, text: &str) -> Result<i64
                 .await?;
             Err(Flow::Discard(1))
         }
+        Err(ArithFailure::Unbound(message)) => {
+            sh.error_text(&format!("bash: line {}: {}\n", sh.lineno, message))
+                .await?;
+            Err(Flow::ExpansionExit)
+        }
         Err(ArithFailure::Flow(flow)) => Err(flow),
     }
 }

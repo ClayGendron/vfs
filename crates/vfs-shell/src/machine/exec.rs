@@ -124,6 +124,8 @@ fn new_shell(hub: HubRef, source: Rc<str>, config: &Config) -> Result<Shell, Fat
         function_depth: 0,
         nesting: 0,
         defer_writes: false,
+        in_background: false,
+        break_status: None,
         loop_depth: 0,
         in_condition: false,
         subshell: 0,
@@ -236,6 +238,7 @@ async fn run_item<'a>(
     if item.background {
         let mut child = sh.fork();
         child.in_condition = false;
+        child.in_background = true;
         let id = sh.jobs.len().saturating_add(1);
         let pid = child.bash_pid;
         let hub = sh.hub.clone();
@@ -354,10 +357,14 @@ fn exec_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline
         let result = run_stages(ctx, sh, pipeline).await;
         sh.in_condition = outer_condition;
         let mut status = result?;
-        if pipeline.negated {
+        if pipeline.negated && !sh.in_background {
             status = i32::from(status == 0);
         }
         sh.last_status = status;
+        let statuses: BTreeMap<i64, String> = (0i64..)
+            .zip(sh.pipestatus.iter().map(i32::to_string))
+            .collect();
+        set_value(sh, "PIPESTATUS", Value::Indexed(statuses))?;
         Ok(status)
     })
 }
@@ -489,6 +496,10 @@ fn finish_pipeline(sh: &mut Shell, results: Vec<Status>, last: Option<Status>) -
 
 pub fn exec_command<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, command: &'b Command) -> Exec<'b> {
     Box::pin(async move {
+        // After `set -n` the line is read and nothing more runs, as bash does.
+        if sh.options.noexec {
+            return Ok(0);
+        }
         match command {
             Command::Simple(simple) => exec_simple(ctx, sh, simple).await,
             Command::Function(def) => {
@@ -543,6 +554,8 @@ fn exec_compound_inner<'b>(
             CompoundCommand::Brace(list) => exec_list(ctx, sh, list).await,
             CompoundCommand::Subshell(list) => {
                 let mut child = sh.fork();
+                // A subshell is outside every loop of its parent: `break` there only says so.
+                child.loop_depth = 0;
                 let result = exec_list(ctx, &mut child, list).await;
                 let status = match result {
                     Ok(status) => Ok(status),
@@ -616,7 +629,7 @@ fn exec_compound_inner<'b>(
                                 if n > 1 {
                                     return Err(Flow::Break(n.saturating_sub(1)));
                                 }
-                                status = 0;
+                                status = sh.break_status.take().unwrap_or(0);
                                 break;
                             }
                             Err(Flow::Continue(n)) => {
@@ -819,6 +832,9 @@ async fn run_for(
                 Err(Flow::Break(n)) => {
                     if n > 1 {
                         return Err(Flow::Break(n.saturating_sub(1)));
+                    }
+                    if let Some(code) = sh.break_status.take() {
+                        status = code;
                     }
                     break;
                 }
@@ -1420,6 +1436,11 @@ pub async fn assign_scalar(
                     .await?;
                 return Err(Flow::Exit(1));
             }
+            Err(super::arith::ArithFailure::Unbound(message)) => {
+                sh.error_text(&format!("bash: line {}: {}\n", sh.lineno, message))
+                    .await?;
+                return Err(Flow::ExpansionExit);
+            }
             Err(super::arith::ArithFailure::Flow(flow)) => return Err(flow),
         };
         value = if append {
@@ -1488,6 +1509,11 @@ pub async fn assign_element(
                 sh.error_text(&format!("bash: line {}: {}\n", sh.lineno, message))
                     .await?;
                 return Err(Flow::CommandFailed(1));
+            }
+            Err(super::arith::ArithFailure::Unbound(message)) => {
+                sh.error_text(&format!("bash: line {}: {}\n", sh.lineno, message))
+                    .await?;
+                return Err(Flow::ExpansionExit);
             }
             Err(super::arith::ArithFailure::Flow(flow)) => return Err(flow),
         };
@@ -1570,6 +1596,7 @@ pub async fn capture(ctx: &Ctx<'_>, sh: &mut Shell, list: &List) -> Result<Strin
     }
     let mut child = sh.fork();
     nest(ctx, &mut child)?;
+    child.loop_depth = 0;
     let (reader, writer) = io::pipe(&sh.hub);
     child.fds.insert(1, Fd::PipeOut(writer));
     if !sh.options.shopt("inherit_errexit") {
@@ -1709,6 +1736,7 @@ pub async fn process_sub(
 async fn capture_raw(ctx: &Ctx<'_>, sh: &mut Shell, list: &List) -> Result<Vec<u8>, Flow> {
     let mut child = sh.fork();
     nest(ctx, &mut child)?;
+    child.loop_depth = 0;
     let (reader, writer) = io::pipe(&sh.hub);
     child.fds.insert(1, Fd::PipeOut(writer));
     let (status, bytes) = {

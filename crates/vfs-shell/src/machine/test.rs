@@ -43,7 +43,16 @@ async fn stat(sh: &mut Shell, path: &str) -> Result<FileFacts, Flow> {
     super::exec::sync_path(sh, &absolute).await?;
     let key = sh.key();
     let reply = io::host_call(&sh.hub, key, Request::Stat { path: absolute }).await?;
+    // A trailing slash names a directory: a file with one is not there at all.
+    let wants_directory = path.len() > 1 && path.ends_with('/');
     Ok(match reply {
+        Reply::Stat {
+            kind: EntryKind::File,
+            ..
+        } if wants_directory => FileFacts {
+            kind: None,
+            size: 0,
+        },
         Reply::Stat { kind, size } => FileFacts {
             kind: Some(kind),
             size,
@@ -368,6 +377,8 @@ impl Test<'_> {
             match args {
                 [] => Ok(false),
                 [one] => Ok(!one.is_empty()),
+                // With three arguments a binary operator in the middle wins, whatever the first is.
+                [a, op, b] if is_binary(op) => self.binary(a, op, b).await,
                 [bang, rest @ ..] if bang == "!" && args.len() <= 4 => {
                     Ok(!self.expression(rest).await? && self.error.is_none())
                 }

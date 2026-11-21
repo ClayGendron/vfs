@@ -292,6 +292,10 @@ pub struct Shell {
     pub nesting: u32,
     /// While a simple command's redirections open: whether its files may wait for one write each.
     pub defer_writes: bool,
+    /// A job run with `&`, whose status bash reports without its pipeline's `!`.
+    pub in_background: bool,
+    /// The status a loop takes from the `break` that left it, when it is not 0: `break 0` is 1.
+    pub break_status: Option<i32>,
     pub loop_depth: u32,
     /// Inside an `if` or `while` condition, a `!`, or the left of `&&` and `||`.
     pub in_condition: bool,
