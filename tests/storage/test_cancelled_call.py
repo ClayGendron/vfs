@@ -340,6 +340,24 @@ class TestACancelledWrite:
         assert (await fs.read("/a.txt")).one().content == "old"
 
 
+@pytest.mark.timeout(60)
+async def test_a_cut_a_call_ends_before_holds_no_round_trip_of_the_next_call(
+    fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+) -> None:
+    """Guards the withdrawn hold: a cut left armed counts on into the next call and holds its round trip for good.
+
+    The sweep's statistics pass between two cuts was held that way, and the sweep hung where a write ended early.
+    """
+    round_trip.again()
+    await fs.stat("/a.txt")
+    sent = len(round_trip.seen)
+    round_trip.again()
+    round_trip.hold(number(sent))
+    assert await cancel_if_held(fs.stat("/a.txt"), round_trip) is None
+    assert (await fs.stat("/a.txt")).success
+    assert round_trip.held_at is None
+
+
 @pytest.mark.slow
 class TestACallCancelledAtOneRoundTripAfterAnother:
     """One storage takes every cut of a sweep, so each cut also proves that the cut before it left the storage whole.

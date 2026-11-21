@@ -132,13 +132,18 @@ async def cancel_while_held(
 async def cancel_if_held(
     call: Awaitable[Any], round_trip: HeldRoundTrip, message: str | None = None
 ) -> tuple[Any, ...] | None:
-    """As ``cancel_while_held``, but ``None`` when *call* ended before it reached the chosen round trip."""
+    """As ``cancel_while_held``, but ``None`` when *call* ended before it reached the chosen round trip.
+
+    A call that ended first withdraws the hold, so no later round trip, of the next call or of a
+    background pass, is held with nobody to let it go.
+    """
     task = asyncio.ensure_future(call)
     reached = asyncio.ensure_future(round_trip.reached.wait())
     await asyncio.wait({task, reached}, return_when=asyncio.FIRST_COMPLETED)
     if not round_trip.reached.is_set():
         reached.cancel()
         await task
+        round_trip.let_go()
         return None
     task.cancel(message)
     round_trip.let_go()
