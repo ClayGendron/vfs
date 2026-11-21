@@ -548,6 +548,44 @@ class TestPoolExhaustion:
         await storage.close()
 
 
+# ---------------------------------------------------------------------------
+# A writer behind another writer's lock
+# ---------------------------------------------------------------------------
+
+
+class TestBusyWriter:
+    async def test_a_write_behind_a_held_lock_gives_up_after_four_tries_and_changes_nothing(self, tmp_path) -> None:
+        """Pins the busy budget the storage docstring states: five seconds a try, four tries, a retryable conflict."""
+        assert "PRAGMA busy_timeout = 5000" in SQLITE.session_settings
+        url = _fresh_url(tmp_path)
+        storage = DatabaseStorage(url=url)
+        assert storage._host._retry_attempts == 4
+        assert (await storage.first_touch()).success is True
+        begins: list[str] = []
+
+        @event.listens_for(storage.engine.sync_engine, "checkout")
+        def impatient(dbapi_connection, record, proxy) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA busy_timeout = 0")
+            cursor.close()
+
+        @event.listens_for(storage.engine.sync_engine, "before_cursor_execute")
+        def begun(conn, cursor, statement, parameters, context, executemany) -> None:
+            if statement.startswith("BEGIN IMMEDIATE"):
+                begins.append(statement)
+
+        rival = sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"), isolation_level=None)
+        rival.execute("BEGIN IMMEDIATE")
+        refused = await storage.write(entries=[Entry(path=Path("/late.txt"), content="x")])
+        assert begins == ["BEGIN IMMEDIATE"] * 4
+        assert [(error.kind, error.retryable) for error in refused.errors] == [(ErrorKind.conflict, True)]
+        rival.execute("COMMIT")
+        rival.close()
+        assert (await storage.stat(path=Path("/late.txt"))).success is False
+        assert (await storage.write(entries=[Entry(path=Path("/late.txt"), content="x")])).success is True
+        await storage.close()
+
+
 async def _stamps(storage: DatabaseStorage) -> list[tuple[str, int]]:
     """Every row of the stamps table once *storage* has made its first touch."""
     assert (await storage.first_touch()).success is True

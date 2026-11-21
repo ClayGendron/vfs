@@ -60,6 +60,7 @@ from sqlalchemy import event, func, insert, inspect, select
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.util import greenlet_spawn
 from ulid import ULID
 
 from vfs.authority import EVERYONE_NAME
@@ -98,7 +99,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlalchemy.engine import URL, Connection, Dialect
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
-    from sqlalchemy.pool import PoolProxiedConnection
+    from sqlalchemy.pool import Pool, PoolProxiedConnection
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models.rows import VFSTables
@@ -145,12 +146,13 @@ def advisory_key(text: str) -> int:
 
 
 class _AnalysisPass:
-    """One analysis pass's handles for the task that owns it: the driver connection to interrupt, and whether it did."""
+    """One analysis pass's handles for the task that owns it: the driver connection, its pool, and an interrupt."""
 
-    __slots__ = ("driver", "interrupted")
+    __slots__ = ("driver", "interrupted", "pool")
 
     def __init__(self) -> None:
         self.driver: Any | None = None
+        self.pool: Pool | None = None
         self.interrupted = False
 
 
@@ -534,7 +536,9 @@ class EngineHost:
         the table stays due and the next write asks again. The dispose
         below runs either way, in a ``finally``, and the pass leaves no
         interrupt pending on a connection it closes: one would stop
-        SQLite's last close from folding the log in and deleting it.
+        SQLite's last close from folding the log in and deleting it. A
+        pass left to end on its own closes its connection as it ends,
+        so a close cut short still leaves no connection open.
         """
         try:
             await self.stop_analysis()
@@ -840,6 +844,13 @@ class EngineHost:
         failure would, without holding an advisory. No awaiter forwards
         a second cancellation into this loop (:meth:`stop_analysis`
         shields its wait), so the loop always outlives the inner task.
+
+        A pass can outlive the pool it drew from: a close whose caller
+        timed out disposes the engine while the pass still holds its
+        connection, and a dispose replaces the pool and leaves a
+        checked-out connection open. The connection then goes back to
+        the replaced pool, which nothing else closes, so the pass
+        disposes that pool itself once its last statement has run.
         """
         state = _AnalysisPass()
         inner = asyncio.create_task(self._analysis_transaction(state), name=f"{STATISTICS_NAME}-pass")
@@ -857,6 +868,9 @@ class EngineHost:
                     cursor = await state.driver.execute(STATISTICS_CLEAR)
                     await cursor.close()
             raise
+        finally:
+            if state.pool is not None and state.pool is not self.engine.sync_engine.pool:
+                await greenlet_spawn(state.pool.dispose)
 
     async def _analysis_transaction(self, state: _AnalysisPass) -> None:
         """One analysis transaction: the lock once, a reload if the fingerprint moved, the listing, the due analyses.
@@ -873,6 +887,7 @@ class EngineHost:
         pooled: PoolProxiedConnection | None = None
         try:
             async with self.session_factory() as session:
+                state.pool = self.engine.sync_engine.pool
                 conn = await session.connection(execution_options={"vfs_writer": True, STATISTICS_NAME: True})
                 pooled = _record_of(conn)
                 state.driver = pooled.dbapi_connection._connection  # ty: ignore[unresolved-attribute]

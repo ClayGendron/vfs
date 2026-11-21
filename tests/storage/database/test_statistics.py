@@ -27,7 +27,6 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
-from sqlalchemy.util import greenlet_spawn
 
 from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock
 from tests.support.plan_store import (
@@ -1065,10 +1064,9 @@ class TestPlannerStatistics:
         assert [item for item in traced[pass_begin:] if item.kind == "commit" and item.connection == connection] == []
         with closing(sqlite3.connect(file)) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
-        # The pass checked its connection back in to the pool the timed-out close had disposed, which nothing closes.
+        # The pass checked its connection back in to the pool the timed-out close had disposed, and closed it there.
         assert isinstance(disposed_pool, QueuePool) and disposed_pool is not engine.sync_engine.pool
-        assert disposed_pool.checkedin() == 1
-        await greenlet_spawn(disposed_pool.dispose)
+        assert disposed_pool.checkedin() == 0
 
     @pytest.mark.slow
     async def test_a_held_advisory_rides_on_a_topology_verb_and_on_posture(self, tmp_path) -> None:

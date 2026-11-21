@@ -144,6 +144,11 @@ class DatabaseStorage:
 
     On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait
     for a connection, and is rolled back. A cancelled write changes nothing unless its commit had begun.
+
+    On SQLite one writer holds the file at a time. A write that finds another writer's lock waits up to five
+    seconds for it, and is tried four times in all, so a write beside one long writer, such as a 10,000-file batch
+    on a slow machine, can give up after about twenty seconds. It then changes nothing and returns a retryable
+    ``conflict``; calling it again once the long writer has committed succeeds. Postgres writers wait on row locks.
     """
 
     def __init__(
