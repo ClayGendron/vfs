@@ -205,6 +205,7 @@ class TestPostgresStorage:
             PostgresStorage(url=url)
         message = str(refused.value)
         assert ("'postgresql'" in message, repr(url.partition("+")[0]) in message) == (True, True)
+        assert "SQLiteStorage takes a path" in message
         assert (SECRET in message, url in message) == (False, False)
         assert engines_built == []
 
