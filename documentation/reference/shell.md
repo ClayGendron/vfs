@@ -33,7 +33,7 @@ A program's own non-zero status is not a failure of the call: `grep` with no mat
 
 ## The Language
 
-The shell speaks bash 5.3: pipes, lists, redirections, here-documents, `for`, `while`, `until`, `if`, `case`, `select`, functions, `[[ ]]`, `(( ))`, arithmetic, indexed and associative arrays, every parameter operator, brace, tilde and pathname expansion, command and process substitution, `&` and `wait`, and the builtins bash defines.
+The shell speaks bash 5.3: pipes, lists, redirections, here-documents, `for`, `while`, `until`, `if`, `case`, `select`, functions, `[[ ]]`, `(( ))`, arithmetic, indexed and associative arrays, the parameter operators, brace, tilde and pathname expansion, command and process substitution, `&` and `wait`, and bash's builtins. Where it still differs from bash, the case is named in the corpus's list of known failures, described at the end of this page.
 
 These words are refused, because they have no meaning inside one call:
 
@@ -72,7 +72,7 @@ The interpreter runs no other program itself. It asks vfs for every other name, 
 
 ## Budgets
 
-A line runs under budgets. `cli` runs every line at these defaults; `vfs.shell.run_line` takes each of them, lower or higher.
+A line runs under budgets. `cli` runs every line at these defaults; `vfs.shell.run_line` takes each of them, lower or higher. The shell is for an agent's lines, not for bulk work: a loop over ten thousand files is ten thousand verb calls, where the batch verbs (`write` with many entries, `copy` and `move` with many pairs) do the same work in one call.
 
 | Budget | Default |
 |---|---|
@@ -89,8 +89,10 @@ A line runs under budgets. `cli` runs every line at these defaults; `vfs.shell.r
 | Memory of the module | 256 MiB |
 | Seconds from the line's start to its end, its verbs included | 30 |
 
+Moving bytes between the interpreter and vfs costs instructions too: about 270 for each byte `cat` reads, and about 1,100 for each byte `grep` searches. So under the default budget a line reads tens of megabytes, not more. Today `grep -r` and `find` read the tree beneath their root with one `read` or `stat` for each file, which bounds them to thousands of files a line; serving them from vfs's indexed `grep` and `glob` is the direction.
+
 The instruction count is a function of the line and its replies, and the result reports it as `fuel_used`. An arithmetic expression or a `[[ ]]` condition counts each link of a long chain, such as `1+1+1`, against the parse depth, so a chain thousands of links long is an error rather than a crash. A regular expression that cannot be matched within its own budget fails with status 2 and says so; it never answers "no match".
 
 ## How Closely It Follows Bash
 
-The shell is tested against a corpus of 3,333 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not.
+The shell is tested against a corpus of 3,333 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not. 3,212 of the 3,333 pass; the other 121 are listed by name in `tests/shell/known_failures.txt`, and the corpus test fails when a listed case starts to pass or an unlisted one fails.

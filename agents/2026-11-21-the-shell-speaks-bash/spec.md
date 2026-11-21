@@ -93,6 +93,7 @@ Done when, step by step.
 - Step 1: at least 2,000 cases written and recorded, every case listed as failing, and the score printed by one command.
 - Steps 2 to 5: no language-tier case of the own corpus is left in the known-failures list, the laws hold, and both fuzz targets pass their declared iterations.
 - Steps 6 and 7: no case is left in the known-failures list, the measured sample runs at 85% or more, the fuzzer's last declared run finds no new disagreement, the Oils rate is measured and published with its commit, and the acceptance of the roadmap's stories F1 to F4 and F7 is met or reported as not met with the reason.
+- 2026-11-21: steps 6 and 7 go to their pull request short of this line, for the developer to rule on: 121 cases stay listed, the measured sample runs 72 of 100 (72 of the 77 in scope), and the Oils rate is not measured. The fuzzer's last declared run found no disagreement, and the roadmap's criteria are reported in `acceptance.md`. `agents/2026-11-21-the-shell-closes-its-known-failures/spec.md` holds what is left.
 
 ## Not checked
 

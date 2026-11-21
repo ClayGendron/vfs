@@ -28,7 +28,8 @@ use wasmtime::{
 /// The machine as a WebAssembly module, built by this crate's build script.
 const MODULE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shell.wasm"));
 
-/// Instructions a line may execute: about five seconds of the machine's work on a laptop.
+/// Instructions a line may execute: about five seconds of the machine's work, measured on a
+/// call-heavy line (50 billion took 12 seconds); a byte across the boundary costs about 270.
 pub const FUEL: u64 = 20_000_000_000;
 /// Instructions between two returns from `step` when nothing is asked: about a millisecond.
 pub const FUEL_SLICE: u64 = 10_000_000;
