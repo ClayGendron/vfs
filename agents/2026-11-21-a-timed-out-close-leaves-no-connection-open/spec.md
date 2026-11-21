@@ -1,6 +1,6 @@
 # A timed-out close leaves no connection open
 
-A draft, written on 2026-11-21 from a leak the clock-and-luck work found once `ResourceWarning` became an error in the suite. It is not reviewed, and nothing is built.
+Written on 2026-11-21 from a leak the clock-and-luck work found once `ResourceWarning` became an error in the suite, and built the same day.
 
 ## The outcome wanted
 
@@ -30,6 +30,13 @@ In: `EngineHost.close`, `EngineHost.stop_analysis` and the analysis pass in `src
 ## Not checked
 
 - Whether Postgres's pass leaves the same connection behind; the test is SQLite-only.
+
+## What was done
+
+- **The pass disposes the pool it returns to.** Decision 1's first form: `_AnalysisPass` records the engine's pool before the pass checks its connection out, and `_analysis_pass` disposes that pool in a `finally`, through `greenlet_spawn`, when the engine's pool is no longer it. Recording after the checkout missed the case under test: the pass is held inside the checkout's own `BEGIN IMMEDIATE`, so nothing was recorded when the close timed out (run). A close that completes awaits the pass before its dispose, so the pools match and nothing extra is disposed; a test's own `engine.dispose()` during a pass is covered by the same check.
+- **The test asserts the old pool is empty.** `test_a_timed_out_close_leaves_no_pass_running` asserts `disposed_pool.checkedin() == 0` and has no `greenlet_spawn` of its own. It failed with `assert 1 == 0` before the fix and passed after, three runs of three (run).
+- **The size ratchet.** `engine.py` is held at 1,008 lines by `tests/lint/allowlist.py`; the probe for a loaded sqlite-vec, `has_sqlite_vec`, moved beside `load_sqlite_vec` in `drivers.py` to keep it there.
+- **Not changed.** `test_each_candidate_is_metered_once_a_pass` still settles the statistics before its own `engine.dispose()`; that wait states what the test counts and is kept.
 
 ## One line
 

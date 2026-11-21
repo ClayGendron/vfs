@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import event, func, select, true
 from sqlalchemy.dialects import sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
 from tests.support.oracles.postings import decode_postings, decode_varints
 from tests.support.partial_callers import BOB, SYSTEM, partial_store
@@ -495,7 +495,7 @@ class TestRounds:
         files = {f"/z/{i:04}.txt": f"zeta word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
         files |= {f"/a/{i:04}.txt": f"alpha word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
         storage = await _indexed(tmp_path, files)
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.exec_driver_sql("ANALYZE")
             stat_rows = (await conn.exec_driver_sql("SELECT count(*) FROM sqlite_stat1")).scalar_one()
         assert stat_rows > 0

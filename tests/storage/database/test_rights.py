@@ -24,6 +24,7 @@ import pytest_asyncio
 from sqlalchemy import and_, delete, event, insert, select, update
 from sqlalchemy.exc import OperationalError
 
+from tests.support.database_helpers import begin_as_writer
 from tests.support.grant_worlds import DIRECTORIES, LAYOUTS, PATHS, SUBJECT_SETS, Layout, random_world
 from tests.support.oracles.grants import GrantWorld, everyone_rank, set_rank
 from tests.support.shared_builds import build_once, shared_directory
@@ -694,6 +695,7 @@ async def test_nesting_past_the_cap_on_read_is_an_authority_budget_refusal(stora
     host = storage._host
     chain = ["ann", *(f"group:g{n}" for n in range(12))]
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(
             host.tables.memberships.insert(),
             [
@@ -754,6 +756,7 @@ async def _hold_posture(storage: InMemoryStorage, path: str, level: GrantLevel) 
     host = storage._host
     grants = host.tables.grants
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         key = and_(grants.c.principal_id == EVERYONE_NAME, grants.c.path_prefix == path)
         updated = cast(
@@ -779,6 +782,7 @@ async def _finish_relabels(storage: InMemoryStorage) -> None:
     relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await relabeller.step(session) is None:
                 return
 
@@ -796,7 +800,7 @@ async def _locked_admin_write(
     grants = cast("Any", revoke_in_gap)
     tables, profile, budget = host.tables, host.profile, host.membership_budget
     async with host.session_factory() as session:
-        await session.connection(execution_options={"vfs_writer": True})
+        await begin_as_writer(session)
         await session.execute(delete(grants).where(grants.c.principal_id == "ann", grants.c.path_prefix == "/x"))
         revision = await bump_revision(session, tables)
         resolution = await resolve_authority(session, tables, profile, budget, authority, None)

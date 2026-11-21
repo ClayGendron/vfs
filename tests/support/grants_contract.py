@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import pytest
 from sqlalchemy import and_, event, insert, select, update
 
+from tests.support.database_helpers import begin_as_writer
 from vfs.authority import EVERYONE_NAME, Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.paths import Path
@@ -1407,6 +1408,7 @@ async def _hold_posture(host: Any, path: str, level: GrantLevel) -> None:
     """
     grants = host.tables.grants
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         key = and_(grants.c.principal_id == EVERYONE_NAME, grants.c.path_prefix == path)
         updated = await session.execute(update(grants).where(key).values(level=level, revision=revision))
@@ -1429,6 +1431,7 @@ async def _drain_relabels(host: Any) -> None:
     relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await relabeller.step(session) is None:
                 return
 

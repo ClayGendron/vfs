@@ -24,7 +24,7 @@ from ulid import ULID
 
 from tests.support.commit_worlds import BOB, EVE, SYSTEM, attempts, authored_edges, clearing, drop_world, row_at
 from tests.support.commit_worlds import replace as replace_row
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind, Severity
@@ -79,7 +79,7 @@ async def _seed_edge(storage: DatabaseStorage, source: str, target: str, *, edge
     tables = storage._host.tables
     entry = tables.entry
     async with storage._host.session_factory() as session:
-        await session.connection(execution_options={"vfs_writer": True})
+        await begin_as_writer(session)
         rows = (
             await session.execute(select(entry.c.path, entry.c.entry_id).where(entry.c.path.in_([source, target])))
         ).all()
@@ -278,7 +278,7 @@ class TestMkedgeArbitration:
         tables = storage._host.tables
         edge = Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="ref", weight=1.0)
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             entry = tables.entry
             rows = (
                 await session.execute(
@@ -370,7 +370,7 @@ class TestHubBoundedStatements:
             statements.append(statement)
 
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             result = await mkedge_rows(
                 session, tables, storage._host.profile, 64, 6, edges=edges, provenance="user", authority=None
             )
@@ -477,7 +477,7 @@ class TestEdgeRebuild:
         tables = storage._host.tables
         entry, edges = tables.entry, tables.edges
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             root = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             top = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a"))).scalar_one()
@@ -512,7 +512,7 @@ class TestEdgeRebuild:
         tables = storage._host.tables
         entry, edges = tables.entry, tables.edges
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/f.txt"))).scalar_one()
             await session.execute(delete(edges).where(edges.c.target_id == victim, edges.c.edge_type == "fs"))
             await session.commit()

@@ -75,7 +75,6 @@ from vfs.storage.backends.database.attempts import (
 )
 from vfs.storage.backends.database.dialects import (
     PROFILES,
-    SQLITE_VEC_PROBE,
     DialectProfile,
     StaleSnapshot,
     VectorFunction,
@@ -88,7 +87,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.drivers import load_sqlite_vec, merge_engine_arguments
+from vfs.storage.backends.database.drivers import has_sqlite_vec, load_sqlite_vec, merge_engine_arguments
 from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
@@ -537,8 +536,7 @@ class EngineHost:
         below runs either way, in a ``finally``, and the pass leaves no
         interrupt pending on a connection it closes: one would stop
         SQLite's last close from folding the log in and deleting it. A
-        pass left to end on its own closes its connection as it ends,
-        so a close cut short still leaves no connection open.
+        pass a close cut short leaves running closes its own connection.
         """
         try:
             await self.stop_analysis()
@@ -845,12 +843,9 @@ class EngineHost:
         a second cancellation into this loop (:meth:`stop_analysis`
         shields its wait), so the loop always outlives the inner task.
 
-        A pass can outlive the pool it drew from: a close whose caller
-        timed out disposes the engine while the pass still holds its
-        connection, and a dispose replaces the pool and leaves a
-        checked-out connection open. The connection then goes back to
-        the replaced pool, which nothing else closes, so the pass
-        disposes that pool itself once its last statement has run.
+        A close cut short by its caller replaces the pool under a running
+        pass, and nothing else closes the one the pass returns to, so the
+        pass disposes it once its last statement has run.
         """
         state = _AnalysisPass()
         inner = asyncio.create_task(self._analysis_transaction(state), name=f"{STATISTICS_NAME}-pass")
@@ -972,7 +967,7 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
         dbapi_connection.isolation_level = None
         cursor = dbapi_connection.cursor()
         # A connection already carrying the function skips the load.
-        if not _has_sqlite_vec(cursor):
+        if not has_sqlite_vec(cursor):
             load_sqlite_vec(dbapi_connection)
         for statement in profile.session_settings:
             cursor.execute(statement)
@@ -1011,13 +1006,3 @@ def _failed_statement(exc: BaseException, fallback: str) -> str:
 def _version_tuple(raw: str) -> tuple[int, ...]:
     """A version string's numeric components: ``"0.8.1"`` and sqlite-vec's ``"v0.1.6"`` both parse."""
     return tuple(int(part) for part in raw.lstrip("v").split(".") if part.isdigit())
-
-
-def _has_sqlite_vec(cursor: Any) -> bool:
-    """Whether this connection already answers the extension's version function."""
-    try:
-        cursor.execute(SQLITE_VEC_PROBE)
-    except sqlite3.OperationalError:
-        return False
-    cursor.fetchall()
-    return True

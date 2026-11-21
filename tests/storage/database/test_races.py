@@ -51,7 +51,7 @@ from tests.support.commit_worlds import (
     row_at,
     version_count,
 )
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from vfs.authority import Authority, Principal
@@ -538,7 +538,7 @@ class TestGhostRefusal:
             now = datetime.now(UTC)
             ghost_id = str(ULID())
             async with host.session_factory() as session:
-                conn = await session.connection(execution_options={"vfs_writer": True})
+                conn = await begin_as_writer(session)
                 d_id = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
                 await conn.execute(
                     insert(entry).values(
@@ -970,7 +970,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -1316,7 +1316,7 @@ class TestLeaseFence:
                 existing = dict((await conn.execute(select(*columns))).mappings().one())
             for row, unique in ((existing, True), ({**existing, "entry_id": None}, False)):
                 async with storage._host.session_factory() as session:
-                    await session.connection(execution_options={"vfs_writer": True})
+                    await begin_as_writer(session)
                     with pytest.raises(IntegrityError) as raised:
                         await dialects.bulk_insert(session, chunks, [row])
                     assert dialects.is_unique_violation(raised.value) is unique, raised.value

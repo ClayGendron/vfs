@@ -28,7 +28,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
 
-from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock
+from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock, begin_as_writer, writer_engine
 from tests.support.plan_store import (
     PLAN_ARMS,
     PLAN_EXTENSIONS,
@@ -246,7 +246,7 @@ async def _own_tables_listed(storage: DatabaseStorage) -> list[str]:
     """
     own = {f'ANALYZE "main"."{table.name}"': table.name for table in storage._host.tables.metadata.tables.values()}
     async with storage._host.session_factory() as session:
-        conn = await session.connection(execution_options={"vfs_writer": True})
+        conn = await begin_as_writer(session)
         listed = [str(row[0]) for row in (await conn.exec_driver_sql(LISTING)).all()]
         indexed = [
             own[statement]
@@ -537,7 +537,7 @@ class TestPlannerStatistics:
         assert _count(traced, SCHEMA_RELOAD) == 1
         await storage._host.settle_statistics()
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.exec_driver_sql("DELETE FROM sqlite_stat1")
             await session.commit()
         failing = _fail_analyze(engine, ordinal=2)
@@ -583,7 +583,7 @@ class TestPlannerStatistics:
     async def test_the_pass_analyzes_only_the_tables_of_the_mount(self, tmp_path) -> None:
         """Guards: a pass acting on every statement the listing prints, tables that are not the mount's included."""
         storage = DatabaseStorage(url=_url(tmp_path))
-        async with storage.engine.begin() as conn:
+        async with writer_engine(storage.engine).begin() as conn:
             await conn.exec_driver_sql("CREATE TABLE other_rows (id INTEGER PRIMARY KEY, label TEXT)")
             await conn.exec_driver_sql("CREATE INDEX ix_other_rows_label ON other_rows (label)")
             for index in range(1_000):

@@ -112,6 +112,34 @@ def test_the_next_test_inherits_nothing():
         if thread is not threading.current_thread() and not thread.daemon:
             thread.join()
 """
+READS_THEN_WRITES: Final = """
+from sqlalchemy import text
+
+from tests.support.database_helpers import _fresh_url, begin_as_writer
+from vfs.storage.backends.database import DatabaseStorage
+
+READ = text("SELECT grant_revision FROM vfs_meta")
+WRITE = text("UPDATE vfs_meta SET grant_revision = grant_revision")
+
+
+async def test_a_plain_session_that_reads_then_writes(tmp_path):
+    storage = DatabaseStorage(url=_fresh_url(tmp_path))
+    assert (await storage.first_touch()).success
+    async with storage._host.session_factory() as session:
+        await session.execute(READ)
+        await session.execute(WRITE)
+        await session.commit()
+
+
+async def test_a_writer_session_that_reads_then_writes(tmp_path):
+    storage = DatabaseStorage(url=_fresh_url(tmp_path))
+    assert (await storage.first_touch()).success
+    async with storage._host.session_factory() as session:
+        await begin_as_writer(session)
+        await session.execute(READ)
+        await session.execute(WRITE)
+        await session.commit()
+"""
 CHILD_INI: Final = """[pytest]
 asyncio_mode = auto
 timeout = {deadline}
@@ -189,6 +217,17 @@ def test_no_test_leaves_a_loop_that_pytest_asyncio_made_unasked(tmp_path: Path) 
 def test_a_driver_thread_stopped_unawaited_ends_on_its_tests_loop(tmp_path: Path) -> None:
     ran = _run_child(tmp_path, STOPPED_MID_WORK, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
     assert ran.returncode == 0, ran.stdout
+
+
+@pytest.mark.slow
+def test_a_plain_transaction_that_reads_then_writes_fails_its_test(tmp_path: Path) -> None:
+    ran = _run_child(tmp_path, READS_THEN_WRITES, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
+    assert ran.returncode == 1, ran.stdout
+    assert "2 passed, 1 error" in ran.stdout, ran.stdout
+    assert "ERROR at teardown of test_a_plain_session_that_reads_then_writes" in ran.stdout, ran.stdout
+    assert "a plain SQLite transaction read and then wrote" in ran.stdout, ran.stdout
+    assert "'UPDATE vfs_meta SET grant_revision = grant_revision'" in ran.stdout, ran.stdout
+    assert "test_hanging.py:16 in test_a_plain_session_that_reads_then_writes" in ran.stdout, ran.stdout
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,7 @@ from unittest import mock
 from sqlalchemy import event, func, select, text
 from ulid import ULID
 
+from tests.support.database_helpers import begin_as_writer
 from tests.support.partial_callers import RecordingSession
 from tests.support.server_schemas import server_schema
 from vfs.authority import Authority, Principal
@@ -337,6 +338,7 @@ async def _refused_texts(storage: DatabaseStorage) -> None:
         for n in range(REFUSED_TEXTS)
     ]
     async with storage._host.session_factory() as session:
+        await begin_as_writer(session)
         for page in chunked(rows, 500):
             await session.execute(refusals.insert(), page)
         await session.commit()

@@ -20,7 +20,7 @@ from sqlalchemy import event, insert, select, text, update
 from sqlalchemy.exc import DBAPIError
 from ulid import ULID
 
-from tests.support.database_helpers import _SqliteError, _url
+from tests.support.database_helpers import _SqliteError, _url, begin_as_writer, writer_engine
 from tests.support.loop_ticks import LoopTicker
 from vfs import deadline as deadline_module
 from vfs.models import Edge, Entry, Observation
@@ -74,7 +74,7 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
     tables = storage._host.tables
     now = datetime.now(UTC)
     async with storage._host.session_factory() as session:
-        conn = await session.connection(execution_options={"vfs_writer": True})
+        conn = await begin_as_writer(session)
         root_key = (await conn.execute(select(tables.entry.c.entry_id).where(tables.entry.c.path == "/"))).scalar_one()
         ids: dict[str, str] = {"/": root_key}
         version = 0
@@ -705,7 +705,7 @@ class TestReadFailureHandling:
     async def test_read_failure_classifies_unavailable(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.exec_driver_sql("DROP TABLE vfs_entries")
         result = await storage.stat(path=Path("/"))
         assert result.success is False
@@ -751,7 +751,7 @@ class TestReadFailureHandling:
     async def test_write_failure_classifies_unavailable(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.exec_driver_sql("DROP TABLE vfs_entries")
         result = await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
         assert result.success is False
@@ -810,7 +810,7 @@ class TestUnlandedVerbStubs:
         seeded = DatabaseStorage(url=_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
-        async with seeded._host.engine.begin() as conn:
+        async with writer_engine(seeded._host.engine).begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_url(tmp_path))
@@ -1149,7 +1149,7 @@ class TestScopeChannel:
         for analyzed in (True, False):
             if not analyzed:
                 async with storage._host.session_factory() as session:
-                    conn = await session.connection(execution_options={"vfs_writer": True})
+                    conn = await begin_as_writer(session)
                     await conn.exec_driver_sql("DELETE FROM sqlite_stat1")
                     await session.commit()
             statements.clear()

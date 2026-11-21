@@ -36,7 +36,7 @@ from tests.support.commit_worlds import (
     version_count,
 )
 from tests.support.commit_worlds import replace as replace_row
-from tests.support.database_helpers import _ReturningSession, _staged_material, _url
+from tests.support.database_helpers import _ReturningSession, _staged_material, _url, begin_as_writer, writer_engine
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
@@ -198,6 +198,7 @@ class TestWriteMechanics:
         entry = storage._host.tables.entry
         marks = select(entry.c.chunked, entry.c.encoded, entry.c.indexable).where(entry.c.path == "/a.txt")
         async with storage._host.session_factory() as session:
+            await begin_as_writer(session)
             await session.execute(update(entry).where(entry.c.path == "/a.txt").values(chunked=True, encoded=True))
             await session.commit()
             indexed = (await session.execute(marks)).one()
@@ -399,7 +400,7 @@ class TestWriteMechanics:
                 return (await conn.execute(flags)).one()._tuple()
 
         async def mark_indexed() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(entry).values(chunked=True, encoded=True))
 
         assert await flags_now() == (False, False)
@@ -418,7 +419,7 @@ class TestWriteMechanics:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).values(chunked=True, encoded=True))
         moved = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
         assert moved.success is True
@@ -576,7 +577,7 @@ class TestArbitration:
             statements.append(statement)
 
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             rival_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f005.txt"))).scalar_one()
             now = datetime.now(UTC)
@@ -612,7 +613,7 @@ class TestArbitration:
         )
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             now = datetime.now(UTC)
             layer = [
@@ -642,7 +643,7 @@ class TestArbitration:
         await storage.mkdir(path=Path("/dir"))
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             rival_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).scalar_one()
             now = datetime.now(UTC)
@@ -706,7 +707,7 @@ class TestArbitration:
         await storage.mkdir(path=Path("/dir"))
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             dir_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/dir"))).scalar_one()
             # The unique path index collides while (parent_id, name) is
             # vacant: the insert fails yet the occupant probe sees nothing.
@@ -763,7 +764,7 @@ class TestArbitration:
             rival_key = (await peek.execute(select(entry.c.entry_id).where(entry.c.path == str(target)))).scalar_one()
 
         async with host.session_factory() as writer:
-            await writer.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(writer)
             result = await _finish(
                 writer,
                 host.tables,
@@ -832,7 +833,7 @@ class TestArbitration:
             rival_key = (await peek.execute(select(entry.c.entry_id).where(entry.c.path == str(target)))).scalar_one()
 
         async with host.session_factory() as writer:
-            await writer.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(writer)
             result = await _finish(
                 writer,
                 host.tables,
@@ -877,7 +878,7 @@ class TestArbitration:
         entry = storage._host.tables.entry
         profile = storage._host.profile
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             root_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             rival = (
                 await conn.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == "/f.txt"))
@@ -945,7 +946,7 @@ class TestArbitration:
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")])
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             row = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).one()
             stale = StagedEntry(
                 path=Path("/f.txt"),
@@ -978,7 +979,7 @@ class TestArbitration:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             row_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/f.txt"))).scalar_one()
             # A rival relocation rewrote the row's address mid-window: the
             # absorb's read-back must catch the mismatch and redrive.
@@ -1010,7 +1011,7 @@ class TestArbitration:
         await storage.first_touch()
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             # An absorb row whose adopted rival vanished before its
             # version learning: the address proof fails and redrives.
             vanished = StagedEntry(
@@ -1065,7 +1066,7 @@ class TestArbitration:
         assert (await storage.write(entries=[Entry(path=target, content="rival")])).success is True
 
         async with host.session_factory() as writer:
-            await writer.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(writer)
             result = await _finish(
                 writer,
                 host.tables,
@@ -1112,7 +1113,7 @@ class TestArbitration:
         assert (await storage.write(entries=[Entry(path=target, content="v3")])).success is True
 
         async with host.session_factory() as writer:
-            await writer.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(writer)
             result = await _finish(
                 writer,
                 host.tables,
@@ -1254,7 +1255,7 @@ class TestGuardedAttribution:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             found = await session.execute(select(entry.c.entry_id, entry.c.path, entry.c.version))
             rows = {m["path"]: m for m in found.mappings()}
             fresh = StagedEntry(
@@ -1303,7 +1304,7 @@ class TestGuardedAttribution:
         # No sane aggregate: the ladder must land on per-row rowcounts.
         monkeypatch.setattr(host.engine.sync_engine.dialect, "supports_sane_multi_rowcount", False)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             found = await session.execute(select(entry.c.entry_id, entry.c.path, entry.c.version))
             rows = {m["path"]: m for m in found.mappings()}
             fresh = StagedEntry(
@@ -1348,7 +1349,7 @@ class TestGuardedAttribution:
         monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
         staged = _staged_material("/f.txt", str(ULID()))
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             errors = await _update_materials(
                 session,
                 host.tables.entry,
@@ -1430,7 +1431,7 @@ class TestBytesBodies:
         assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1")])).success is True
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             key = (
                 await conn.execute(select(tables.entry.c.entry_id).where(tables.entry.c.path == "/r.pdf"))
             ).scalar_one()
@@ -1693,7 +1694,7 @@ class TestLandingJudgment:
         tables = storage._host.tables
         assert (await storage.write(entries=[Entry(path=Path("/drop/w.txt"), content="w")], authority=BOB)).success
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             await land(session, tables, "/drop/l.txt", "alice", "add")
             await session.commit()
         counts = []

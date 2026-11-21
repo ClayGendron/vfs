@@ -137,18 +137,15 @@ class DatabaseStorage:
     ``private``. It is planted once, at first touch: a mount that already exists keeps its stored posture,
     and only the ``set_posture`` verb changes it.
 
-    *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside
-    the URL: the pool's class and size, ``pool_pre_ping``, ``connect_args``.
-    A ``ValueError`` refuses autocommit, another value for an argument VFS requires, and, on an in-memory
-    URL that SQLAlchemy gives one connection, another pool. The ``file::memory:`` spellings are not covered.
+    *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside the URL: the pool's class and size,
+    ``pool_pre_ping``, ``connect_args``. A ``ValueError`` refuses autocommit, another value for an argument VFS
+    requires, and, on an in-memory URL SQLAlchemy gives one connection, another pool, ``file::memory:`` spellings aside.
 
-    On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait
-    for a connection, and is rolled back. A cancelled write changes nothing unless its commit had begun.
-
-    On SQLite one writer holds the file at a time. A write that finds another writer's lock waits up to five
-    seconds for it, and is tried four times in all, so a write beside one long writer, such as a 10,000-file batch
-    on a slow machine, can give up after about twenty seconds. It then changes nothing and returns a retryable
-    ``conflict``; calling it again once the long writer has committed succeeds. Postgres writers wait on row locks.
+    On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait for a connection, and
+    is rolled back. A cancelled write changes nothing unless its commit had begun. One writer holds the file at a
+    time: a write behind another writer's lock waits five seconds a try for four tries, so beside a long writer, such
+    as a 10,000-file batch, it can give up after about twenty seconds, change nothing, and return a retryable
+    ``conflict``, which succeeds once that writer has committed.
     """
 
     def __init__(
@@ -174,12 +171,10 @@ class DatabaseStorage:
     ) -> None:
         if trash_days < 0:
             raise ValueError(f"trash_days must be non-negative, got {trash_days}")
-        if grep_wall_seconds <= 0:
-            raise ValueError(f"grep_wall_seconds must be positive, got {grep_wall_seconds}")
-        if search_wall_seconds <= 0:
-            raise ValueError(f"search_wall_seconds must be positive, got {search_wall_seconds}")
-        if glob_wall_seconds <= 0:
-            raise ValueError(f"glob_wall_seconds must be positive, got {glob_wall_seconds}")
+        walls = {"grep": grep_wall_seconds, "search": search_wall_seconds, "glob": glob_wall_seconds}
+        for verb, seconds in walls.items():
+            if seconds <= 0:
+                raise ValueError(f"{verb}_wall_seconds must be positive, got {seconds}")
         if embed_concurrency < 1:
             raise ValueError(f"embed_concurrency must be at least 1, got {embed_concurrency}")
         if embed_timeout_seconds <= 0:

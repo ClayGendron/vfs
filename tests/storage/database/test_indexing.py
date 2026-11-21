@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import event, func, insert, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.documents import pdf_bytes
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.postings import decode_postings
@@ -226,7 +226,7 @@ class TestRebuild:
 
         async def rival_claims() -> None:
             index_state = storage._host.tables.index_state
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(lease_heartbeat=0))
             await _claimed(storage, "RIVAL")
 
@@ -324,7 +324,7 @@ class TestRebuild:
         entry = storage._host.tables.entry
         predated = entry.c.path.in_(["/a", "/b", "/c"])
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(update(entry).where(predated).values(encoded=False))
             await session.commit()
 
@@ -356,7 +356,7 @@ class TestRebuild:
         entry = storage._host.tables.entry
         predated = entry.c.path.in_(["/a", "/b"])
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(update(entry).where(predated).values(encoded=False))
             await session.commit()
         collect = flags_module.collect_flag_drift
@@ -364,7 +364,7 @@ class TestRebuild:
         async def rekinded(session, tables, state) -> Result:
             result = await collect(session, tables, state)
             async with storage._host.session_factory() as rival:
-                conn = await rival.connection(execution_options={"vfs_writer": True})
+                conn = await begin_as_writer(rival)
                 await conn.execute(update(entry).where(entry.c.path == "/b").values(kind="file"))
                 await rival.commit()
             return result
@@ -386,7 +386,7 @@ class TestRebuild:
         assert (await storage.mkdir(path=Path("/a"))).success is True
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(update(entry).where(entry.c.path == "/a").values(encoded=False))
             await session.commit()
         lost = asyncio.Event()
@@ -772,7 +772,7 @@ class TestEligibilityGates:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="steady body")])
         assert (await storage.rebuild()).success is True
         tables = storage._host.tables
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(tables.gram_epochs.delete())
         assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
@@ -791,7 +791,7 @@ async def _seed_built_epoch(storage: DatabaseStorage, epoch: int, *, with_finger
         "doc_count": 1,
         "byte_size": len(blob),
     }
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(tables.posting_list.insert(), [row])
         if with_fingerprint:
             fingerprint = {
@@ -850,7 +850,7 @@ class TestPublishRace:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -1020,7 +1020,7 @@ class TestReclaim:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -1041,7 +1041,7 @@ class TestReclaim:
 
         async def rival() -> None:
             await _seed_built_epoch(storage, 2, with_fingerprint=True)
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=2))
 
         with installed("rebuild:before-reclaim", rival):
@@ -1468,7 +1468,7 @@ class TestChunkProvenance:
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).values(chunk_generation="stale:0"))
         statements: list[str] = []
         self._record_into(storage, statements)
@@ -1542,7 +1542,7 @@ class TestChunkProvenance:
 class TestIndexLease:
     async def _stamped(self, storage: DatabaseStorage, holder: str | None, heartbeat: int | None) -> None:
         index_state = storage._host.tables.index_state
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(index_state).values(lease_holder=holder, lease_heartbeat=heartbeat))
 
     async def _lease(self, storage: DatabaseStorage) -> tuple[str | None, int | None]:
@@ -1555,7 +1555,7 @@ class TestIndexLease:
         """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
         index_state = storage._host.tables.index_state
         stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
     async def test_a_live_lease_refuses_a_second_rebuild(self, tmp_path) -> None:
@@ -1591,7 +1591,7 @@ class TestIndexLease:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):

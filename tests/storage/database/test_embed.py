@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event, select, update
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.embedding_doubles import InputRefusedError, RateLimitedError, ResponseStatusError, ScriptedProvider
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.embedding import Embedded, HashEmbeddingProvider
@@ -100,7 +100,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -374,7 +374,7 @@ class TestStep:
         storage = await _fresh(tmp_path, embedder=provider)
         assert (await storage.rebuild()).success is True
         chunks = storage._host.tables.chunks
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(chunks).values(embedding=None))
         assert (await storage.delete(path=Path("/a.txt"))).success is True
         result = await storage.rebuild()

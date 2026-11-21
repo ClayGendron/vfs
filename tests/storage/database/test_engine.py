@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool, QueuePool
 from ulid import ULID
 
-from tests.support.database_helpers import _fresh_url
+from tests.support.database_helpers import _fresh_url, writer_engine
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.authority import EVERYONE_NAME
 from vfs.models import Entry
@@ -255,7 +255,7 @@ class TestFirstTouch:
         seeded = DatabaseStorage(url=_fresh_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
-        async with seeded._host.engine.begin() as conn:
+        async with writer_engine(seeded._host.engine).begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_fresh_url(tmp_path))
@@ -280,7 +280,7 @@ class TestFirstTouch:
         seeded = DatabaseStorage(url=_fresh_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
-        async with seeded._host.engine.begin() as conn:
+        async with writer_engine(seeded._host.engine).begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_fresh_url(tmp_path))
