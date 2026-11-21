@@ -21,7 +21,7 @@ import posixpath
 import random
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from vfs.deadline import Deadline
 from vfs.native import extension
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from vfs.authority import Authority
-    from vfs.base import AsyncVirtualFileSystem
 
 SHELL_NAME: Final = "bash"
 """``$0`` of every line, so its errors read as bash's do."""
@@ -72,7 +71,8 @@ PID: Final = 1000
 _KIND_OF: Final[dict[str, str]] = {"directory": "directory"}
 
 BODY_CACHE_BYTES: Final = 64 << 20
-"""Bytes of file bodies a line's host holds for the line, as much as the machine itself may hold."""
+"""Bytes of file bodies a line's host holds at once, as much as the machine itself may hold; the
+body being read is held whatever its size, since one ``read`` of the router returns it whole."""
 
 _BODY: Final = frozenset({"content", "data"})
 """The columns a read asks for: a bytes body comes back only when ``data`` is named."""
@@ -116,6 +116,43 @@ _FAILURE_KIND: Final[dict[str, ErrorKind]] = {
 # ---------------------------------------------------------------------------
 
 
+class Router(Protocol):
+    """The verbs a line can reach: each request of the machine is one call of one of these, as the caller.
+
+    The router (:class:`~vfs.AsyncVirtualFileSystem`) is one; the shell names only the verbs, so it
+    sits beneath the router and imports nothing above it.
+    """
+
+    async def read(self, path: str, /, *, columns: frozenset[str], authority: Authority | None) -> Result: ...
+
+    async def stat(self, path: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def ls(self, path: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def search(
+        self, query: str, /, *, limit: int, paths: tuple[str, ...], authority: Authority | None
+    ) -> Result: ...
+
+    async def write(
+        self,
+        *,
+        path: str,
+        authority: Authority | None,
+        content: str | None = ...,
+        data: bytes | None = ...,
+        if_absent: bool = ...,
+        append: bool = ...,
+    ) -> Result: ...
+
+    async def mkdir(self, path: str, /, *, parents: bool, exist_ok: bool, authority: Authority | None) -> Result: ...
+
+    async def delete(self, path: str, /, *, cascade: bool, authority: Authority | None) -> Result: ...
+
+    async def copy(self, src: str, dest: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def move(self, src: str, dest: str, /, *, authority: Authority | None) -> Result: ...
+
+
 class LineResult(Result):
     """What ``cli`` returns: a :class:`Result` with what the line printed and the status it exited with.
 
@@ -135,7 +172,7 @@ class LineResult(Result):
 
 
 async def run_line(
-    fs: AsyncVirtualFileSystem,
+    fs: Router,
     line: str,
     authority: Authority,
     *,
@@ -153,18 +190,18 @@ async def run_line(
     or a budget, the deadline or a cancel ended it. A program that exits non-zero is not a
     failure of the call. ``env`` is the environment the line starts with, and ``limits`` lowers
     or raises the machine's budgets by name, each one of :data:`LIMITS`; an unknown name or a
-    negative value fails the call as ``invalid``. ``fuel`` is the instructions the line may
-    execute, and ``deadline`` the instant it must end by, ``DEADLINE_SECONDS`` from the call when
-    not given.
+    value that is no count from 0 to 2**64 fails the call as ``invalid``. ``fuel`` is the
+    instructions the line may execute, and ``deadline`` the instant it must end by,
+    ``DEADLINE_SECONDS`` from the call when not given.
 
     The machine runs inside its WebAssembly module, one slice at a time on the process pool, so
     the event loop never waits on it. A cancelled call cancels the line: the slice running then
     ends within one tick of the runtime's clock.
     """
     deadline = deadline if deadline is not None else Deadline.after(DEADLINE_SECONDS)
-    refused = sorted(name for name, value in (limits or {}).items() if name not in LIMITS or value < 0)
+    refused = sorted(name for name, value in (limits or {}).items() if name not in LIMITS or not _a_budget(value))
     if refused:
-        detail = f"no such budget, or a negative one: {', '.join(refused)}; the budgets are {', '.join(sorted(LIMITS))}"
+        detail = f"no such budget, or no count: {', '.join(refused)}; the budgets are {', '.join(sorted(LIMITS))}"
         return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
     if authority.actor.is_system:
         detail = "a line never runs as the system actor; name the caller's authority"
@@ -229,6 +266,11 @@ async def run_line(
 # ---------------------------------------------------------------------------
 
 
+def _a_budget(value: object) -> bool:
+    """Whether ``value`` is a count the machine can hold: an integer, not a bool, from 0 to 2**64."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 1 << 64
+
+
 def _ended(reason: str) -> ResultError:
     """The fact for a line a budget, a cancel or a fault ended."""
     if reason.startswith("Budget"):
@@ -243,7 +285,7 @@ def _ended(reason: str) -> ResultError:
 class _Host:
     """One line's answers: each request a public verb called as the line's authority."""
 
-    def __init__(self, fs: AsyncVirtualFileSystem, authority: Authority) -> None:
+    def __init__(self, fs: Router, authority: Authority) -> None:
         self._fs = fs
         self._authority = authority
         self._bodies: dict[str, bytes] = {}
@@ -278,9 +320,13 @@ class _Host:
                 return refusal
             row = result.observations[0]
             body = row.data if row.data is not None else (row.content or "").encode()
-            if self._held + len(body) <= BODY_CACHE_BYTES:
-                self._bodies[path] = body
-                self._held += len(body)
+            # The body being read is always kept, so a reader takes it in chunks from one read; the
+            # others give way when it would pass the budget.
+            if self._held + len(body) > BODY_CACHE_BYTES:
+                self._bodies.clear()
+                self._held = 0
+            self._bodies[path] = body
+            self._held += len(body)
         end = offset + length
         return "data", (body[offset:end], end >= len(body))
 

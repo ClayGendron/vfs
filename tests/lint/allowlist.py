@@ -16,7 +16,6 @@ from __future__ import annotations
 UPWARD_IMPORT_ALLOWANCE: frozenset[tuple[str, str]] = frozenset(
     {
         ("vfs.base", "vfs.session"),
-        ("vfs.shell.host", "vfs.base"),
         ("vfs.results.preview", "vfs.pattern_matching.grep"),
         ("vfs.results.render", "vfs.pattern_matching.grep"),
         ("vfs.models.signals", "vfs.storage.ranking"),

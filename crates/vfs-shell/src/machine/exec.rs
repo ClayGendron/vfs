@@ -919,7 +919,7 @@ async fn exec_simple_inner(ctx: &Ctx<'_>, sh: &mut Shell, simple: &SimpleCommand
             }
         }
     }
-    sh.defer_writes = writes_nothing_else(sh, &name, &words);
+    sh.defer_writes = writes_nothing_else(sh, &name, &words, &simple.redirects);
     let applied = apply_redirects(ctx, sh, &simple.redirects).await;
     sh.defer_writes = false;
     let saved = match applied {
@@ -1936,10 +1936,27 @@ pub async fn open_write(
 }
 
 /// Whether a simple command can act on nothing before its redirections end, so a file it writes
-/// can wait for one write of all its bytes: it only prints, or `cat` copies its standard input.
-fn writes_nothing_else(sh: &Shell, name: &str, words: &[String]) -> bool {
-    !sh.functions.contains_key(name)
-        && (matches!(name, "echo" | "printf" | ":" | "true") || (name == "cat" && words.len() == 1))
+/// can wait for one write of all its bytes: it only prints, or `cat` copies an input its own
+/// redirections give it. `printf -v` sets a variable, and `cat` of an inherited input consumes it.
+fn writes_nothing_else(sh: &Shell, name: &str, words: &[String], redirects: &[Redirect]) -> bool {
+    if sh.functions.contains_key(name) {
+        return false;
+    }
+    match name {
+        "echo" | ":" | "true" => true,
+        "printf" => !words.iter().skip(1).any(|word| word.starts_with("-v")),
+        "cat" => {
+            words.len() == 1
+                && redirects.iter().any(|redirect| {
+                    matches!(redirect.fd, RedirFd::Default | RedirFd::Number(0))
+                        && matches!(
+                            redirect.op,
+                            RedirOp::Read | RedirOp::HereDoc | RedirOp::HereString
+                        )
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Judge, by reading alone, whether `path` can be opened for writing: not a directory, and in a

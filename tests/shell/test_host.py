@@ -183,6 +183,34 @@ async def test_a_command_that_only_prints_writes_its_file_once(monkeypatch: pyte
     ], "a group can act before it ends, so its file is opened with a write first"
 
 
+async def _read_only_ro() -> AsyncVirtualFileSystem:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/w/keep.txt", content="kept", parents=True, authority=SYSTEM))
+    ok(await fs.mkdir("/ro", authority=SYSTEM))
+    ok(await fs.set_posture("/", "none", authority=SYSTEM))
+    ok(await fs.grant("/w", "ada", "read_write", authority=SYSTEM))
+    ok(await fs.grant("/ro", "ada", "read", authority=SYSTEM))
+    return fs
+
+
+@pytest.mark.parametrize(
+    ("line", "stdout"),
+    [
+        ('printf -v x hi > /ro/out.txt; echo "[$x] $?"', "[] 1\n"),
+        ("{ cat > /ro/out.txt; cat; } <<< hi", "hi\n"),
+        ("echo x > /ro/out.txt; echo $?", "1\n"),
+        ("cat > /ro/out.txt <<< hi; echo $?", "1\n"),
+    ],
+    ids=["printf-v-sets-nothing", "cat-leaves-its-input", "echo-refused-at-the-end", "cat-of-its-own-input"],
+)
+async def test_a_refused_redirection_leaves_its_command_undone(line: str, stdout: str) -> None:
+    fs = await _read_only_ro()
+    result = await fs.cli(line, authority=ADA)
+    assert result.stdout == stdout
+    assert "/ro/out.txt" in result.stderr
+    assert (await fs.stat("/ro/out.txt", authority=SYSTEM)).success is False
+
+
 async def test_a_command_never_runs_before_its_refused_redirection() -> None:
     fs = AsyncVirtualFileSystem()
     ok(await fs.write(path="/w/keep.txt", content="kept", parents=True, authority=SYSTEM))
@@ -261,7 +289,7 @@ async def test_a_limit_that_is_no_ascii_number_is_a_query_word() -> None:
     assert result.stdout == "1\n"
 
 
-async def test_the_bodies_a_line_holds_stay_under_their_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_bodies_a_line_holds_give_way_to_the_one_it_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 10)
     fs = AsyncVirtualFileSystem()
     ok(await fs.write(path="/big.txt", content="x" * 100, authority=SYSTEM))
@@ -277,7 +305,25 @@ async def test_the_bodies_a_line_holds_stay_under_their_budget(monkeypatch: pyte
     monkeypatch.setattr(fs, "read", counted)
     result = await fs.cli("cat /big.txt /big.txt /small.txt /small.txt | wc -c", authority=ADA)
     assert result.stdout == "208\n"
-    assert reads == 3, "a body past the budget is read again, one under it is held"
+    assert reads == 2, "each body is read once; the small one makes the big one give way"
+
+
+async def test_a_body_past_the_budget_is_read_once_across_its_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 1000)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/big.bin", content="y" * 300_000, authority=SYSTEM))
+    reads = 0
+    real_read = fs.read
+
+    async def counted(*args: Any, **kwargs: Any) -> Result:
+        nonlocal reads
+        reads += 1
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(fs, "read", counted)
+    result = await fs.cli("wc -c < /big.bin", authority=ADA)
+    assert result.stdout == "300000\n"
+    assert reads == 1, "five chunks of one body are one read"
 
 
 async def test_a_refused_search_reads_as_its_message_and_is_kept_as_a_warning() -> None:
@@ -568,7 +614,9 @@ async def test_an_unknown_request_is_unsupported() -> None:
     assert await host.answer("chmod", {"path": "/x"}) == ("error", "unsupported")
 
 
-@pytest.mark.parametrize("limits", [{"memory_byte": 10}, {"memory_bytes": -1}])
+@pytest.mark.parametrize(
+    "limits", [{"memory_byte": 10}, {"memory_bytes": -1}, {"memory_bytes": 2**70}, {"memory_bytes": "10"}]
+)
 async def test_an_unknown_or_negative_budget_fails_the_call(limits: dict[str, int]) -> None:
     result = await run_line(AsyncVirtualFileSystem(), "echo hi", ADA, limits=limits)
     assert result.errors[0].kind == ErrorKind.invalid
