@@ -398,8 +398,8 @@ class TestRevive:
         before = (await _rows(storage))["/f.md"]
         assert (await storage.delete(path=Path("/f.md"))).success is True
         parent = (await storage.stat(path=Path("/"))).observations[0].version
-        # overwrite=False admits the revive: no live row occupies the path.
-        result = await storage.write(entries=[Entry(path=Path("/f.md"), content="two")], overwrite=False, authority=ANN)
+        # A create-only write admits the revive: no live row occupies the path.
+        result = await storage.write(entries=[Entry(path=Path("/f.md"), content="two")], if_absent=True, authority=ANN)
         assert result.success is True
         [observed] = result.observations
         assert observed.status == "updated"

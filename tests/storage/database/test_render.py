@@ -180,12 +180,23 @@ class TestRenderings:
 
 
 class TestSkipLaw:
-    async def test_a_same_bytes_overwrite_renders_once_more_and_settles(self, tmp_path) -> None:
-        # The write clears the stamp and drops the rendering, so the skip
+    async def test_a_same_bytes_overwrite_keeps_its_rendering(self, tmp_path) -> None:
+        # The overwrite is unchanged: the stamp stands and nothing renders again.
+        storage = _mount(tmp_path)
+        await _put(storage, "/q.pdf", QUOKKA_PDF)
+        assert (await storage.rebuild()).success is True
+        await _put(storage, "/q.pdf", QUOKKA_PDF)
+        assert (await _row(storage, "/q.pdf")).render_status == "ok"
+        assert "rendering" not in ((await storage.rebuild()).model_extra or {})
+        await storage.close()
+
+    async def test_bytes_written_away_and_back_render_once_more_and_settle(self, tmp_path) -> None:
+        # Each write clears the stamp and drops the rendering, so the skip
         # law has nothing to compare: one re-render, then settled again.
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
+        await _put(storage, "/q.pdf", pdf_bytes(["A bilby instead"]))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
         result = await storage.rebuild()

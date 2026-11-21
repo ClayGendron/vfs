@@ -37,7 +37,7 @@ from vfs.results import ErrorKind, Result, classified
 from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterable, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
     from concurrent.futures import Future
     from types import TracebackType
 
@@ -309,7 +309,10 @@ class VirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        overwrite: bool = True,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -320,7 +323,10 @@ class VirtualFileSystem:
             path=path,
             content=content,
             data=data,
-            overwrite=overwrite,
+            if_version=if_version,
+            if_versions=if_versions,
+            if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=authority,
         )
@@ -799,7 +805,10 @@ class Session:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        overwrite: bool = True,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
     ) -> Result:
         return self._result(
@@ -809,7 +818,10 @@ class Session:
             path=path,
             content=content,
             data=data,
-            overwrite=overwrite,
+            if_version=if_version,
+            if_versions=if_versions,
+            if_absent=if_absent,
+            append=append,
             parents=parents,
         )
 

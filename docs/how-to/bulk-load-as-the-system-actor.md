@@ -19,6 +19,8 @@ etl = AsyncVirtualFileSystem(storage=storage, default_authority=Authority.system
 
 Keep this filesystem object separate from the one your application serves. The system actor bypasses grants, so it should not be the default anywhere a user's call can reach.
 
+Making it logs one warning on the `vfs.authority` logger, which says that calls naming no authority pass every rights check. For a bulk load that is the intent, so silence it with `logging.getLogger("vfs.authority").setLevel(logging.ERROR)`.
+
 ## Declare the owner on each entry
 
 ```python

@@ -15,6 +15,7 @@ from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStor
 from vfs import ops, permissions
 from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import (
+    ADDITIVE_WRITE,
     ALL_OPS,
     DEVELOPER_OPS,
     EXEC_OPS,
@@ -135,6 +136,13 @@ def test_a_mutation_never_sits_below_add() -> None:
         needs = VERB_RUNGS[op]
         assert LEVEL_RANK[needs.primary] >= LEVEL_RANK["add"], op
         assert needs.create is None or LEVEL_RANK[needs.create] >= LEVEL_RANK["add"], op
+
+
+def test_the_additive_write_sits_at_add_and_no_lower() -> None:
+    # A write that replaces nothing needs what a creation needs, on an occupied target too.
+    plain = VERB_RUNGS["write"]
+    assert (ADDITIVE_WRITE.primary, ADDITIVE_WRITE.create, ADDITIVE_WRITE.passing) == ("add", plain.create, None)
+    assert LEVEL_RANK[ADDITIVE_WRITE.primary] < LEVEL_RANK[plain.primary]
 
 
 def test_a_read_never_mints() -> None:
