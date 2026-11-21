@@ -10,9 +10,10 @@ writer out.
 
 So on SQLite each attempt runs in a task of its own, and a caller that
 is cancelled waits for its attempt to end before its cancellation is
-raised. A caller that was cancelled more than once is raised the first
-cancellation, with each later one of another canceller behind it as its
-``__context__``, so each canceller finds its own.
+raised. A caller with more than one canceller is raised the first
+cancellation that carries a message, with the others behind it as its
+``__context__``. A canceller that knows its own cancellation by its
+message, as a cancel scope does, then finds it on the error raised.
 
 An attempt whose caller was cancelled is marked, and a marked attempt
 stops. The statement in flight ends, and no other is sent: the next one
@@ -97,15 +98,24 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
     Return what ``attempt`` returns, and raise what it raises. If the caller
     is cancelled while ``attempt`` runs, ``attempt`` is marked and runs on
     until its next refusal. The caller goes on waiting, however many times
-    it is cancelled. Once ``attempt`` has ended it raises the first of those
+    it is cancelled. Once ``attempt`` has ended it raises one of those
     cancellations, the same ``CancelledError`` and not a new one. What
     ``attempt`` returned or raised is then dropped.
 
     A caller can have two cancellers, such as a time limit and a cancel
-    scope, and a scope knows its own cancellation by the message on it. So
-    each later cancellation with a message not yet kept is the
-    ``__context__`` of the one kept before it, where a canceller that
-    does not find its message on the error raised looks next.
+    scope. The cancellation raised is the first that carries a message,
+    or the first of all when none does. Only a canceller that knows its
+    cancellation by its message needs to see it on the error itself, and
+    asyncio's own cancellers, a time limit and a task group, do not read
+    the message. One cancellation is kept for each message, and the
+    others are behind the one raised as its ``__context__``, in the order
+    they came.
+
+    What is behind the error raised does not always arrive. Python
+    replaces it when the caller awaits inside a block that is handling
+    another error. So of two cancellers that both know their cancellation
+    by a message, a caller that awaits inside an ``except`` block is
+    raised the first, and the second does not find its own.
     """
     mark = _Mark()
     cancellations: list[asyncio.CancelledError] = []
@@ -129,9 +139,11 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
     # Read what the dropped attempt raised, or the loop reports it as never retrieved.
     with suppress(asyncio.CancelledError, Exception):
         task.result()
-    for kept, later in itertools.pairwise(cancellations):
+    # A message is how a canceller knows its own cancellation, so the first that carries one is the one raised.
+    first = next((kept for kept in cancellations if kept.args), cancellations[0])
+    for kept, later in itertools.pairwise([first, *(kept for kept in cancellations if kept is not first)]):
         kept.__context__ = later
-    raise cancellations[0]
+    raise first
 
 
 # ---------------------------------------------------------------------------

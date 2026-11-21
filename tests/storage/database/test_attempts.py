@@ -223,18 +223,38 @@ class TestACancelledCaller:
         assert raised is thrown[0]
         assert raised.args == ("first",)
 
-    async def test_a_later_cancellation_of_another_canceller_is_found_behind_the_first(
+    async def test_a_cancellation_with_a_message_is_raised_ahead_of_an_earlier_one_with_none(
         self, thrown: list[BaseException]
     ) -> None:
-        """A canceller that looks for its own cancellation behind the one raised finds it.
+        """A canceller that knows its cancellation by its message finds it on the error raised.
 
-        Guards the chain: a time limit cancels with no message and a cancel scope
-        with its own, and with only the first raised the scope does not know its cancellation.
+        Guards which cancellation is raised: a time limit cancels with no message and a cancel
+        scope with its own, and what is behind the error raised is lost when the caller is handling an error.
         """
         raised = await cancelled_with([None, "the scope's"])
+        assert raised is thrown[1]
+        assert raised.__context__ is thrown[0]
+        assert chain_of(raised) == [("the scope's",), ()]
+
+    async def test_a_caller_cancelled_with_no_message_at_all_is_raised_the_first(
+        self, thrown: list[BaseException]
+    ) -> None:
+        raised = await cancelled_with([None, None])
+        assert raised is thrown[0]
+        assert chain_of(raised) == [()]
+
+    async def test_three_cancellers_are_one_behind_another_in_the_order_they_came(
+        self, thrown: list[BaseException]
+    ) -> None:
+        """Guards the whole chain: each later cancellation is behind the one before it, and none is left out."""
+        raised = await cancelled_with(["first", "second", "third"])
         assert raised is thrown[0]
         assert raised.__context__ is thrown[1]
-        assert chain_of(raised) == [(), ("the scope's",)]
+        assert chain_of(raised) == [("first",), ("second",), ("third",)]
+
+    async def test_the_cancellations_behind_the_one_raised_keep_the_order_they_came_in(self) -> None:
+        """Guards the order: only the first cancellation with a message moves, to the front."""
+        assert chain_of(await cancelled_with([None, "first", "second"])) == [("first",), (), ("second",)]
 
     async def test_a_canceller_that_cancels_again_and_again_is_behind_the_first_once(self) -> None:
         """Guards the test for a message already kept: a scope cancels at every turn of the loop while it waits."""

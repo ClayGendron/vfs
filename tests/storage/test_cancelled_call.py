@@ -19,6 +19,7 @@ the refusals are in ``tests/storage/database/test_attempts.py``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite.core
@@ -131,6 +132,29 @@ VERBS: dict[str, Callable[[AsyncVirtualFileSystem], Awaitable[Any]]] = {
     "move": lambda kernel: kernel.move("/dir/x.txt", "/dir/moved.txt"),
     "grant": lambda kernel: kernel.grant("/dir", "ann", "read"),
     "revoke": lambda kernel: kernel.revoke("/dir", "bob"),
+}
+
+
+async def _while_an_error_is_handled(kernel: AsyncVirtualFileSystem) -> None:
+    try:
+        raise LookupError("an earlier step failed")
+    except LookupError:
+        await kernel.stat("/a.txt")
+
+
+async def _in_a_finally_during_an_error(kernel: AsyncVirtualFileSystem) -> None:
+    with contextlib.suppress(LookupError):
+        try:
+            raise LookupError("an earlier step failed")
+        finally:
+            await kernel.stat("/a.txt")
+
+
+# Where a caller makes its call: a block that is handling an error replaces what is behind the error raised in it.
+CALLED: dict[str, Callable[[AsyncVirtualFileSystem], Awaitable[Any]]] = {
+    "plainly": lambda kernel: kernel.stat("/a.txt"),
+    "while an error is handled": _while_an_error_is_handled,
+    "in a finally during an error": _in_a_finally_during_an_error,
 }
 
 
@@ -551,11 +575,16 @@ class TestACallerCancelledByATimeLimitAndByACancelScope:
     """
 
     @ON_EVERY_HOST
+    @pytest.mark.parametrize("where", ["plainly", "while an error is handled", "in a finally during an error"])
     @pytest.mark.parametrize("first", ["the time limit", "the scope"])
     async def test_the_scope_knows_its_cancellation_and_what_follows_it_runs(
-        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip, first: str
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip, first: str, where: str
     ) -> None:
-        """Guards the cancellations kept behind the first: with the first alone raised, the scope lets it escape."""
+        """Guards which cancellation is raised: the scope must find its message on the error itself.
+
+        Python replaces what is behind an error as it leaves a block that is handling
+        another, so a scope's cancellation kept behind the time limit's is lost there.
+        """
         round_trip.hold(reads_entries)
         cancellers: list[Callable[[], Any]] = []
 
@@ -563,7 +592,7 @@ class TestACallerCancelledByATimeLimitAndByACancelScope:
             with anyio.CancelScope() as scope:
                 async with asyncio.timeout(None) as limit:
                     cancellers.extend([lambda: limit.reschedule(0), scope.cancel])
-                    await fs.stat("/a.txt")
+                    await CALLED[where](fs)
             return scope.cancelled_caught, "ran on after the scope"
 
         handled = asyncio.ensure_future(handler())
@@ -575,6 +604,32 @@ class TestACallerCancelledByATimeLimitAndByACancelScope:
         round_trip.let_go()
         assert (still_waiting, await handled) == (True, (True, "ran on after the scope"))
         assert (await fs.read("/a.txt")).one().content == "old"
+
+    @ON_EVERY_HOST
+    async def test_a_scope_inside_the_time_limit_takes_the_cancellation_and_no_timeout_is_raised(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip
+    ) -> None:
+        """Pins the other nesting as it is: what a plain await gives when the scope's cancellation lands first."""
+        round_trip.hold(reads_entries)
+        cancellers: list[Callable[[], Any]] = []
+
+        async def handler() -> tuple[bool, bool, int]:
+            async with asyncio.timeout(None) as limit:
+                with anyio.CancelScope() as scope:
+                    cancellers.extend([lambda: limit.reschedule(0), scope.cancel])
+                    await fs.stat("/a.txt")
+                ran_on = scope.cancelled_caught
+            task = asyncio.current_task()
+            assert task is not None
+            return ran_on, limit.expired(), task.cancelling()
+
+        handled = asyncio.ensure_future(handler())
+        await round_trip.reached.wait()
+        for cancel in cancellers:
+            cancel()
+            await turns_of_the_loop()
+        round_trip.let_go()
+        assert await handled == (True, True, 0)
 
 
 class TestACallerCancelledWhileItsAttemptWaitsForAConnection:
