@@ -3,7 +3,8 @@
 `cli` runs a line of bash inside the file system. Every file the line reads, lists or writes is a call of a public verb, made as the caller. So a line can do nothing that its caller could not do with the Python API.
 
 ```python
-result = await fs.cli("grep -rn TODO /docs | sort | head -3", authority=alice)
+line = "grep -rn TODO /docs | sort | head -3"
+result = await fs.cli(line, authority=alice)
 print(result.stdout)
 ```
 

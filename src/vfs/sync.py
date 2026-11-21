@@ -30,12 +30,11 @@ import threading
 import warnings
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from vfs.base import AsyncVirtualFileSystem
+from vfs.base import CLOSED_DETAIL, AsyncVirtualFileSystem
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
 from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
-from vfs.shell import LineResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
@@ -49,6 +48,7 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind
     from vfs.permissions import Permission, PermissionMap
     from vfs.rerank import Reranker
+    from vfs.shell import LineResult
     from vfs.storage import StorageBackend
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
@@ -60,9 +60,6 @@ LOOP_THREAD_DETAIL: Final = (
     "called from the facade's own loop thread; a callback running on the loop uses AsyncVirtualFileSystem"
 )
 """The deadlock refusal: a call that would block the loop on a future the same loop must finish."""
-
-CLOSED_DETAIL: Final = "the filesystem is closed"
-"""The closed refusal, the same words the router mints after its own close."""
 
 CLOSED_MANAGEMENT_DETAIL: Final = "the filesystem is closed; the loop thread has stopped"
 """The closed refusal for a management method, which raises by contract."""
@@ -175,10 +172,7 @@ class VirtualFileSystem:
         return self
 
     def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
         self.close()
 
@@ -579,9 +573,7 @@ class VirtualFileSystem:
         return self._result("run", self._fs.run, path, arguments=arguments, authority=authority)
 
     def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"", authority: Authority | None = None) -> LineResult:
-        """Run a line of bash as the caller; see :meth:`AsyncVirtualFileSystem.cli`."""
-        result = self._result("cli", self._fs.cli, line, cwd=cwd, stdin=stdin, authority=authority)
-        return result if isinstance(result, LineResult) else LineResult(errors=result.errors, exit_status=2)
+        return self._await("cli", self._fs.cli, line, cwd=cwd, stdin=stdin, authority=authority)
 
     # -------------------------------------------------------------------
     # grants
@@ -673,7 +665,7 @@ class VirtualFileSystem:
             loop.run_until_complete(loop.shutdown_default_executor())
             loop.close()
 
-    def _result(self, op: str, call: Callable[..., Coroutine[Any, Any, Result]], *args: Any, **kwargs: Any) -> Result:
+    def _result(self, op: Op, call: Callable[..., Coroutine[Any, Any, Result]], *args: Any, **kwargs: Any) -> Result:
         """The verb hop: refuse as a classified row, else run the coroutine on the loop and wait."""
         if self._closed:
             return Result(ops=(op,), errors=[classified(ErrorKind.backend_unavailable, detail=CLOSED_DETAIL)])
@@ -753,10 +745,7 @@ class Session:
         return self
 
     def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
         self.close()
 
@@ -1041,8 +1030,7 @@ class Session:
         return self._result("run", self._session.run, path, arguments=arguments)
 
     def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"") -> LineResult:
-        result = self._result("cli", self._session.cli, line, cwd=cwd, stdin=stdin)
-        return result if isinstance(result, LineResult) else LineResult(errors=result.errors, exit_status=2)
+        return self._facade._await("cli", self._session.cli, line, cwd=cwd, stdin=stdin)
 
     # -------------------------------------------------------------------
     # grants
@@ -1070,7 +1058,7 @@ class Session:
     # Internal helpers
     # -------------------------------------------------------------------
 
-    def _result(self, op: str, call: Callable[..., Coroutine[Any, Any, Result]], *args: Any, **kwargs: Any) -> Result:
+    def _result(self, op: Op, call: Callable[..., Coroutine[Any, Any, Result]], *args: Any, **kwargs: Any) -> Result:
         """The closed fact first, then the facade's own hop."""
         if self._session.closed:
             return closed_refusal(op)

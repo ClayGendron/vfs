@@ -60,15 +60,7 @@ from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
 from vfs.listing import MountListing, PathFilters, gather_settled, skip_record
-from vfs.models import (
-    MEASURE_OFFLOAD_BYTES,
-    MEASURED_BODY,
-    Edge,
-    Entry,
-    Observation,
-    measure_bytes,
-    measure_text,
-)
+from vfs.models import Edge, Entry, Observation
 from vfs.mounts import (
     EdgeLocation,
     Location,
@@ -90,7 +82,7 @@ from vfs.mounts import (
     validate_deny_ops,
     validate_posture,
 )
-from vfs.offload import call_offloaded, judge_rows, offload_pool, wall_truncation
+from vfs.offload import judge_rows, measured_entry, offload_pool, wall_truncation
 from vfs.ops import (
     MUTATING_OPS,
     TRAVERSE_DEPTH_DEFAULT,
@@ -165,6 +157,10 @@ _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patter
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 
 
+CLOSED_DETAIL: Final = "the filesystem is closed"
+"""The refusal of every verb called after ``close()``, by the router and by its synchronous face."""
+
+
 class ResolvedTerminal(NamedTuple):
     """Where a path landed, as the :term:`mount` that holds it and the path inside that mount.
 
@@ -234,24 +230,6 @@ class _FileSite(NamedTuple):
 
     mount: Path
     local: Path
-
-
-async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
-    """Build the :term:`entry` that a write to one path makes.
-
-    A small body is hashed in place by the model's own validator, because the hash costs less than a hop
-    to another thread. A body at or past ``MEASURE_OFFLOAD_BYTES`` is measured on the process pool first
-    and handed to the validator already measured. One caller's 16 MB write then never stalls every other
-    coroutine for the length of a SHA-256.
-    """
-    body: str | bytes | None = data if data is not None else content
-    if body is None or len(body) < MEASURE_OFFLOAD_BYTES:
-        return Entry(path=str(path), content=content, data=data)
-    if isinstance(body, bytes):
-        metrics = await call_offloaded(offload_pool(), partial(measure_bytes, body))
-    else:
-        metrics = await call_offloaded(offload_pool(), partial(measure_text, body))
-    return Entry.model_validate({"path": str(path), "content": content, "data": data}, context={MEASURED_BODY: metrics})
 
 
 def _rebase_grant_rows(result: Result, mount: Path) -> Result:
@@ -1016,7 +994,7 @@ class AsyncVirtualFileSystem:
         if resolved.path is None:
             return self._invalid_path(resolved, path, "write")
         try:
-            entry = await _authored_entry(resolved.path, content, data)
+            entry = await measured_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
         expected = None if if_version is None else {path: if_version}
@@ -1655,25 +1633,12 @@ class AsyncVirtualFileSystem:
     # -------------------------------------------------------------------
 
     async def cli(
-        self,
-        line: str,
-        *,
-        cwd: str = "/",
-        stdin: bytes = b"",
-        authority: Authority | None = None,
+        self, line: str, *, cwd: str = "/", stdin: bytes = b"", authority: Authority | None = None
     ) -> LineResult:
-        """Run a line of bash, with every effect of it a public verb called as the caller.
+        """Run a line of bash as the caller, every file it reads, lists or writes a call of a public verb.
 
-        The line is parsed whole before anything runs, so a syntax error, a refused construct
-        (``eval``, ``exec``, ``trap``, ``source`` and job control past the call) or a spent budget
-        fails the call and changes nothing. Then each file the line reads, lists or writes is a call
-        of :meth:`read`, :meth:`stat`, :meth:`ls`, :meth:`write`, :meth:`mkdir`, :meth:`delete`,
-        :meth:`copy` or :meth:`move` with ``authority``, so the line can do nothing the caller could
-        not. A line never runs as the system actor.
-
-        The call returns a :class:`Result` with ``stdout`` and ``stderr`` as bash prints them and
-        ``exit_status`` as bash would exit. A program's own non-zero status is not a failure of the
-        call; a verb a program was refused is kept on the result as a warning.
+        A line that does not parse, holds a refused word or spends a parse budget fails and changes nothing.
+        A line never runs as the system actor. :mod:`vfs.shell` holds the whole contract.
         """
         who = caller_for(authority, self._default_authority, op="cli")
         return await run_line(self, line, who, cwd=cwd, stdin=stdin)
@@ -3106,7 +3071,7 @@ class AsyncVirtualFileSystem:
 
     def _closed_error(self, op: Op) -> Result:
         """Return the ``backend_unavailable`` refusal for a verb called after ``close()``."""
-        return self._error(ErrorKind.backend_unavailable, op=op, detail="the filesystem is closed")
+        return self._error(ErrorKind.backend_unavailable, op=op, detail=CLOSED_DETAIL)
 
 
 # ---------------------------------------------------------------------------

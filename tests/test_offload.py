@@ -24,7 +24,6 @@ import pytest
 
 from tests.support.database_helpers import _url
 from tests.support.loop_ticks import LoopTicker
-from vfs import base as base_module
 from vfs import chain as chain_module
 from vfs import deadline as deadline_module
 from vfs import offload as offload_module
@@ -642,13 +641,13 @@ async def test_every_hop_rides_the_process_pool(tmp_path: Any, monkeypatch: pyte
     storage_threads = _trace_verifiers(monkeypatch, grep_module)
     router_threads = _trace_verifiers(monkeypatch, chain_module)
     measure_threads: list[str] = []
-    real_measure = base_module.measure_text
+    real_measure = offload_module.measure_text
 
     def measured(body: str) -> Any:
         measure_threads.append(_thread_name())
         return real_measure(body)
 
-    monkeypatch.setattr(base_module, "measure_text", measured)
+    monkeypatch.setattr(offload_module, "measure_text", measured)
     storage = await _needle_storage(tmp_path)
     found = await storage.grep(pattern="needle", allow_scan=True)
     assert [str(row.path) for row in found.observations] == ["/a.txt"]
