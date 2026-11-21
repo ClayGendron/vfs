@@ -1,6 +1,6 @@
 ---
 name: db_test
-description: Run the storage conformance suite against a real Postgres server in a local Docker container, end to end — start Docker Desktop, build the container up, run the engine leg on Postgres 17 or 18, tear everything down, quit Docker Desktop. Use when the user asks to "test against a real database", "run the postgres leg", "db test", or before landing a change that touches the database backend, the schema (models/rows.py), or a dialect profile.
+description: Run the storage conformance suite against a real Postgres server in a local Docker container, end to end — start Docker Desktop, build the container up, run the engine leg on Postgres 19 (CI runs every supported version), tear everything down, quit Docker Desktop. Use when the user asks to "test against a real database", "run the postgres leg", "db test", or before landing a change that touches the database backend, the schema (models/rows.py), or a dialect profile.
 ---
 
 # Local real-engine database testing
@@ -43,18 +43,19 @@ down whatever is left, volumes included, so the `docker/initdb/` init
 scripts always apply and no container carries hand-applied state:
 
 ```sh
-docker compose -f docker/compose.test.yml down -v
+docker compose -f docker/compose.test.yml --profile every-version down -v
 ```
 
-Then start Postgres. The image defaults to Postgres 17 with pgvector;
-`VFS_PG_IMAGE` runs 18 from the same file, and `VFS_PG_DATA` moves the
-tmpfs to the parent directory, since 18 keeps its data under
-`/var/lib/postgresql/18/docker`:
+Then start Postgres. A laptop runs one version, the newest: the
+`postgres` service, Postgres 19 on 54320, which starts by default. CI
+runs every version the PostgreSQL project supports, 15 to 19 today, one
+matrix row each; the older ones are services of their own behind the
+`every-version` profile (`docker/README.md` has the table), started
+here only to reproduce a failure CI found on one of them:
 
 ```sh
-docker compose -f docker/compose.test.yml up -d --wait                                   # Postgres 17
-VFS_PG_IMAGE=pgvector/pgvector:pg18 VFS_PG_DATA=/var/lib/postgresql \
-  docker compose -f docker/compose.test.yml up -d --wait                                 # Postgres 18
+docker compose -f docker/compose.test.yml up -d --wait                  # Postgres 19
+docker compose -f docker/compose.test.yml up -d --wait postgres16       # one older version, on its own port
 ```
 
 `--wait` blocks on a query-level health check, not container liveness.
@@ -99,10 +100,13 @@ the Postgres leg mostly waits on its server, so run them at the same
 time:
 
 ```sh
-( VFS_TEST_POSTGRES_URL=... uv run pytest -m postgres -q > leg_postgres.log 2>&1 ) &
+( VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
+    uv run pytest -m postgres -q > leg_postgres.log 2>&1 ) &
 ( scripts/ci.sh > leg_ci.log 2>&1 ) &
 wait; tail -n 1 leg_*.log
 ```
+
+The other versions are CI's: the pull request runs the leg on each.
 
 While iterating on a fix, run only the slice that touches it
 (`-k "<names>"`) — seconds, not minutes — and run the whole leg once,
@@ -115,10 +119,11 @@ shapes, not the seconds.
 ## 4. Tear down
 
 ```sh
-docker compose -f docker/compose.test.yml down -v
+docker compose -f docker/compose.test.yml --profile every-version down -v
 ```
 
-Always pass `-v`: volumes go with the container, so the next run
+Name the profile, or `down` leaves any older version you started running. Always pass
+`-v`: volumes go with the containers, so the next run
 starts clean. Data is on tmpfs; nothing persists. Verify with
 `docker ps -a --format '{{.Names}} {{.Status}}'` — expect **zero**
 rows, not just zero running.

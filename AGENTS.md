@@ -86,7 +86,7 @@ Every design idea is costed against one concrete enterprise deployment before it
 | Full rebuild | once a day, required by the design, folding the delta posting tables into one; 10,000,000 file visits, about ten times the day's organic writes | prior art rebuilds weekly to monthly or never; the only sub-daily full builds are zoekt's, per repository, for compaction |
 | Directory aggregates | direct-children file count, subdirectory count and byte total per directory, maintained with the write and coalesced per batch; recursive totals only for marked directories; labelled approximate, with a strict read and a repair verb; a 1 to 5 second lag budget where asynchronous | the consensus of CephFS, HDFS, btrfs, ZFS, Lustre, GPFS, FSRM and JuiceFS at ten million files and beyond; the shape vfs's own aggregation experiment tests |
 | Rights | every verb call judged against row-level grants | the number of groups and the share of files under grants is an *assumption* |
-| Engines | Postgres 17 or 18 with pgvector 0.8, tested; SQLite for local and demo use | the caps above are live constraints; an engine outside these two is unsupported |
+| Engines | Postgres, every major version upstream supports (15 to 19 today) with pgvector 0.8, tested; SQLite for local and demo use | the caps above are live constraints; an engine outside these two is unsupported |
 
 How to use it: name the multiplier an idea rides on, then multiply.
 

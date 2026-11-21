@@ -1,8 +1,8 @@
 name: Dialect tests
 
-# The real-engine conformance leg, on Postgres 17 and 18. The server comes
-# from docker/compose.test.yml — the same file used locally — so the image,
-# credentials, and health probe have one source of truth. It runs on a push
+# The real-engine conformance leg, on every Postgres version upstream supports. The servers
+# come from docker/compose.test.yml — the same file used locally — so images,
+# credentials, and health probes have one source of truth. It runs on a push
 # to main and on PRs that touch storage; there is no schedule, so a run
 # always traces back to a commit. Manual dispatch covers everything else.
 
@@ -33,17 +33,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Each tested version is a compose service of its own, on its own port.
         include:
+          - version: "15"
+            service: postgres15
+            port: "54315"
+          - version: "16"
+            service: postgres16
+            port: "54316"
           - version: "17"
-            image: pgvector/pgvector:pg17
-            data: /var/lib/postgresql/data
+            service: postgres17
+            port: "54317"
           - version: "18"
-            image: pgvector/pgvector:pg18
-            data: /var/lib/postgresql
+            service: postgres18
+            port: "54318"
+          - version: "19"
+            service: postgres
+            port: "54320"
     env:
-      VFS_PG_IMAGE: ${{ matrix.image }}
-      VFS_PG_DATA: ${{ matrix.data }}
-      VFS_TEST_POSTGRES_URL: "postgresql+asyncpg://vfs:vfs@localhost:54320/vfs"
+      VFS_TEST_POSTGRES_URL: "postgresql+asyncpg://vfs:vfs@localhost:${{ matrix.port }}/vfs"
     steps:
       - uses: actions/checkout@v6
 
@@ -51,9 +59,9 @@ jobs:
         with:
           python-version: "3.13"
 
-      # --wait blocks on the healthcheck, which probes query-readiness, not liveness.
+      # Naming the service activates its profile; --wait blocks on the healthcheck, which probes query-readiness.
       - name: Start Postgres ${{ matrix.version }}
-        run: docker compose -f docker/compose.test.yml up -d --wait --wait-timeout 300
+        run: docker compose -f docker/compose.test.yml up -d --wait --wait-timeout 300 ${{ matrix.service }}
 
       # The conformance contract renders real documents, so the document
       # libraries install beside the driver.

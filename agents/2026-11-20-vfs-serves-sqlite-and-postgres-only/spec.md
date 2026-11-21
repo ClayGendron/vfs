@@ -151,15 +151,18 @@ Reason: the profile then names only decisions that someone still makes, and no f
 
 ### 7. The Postgres version vfs is tested on is stated, not enforced
 
-The docs and `docker/README.md` state that vfs is tested on Postgres 17 and 18 with pgvector 0.8. The engine leg in CI runs on `pgvector/pgvector:pg17` and `pgvector/pgvector:pg18`. First touch does not check the server version.
+Amended on 2026-11-21: vfs is tested on every Postgres major version the PostgreSQL project supports, each with pgvector 0.8 and each a compose service of its own. Today that is 15, 16, 17, 18 and 19.
 
-How the leg runs on both:
-- `docker/compose.test.yml` keeps one `postgres` service, whose image is `${VFS_PG_IMAGE:-pgvector/pgvector:pg17}`. A laptop runs 17 by default, and `VFS_PG_IMAGE=pgvector/pgvector:pg18` runs 18 from the same file.
-- The service's tmpfs moves from `/var/lib/postgresql/data` to `/var/lib/postgresql` for 18. From version 18 the official image keeps its data under `/var/lib/postgresql/18/docker`. As built, the fallback below is taken: the tmpfs path is `${VFS_PG_DATA:-/var/lib/postgresql/data}`, the 17 leg keeps the default, and the 18 leg sets `VFS_PG_DATA=/var/lib/postgresql`, in the compose file, `docker/README.md`, the `db_test` skill and the workflow's matrix.
-- In `test-dialects.yml` the matrix row carries `image`, besides `dialect`, `env_var` and `url`. Two rows run, `postgres` with pg17 and `postgres` with pg18, under the same marker and extra.
-- The pg18 leg is run once, on a laptop or in CI, before landing 1 is called green. That run also runs `SHOW data_directory` and `df` inside the container on both images, to show that the data directory is on the tmpfs. The pg17 image declares `VOLUME /var/lib/postgresql/data`, which may sit over a tmpfs mounted at its parent. If it does, the tmpfs path comes from a second variable, `VFS_PG_DATA`, which keeps `/var/lib/postgresql/data` for 17.
+The docs and `docker/README.md` state that vfs is tested on every supported Postgres version, 15 to 19 today, with pgvector 0.8. The engine leg in CI runs on all five. First touch does not check the server version.
 
-Reason: today nothing states a version, and only 17 is run. Refusing an older server changes behaviour, and `research.md` recommends enforcing a floor of 17 in its own landing, together with the pgvector 0.8 requirement for ANN.
+How the leg runs on all five:
+- A laptop tests on one version, the newest; CI tests every one. `docker/compose.test.yml` holds one service per version, sharing one shape: `postgres` (19, the default) on host port 54320, `postgres18` on 54318, `postgres17` on 54317, `postgres16` on 54316 and `postgres15` on 54315. 19 starts by default; the others sit behind the `every-version` profile, each on its own port, so CI starts its row's service by name and a CI failure on an older version can be reproduced on a laptop by naming that service.
+- Each service keeps its data on a tmpfs at a fixed path: `/var/lib/postgresql/data` for 15, 16 and 17, and `/var/lib/postgresql` for 18 and 19, whose image keeps its data under `/var/lib/postgresql/<version>/docker`. No variable moves the path, so no caller can start a version with its data off the tmpfs.
+- In `test-dialects.yml` each matrix row carries `version`, `service` and `port`. The job starts its row's service by name and points `VFS_TEST_POSTGRES_URL` at its port. A test in `tests/scripts/test_check_release_tag.py` holds that the rows are 15 to 19 and that each row's service in the compose file has that version's image and that port.
+- The set follows the project's five-year support policy: each November the version that reaches its end of life leaves the compose file, the matrix and that test, and the new major joins. 14 reached its end of life on 2026-11-12; 15 reaches it in November 2027.
+- Each leg is run once before landing 1 is called green, with `SHOW data_directory` and `df` inside each container to show that the data directory is on the tmpfs. Run on 2026-11-21 at `5daf3907`, with `-m postgres`: 16.16, 17.11, 18.7 and 19.0, each with pgvector 0.8.6 or 0.8.7, passed 506 of 506 apiece, and `df` put each data directory on a tmpfs (15.20's too, whose leg is CI's). Postgres 15's leg runs first in CI on landing 1's pull request.
+
+Reason: today nothing states a version, and only 17 is run. Mirroring the project's support window tests what a deployment can lawfully run, the managed services included, and names one rule for when the set changes. Refusing an older server changes behaviour, so it is left to its own landing, together with the pgvector 0.8 requirement for ANN.
 
 ### 8. The working agreement, the skills and the docs say two engines
 
@@ -169,7 +172,7 @@ Each sentence lands with the code it describes. Landing 1 writes everything belo
 
 1. "Never assume SQLite" becomes: "**Design for both engines.** SQLite and Postgres are both core product. SQLite serves demos and local applications, and Postgres serves production at the reference deployment. A design that works only within SQLite's single writer, or only with a Postgres extension, needs a counterpart on the other engine with the same verb results. The caps to design against are the real ones: SQLite's 32,766 variables and expression depth of 1,000, asyncpg's 32,767 bind parameters, and SQLAlchemy's 32,700 parameter budget."
 2. "Unknown dialects are served the core verbs, never ranked search" keeps its rule against ranked search. It names the supported engines as SQLite, with sqlite-vec, and Postgres, with pgvector. "Exactly as a tuned engine does" becomes "They are served the core verbs on the generic floor, which no engine leg tests, and are fit for testing only." The sentences about MariaDB, SQL Server 2025, Oracle 23ai and MySQL community go. In landing 2 it adds: "Each storage on the floor logs one `WARNING` saying so."
-3. The Engines row of the reference deployment table becomes: "| Engines | Postgres 17 or 18 with pgvector 0.8, tested; SQLite for local and demo use | the caps above are live constraints; an engine outside these two is unsupported |".
+3. The Engines row of the reference deployment table becomes: "| Engines | Postgres, every major version upstream supports (15 to 19 today) with pgvector 0.8, tested; SQLite for local and demo use | the caps above are live constraints; an engine outside these two is unsupported |".
 4. "Per batch" says: "10,000 rows through chunked builders is one membership statement per table touched at the engines' 32,668-key chunk, and about nine for a 28-column multi-row insert; a round trip per row adds 10,000." The example in "The engine's own reader locks count" loses its SQL Server instance and keeps its rule.
 
 The anecdote in Tooling about the SQL Server leg that hung stays, because it is the reason for that rule.
@@ -193,7 +196,7 @@ Docs and other prose:
 - `tests/conftest.py` `ENGINE_URLS` and `tests/support/server_schemas.py` `ENGINE_LEGS` keep `postgres`. The `mariadb`, `mssql` and `oracle` markers leave `pyproject.toml`.
 - The extras `mssql`, `mariadb` and `oracle` leave `pyproject.toml`, and `all` stops naming them. `uv lock` drops aioodbc, pyodbc, aiomysql, pymysql, oracledb and cryptography. A read of `uv.lock` on 2026-11-20 found oracledb to be the only package that needs cryptography.
 - `docker/compose.test.yml` loses three services and its profile and Rosetta comments. `docker/initdb/mariadb` and `docker/initdb/oracle` are deleted. `docker/README.md` keeps only the Postgres setup.
-- `.github/workflows/test-dialects.yml` runs a matrix of Postgres 17 and 18 and loses the ODBC step.
+- `.github/workflows/test-dialects.yml` runs a matrix of every supported Postgres version, 15 to 19, and loses the ODBC step.
 - `tests/support/plan_store.py` keeps the SQLite and Postgres plan readers.
 
 ### 10. `SQLiteStorage` and `PostgresStorage` are named constructors over the one storage class
@@ -314,7 +317,7 @@ Out of scope: `context/`, which takes no new work, and `crates/`, which holds no
 ## What the docs must say
 
 - **Overview and tutorial, landing 1.** VFS runs on SQLite and Postgres. SQLite is the database for a demo or a local application, and Postgres the database for a shared deployment.
-- **Postgres requirements, landing 1.** Version 17 or 18, tested, with pgvector 0.8 installed by a role that may create extensions. vfs proves the extension and never creates it.
+- **Postgres requirements, landing 1.** Any version the PostgreSQL project supports, 15 to 19 today, tested, with pgvector 0.8 installed by a role that may create extensions. vfs proves the extension and never creates it.
 - **`DatabaseStorage`, landing 2.** It serves any SQLAlchemy URL. A dialect other than the two is served the generic floor, is withheld `search`, and logs one warning on the `vfs.storage.backends.database.engine` logger.
 - **Reference and tutorial, landing 3.** `SQLiteStorage` and `PostgresStorage` each get an entry, and the tutorial shows both constructions.
 
@@ -372,7 +375,7 @@ The Postgres server was a container started again, not created fresh, for both r
 
 ## Choices to confirm
 
-Confirmed on 2026-11-21: choices 1, 2 and 4 stand as written. Choice 3 is not yet confirmed.
+Confirmed on 2026-11-21: all four choices stand as written. Choice 3's tested versions are amended to every version the PostgreSQL project supports, 15 to 19 today, stated and not enforced, as decision 7 says.
 
 Since this spec was written, `DatabaseStorage(session_factory=...)` was removed by the branch `a-cancelled-call-leaves-its-storage-intact`, and a storage always builds its own engine from `url=` and `engine_arguments=`. Decision 10's borrowed-engine example and landing 3's mismatch tests name `session_factory=`. Before landing 3 is built they are recut: the mismatch is a URL of the other engine, such as `SQLiteStorage(url="postgresql+asyncpg://...")`, refused with both dialects named. Landings 1 and 2 are unaffected.
 

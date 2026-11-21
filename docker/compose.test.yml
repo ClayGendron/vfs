@@ -1,40 +1,82 @@
-# The real Postgres server for the storage conformance suite.
+# The real Postgres servers for the storage conformance suite, one service per supported version.
 #
-#   docker compose -f docker/compose.test.yml up -d --wait                                     # Postgres 17
-#   VFS_PG_IMAGE=pgvector/pgvector:pg18 VFS_PG_DATA=/var/lib/postgresql \
-#     docker compose -f docker/compose.test.yml up -d --wait                                   # Postgres 18
+#   docker compose -f docker/compose.test.yml up -d --wait     # Postgres 19, the one a laptop runs
 #
-# The service carries a healthcheck so `--wait` blocks until the server
-# accepts queries, not merely until the container runs. CI uses this
-# same file (.github/workflows/test-dialects.yml), so the image, env and
-# health probe stay identical between a laptop and a runner.
+# A laptop tests on the newest version alone: `postgres`, Postgres 19, on
+# 54320, which starts by default. CI tests every version the PostgreSQL
+# project supports, one matrix row each (.github/workflows/test-dialects.yml);
+# the older ones sit behind the `every-version` profile, each on its own
+# port, and naming one service starts it alone.
 #
-# The host port is offset (5432 + a leading digit) so the container
-# never collides with a Homebrew/Postgres.app/local install already
-# holding the default port.
+# Every service carries a healthcheck so `--wait` blocks until the server
+# accepts queries, not merely until the container runs. CI uses this same
+# file, so images, env and health probes stay identical between a laptop
+# and a runner.
+#
+# Host ports are offset from 5432 so a container never collides with a
+# Homebrew/Postgres.app/local install already holding the default port.
 
 name: vfs-test
 
+# One service's shape; each version names its image, port and data directory.
+# The pgvector image is a superset of the plain one, which cannot CREATE EXTENSION vector.
+x-postgres: &postgres
+  environment:
+    POSTGRES_USER: vfs
+    POSTGRES_PASSWORD: vfs
+    POSTGRES_DB: vfs
+  # Installs pgvector once at first start: vfs proves the extension, never creates it.
+  volumes:
+    - ./initdb/postgres:/docker-entrypoint-initdb.d:ro
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U vfs -d vfs"]
+    interval: 2s
+    timeout: 3s
+    retries: 15
+
 services:
   postgres:
-    # The pgvector image is a superset of the plain postgres image, which
-    # cannot CREATE EXTENSION vector, which the native vector column needs.
-    image: ${VFS_PG_IMAGE:-pgvector/pgvector:pg17}
-    environment:
-      POSTGRES_USER: vfs
-      POSTGRES_PASSWORD: vfs
-      POSTGRES_DB: vfs
+    <<: *postgres
+    image: pgvector/pgvector:pg19
     ports:
       - "54320:5432"
     # Disposable test data; tmpfs skips disk I/O and leaves nothing behind.
-    # From 18 the image keeps its data under /var/lib/postgresql/18/docker.
+    # From 18 the image keeps its data under /var/lib/postgresql/<version>/docker.
     tmpfs:
-      - ${VFS_PG_DATA:-/var/lib/postgresql/data}
-    # Installs pgvector once at first start: vfs proves the extension, never creates it.
-    volumes:
-      - ./initdb/postgres:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vfs -d vfs"]
-      interval: 2s
-      timeout: 3s
-      retries: 15
+      - /var/lib/postgresql
+
+  postgres15:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg15
+    ports:
+      - "54315:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  postgres16:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg16
+    ports:
+      - "54316:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  postgres17:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg17
+    ports:
+      - "54317:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  postgres18:
+    <<: *postgres
+    profiles: [every-version]
+    image: pgvector/pgvector:pg18
+    ports:
+      - "54318:5432"
+    tmpfs:
+      - /var/lib/postgresql

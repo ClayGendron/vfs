@@ -1,14 +1,38 @@
-# Real-engine test database
+# Real-engine test databases
 
-`compose.test.yml` starts the Postgres server the storage conformance
-suite runs against. vfs supports two engines, SQLite and Postgres, and
-SQLite needs no server. The Postgres leg activates when
-`VFS_TEST_POSTGRES_URL` is set and skips otherwise, so a plain
-`uv run pytest` never needs Docker. CI
-(`.github/workflows/test-dialects.yml`) uses this same compose file.
+`compose.test.yml` starts the Postgres servers the storage conformance
+suite runs against, one service per supported version. vfs supports two
+engines, SQLite and Postgres, and SQLite needs no server. The Postgres
+leg activates when `VFS_TEST_POSTGRES_URL` is set and skips otherwise,
+so a plain `uv run pytest` never needs Docker.
 
-vfs is tested on Postgres 17 and 18 with pgvector 0.8. The image is
-`pgvector/pgvector:pg17` unless `VFS_PG_IMAGE` names another.
+vfs is tested on every Postgres major version the PostgreSQL project
+supports, each with pgvector 0.8: today 15, 16, 17, 18 and 19. The
+project supports a major version for five years, so each November the
+version that reaches its end of life leaves this file and the workflow,
+and the new major joins.
+
+**A laptop runs one version, the newest: Postgres 19.** It is the
+`postgres` service, on host port 54320, and starts by default. **CI runs
+every version**, one matrix row each in
+`.github/workflows/test-dialects.yml`, from this same file:
+
+| Service | Version | Host port | Who runs it |
+|---|---|---|---|
+| `postgres` | 19 | 54320 | a laptop, and CI |
+| `postgres18` | 18 | 54318 | CI |
+| `postgres17` | 17 | 54317 | CI |
+| `postgres16` | 16 | 54316 | CI |
+| `postgres15` | 15 | 54315 | CI |
+
+The older versions sit behind the `every-version` profile; naming one
+service starts it alone, so a failure CI reports on one version can be
+reproduced here. Each keeps its data on a tmpfs: 15, 16 and 17 at
+`/var/lib/postgresql/data`, and 18 and 19 at `/var/lib/postgresql`,
+since from 18 the image keeps its data under
+`/var/lib/postgresql/<version>/docker`. Host ports are offset from 5432
+so a container never collides with a Homebrew or Postgres.app install
+already holding the default port.
 
 The leg is reentrant: vfs's table names are fixed, so each test creates
 a schema of its own (`vfs_t_<hex>`) and drops it at teardown, and
@@ -28,21 +52,17 @@ VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
   uv run pytest -m postgres
 ```
 
-Postgres 18 runs from the same file. From 18 the image keeps its data
-under `/var/lib/postgresql/18/docker`, so the tmpfs moves to the parent
-directory with `VFS_PG_DATA`:
+To reproduce a failure CI found on an older version, start that service
+and point the URL at its port:
 
 ```sh
-VFS_PG_IMAGE=pgvector/pgvector:pg18 VFS_PG_DATA=/var/lib/postgresql \
-  docker compose -f docker/compose.test.yml up -d --wait
+docker compose -f docker/compose.test.yml up -d --wait postgres16
+VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54316/vfs" \
+  uv run pytest -m postgres
 ```
-
-The host port is 54320, offset from 5432 so the container never
-collides with a Homebrew or Postgres.app install already holding the
-default port.
 
 Tear down (data is tmpfs/ephemeral — nothing persists):
 
 ```sh
-docker compose -f docker/compose.test.yml down -v
+docker compose -f docker/compose.test.yml --profile every-version down -v
 ```

@@ -29,7 +29,7 @@ Read. The index is created at the `after_create` event. Its recall is expected t
 1. **A subtree predicate is the bytewise range `path > root || '/' AND path < root || '0'`** on both tuned engines, as `ranges.py` already spells scopes. It is exact under `COLLATE "C"` on Postgres and `BINARY` on SQLite, because `/` sorts just before `0`. The generic floor keeps `LIKE`, behind one profile fact, a bytewise key order.
 2. **`native_ann` is served only on pgvector 0.8 or later.** Below it, the exact tier is served.
 3. **`index_method="ivfflat"` is removed.**
-4. **Postgres 17 is the stated floor, refused at first touch below it.**
+4. **The oldest version the PostgreSQL project supports is the floor, refused at first touch below it** (15 today). The tested set, every supported version, was decided on 2026-11-21 in the drop's decision 7; this landing turns the stated floor into a refusal, and the floor moves each November with the project's support window.
 
 ## Tests
 
