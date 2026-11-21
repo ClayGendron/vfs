@@ -100,12 +100,14 @@ Close-out. Checked: three charters, all clean. Not reached: a dropped engine's o
 
 ## Disposition
 
-- L1: not fixed on this branch because `agents/tasks.md` is deleted on `dev` by the pull request that turns the task list into specs; once that merges and `dev` is merged in, the file and its four lines are gone.
-- L2: fixed in `d48dd56d`: the tutorial's line 105 gains the fix text as written.
-- L3: fixed in `d48dd56d`: the `db_test` skill's Postgres 18 line sets `VFS_PG_DATA=/var/lib/postgresql` beside `VFS_PG_IMAGE`, and the spec's decision 7 says the fallback was taken and where it is set.
-- L4: fixed in `d48dd56d`: the four comments and docstrings take the fix texts as written.
-- L5: fixed in `d48dd56d` by the spec's fix text: decision 6's "Kept on purpose" gains the `escape_like` line; the parameter stays.
+- L1: not fixed on this branch because `agents/tasks.md` is deleted on `dev` by the pull request that turns the task list into specs; once that merges and `dev` is merged in, the file and its four lines are gone. Confirmed (EXECUTED): `gh pr view 28` ("The task list becomes specs, and is deleted") is open, not merged, and deletes `agents/tasks.md` whole, 122 lines removed and none added, which is every line the file holds at `660ef30d`; the spec's Landings rebase this branch on `dev` before landing 1's pull request, so the reason stands while 28 lands first. If 28 does not land first, the L1 fix text applies.
+- L2: fixed in `d48dd56d`: the tutorial's line 105 gains the fix text as written. Confirmed (READ, `git show d48dd56d`): the two sentences are the fix text word for word; they add no link and no code span, and `scripts/docs.sh check` was not re-run on `660ef30d`.
+- L3: fixed in `d48dd56d`: the `db_test` skill's Postgres 18 line sets `VFS_PG_DATA=/var/lib/postgresql` beside `VFS_PG_IMAGE`, and the spec's decision 7 says the fallback was taken and where it is set. Confirmed (READ): the skill's line now matches `docker/README.md` and the workflow's matrix, and decision 7's bullet names the compose default and the four places that set the variable; the pg18 run is still owed by ruling.
+- L4: fixed in `d48dd56d`: the four comments and docstrings take the fix texts as written. Confirmed (READ, and EXECUTED `ruff check` and `ruff format --check` on the three files, clean): each of the four lines is the fix text.
+- L5: fixed in `d48dd56d` by the spec's fix text: decision 6's "Kept on purpose" gains the `escape_like` line; the parameter stays. Confirmed (READ): the bullet is the fix text word for word, and `src/` is untouched by the fix commits (EXECUTED, `git diff 4adde870 660ef30d -- src/` is empty).
 
 ## Verdict
 
 Lands: nothing High or Medium stands; the statements on SQLite and Postgres and on the floor are equal at the base and the tip by my own run, every new test goes red on the base, and the five Lows are write-ins with their fix texts, while the Postgres 18 run stays owed by ruling before the landing is called green. On `4adde870`.
+
+2026-11-21, re-read on 660ef30d: Lands. Nothing High or Medium stands, judged from `git diff 4adde870 660ef30d` and not from the Disposition's words. `d48dd56d` touches only prose, a skill, the spec and four test comments, and no line of `src/` (EXECUTED); L2 to L5 take their fix texts as written (READ). L1's "not fixed because" stands: pull request 28 is open and deletes `agents/tasks.md` whole (EXECUTED, `gh pr view 28`), and this branch is rebased on `dev` before its own pull request. The Postgres 18 run stays owed by ruling. The Disposition holds no line I found false.
