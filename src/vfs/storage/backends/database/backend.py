@@ -2,27 +2,23 @@
 
 Runs on any SQLAlchemy-compatible database: known dialects carry tuned
 policy, everything else serves on the generic floor (``dialects.py``).
-The read family and both pattern verbs are live — point reads with
-projection push-down, ``parent_id`` listings, glob's batched pattern
-fan, grep's indexed pipeline (``grep.py``), and the descent-ladder
-classification chokepoint (``descent.py`` / ``reads.py``) — as are the
-mutation core (write/edit/mkdir batches planned and executed as one
-transaction each, ``writes.py``), the serialized verbs — move/copy
-(``topology.py``) and delete/restore/sweep (``trash.py``) over the
-shared kit in ``serialized.py`` — and the edge pair ``mkedge``/``rmedge``
-over the same table as the storage-minted fs mirror (``edges.py``).
+Point reads with projection push-down, ``parent_id`` listings and glob's
+batched pattern fan are in ``reads.py``, on the descent ladder of
+``descent.py``; grep's indexed pipeline in ``grep.py``; write, edit and
+mkdir batches, each planned and executed as one transaction, in
+``writes.py``; move and copy in ``topology.py`` and delete, restore and
+sweep in ``trash.py``, over the kit in ``serialized.py``; and
+``mkedge``/``rmedge``, over the table of the fs mirror, in ``edges.py``.
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
     storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
 
-Built or borrowed, never a bare engine: a backend builds its engine or
-borrows sessions — it never holds an engine it didn't make. First touch
-happens at the first routed op (or the ``first_touch`` admin verb) on
-the caller's loop; ``close()`` disposes the engine iff built and never
-touches a borrowed pool. Each protocol method runs in one session under
-the retry discipline: a retryable outcome restarts the whole method
-from its first read, and a driver failure that escapes retry returns a
-classified ``Result`` — never a raw exception.
+Built or borrowed: a backend never holds an engine it did not make.
+First touch runs at the first routed op or at ``first_touch``, on the
+caller's loop; ``close()`` disposes a built engine and never touches a
+borrowed pool. Each protocol method runs in one session under retry: a
+retryable outcome restarts it from its first read, and a driver failure
+that escapes retry returns a classified ``Result``, never an exception.
 """
 
 from __future__ import annotations
@@ -144,9 +140,9 @@ class DatabaseStorage:
     first touch: a mount that already exists keeps its stored posture,
     and only the ``set_posture`` verb changes it.
 
-    On SQLite a caller that is cancelled waits for its attempt to end. A
-    write cancelled before its commit changes nothing, and one cancelled
-    later has landed, so the caller cannot tell which.
+    On SQLite a cancelled caller waits while its call ends the statement
+    in flight, sends no other and is rolled back: a cancelled write
+    changes nothing unless its commit had begun, and then it has landed.
     """
 
     def __init__(
