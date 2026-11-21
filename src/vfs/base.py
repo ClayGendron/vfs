@@ -1359,6 +1359,8 @@ class AsyncVirtualFileSystem:
 
         ``after`` and ``limit`` page the matches in path order across every mount, as they page
         :meth:`ls`, and take any path as the key. A page takes no ``max_count`` and no ``observations``.
+        A page cut short by the time budget carries the ``truncated`` warning, and its key resumes after
+        the last row it judged; a page that judged no row ends the listing there, with the warning.
 
         The call returns a :class:`Result`. The set of matches is the same wherever the mounts are
         placed. The order is not, so the first ``max_count`` rows can differ from one layout to
