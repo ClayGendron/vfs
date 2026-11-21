@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "     1\tTODO: write the intro\n     2\tthe quick brown fox\n     3\tjumps over the lazy dog\n     4\tTODO: check the numbers\n     5\tdone\n",
+  "stderr": ""
+}

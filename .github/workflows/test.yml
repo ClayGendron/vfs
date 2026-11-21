@@ -22,6 +22,27 @@ on:
       - ".github/workflows/**"
 
 jobs:
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install the WebAssembly target
+        run: rustup target add wasm32-unknown-unknown && rustup component add clippy rustfmt
+
+      - name: Lint the shell crate
+        run: cargo clippy -p vfs-shell --all-targets -- -D warnings && cargo fmt -p vfs-shell --check
+
+      - name: Test the shell crate
+        run: cargo test --release -p vfs-shell
+
+      - name: Build the machine for WebAssembly
+        run: cargo build --release -p vfs-shell --target wasm32-unknown-unknown
+
+      - name: Print the corpus score
+        run: scripts/shell_score.sh
+
   test:
     runs-on: ubuntu-latest
     # A backstop for a hang outside any test: a run takes about 15 minutes.
