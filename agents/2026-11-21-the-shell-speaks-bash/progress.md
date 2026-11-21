@@ -50,8 +50,10 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - Roadmap F1 (removing `SupportsRun`), `move(replace=)` and `glob(case_mode=)` are not built.
 - `printf` floats use 64-bit doubles where bash uses `long double`, so `%.20f` and `1e309` differ.
 - The regular-expression engine backtracks, with no back-references, and fails a search past 4,000 characters of depth; a Pike-style engine would be linear. Glob and extglob matching backtrack too: `*a*a*a*a*b` over 100,000 characters spends the line's fuel where bash answers in milliseconds.
+- The module's boundary is JSON with every byte in base64, which costs about 700 instructions a byte, so a line reads about 28 MB under the default fuel (`cat` of 1 MB spends about 0.7 billion instructions, `grep -c` 1.5 billion). Serving `grep -r` and `find` from the indexed verbs moves the heavy case off it; a binary wire is the other remedy.
+- The roadmap's one write per redirection holds for a command that only prints; a group, a loop or a program has its file opened by a write first, since only a write can learn that the caller may not write the file, and bash refuses the redirection before the command runs.
 - The building of a wheel from the sdist now needs the `wasm32-unknown-unknown` target beside the Rust toolchain.
 
 ## Next
 
-The review of steps 3 to 7, code and documents, by a fresh reviewer; then the pull request.
+The review of steps 3 to 7 (`reviews/step-3-7-code-review.md`) is answered in `ac1d370`; its reviewer reads the fix and signs again, then the pull request.
