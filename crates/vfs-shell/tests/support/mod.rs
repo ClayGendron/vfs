@@ -403,7 +403,46 @@ fn base64_decode(text: &str) -> Vec<u8> {
     out
 }
 
+/// The environment a case runs in, as the recorder gives it to bash.
+pub const ENVIRONMENT: &[(&str, &str)] = &[
+    ("HOME", "/home/agent"),
+    ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+    ("LC_ALL", "C.UTF-8"),
+    ("TZ", "UTC"),
+    ("USER", "agent"),
+    ("LOGNAME", "agent"),
+    ("TERM", "dumb"),
+];
+
 /// Run one case through the shell and its reference host.
-pub fn run_case(_case: &Case) -> Result<Outcome, String> {
-    Err("no machine yet".to_owned())
+pub fn run_case(case: &Case) -> Result<Outcome, String> {
+    let mut host = shell::host::MemoryHost::new();
+    host.add_dir("/home/agent");
+    host.add_dir("/work");
+    host.add_dir("/tmp");
+    if case.seed_world {
+        for (path, bytes) in seed_world() {
+            match path.strip_suffix('/') {
+                Some(dir) => host.add_dir(&format!("/work/{dir}")),
+                None => host.add_file(&format!("/work/{path}"), &bytes),
+            }
+        }
+    }
+    let mut config = host.config();
+    config.env = ENVIRONMENT
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    config.cwd = "/work".to_owned();
+    let source = case.source.clone();
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.run(&source, config)));
+    match result {
+        Ok(outcome) => Ok(Outcome {
+            stdout: outcome.stdout,
+            stderr: outcome.stderr,
+            status: outcome.status,
+        }),
+        Err(_) => Err("the machine panicked".to_owned()),
+    }
 }

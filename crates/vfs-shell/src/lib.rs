@@ -7,4 +7,7 @@
 //! the machine; [`host::MemoryHost`] is the reference host, a tree of files
 //! held in memory.
 
+pub mod host;
+pub mod machine;
+pub mod programs;
 pub mod syntax;

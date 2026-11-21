@@ -119,6 +119,13 @@ struct DocSlot {
     doc: HereDoc,
 }
 
+struct Saved {
+    pos: usize,
+    depth: u32,
+    pending: usize,
+    heredocs: usize,
+}
+
 struct Parser<'a> {
     src: &'a str,
     bytes: &'a [u8],
@@ -386,6 +393,11 @@ impl<'a> Parser<'a> {
             let mut sub = Parser::new(&body, body_start, self.limits, self.depth);
             let parts = sub.read_inner(Inner::HereDoc, b"", false)?;
             self.absorb(&sub);
+            if !sub.heredocs.is_empty() {
+                return Err(self.error(
+                    "here-document inside a here-document body is not supported".to_owned(),
+                ));
+            }
             Word {
                 parts,
                 span: self.span_from(body_start),
@@ -946,7 +958,7 @@ impl<'a> Parser<'a> {
 
     /// `(( expr ))`, or nothing when the text is two nested subshells.
     fn try_arith_command(&mut self, start: u32) -> Parsed<Option<CompoundCommand>> {
-        let saved = self.pos;
+        let saved = self.save();
         self.bump(2);
         match self.read_inner(Inner::Arith, b"", false) {
             Ok(parts) if self.starts_with("))") => {
@@ -956,11 +968,29 @@ impl<'a> Parser<'a> {
                 let word = Word { parts, span };
                 Ok(Some(CompoundCommand::Arith(word, span)))
             }
+            Err(ParseError::Budget(which, limit)) => Err(ParseError::Budget(which, limit)),
             _ => {
-                self.pos = saved;
+                self.rewind(saved);
                 Ok(None)
             }
         }
+    }
+
+    /// Where the parser stands, to go back to when a reading does not fit.
+    fn save(&self) -> Saved {
+        Saved {
+            pos: self.pos,
+            depth: self.depth,
+            pending: self.pending.len(),
+            heredocs: self.heredocs.len(),
+        }
+    }
+
+    fn rewind(&mut self, saved: Saved) {
+        self.pos = saved.pos;
+        self.depth = saved.depth;
+        self.pending.truncate(saved.pending);
+        self.heredocs.truncate(saved.heredocs);
     }
 
     fn read_arith_clause(&mut self, end: u8) -> Parsed<Option<Word>> {
@@ -1716,17 +1746,21 @@ impl<'a> Parser<'a> {
                 self.read_double().map(Some)
             }
             Some(b'(') if self.peek_at(2) == Some(b'(') => {
-                let saved = self.pos;
+                let saved = self.save();
                 self.bump(3);
-                if let Ok(parts) = self.read_inner(Inner::Arith, b"", false)
-                    && self.starts_with("))")
-                {
-                    self.bump(2);
-                    self.token(4)?;
-                    let span = self.span_from(start);
-                    return Ok(Some(WordPart::Arith(Box::new(Word { parts, span }), span)));
+                match self.read_inner(Inner::Arith, b"", false) {
+                    Ok(parts) if self.starts_with("))") => {
+                        self.bump(2);
+                        self.token(4)?;
+                        let span = self.span_from(start);
+                        return Ok(Some(WordPart::Arith(Box::new(Word { parts, span }), span)));
+                    }
+                    Err(ParseError::Budget(which, limit)) => {
+                        return Err(ParseError::Budget(which, limit));
+                    }
+                    _ => {}
                 }
-                self.pos = saved;
+                self.rewind(saved);
                 self.read_command_sub(start).map(Some)
             }
             Some(b'(') => self.read_command_sub(start).map(Some),
