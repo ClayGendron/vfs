@@ -107,3 +107,16 @@ Built on the branch `write-takes-preconditions-and-an-append` on 2026-11-20, in 
 - [ ] **Decide whether `edit` takes the row lock an append takes.** `edit` keeps 20 of 20 concurrent edits on SQLite only, where every writer holds the one writer lock. It takes no row lock. On Postgres and MariaDB a losing edit runs again up to four times and is then refused, and on SQL Server and Oracle it is refused `conflict` at once. No edit is lost in silence. Read, and not run on a server engine.
 - [ ] **The example in `documentation/maintainers/how-we-write-docstrings.md` names `overwrite`.** It shows the `write` docstring before and after a rewrite, and `write` no longer takes that argument.
 - [ ] **Move the draft spec out of `context/`.** `context/specifications/active/174-write-preconditions-and-the-guarded-append/` is replaced and points at the new spec. Its notes for the shell, the WASI host and the adapter specs were not carried over.
+
+## SQLite and Postgres only
+
+Researched and specified on 2026-11-20, on the branch `vfs-serves-sqlite-and-postgres-only`, cut from `write-takes-preconditions-and-an-append` at `c42dccd4`. Three files are in `agents/2026-11-20-vfs-serves-sqlite-and-postgres-only/`: the spec, `spec.md`; the memo that ranks the Postgres-native work, `research.md`; and the list of every line the drop touches, `inventory.md`. Nothing is built. The branch is not pushed.
+
+- [ ] **Confirm the spec's four choices.** The warning as one `logging` record, under D17, not a Python warning. The dropped engines served by the floor with the warning, not refused by name. The tested Postgres versions stated, not enforced. The named constructors as landing 3 of the same spec.
+- [ ] **Build the spec's three landings, in order.** Run the statement diff of landing 1 on the SQLite file leg and the Postgres leg, before and after. The diff is what proves that no statement changed.
+- [ ] **Choose which of the memo's Postgres candidates get a spec.** Four are ranked "take now": the subtree range in place of a bound `LIKE`; pgvector 0.8 for the ANN tier, with tests of its plan and recall; one array bind for each key list; and old index epochs dropped as tables.
+- [ ] **A bound subtree `LIKE` scans all of `vfs_entries` once a connection has switched to its generic plan.** On Postgres 17 and 18, vfs's own `tree` statement switched after five executions on a large subtree, and stayed switched. A keyset page under the same plan read 910,459 buffers for 53 rows. Run, in experiment X2 of the memo.
+- [ ] **On pgvector below 0.8, vector search returns at most 40 chunks.** The depth is at least 100, and `ef_search` stays at its default of 40. Recall@100 is 0.40 unscoped and 0.039 at a 10% scope. Run, in experiment X1 of the memo.
+- [ ] **A delete, restore, sweep, move or copy holds the topology lock for its whole batch.** `serialize()` takes the lock row as the verb's first statement. A 10,000-target delete therefore stalls every other such verb on the mount for the length of the batch. Read.
+- [ ] **A relabel rewrites rows whose level is already right.** `relabel_spans` has no `everyone_level <> :rank` term. Read.
+- [ ] **`index_method="ivfflat"` builds its index on an empty table and never raises `ivfflat.probes`.** Read. Its recall is expected to be near useless, and it was not run.
