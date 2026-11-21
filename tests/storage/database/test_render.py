@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from typing import Any
 
 import pytest
@@ -289,18 +288,21 @@ class TestSkipLaw:
 
 
 class _Slow:
-    """A renderer that spends the wall budget between units."""
+    """A renderer that spends the wall budget between units, on the Builder clock *now* that it moves itself."""
 
     name = "slow"
     extra = "slow"
     mimes = (PDF,)
     version: str | None = "1"
 
+    def __init__(self, now: list[float] | None = None) -> None:
+        self._now = [0.0] if now is None else now
+
     def render(self, source: RenderSource, limits: RenderLimits) -> Rendering:
         builder = Builder(limits, input_bytes=len(source.data), total_units=2)
         assert builder.unit("page", 1)
         builder.paragraph("first page text")
-        time.sleep(limits.seconds + 0.02)
+        self._now[0] += limits.seconds + 0.02
         builder.unit("page", 2)
         return builder.build()
 
@@ -400,8 +402,11 @@ class TestStatuses:
         assert [str(r.path) for r in (await storage.grep(pattern="quokka")).observations] == ["/q.pdf"]
         await storage.close()
 
-    async def test_the_time_budget_keeps_the_text_so_far_as_partial(self, tmp_path) -> None:
-        storage = _mount(tmp_path, renderers=RendererRegistry((_Slow(),)), render_limits=RenderLimits(seconds=0.01))
+    async def test_the_time_budget_keeps_the_text_so_far_as_partial(self, tmp_path, monkeypatch) -> None:
+        now = [0.0]
+        monkeypatch.setattr("vfs.rendering.markdown.monotonic", lambda: now[0])
+        slow = _Slow(now)
+        storage = _mount(tmp_path, renderers=RendererRegistry((slow,)), render_limits=RenderLimits(seconds=0.01))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")

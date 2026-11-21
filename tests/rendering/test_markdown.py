@@ -33,6 +33,13 @@ def _clock(monkeypatch: pytest.MonkeyPatch, *, readings: int) -> list[int]:
     return reads
 
 
+def _hand_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The Builder's clock, moved only by the test: every read answers ``now[0]``."""
+    now = [0.0]
+    monkeypatch.setattr("vfs.rendering.markdown.monotonic", lambda: now[0])
+    return now
+
+
 class TestMarkers:
     def test_one_grammar_for_every_kind(self) -> None:
         assert unit_marker("page", 3) == "<!-- page 3 -->"
@@ -142,11 +149,12 @@ class TestVerdicts:
         assert builder.unit("page", 2) is False
         assert builder.build().status == "truncated"
 
-    def test_the_wall_clock_makes_the_text_so_far_partial(self) -> None:
+    def test_the_wall_clock_makes_the_text_so_far_partial(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = _hand_clock(monkeypatch)
         builder = _build(RenderLimits(seconds=0.01), total_units=2)
         assert builder.boundary(1)
         builder.paragraph("kept")
-        time.sleep(0.02)
+        now[0] = 0.02
         assert builder.boundary(2) is False
         rendering = builder.build()
         assert (rendering.status, rendering.text) == ("partial", "kept\n")
@@ -169,12 +177,13 @@ class TestVerdicts:
         assert (rendering.status, rendering.text) == ("failed", None)
         assert rendering.detail is not None and "exceed 1x the 10-byte input" in rendering.detail
 
-    def test_the_cut_wins_over_the_clock(self) -> None:
+    def test_the_cut_wins_over_the_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = _hand_clock(monkeypatch)
         builder = _build(RenderLimits(chars=24, seconds=0.01), total_units=2)
         assert builder.unit("page", 1)
         builder.paragraph("yes")
         builder.paragraph("more words")  # does not fit: cut inside unit 1
-        time.sleep(0.02)
+        now[0] = 0.02
         assert builder.unit("page", 2) is False
         assert builder.build().status == "truncated"
 
@@ -310,10 +319,11 @@ class TestMarkersAndClock:
         rendering = cut.build()
         assert (rendering.status, rendering.detail) == ("empty", "no text in 1 units")
 
-    def test_a_table_is_cut_by_the_clock_between_rows(self) -> None:
+    def test_a_table_is_cut_by_the_clock_between_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = _hand_clock(monkeypatch)
         builder = _build(RenderLimits(seconds=0.01), total_units=1)
         assert builder.unit("sheet", 1, "S")
-        time.sleep(0.02)
+        now[0] = 0.02
         assert builder.table([["h"], ["r1"], ["r2"]]) is False
         rendering = builder.build()
         assert rendering.status == "partial"
