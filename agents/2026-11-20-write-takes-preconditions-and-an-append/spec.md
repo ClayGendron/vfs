@@ -1,6 +1,6 @@
 # Write takes preconditions and an append
 
-This spec is not built and has had no review. It replaces the draft at `context/specifications/active/174-write-preconditions-and-the-guarded-append/spec.md`, which was cut on 2026-10-24 against commit `ba77449`. The design is the draft's. Every fact in it was checked against `dev` at `93f3d297` on 2026-11-20, and its probes were run again that day. What moved since the draft is listed under "What changed since the draft".
+This spec is built, on the branch `write-takes-preconditions-and-an-append`, in four landings on 2026-11-20. It has had no review. Lint, format, types and the tests pass on SQLite, the slow tier included. `scripts/ci.sh`, `scripts/docs.sh check` and the server engine legs have not run. It replaces the draft at `context/specifications/active/174-write-preconditions-and-the-guarded-append/spec.md`, which was cut on 2026-10-24 against commit `ba77449`. The design is the draft's. Every fact in it was checked against `dev` at `93f3d297` on 2026-11-20, and its probes were run again that day. What moved since the draft is listed under "What changed since the draft", and what was settled while it was built under "Decided while it was built".
 
 ## The outcome wanted
 
@@ -26,7 +26,8 @@ Run on 2026-11-20 on a SQLite file, at `dev` `93f3d297`. Statement counts leave 
 | Fact | How it is known |
 |---|---|
 | Two callers read `/log.txt`, and each writes it back with one more line. Both report success. One line survives. | Run. |
-| 20 concurrent read-then-write appends: 20 report success and 1 line survives. The same 20 through `edit` keep 20. | Run. |
+| 20 concurrent read-then-write appends: 20 report success and 1 line survives. The same 20 through `edit` keep 20. | Run, on SQLite, where every writer holds the database's one writer lock. |
+| `edit` takes no row lock. Its snapshot is a plain read, and its guard is the version on the `UPDATE`. On Postgres and MariaDB a losing edit runs again, up to four attempts, and is then refused. On SQL Server and Oracle it is refused `conflict` at once. No edit is lost in silence on any engine. | Read, `edit_rows` and `_classify_guard_misses`. Not run on a server engine. |
 | A rewrite of a file with its own body reports `updated`, adds one to the version, and mints no version row. At the seam, as the system actor, it issues 7 statements: the snapshot, the guarded `UPDATE`, the revision read, the body read for the mint, two body `DELETE`s and the content `INSERT`. Through the kernel as the default caller it issues 13. | Run. |
 | A rewrite with a new body issues 8 statements at the seam and 15 through the kernel. | Run. |
 | An identical rewrite of 1,000 files updates 1,000 entry rows, deletes and inserts 1,000 content rows, and moves every version from 1 to 2. | Run. |
@@ -72,7 +73,7 @@ Four public methods take this shape: `AsyncVirtualFileSystem.write`, `AsyncSessi
 
 - `if_version` is the precondition of the single form. `if_versions` is the precondition of the batch form, a mapping from path to expected version. A path with no key has no precondition.
 - `if_absent=True` is today's `overwrite=False` under one name for one fact. The default replaces an occupant, as `overwrite=True` does today. No alias is kept, because the design is not released.
-- `append` and `if_absent` apply to every entry of the call.
+- `if_absent` applies to every entry of the call. `append` goes with the single form only, and takes one file.
 
 The seam takes one shape for both forms.
 
@@ -101,7 +102,7 @@ Reason: a version is the one coordinate every reader already holds, since every 
 | A list beside `entries` | Rejected. Position would carry the meaning. The kernel sorts a batch by depth and splits it by mount, and `entries` is an iterable read once. |
 | A mapping from path to version | Chosen. It is keyed by the one identity an entry has, it survives the sort and the split, and the plan reads it from a dictionary at no statement. |
 
-One call cannot mix appended rows with plain rows, or create-only rows with plain rows. Each is its own call, and so its own transaction on each mount.
+One call cannot mix create-only rows with plain rows. Each is its own call, and so its own transaction on each mount. An append is always a call of its own.
 
 ### 3. The rules at the gate
 
@@ -113,9 +114,10 @@ Each is refused with `invalid`, names the argument, and is judged before any sto
 | `if_versions` is a mapping of text to integers from 1 to `INT_CEILING` | a new `ParamKind`, checked key by key |
 | `if_version` goes with the single form only, and `if_versions` with `entries` only | two shape rules |
 | `if_absent=True` with `if_version` or `if_versions` | a rule: an absent row has no version |
-| `if_absent=True` with `append=True` | a rule: an append to an absent path already creates |
+| `if_absent=True` with `append=True` | a rule of a new kind, `NotBoth`, which reads a flag that is left out as off |
+| `append=True` with `entries` | a rule: an append takes one file, by `path` with `content` or `data` |
 | every key of `if_versions` names a file entry of the batch, once it is resolved as the entry paths are | `_route_entry_batch` in `base.py`. A storage called at the seam ignores a key that names none of its entries. |
-| under `append=True` every entry is a file | `_route_entry_batch` |
+| at the seam, `append=True` with any number of entries but one, or with a directory entry | the storage's `write`, as a classified `invalid` |
 
 The kernel resolves each key as it resolves each entry path, matches keys to entries, and hands each mount the keys of its own entries with the mount prefix taken off. A batch over two mounts stays whole on each mount and not across them, which is today's rule for any refusal.
 
@@ -171,38 +173,44 @@ A replay of one's own write: body X with `if_version=1` lands as version 2, the 
 
 ### 7. `if_absent` creates and never replaces
 
-- A live occupant is `exists`. The refusal carries the occupant's `version` and `content_hash` in `data`, so a caller that lost the reply to its own create can recognise it.
+- A live occupant is `exists`. The refusal carries the occupant's `version` and `content_hash` in `data`, so a caller that lost the reply to its own create can recognise it. A directory has no body and names its version alone. An occupant that the same batch staged is named bare, since it is not stored.
 - The same body from another caller is still refused. Otherwise two agents that create one lock file would both hold the lock.
 - A tombstone is absent, so `if_absent=True` revives it. Every read already treats the path as empty. The revive is still judged as a restore by the rights gate.
 - A directory entry under `if_absent` is `exists` over any occupant, as `mkdir` is without `exist_ok`.
 - Two concurrent creates of one absent path both pass the snapshot and both insert. One wins the `(parent_id, name)` index. The loser is classified `exists` by the arbitration code that serves `overwrite=False` today, and its probe gains `content_hash`.
 
-### 8. `append=True` is one read and one write inside one transaction, under a row lock
+### 8. `append=True` is one read and one write of one file inside one transaction, under a row lock
 
 | Way to append | Verdict |
 |---|---|
 | The caller loops `read` and `write(if_version=)` | Works with decision 6 alone, and stays the fallback. Each loser pays a whole round trip, and the body crosses the wire twice. |
-| The storage appends inside one transaction, under a row lock | Chosen. One call. Rivals queue on the lock. It is how `edit` already keeps 20 of 20. |
+| The storage appends inside one transaction, under a row lock | Chosen. One call. Rivals queue on the lock, so every one lands. |
+| The storage appends with no lock, and a call that loses its guard runs again | Rejected. No line is lost, but not every line lands. Every appender whose snapshot is older than a winner's commit loses that attempt, and the rerun budget is four attempts. With 20 appenders, 4 can land and 16 be refused a retryable `conflict`. Read, not run. |
+| A no-op `UPDATE` first, in place of the locking read | Rejected. It is the same lock, held from the same statement to the same commit, and it writes the row once more. |
 | SQL concatenation, `content = content || :tail` | Rejected. A sha256 cannot be extended from a stored digest, and the version mint keeps the old body. Both need the body in hand. |
+
+An append takes one file. A batch of appends is refused with `invalid`, at the gate and at the seam. Reason: no caller for it is known, and one file keeps the lock on one row for the length of one write.
 
 The transaction, in order:
 
-1. **Lock the targets that exist.** The target paths are sorted and locked with `locked_lookup`, in chunks of the membership budget. An absent target locks nothing. Sorted paths are the lock order every write pass already uses, so an append and a plain write cannot deadlock.
-2. **Read the snapshot with bodies, as a second statement.** On Postgres a locking read that waited checks the locked row again and not the joined body row, so one statement could hand back the body a rival just replaced.
-3. **Compose each body**, in entry order, through the staged overlay. A path appended twice in one batch appends to its own staged body, as `edit` does.
+1. **Lock the row, if it is there.** `locked_lookup` by path. An absent path locks nothing.
+2. **Read the snapshot with the body, as a second statement.** On Postgres a locking read that waited checks the locked row again and not the joined body row, so one statement could hand back the body a rival just replaced.
+3. **Compose the body.** No live file at the path leaves the tail as the whole body.
 4. **Stage, settle and apply** as a plain write. The guard still rides the `UPDATE`.
 
 The transaction runs under the topology verbs' isolation pin, READ COMMITTED where a profile declares one, because step 2 must read what was committed after step 1 waited. It takes the writer marker and the label fence, as every write does. It takes no serialization point.
 
 Composing is a pure function beside `edited_entry` in `storage/editing.py`. No stored body leaves the tail as the whole body. Otherwise the two join as bytes. A text row stays text when the joined bytes are UTF-8 with no NUL, and becomes a bytes row when they are not. A bytes row stays bytes. The row keeps its stored `mime_type`.
 
-The composed body is measured as a write's body is: inline below `MEASURE_OFFLOAD_BYTES`, in one offloaded hop at or above it. The mint reuses the body the snapshot read. `StagedEntry` gains `base_data` beside `base_content`, so no old body is read twice.
+The composed body is measured as a write's body is: inline below `MEASURE_OFFLOAD_BYTES`, in one offloaded hop at or above it. The mint reuses the body the snapshot read. `StagedEntry` gains `base_data` beside `base_content`, so no old body is read twice. For a bytes row the mint needs the rendering too, and takes it from `base_content`.
 
 When a rival beats an append, the append recomputes. It carries the kernel's own precondition and not the caller's.
 
-- Two appends to one absent path both insert. The loser raises `StaleSnapshot`, and the rerun locks the winner's row and appends to it. It is never `exists`, and it never absorbs the winner's row, which would erase the winner's line.
-- A guard miss under the lock is not expected. If one happens it raises `StaleSnapshot` on every dialect.
+- Two appends to one absent path both insert. The loser is created so that it never lands on an occupant, and its `exists` is turned into `StaleSnapshot`. The rerun locks the winner's row and appends to it. It is never `exists`, and it never absorbs the winner's row, which would erase the winner's line.
+- A guard miss under the lock is not expected between appenders. A rival that takes no lock can still cause one. Its retryable `conflict` is turned into `StaleSnapshot` on every dialect.
 - With `if_version=N` as well, the caller's precondition wins and a mismatch is `conflict`. That is an append that lands at most once.
+
+The staged update is admitted at `add` and not at the verb's own rung, since the gate judged it there. `admit_staged` takes the rung for that.
 
 An append sent twice appends twice. It is the one write that is not the storing of a value.
 
@@ -232,7 +240,9 @@ A `conflict` is retryable only where the caller stated no precondition, because 
 
 ### 11. No content-hash precondition is added
 
-An adapter that speaks a protocol with a hash precondition does `stat`, compares the hash, and writes with `if_version`. If the write lands, the row was still at the version whose hash matched, so the pair is correct at the cost of one round trip. Decision 5 already gives the one extra power a hash has, which is that a replay meeting its own body succeeds. An `if_hash` argument can be added later without changing anything here.
+Decided on 2026-11-20. The callers of VFS are programs written against it, and each holds the version: every read and every write returns it. A version is also the cheaper thing to carry and compare.
+
+An adapter that speaks a protocol with a hash precondition does `stat`, compares the hash, and writes with `if_version`. If the write lands, the row was still at the version whose hash matched, so the pair is correct at the cost of one round trip for a batch. Decision 5 already gives the one extra power a hash has, which is that a replay meeting its own body succeeds. An `if_hash` argument can be added later without changing anything here, since the snapshot already reads the hash.
 
 ### 12. Four landings, in this order
 
@@ -241,7 +251,7 @@ An adapter that speaks a protocol with a hash precondition does `stat`, compares
 3. `if_absent` in place of `overwrite`, with `ADDITIVE_WRITE`.
 4. `append`.
 
-Reason: each leaves the tree green and is of use alone. The first makes the second safe to retry. The fourth adds a locking read and an isolation path, so it waits for the engine legs.
+Reason: each leaves the tree green and is of use alone. The first makes the second safe to retry. All four were built in one session, one commit each. The fourth adds a locking read and an isolation path, and is the one that most needs the engine legs before the branch reaches `dev`.
 
 ## Cost
 
@@ -253,21 +263,21 @@ Costed against the reference deployment in the working agreement.
 
 **A stale precondition.** One read and no mutation statement, at any batch size. A 10,000-row batch with one stale key writes nothing.
 
-**An append.** One more statement for each chunk of targets, the locking read. A 10,000-row append at a budget of 1,000 issues ten of them. The snapshot joins the bodies, as an `edit` snapshot does.
+**An append.** One more statement than a write of the same file, the locking read. It issues 8 at the seam, where a write issues 8: the locking read is added and the mint's read of the old body is gone. Counted on SQLite, for a text row and a bytes row.
 
-**Memory.** An append batch holds every target's old body and composed body in memory, as `edit` does today. Nothing pages them but the membership chunk. The direction, if a measured append workload needs it, is to page the body join by bytes as the mint pages. No cap is declared.
+**Memory.** An append holds the file's old body and its composed body in memory, as `edit` does for a file today. No cap is declared.
 
 **The lock an append takes.**
 
 | Question | Answer |
 |---|---|
-| What is locked | The rows the call appends to. No table, no parent row, no other row. |
+| What is locked | The one row the call appends to. No table, no parent row, no other row. |
 | When | Before the body is read, after the rights gate. |
-| Until | The commit of the call. For one file that is one write. For a batch it is the batch's body. |
-| Who waits | Another writer of the same row: a write, an edit, an append, a delete or a move of it. |
-| Who does not wait | Every read, list, glob, grep and search. A plain read takes no row lock on Postgres, MariaDB and Oracle. On SQL Server the hint is `UPDLOCK`, which a reader's shared lock passes. On SQLite the writer lock is the database's, taken by every write at its `BEGIN`. |
+| Until | The commit of the call, which is one write of one file: eight statements, against the six a plain write holds the same row lock for. |
+| Who waits | Another writer of the same file: a write, an edit, an append, a delete or a move of it, and an edge verb that names it, which locks its row too. With 20 appenders the last waits for 19 appends. |
+| Who does not wait | Every read, list, glob, grep and search, and every writer of another file. A plain read takes no row lock on Postgres, MariaDB and Oracle. On SQL Server the hint is `UPDLOCK`, which a reader's shared lock passes. On SQLite the writer lock is the database's, taken by every write at its `BEGIN`. |
 
-The working agreement says a lock other callers need is held for the length of a commit and never for a batch's body. An append batch holds its row locks for its body. A plain write batch holds the same locks from its guarded `UPDATE` to its commit, which is most of its body. The append takes them one read and one compose earlier. The callers who wait are writers of the rows the batch is itself rewriting, and nobody else.
+The working agreement says a lock other callers need is held for the length of a commit and never for a batch's body. With one file to a call there is no batch. The lock is held for one write, and the callers who wait are writers of the file that is itself being rewritten.
 
 ## Left as it is
 
@@ -276,7 +286,9 @@ The working agreement says a lock other callers need is held for the length of a
 - **`content_hash` on every written row of a result.** It is carried only in the `exists` refusal.
 - **A repair of a body that rotted under a hash that still matches.** Today a rewrite of the right body repairs it. After decision 5 that rewrite is `unchanged` and repairs nothing. A check of the hash on read, and a repair that does not go through `write`, are a change of their own.
 - **A capability name on the seam for append.** The database storage is the only storage, and the in-memory storage is the same class.
-- **Mixing appended, create-only and plain rows in one call.**
+- **Mixing create-only and plain rows in one call.**
+- **An append of several files in one call.** It is refused. If a caller for it appears, it needs the lock costed for a batch's body.
+- **`edit` under concurrent editors on a server engine.** It never loses an edit, and it does not promise that every editor lands. A row lock as an append takes would make it so.
 
 ## Tests
 
@@ -317,16 +329,17 @@ Each is written and seen failing before the code. Counts are of statements recor
 - On a file that holds `line0\n`, 20 concurrent appends all succeed, the body has 21 lines, and each line appears once. From an absent path the body has 20 lines, at least one rerun is counted on the arbitration path, and none is `exists`. Contract row.
 - An append to a bytes row leaves the old bytes and the tail. A text tail on a bytes row appends its UTF-8 bytes. A tail that is not UTF-8 turns a text row into a bytes row. A UTF-8 bytes tail leaves a text row text.
 - An append to a directory is `wrong_kind`. An append of an empty tail is `unchanged`.
-- A single text append issues 8 statements: the locking read, the snapshot, the guarded update, the revision read, the version insert, two body deletes and the content insert. No second read of the old body.
-- A caller who holds `add` appends to another's row. The same caller's overwrite of that row is `permission_denied`, and so is its append to another's tombstoned row.
-- A 10,000-entry append with the membership budget at 1,000 issues ten locking reads and one `COMMIT`, holds no `IN` list longer than the budget, and every row ends as its old body and its tail. Marked `slow`.
+- A single append issues 8 statements: the locking read, the snapshot, the guarded update, the revision read, the version insert, two body deletes and the body insert. No second read of the old body. For a text row and a bytes row.
+- A caller who holds `add` appends to another's row. The same caller's overwrite of that row is `permission_denied`, and so is its append to another's tombstoned row. A caller who holds `list` cannot append.
+- An append of two files, of none, or of a directory entry is `invalid` at the seam. `append` with `entries` is `invalid` at the gate.
 - A composed body at or above `MEASURE_OFFLOAD_BYTES` is measured in one offloaded hop, and a smaller one in none.
-- An append with `if_version=N` on a row at another version is `conflict`.
-- While an append holds its row lock, a read of that row, a search, and an edit of another file each return, as the system actor, a named caller and anonymous. On every server engine.
+- An append with `if_version=N` lands once. Sent again it is `conflict` with the version it made, and nothing is added twice.
+- An append that loses its guard, and one that loses the creation of its path, each run again and land. Counted as two attempts.
+- While an append holds its row lock, a read and a `stat` of that file, a `grep`, and an edit of another file each return. On every server engine, as the system actor. A call that does not return in 60 seconds stops the test as hung.
 
 Five tests used a rewrite of the same body to make a row pending again without changing its hash, and were rewritten at the first landing to write the body away and back: `test_a_refresh_of_kept_entries_flips_and_bumps_only`, `test_a_write_during_a_publish_keeps_one_posting`, `test_a_missed_flip_is_stamped_all_the_same`, and `test_same_body_overwrite_skips_the_resplit`, which is now `test_a_body_written_away_and_back_skips_the_resplit`. The fifth, `test_a_same_bytes_overwrite_renders_once_more_and_settles`, is now two: the same bytes keep their rendering, and bytes written away and back render once more. The index's paths for a pending row whose body did not change stay reachable that way, and by a delete and a restore.
 
-Still to be rewritten, at the third landing: the 66 uses of `overwrite=` in 15 files under `tests/`.
+At the third landing every public call that passed `overwrite=` was rewritten: `overwrite=False` to `if_absent=True`, and `overwrite=True` dropped. The calls to `write_rows`, `_finish` and the arbitration helpers keep the word.
 
 ## Scope
 
@@ -342,7 +355,7 @@ Out: everything under "Left as it is".
 - An append is one call, concurrent appends all land, and an append sent twice appends twice.
 - `add` lets a caller create files and append to files, and never replace or remove what is stored.
 
-Pages: the docstrings of the four `write` methods, which are the reference page; the `ErrorKind` docstring for the two `data` records; the `Rung` docstring and `documentation/reference/access-levels.md` for `add`; `documentation/how-to/load-a-folder-of-files.md` for a second load of the same folder; the write docstring in `exceptions.py`. Six pages under `documentation/` use the word "overwrite" and are read at the third landing.
+Pages, each changed: the docstring of `AsyncVirtualFileSystem.write`, which is the reference page; the `ErrorKind` docstring for the two `data` records; the `Rung` docstring and `documentation/reference/access-levels.md` for `add`; `documentation/how-to/load-a-folder-of-files.md` for a second load of the same folder; the write docstring in `exceptions.py`. One page is not changed: `documentation/maintainers/how-we-write-docstrings.md` shows the `write` docstring as an example and still names `overwrite`.
 
 ## Earlier decisions this reverses
 
@@ -363,14 +376,23 @@ Pages: the docstrings of the four `write` methods, which are the reference page;
 - The reference pages are generated from docstrings under `documentation/`. The draft named pages under `docs/` that no longer exist.
 - The draft's notes for the shell, the WASI host and the adapter specs are not carried. Those specs are unbuilt and under `context/`. What they can use is the surface in decision 1.
 
+## Decided while it was built
+
+- **No content-hash precondition.** Decision 11 gives the reason.
+- **An append takes one file.** Decision 8 gives the reason. A subagent read the alternatives to the early row lock on 2026-11-20 and found none that lands every appender.
+- **A module on the size list may grow.** The list exists to keep each size in view. `base.py`, `backend.py`, `writes.py` and `sync.py` grew, and their entries in `tests/lint/allowlist.py` were raised to match.
+- **`unchanged` is said after the rights check.** It tells a caller that its body equals the stored one, which is a way to test a guess at a file's contents.
+- **A lost guard reruns only for a row still at its path.** A row that moved keeps its `conflict`, as before, whatever its body.
+- **The names inside `writes.py` stay.** `write_rows` and the helpers beneath it keep `overwrite`. The storage's `write` turns `if_absent` into it.
+
 ## Not checked
 
-- The server engines. Every probe ran on a SQLite file.
+- The server engines. Every probe and every test ran on SQLite. Four tests run only on an engine leg and have never run: the two in `TestExpectedVersionRivals` and the one in `TestAppendLock`, in `tests/storage/database/test_races.py`, and every new row of the storage contract on Postgres, MariaDB, SQL Server and Oracle.
+- Whether an engine-leg test that has a rival write the same body as its victim still passes. Such a write is now `unchanged`, and a lost guard against the same body now reruns. One such call is in `test_races.py`, in a test that counts successes.
 - On Postgres at REPEATABLE READ, a rival's commit inside the window can end the guarded `UPDATE` with a serialization failure and a rerun, and not with a guard that matches no row. Both roads are read to end at the same answer. Neither was run.
-- Lock escalation on SQL Server under a 10,000-row append. The locking reads are chunked at the `IN` list budget of 2,000, under the 5,000 locks at which one statement escalates.
+- Twenty appenders on a server engine. The lock is read to queue them. The count of reruns for an absent path is not known.
 - SQL Server with `READ_COMMITTED_SNAPSHOT` off. No code under `src/vfs` reads that setting.
-- The count of 8 statements for one append is worked out and not run.
-- How many existing tests rewrite a body with itself.
+- `scripts/ci.sh`, with its coverage gate, and `scripts/docs.sh check`. The tests under `tests/ranking` were left out of the last run.
 - The share of a nightly batch that is unchanged.
 
 ## One line
