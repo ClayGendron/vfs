@@ -108,11 +108,11 @@ T = TypeVar("T")
 
 _log: Final = logging.getLogger(__name__)
 
-UNSUPPORTED_DIALECT: Final = (
+# The one warning a storage logs when it is built on a dialect no tuned profile serves.
+_UNSUPPORTED_DIALECT: Final = (
     "vfs does not support the %r SQL dialect: it is served the generic floor, without search,"
     " and is fit for testing only. vfs supports SQLite and Postgres."
 )
-"""The one warning a storage logs when it is built on a dialect no tuned profile serves."""
 
 STATISTICS_NAME = "vfs_statistics"
 """The statistics step's one name: the detection savepoint, the pass's begin tag and option, the record key."""
@@ -197,7 +197,7 @@ class EngineHost:
         self._profile: DialectProfile = profile_for(bind.dialect.name)
         self._dialect: Dialect = bind.dialect
         if self._profile.name not in PROFILES:
-            _log.warning(UNSUPPORTED_DIALECT, self._profile.name)
+            _log.warning(_UNSUPPORTED_DIALECT, self._profile.name)
         sessions: Callable[[], AsyncSession]
         if self._profile.attempts_out_of_reach:
             # An attempt whose caller was cancelled is refused its next statement, its sessions and its commit.

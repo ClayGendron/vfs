@@ -171,6 +171,8 @@ class DatabaseStorage:
             raise ValueError(f"trash_days must be non-negative, got {trash_days}")
         if grep_wall_seconds <= 0:
             raise ValueError(f"grep_wall_seconds must be positive, got {grep_wall_seconds}")
+        if search_wall_seconds <= 0:
+            raise ValueError(f"search_wall_seconds must be positive, got {search_wall_seconds}")
         if glob_wall_seconds <= 0:
             raise ValueError(f"glob_wall_seconds must be positive, got {glob_wall_seconds}")
         if embed_concurrency < 1:
@@ -196,8 +198,6 @@ class DatabaseStorage:
         self._render_limits = render_limits if render_limits is not None else RenderLimits()
         # The last queries' vectors, keyed by space: a re-asked question costs no provider call.
         self._query_vectors: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
-        if search_wall_seconds <= 0:
-            raise ValueError(f"search_wall_seconds must be positive, got {search_wall_seconds}")
         self._grep_wall_seconds = grep_wall_seconds
         self._search_wall_seconds = search_wall_seconds
         self._glob_wall_seconds = glob_wall_seconds

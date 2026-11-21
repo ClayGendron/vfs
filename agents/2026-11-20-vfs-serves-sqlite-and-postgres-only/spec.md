@@ -303,7 +303,9 @@ Each new test is written and seen failing before the code that passes it. The co
 
 **Landing 3: the named constructors.**
 - `SQLiteStorage(path=tmp)` round-trips a write and a read, as text and as a `pathlib.Path`, and so does a path that holds `?`, which leaves no other file beside it. `SQLiteStorage(url=...)` round-trips too. `InMemoryStorage()` is an instance of `SQLiteStorage` over `:memory:`.
-- `SQLiteStorage()` with neither `path=` nor `url=`, or with both, raises a `ValueError` and builds no engine.
+- `SQLiteStorage()` with neither `path=` nor `url=`, or with both, raises a `ValueError` and builds no engine. So does an empty `path=`, as text or as `pathlib.Path()`, which SQLite would otherwise serve as a database in memory that keeps nothing.
+- The refusal of another engine's URL never holds the URL or its password.
+- Each named class takes every argument of `DatabaseStorage` with the same default.
 - `PostgresStorage(url=...)` passes the storage contract. The conformance fixtures construct the named classes.
 - `SQLiteStorage(url=<postgres or floor URL>)` and `PostgresStorage(url=<sqlite or floor URL>)` raise a `ValueError` that names both dialects, and no engine is built.
 - Neither class logs the warning. The Postgres row runs on the engine leg.

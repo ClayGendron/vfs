@@ -10,6 +10,7 @@ of the run.
 from __future__ import annotations
 
 import os
+from functools import wraps
 from typing import TYPE_CHECKING, Any, Final
 
 import pytest
@@ -47,6 +48,7 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
     created: list[DatabaseStorage] = []
     original = DatabaseStorage.__init__
 
+    @wraps(original)
     def tracking(self: DatabaseStorage, *args: Any, **kwargs: Any) -> None:
         original(self, *args, **kwargs)
         created.append(self)

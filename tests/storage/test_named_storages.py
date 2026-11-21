@@ -9,8 +9,10 @@ engine module's logger, once, when it is built.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
+import pathlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -23,11 +25,11 @@ from vfs.storage import backends
 from vfs.storage.backends.database import engine as engine_module
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import Callable
 
 ENGINE_LOGGER = "vfs.storage.backends.database.engine"
 POSTGRES_URL = "postgresql+asyncpg://vfs:vfs@localhost:54320/vfs"
+SECRET = "s3cret-pw"
 
 
 def _floor_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -75,6 +77,12 @@ class TestTheFloorWarns:
         assert (built, len(_floor_records(caplog))) == (1, 1)
         assert _floor_records(caplog)[0].levelno == logging.WARNING
         await storage.close()
+
+    def test_a_construction_refused_for_its_arguments_logs_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Guards: a warning about a storage that was never built, because an argument check ran after the host."""
+        with caplog.at_level(logging.WARNING, logger=ENGINE_LOGGER), pytest.raises(ValueError, match="search_wall"):
+            DatabaseStorage(url=FLOOR_URL, search_wall_seconds=0)
+        assert _floor_records(caplog) == []
 
     async def test_two_storages_on_the_floor_log_two_records(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.WARNING, logger=ENGINE_LOGGER):
@@ -148,7 +156,7 @@ class TestSQLiteStorage:
         assert sorted(child.name for child in tmp_path.iterdir()) == ["notes?v2.db"]
 
     async def test_a_storage_at_a_url_keeps_its_files_where_the_url_says(self, tmp_path: pathlib.Path) -> None:
-        """A managed or remote SQLite is reached by its URL, as a file is."""
+        """A SQLite URL names the database as a path does, with the options its query carries."""
         path = tmp_path / "knowledge.db"
         assert await _round_trip(SQLiteStorage(url=f"sqlite+aiosqlite:///{path}")) == "a"
         assert path.is_file()
@@ -164,7 +172,26 @@ class TestSQLiteStorage:
             SQLiteStorage(**where)
         assert engines_built == []
 
-    @pytest.mark.parametrize("url", [pytest.param(POSTGRES_URL, id="postgres"), pytest.param(FLOOR_URL, id="floor")])
+    @pytest.mark.parametrize(
+        "where",
+        [pytest.param("", id="empty"), pytest.param(pathlib.Path(), id="empty-path-object")],
+    )
+    def test_an_empty_path_is_refused_and_builds_no_engine(
+        self, where: str | pathlib.Path, engines_built: list[object]
+    ) -> None:
+        """Guards: an unset setting read as ``""``, which SQLite serves as a database in memory that keeps nothing."""
+        with pytest.raises(ValueError, match=r"path= must name a file.*InMemoryStorage"):
+            SQLiteStorage(path=where)
+        assert engines_built == []
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            pytest.param(POSTGRES_URL, id="postgres"),
+            pytest.param(f"postgresql+asyncpg://app:{SECRET}@db/vfs", id="postgres-with-a-password"),
+            pytest.param(FLOOR_URL, id="floor"),
+        ],
+    )
     def test_a_url_of_another_engine_is_refused_naming_both_and_builds_no_engine(
         self, url: str, engines_built: list[object]
     ) -> None:
@@ -172,6 +199,7 @@ class TestSQLiteStorage:
             SQLiteStorage(url=url)
         message = str(refused.value)
         assert ("'sqlite'" in message, repr(url.partition("+")[0]) in message) == (True, True)
+        assert (SECRET in message, url in message) == (False, False)
         assert engines_built == []
 
     async def test_an_in_memory_storage_is_a_sqlite_storage_over_memory(self) -> None:
@@ -189,7 +217,11 @@ class TestSQLiteStorage:
 class TestPostgresStorage:
     @pytest.mark.parametrize(
         "url",
-        [pytest.param("sqlite+aiosqlite:///a.db", id="sqlite"), pytest.param(FLOOR_URL, id="floor")],
+        [
+            pytest.param("sqlite+aiosqlite:///a.db", id="sqlite"),
+            pytest.param(f"mysql+aiomysql://app:{SECRET}@db/vfs", id="mysql-with-a-password"),
+            pytest.param(FLOOR_URL, id="floor"),
+        ],
     )
     def test_a_url_of_another_engine_is_refused_naming_both_and_builds_no_engine(
         self, url: str, engines_built: list[object]
@@ -198,6 +230,7 @@ class TestPostgresStorage:
             PostgresStorage(url=url)
         message = str(refused.value)
         assert ("'postgresql'" in message, repr(url.partition("+")[0]) in message) == (True, True)
+        assert (SECRET in message, url in message) == (False, False)
         assert engines_built == []
 
     async def test_a_postgres_url_builds_a_storage_on_the_postgres_profile(self) -> None:
@@ -205,6 +238,28 @@ class TestPostgresStorage:
         storage = PostgresStorage(url=POSTGRES_URL, schema="vfs")
         assert (storage._host.profile.name, storage._host.tables.entry.schema) == ("postgresql", "vfs")
         await storage.close()
+
+
+@pytest.mark.parametrize(
+    ("named", "dropped", "added"),
+    [
+        pytest.param(SQLiteStorage, {"url"}, {"path", "url"}, id="sqlite"),
+        pytest.param(PostgresStorage, set(), set(), id="postgres"),
+    ],
+)
+def test_a_named_storage_takes_every_argument_of_database_storage_with_its_default(
+    named: type[DatabaseStorage], dropped: set[str], added: set[str]
+) -> None:
+    """Guards: an argument added to ``DatabaseStorage``, or a default changed there, that a named class misses."""
+    shared = {
+        name: (parameter.kind, parameter.default, parameter.annotation)
+        for name, parameter in inspect.signature(DatabaseStorage.__init__).parameters.items()
+        if name not in dropped
+    }
+    own = inspect.signature(named.__init__).parameters
+    assert {name: (p.kind, p.default, p.annotation) for name, p in own.items() if name not in added} == {
+        name: value for name, value in shared.items() if name not in added
+    }
 
 
 def test_both_names_are_exported_where_the_storages_are() -> None:

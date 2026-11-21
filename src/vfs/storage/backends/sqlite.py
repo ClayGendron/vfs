@@ -2,8 +2,7 @@
 
 SQLite is the engine for a demo or a local application. A storage keeps
 its data in one database, named by a path on disk or by a URL. A URL
-reaches what a path cannot: a managed or remote SQLite, or the options
-a URL carries.
+carries what a path cannot: the options in its query.
 
     SQLiteStorage(path="knowledge.db")
     SQLiteStorage(url="sqlite+aiosqlite:///knowledge.db")
@@ -38,19 +37,25 @@ if TYPE_CHECKING:
 SQLITE_DRIVER = "sqlite+aiosqlite"
 """The dialect and driver a path is opened with."""
 
+# An empty path, as text or as ``pathlib.Path("")``, which SQLite would serve as a database in memory.
+_NO_FILE = frozenset({"", "."})
+
 
 class SQLiteStorage(DatabaseStorage):
     """A ``DatabaseStorage`` on SQLite, the engine for a demo or a local application.
 
     Pass ``path`` or ``url``, exactly one, to say where the data lives.
     ``path`` is a file on disk, and is read as a file name whatever it
-    holds, so ``notes?v2.db`` is that file. ``url`` reaches a managed or
-    remote SQLite, or carries options in its query. Every other argument
-    is the one ``DatabaseStorage`` takes.
+    holds, so ``notes?v2.db`` is that file. The one exception is
+    ``:memory:``, a private database in memory, which ``InMemoryStorage``
+    names. ``url`` reaches a SQLite database through the aiosqlite
+    driver, with the options its query carries. Every other argument is
+    the one ``DatabaseStorage`` takes.
 
     Neither ``path`` nor ``url``, or both, raises a ``ValueError``. So
-    does a ``url`` of another dialect, before any engine is built, and
-    the error names both dialects.
+    does an empty ``path``, which SQLite would serve as a database in
+    memory that keeps nothing. So does a ``url`` of another dialect,
+    before any engine is built, and the error names both dialects.
     """
 
     def __init__(
@@ -78,8 +83,14 @@ class SQLiteStorage(DatabaseStorage):
         if (path is None) == (url is None):
             raise ValueError(f"{type(self).__name__} takes exactly one of path= or url=, to say where its data lives")
         if path is not None:
+            database = os.fspath(path)
+            if database in _NO_FILE:
+                raise ValueError(
+                    f"{type(self).__name__} path= must name a file, and {database!r} names none; "
+                    "InMemoryStorage keeps a database in memory"
+                )
             # Never formatted into a URL string, which would read a '?' in the path as the start of a query.
-            address = URL.create(SQLITE_DRIVER, database=os.fspath(path))
+            address = URL.create(SQLITE_DRIVER, database=database)
         else:
             assert url is not None
             address = url_of_engine(url, engine="sqlite", storage=type(self).__name__)

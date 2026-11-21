@@ -84,8 +84,8 @@ def url_of_engine(url: str | URL, *, engine: str, storage: str) -> URL:
     given = address.get_backend_name()
     if given != engine:
         raise ValueError(
-            f"{storage} serves the {engine!r} dialect and was given a URL of {given!r}. "
-            "DatabaseStorage serves any other dialect."
+            f"{storage} serves the {engine!r} dialect and was given a URL of {given!r}. SQLiteStorage serves "
+            "'sqlite', PostgresStorage 'postgresql', and DatabaseStorage any other dialect, on the generic floor."
         )
     return address
 

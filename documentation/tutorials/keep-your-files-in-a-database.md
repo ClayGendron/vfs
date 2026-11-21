@@ -102,7 +102,7 @@ You gave a file system a database, wrote a file, and read it back after closing 
 - **One argument made the files last.** `storage=SQLiteStorage(path=...)` is the only line that differs from the first tutorial.
 - **The files live in the database.** VFS stores each file as a row and never writes it to your disk as a file.
 
-SQLite is a good fit for a laptop or a local application. A managed SQLite is reached by its URL instead of a path, as in `SQLiteStorage(url=...)`.
+SQLite is a good fit for a laptop or a local application. `SQLiteStorage(url=...)` takes a SQLite URL instead of a path, for the options a URL carries.
 
 A shared deployment runs on Postgres. `PostgresStorage` takes the URL of the server, and `schema` names the Postgres schema its tables live in:
 
