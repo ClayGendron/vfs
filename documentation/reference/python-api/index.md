@@ -67,8 +67,10 @@ Every name that `import vfs` makes public, grouped by what it is for. Each one l
 
 ## Storage
 
-- [`DatabaseStorage`](storage.md#vfs.DatabaseStorage): a storage backend in a SQL database.
+- [`SQLiteStorage`](storage.md#vfs.SQLiteStorage): a storage backend in SQLite, for a demo or a local application.
+- [`PostgresStorage`](storage.md#vfs.PostgresStorage): a storage backend in Postgres, for a shared deployment.
 - [`InMemoryStorage`](storage.md#vfs.InMemoryStorage): a storage backend in a private in-memory database.
+- [`DatabaseStorage`](storage.md#vfs.DatabaseStorage): the storage backend the others are built on, which serves any SQLAlchemy URL.
 - [`StorageBackend`](storage.md#vfs.StorageBackend): what every storage backend has.
 - [`ResolvedPair`](storage.md#vfs.ResolvedPair): the two checked paths a backend gets for a move or a copy.
 - [`ScopeChannel`](storage.md#vfs.ScopeChannel): the scope of a search, as a backend gets it.

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -637,12 +638,12 @@ async def _probes(storage: DatabaseStorage) -> dict[str, tuple[str, tuple[Any, .
 
 def _on_file(database: str, sql: str) -> None:
     """Run one statement on the store's file beside the backend, waiting out the backend's own writer."""
-    with sqlite3.connect(database, timeout=30) as connection:
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         connection.execute(sql)
 
 
 def _plan(database: str, sql: str, parameters: tuple[Any, ...]) -> list[str]:
-    with sqlite3.connect(database, timeout=30) as connection:
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         return [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters)]
 
 
@@ -654,7 +655,7 @@ def _steps(database: str, sql: str, parameters: tuple[Any, ...]) -> int:
         ticks[0] += 1
         return 0
 
-    with sqlite3.connect(database, timeout=30) as connection:
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         connection.set_progress_handler(tick, 100)
         connection.execute(sql, parameters).fetchall()
     return ticks[0]

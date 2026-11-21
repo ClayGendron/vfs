@@ -8,7 +8,9 @@ on it: beside a call on an in-memory database, one costs the database.
 Construction binds nothing to a loop, so first touch may be on another.
 
 The dialect is known once the engine is built, so its declared policy
-is resolved at construction, with no IO. First touch is idempotent and
+is resolved at construction, with no IO. A dialect other than SQLite
+and Postgres is served the generic floor, and the host logs one
+``WARNING`` on this module's logger saying so. First touch is idempotent and
 lazy, on the caller's loop: database-file settings, the profile's vector probe (the
 cosine distance function is a precondition vfs proves and never
 installs — sqlite-vec, pgvector), then — under the topology
@@ -47,18 +49,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib.util
+import logging
 import random
 import sqlite3
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from sqlalchemy import event, func, insert, inspect, select
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.util.concurrency import await_only
 from ulid import ULID
 
 from vfs.authority import EVERYONE_NAME
@@ -72,6 +73,7 @@ from vfs.storage.backends.database.attempts import (
     run_out_of_reach,
 )
 from vfs.storage.backends.database.dialects import (
+    PROFILES,
     SQLITE_VEC_PROBE,
     DialectProfile,
     StaleSnapshot,
@@ -85,7 +87,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.drivers import merge_engine_arguments
+from vfs.storage.backends.database.drivers import load_sqlite_vec, merge_engine_arguments
 from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
@@ -94,7 +96,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
     from sqlalchemy import Engine
-    from sqlalchemy.engine import Connection, Dialect
+    from sqlalchemy.engine import URL, Connection, Dialect
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
     from sqlalchemy.pool import PoolProxiedConnection
 
@@ -104,17 +106,12 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-# Some system Pythons build sqlite3 without extension loading; the hook
-# then loads nothing and first touch refuses with the reason.
-_EXTENSIONS_LOADABLE = hasattr(sqlite3.Connection, "enable_load_extension")
+_log: Final = logging.getLogger(__name__)
 
-# The extension's loadable file, located without importing the package
-# (its ``__init__`` pulls numpy in when numpy is installed).
-_SQLITE_VEC_SPEC = importlib.util.find_spec("sqlite_vec")
-SQLITE_VEC_PATH: str | None = (
-    str(next(iter(_SQLITE_VEC_SPEC.submodule_search_locations or ()), "") or "") + "/vec0"
-    if _SQLITE_VEC_SPEC is not None and _SQLITE_VEC_SPEC.submodule_search_locations
-    else None
+# The one warning a storage logs when it is built on a dialect no tuned profile serves.
+_UNSUPPORTED_DIALECT: Final = (
+    "vfs does not support the %r SQL dialect: it is served the generic floor, without search,"
+    " and is fit for testing only. vfs supports SQLite and Postgres."
 )
 
 STATISTICS_NAME = "vfs_statistics"
@@ -163,7 +160,7 @@ class EngineHost:
     def __init__(
         self,
         *,
-        url: str,
+        url: str | URL,
         engine_arguments: Mapping[str, Any] | None = None,
         schema: str | None = None,
         embedder: EmbeddingProvider | None = None,
@@ -199,6 +196,8 @@ class EngineHost:
         # The declared policy and the live dialect it is read beside, both known with no IO.
         self._profile: DialectProfile = profile_for(bind.dialect.name)
         self._dialect: Dialect = bind.dialect
+        if self._profile.name not in PROFILES:
+            _log.warning(_UNSUPPORTED_DIALECT, self._profile.name)
         sessions: Callable[[], AsyncSession]
         if self._profile.attempts_out_of_reach:
             # An attempt whose caller was cancelled is refused its next statement, its sessions and its commit.
@@ -959,7 +958,7 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
         cursor = dbapi_connection.cursor()
         # A connection already carrying the function skips the load.
         if not _has_sqlite_vec(cursor):
-            _load_sqlite_vec(dbapi_connection)
+            load_sqlite_vec(dbapi_connection)
         for statement in profile.session_settings:
             cursor.execute(statement)
         cursor.close()
@@ -1007,23 +1006,3 @@ def _has_sqlite_vec(cursor: Any) -> bool:
         return False
     cursor.fetchall()
     return True
-
-
-def _load_sqlite_vec(dbapi_connection: Any) -> None:
-    """Load the sqlite-vec extension into one DBAPI connection.
-
-    The async adapter wraps an ``aiosqlite`` connection whose worker
-    thread owns the real ``sqlite3`` handle, so the load is issued as
-    that connection's own coroutines, awaited from the pool event's
-    greenlet — the adapter's own pattern for ``create_function``. An
-    interpreter without extension loading is left as it is; first touch
-    probes and refuses with the reason.
-    """
-    inner = getattr(dbapi_connection, "_connection", None)
-    if not _EXTENSIONS_LOADABLE or inner is None or SQLITE_VEC_PATH is None:
-        return
-    await_only(inner.enable_load_extension(True))
-    try:
-        await_only(inner.load_extension(SQLITE_VEC_PATH))
-    finally:
-        await_only(inner.enable_load_extension(False))

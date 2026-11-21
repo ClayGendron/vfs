@@ -80,9 +80,9 @@ _UNSUPPORTED_DIALECT: Final = (
 )
 ```
 
-- **Where.** In `EngineHost._policy()`, in the branch that resolves the profile, when `profile.name not in PROFILES`, after the profile and dialect are cached. This is the one place that both a URL-built storage and a borrowed `session_factory` reach.
-- **How often.** `_policy()` resolves once per host and never again, so the record is logged once per storage with no latch of its own. Two storages on the same dialect log two records.
-- **When.** When the profile is first resolved. For a mounted storage that is inside `VirtualFileSystem(...)` or `add_mount`, through `storage.capabilities()`. For a storage used alone it is at its first call.
+- **Where.** In `EngineHost.__init__`, where the profile is resolved, when `profile.name not in PROFILES`. A storage always builds its own engine from `url=`, so the dialect is known at construction with no IO, and `_policy()` no longer exists.
+- **How often.** The profile is resolved once per host, at construction, so the record is logged once per storage with no latch of its own. Two storages on the same dialect log two records.
+- **When.** When the storage is built. `capabilities()` and every later call log nothing more.
 - **Not in `profile_for`.** `bulk_insert` calls `profile_for` again on every batch (`dialects.py:914`), so a record there would repeat.
 - **No new public name.** The logger's name is public surface under X7, as `vfs.authority`'s is.
 
@@ -208,16 +208,14 @@ from vfs import DatabaseStorage, InMemoryStorage, PostgresStorage, SQLiteStorage
 
 SQLiteStorage(path="knowledge.db")                                     # demos and local apps
 InMemoryStorage()                                                      # an SQLiteStorage over :memory:
-PostgresStorage(url="postgresql+asyncpg://app@db/vfs", schema="vfs")   # production, an engine vfs builds
-PostgresStorage(session_factory=app_sessionmaker)                      # production, a borrowed engine
+PostgresStorage(url="postgresql+asyncpg://app@db/vfs", schema="vfs")   # production
 DatabaseStorage(url="duckdb:///x.db")                                  # the generic floor; logs one warning
 ```
 
 - Each is a subclass of `DatabaseStorage` that only constructs, as `InMemoryStorage` is today. It carries no verb, no override and no behaviour. Every difference between the engines stays where it is chosen: in the profile, read by the builder functions.
-- `SQLiteStorage(path=...)` builds its URL as `sqlalchemy.engine.URL.create("sqlite+aiosqlite", database=os.fspath(path))`, and `EngineHost` accepts a `URL` without turning it into a string. A formatted string would misread a path that holds `?`: `make_url("sqlite+aiosqlite:///notes?v2.db").database` is `'notes'`. `SQLiteStorage(session_factory=...)` borrows. `PostgresStorage` takes `url=` or `session_factory=` and `schema=`. The common arguments of `DatabaseStorage` pass through.
-- Each records the dialect name it expects on its host. `_policy()` compares the resolved dialect with that name in its resolving branch. On a mismatch it records the refusal and installs no listener on the engine, so a borrowed SQLite engine is not changed by a `PostgresStorage` that refuses it. `_policy()` is synchronous and is reached from about 50 sites, the first inside `VirtualFileSystem.__init__`, so it cannot return a refusal, and it does not raise.
-- One host method returns the recorded refusal. `EngineHost._first_touch` calls it first, before any file setting or extension probe, and so does `install_extensions`, which runs without first touch. The refusal is `unavailable` with `retryable=False`, because the bind will not change. Its message names both dialects, and no further statement is sent. Until first touch, `capabilities()` reports the bound engine's profile, which is what a mismatched storage would serve if it were allowed to.
-- `InMemoryStorage` becomes a subclass of `SQLiteStorage`. Its arguments are unchanged.
+- `SQLiteStorage` takes `path=` alone, and it is required. An empty path, as `""` or `pathlib.Path()`, raises a `ValueError`, because SQLite would serve it as a database in memory that keeps nothing. A SQLite URL with options in its query is served on the same tuned profile by `DatabaseStorage(url=...)`, so a `url=` here would add no reach. It was taken for a managed SQLite and dropped on 2026-11-21, because every SQLite arm assumes the aiosqlite driver; `agents/2026-11-21-a-managed-sqlite-is-studied-before-it-is-served/spec.md` holds that question. `path=` is built as `sqlalchemy.engine.URL.create("sqlite+aiosqlite", database=os.fspath(path))`, and `EngineHost` accepts a `URL` without turning it into a string. A formatted string would misread a path that holds `?`: `make_url("sqlite+aiosqlite:///notes?v2.db").database` is `'notes'`. `PostgresStorage` takes `url=` and `schema=`. The common arguments of `DatabaseStorage` pass through.
+- A `PostgresStorage` `url=` of another dialect is refused at construction with a `ValueError` that names both dialects and never the URL, which can hold a password. `drivers.url_of_engine` reads the dialect from the URL alone, so the refusal comes before any engine is built: no engine, no listener and no statement exist. The first draft refused at first touch as `unavailable`, because a borrowed engine's dialect could not be read earlier. Borrowed engines are gone, and a misconfigured construction is a `ValueError` everywhere else in `DatabaseStorage`.
+- `InMemoryStorage` becomes a subclass of `SQLiteStorage`, with its path fixed at `:memory:`. Its arguments are unchanged.
 - `DatabaseStorage` stays public. It is the shared type that signatures name, and the way into the floor. `DatabaseStorage(url="sqlite...")` and `DatabaseStorage(url="postgresql...")` keep working with no warning, so the 505 constructions in `tests/` need not change.
 - The docs teach the named classes. The tutorial gains a Postgres construction, which no page teaches today.
 
@@ -227,16 +225,16 @@ Reasons for this form:
 - **Not behaviour in subclasses.** Almost every difference between SQLite and Postgres is a different statement inside about 30 free builder functions, which receive the profile as a value and never see the storage. A subclass override reaches only the 6 places where the storage reads the profile itself.
 - **Not a strategy object.** One would put the 10 remaining selectors behind about 25 methods, a god class from the start. It would also rewrite 188 parameters and 437 test references, and lose the tests that prove each floor arm by changing one field.
 - **Django and SQLAlchemy** do use a class for each engine. Their sets of engines are open to third parties, and vfs's set is closed.
-- **The subclasses still earn a place.** They give engine-only arguments a home, they let a mismatched bind be refused, and they give the docs a name to teach.
+- **The subclasses still earn a place.** They give engine-only arguments a home, they let a URL of the other engine be refused, and they give the docs a name to teach.
 
 ## Where the code goes
 
 | Concern | Owner |
 |---|---|
 | The two tuned profiles, the floor, `profile_for` | `storage/backends/database/dialects.py` |
-| The warning's text and its record | `storage/backends/database/engine.py`, the module logger, in the resolving branch of `EngineHost._policy()` |
-| The expected dialect and the mismatch refusal | `storage/backends/database/engine.py`: recorded on the host at construction, checked first in `EngineHost._first_touch` |
-| A `URL` accepted as well as a string | `EngineHost.__init__` and `drivers.engine_arguments` |
+| The warning's text and its record | `storage/backends/database/engine.py`, the module logger, where `EngineHost.__init__` resolves the profile |
+| The mismatch refusal | `storage/backends/database/drivers.py`, `url_of_engine`, called by each named class before it builds anything |
+| A `URL` accepted as well as a string | `DatabaseStorage.__init__`, `EngineHost.__init__` and `drivers.merge_engine_arguments` |
 | `SQLiteStorage`, `PostgresStorage` | a new `storage/backends/sqlite.py` and `storage/backends/postgres.py`, beside `memory.py`, exported from `vfs` and `vfs.storage.backends` |
 
 ## Landings
@@ -297,16 +295,18 @@ Each new test is written and seen failing before the code that passes it. The co
 - A driver error whose `args[0]` is `40001` is retryable on `GENERIC`, and a bare `23000` reads as no unique violation. Together they pin the arm decision 3 keeps.
 
 **Landing 2: the warning.** Each test records with `caplog` on the engine module's logger.
-- A storage over a bind whose dialect name is unknown logs one `WARNING` when `storage.capabilities()` is first read, and none on the second to tenth read. The test makes a SQLite engine and gives its dialect instance an unknown `name`, so that `_policy()` runs and is not patched around. That storage then fails first touch, because it loses SQLite's type variants, so the test counts records and calls no verb.
+- A storage on a dialect whose name is unknown logs one `WARNING` when it is built, and none on ten reads of `storage.capabilities()`. The test registers aiosqlite's dialect with SQLAlchemy under an unknown name (`tests/support/floor_dialect.py`), so a real URL builds a real engine and nothing is patched around. The test counts records and calls no verb.
 - Two such storages log two records.
 - The record's message names the dialect.
 - A SQLite storage and a Postgres storage log no record from this logger. The Postgres check is a row of the engine leg.
 
 **Landing 3: the named constructors.**
-- `SQLiteStorage(path=tmp)` round-trips a write and a read, and so does a path that holds `?`. `InMemoryStorage()` is an instance of `SQLiteStorage`.
+- `SQLiteStorage(path=tmp)` round-trips a write and a read, as text and as a `pathlib.Path`, and so does a path that holds `?`, which leaves no other file beside it. `InMemoryStorage()` is an instance of `SQLiteStorage` over `:memory:`.
+- `SQLiteStorage()` with no `path=`, or with a `url=`, raises a `TypeError` and builds no engine. An empty `path=`, as text or as `pathlib.Path()`, raises a `ValueError` and builds no engine, because SQLite would otherwise serve it as a database in memory that keeps nothing.
+- Each named class takes every argument of `DatabaseStorage` with the same default, less `url=` and plus `path=` for `SQLiteStorage`.
 - `PostgresStorage(url=...)` passes the storage contract. The conformance fixtures construct the named classes.
-- `SQLiteStorage(session_factory=<postgres factory>)` and `PostgresStorage(session_factory=<sqlite factory>)` are refused as `unavailable`, not retryable, at their first verb call and at `install_extensions()`. The refusal names both dialects. The statement recorder sees no statement after the refusal, and the borrowed SQLite engine carries no listener vfs added. The Postgres half runs on the engine leg.
-- Neither class logs the warning.
+- `PostgresStorage(url=<sqlite, mysql or floor URL>)` raises a `ValueError` that names both dialects, and no engine is built. The refusal never holds the URL or its password.
+- Neither class logs the warning. The Postgres row runs on the engine leg.
 
 ## Scope
 
@@ -377,7 +377,7 @@ The Postgres server was a container started again, not created fresh, for both r
 
 Confirmed on 2026-11-21: all four choices stand as written. Choice 3's tested versions are amended to every version the PostgreSQL project supports, 15 to 19 today, stated and not enforced, as decision 7 says.
 
-Since this spec was written, `DatabaseStorage(session_factory=...)` was removed by the branch `a-cancelled-call-leaves-its-storage-intact`, and a storage always builds its own engine from `url=` and `engine_arguments=`. Decision 10's borrowed-engine example and landing 3's mismatch tests name `session_factory=`. Before landing 3 is built they are recut: the mismatch is a URL of the other engine, such as `SQLiteStorage(url="postgresql+asyncpg://...")`, refused with both dialects named. Landings 1 and 2 are unaffected.
+Since this spec was written, `DatabaseStorage(session_factory=...)` was removed by the branch `a-cancelled-call-leaves-its-storage-intact`, and a storage always builds its own engine from `url=` and `engine_arguments=`. Decisions 2 and 10 and their tests were recut on 2026-11-21, before landings 2 and 3 were built, and two choices were confirmed then. A URL of another engine given to `PostgresStorage` is refused at construction with a `ValueError`, not at first touch. `SQLiteStorage` was first given `path=` or `url=`, for a managed SQLite, and `url=` was dropped the same day once the code review showed that every SQLite arm assumes the aiosqlite driver; it takes `path=` alone. Landings 2 and 3 land as one pull request. The answers to H1, N1 and N2 below describe the first-touch refusal that this recut replaces, and "What the code does today" is the code of 2026-11-20.
 
 1. **The warning is a `logging` record, not a Python warning.** D17 and X7 give the reason. The other choice is `warnings.warn` with a public `UnsupportedDialectWarning`, which a caller filters by category, at the price of a second channel and a new public type.
 2. **The dropped engines resolve to the floor with the warning**, and are not refused by name. Decision 3 gives the reason.

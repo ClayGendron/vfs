@@ -15,14 +15,14 @@ Each Python block below is one notebook cell, and the block after it shows what 
 Open a new notebook and run this in the first cell.
 
 ```python
-from vfs import DatabaseStorage, VirtualFileSystem
+from vfs import SQLiteStorage, VirtualFileSystem
 
 fs = VirtualFileSystem(
-    storage=DatabaseStorage(url="sqlite+aiosqlite:///vfs.db"),
+    storage=SQLiteStorage(path="vfs.db"),
 )
 ```
 
-This cell prints nothing. The `storage` argument tells the file system where to keep its files, and the URL names the database. Here, `sqlite+aiosqlite` is the kind of database and its driver, which is installed with `vfs-py`, and `vfs.db` is the file the database lives in.
+This cell prints nothing. The `storage` argument tells the file system where to keep its files. `SQLiteStorage` keeps them in a SQLite database, and `path` names the file the database lives in, here `vfs.db`. SQLite and its driver are installed with `vfs-py`.
 
 ## Step 2: Write a File
 
@@ -71,7 +71,7 @@ This cell prints nothing. The file system is gone from memory, as if your applic
 
 ```python
 fs = VirtualFileSystem(
-    storage=DatabaseStorage(url="sqlite+aiosqlite:///vfs.db"),
+    storage=SQLiteStorage(path="vfs.db"),
 )
 
 fs.read("/hello_world.py")
@@ -99,10 +99,23 @@ This cell prints nothing. Close the file system first, so the database is no lon
 
 You gave a file system a database, wrote a file, and read it back after closing and reopening the file system.
 
-- **One argument made the files last.** `storage=DatabaseStorage(url=...)` is the only line that differs from the first tutorial.
+- **One argument made the files last.** `storage=SQLiteStorage(path=...)` is the only line that differs from the first tutorial.
 - **The files live in the database.** VFS stores each file as a row and never writes it to your disk as a file.
 
-SQLite is a good fit for a laptop. VFS also runs on Postgres, where the URL names that database instead. VFS is tested on every Postgres version the PostgreSQL project supports, 15 to 19 today, with pgvector 0.8. pgvector must be installed in the database by a role that may create extensions: VFS proves the extension when it first connects and never creates it.
+SQLite is a good fit for a laptop or a local application. A SQLite URL that carries options in its query goes to `DatabaseStorage(url=...)`, which serves it on the same tuned SQLite profile.
+
+A shared deployment runs on Postgres. `PostgresStorage` takes the URL of the server, and `schema` names the Postgres schema its tables live in:
+
+```python
+from vfs import PostgresStorage
+
+storage = PostgresStorage(
+    url="postgresql+asyncpg://app@db/vfs",
+    schema="vfs",
+)
+```
+
+VFS is tested on every Postgres version the PostgreSQL project supports, 15 to 19 today, with pgvector 0.8. pgvector must be installed in the database by a role that may create extensions. VFS proves the extension when it first connects and never creates it.
 
 ## Where to Go Next
 

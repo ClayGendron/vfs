@@ -35,9 +35,11 @@ SECURITY_SKILL_SHA256 = "ac796659de231c3ab76f6ee012836072bdc82928fb019199925c906
 
 
 # The database adapter, and the only modules outside it that may import from it:
-# the public export, the backends package's re-export, and the in-memory storage built on it.
+# the public export, the backends package's re-export, and the named storages built on it.
 ADAPTER = "vfs.storage.backends.database"
-ADAPTER_IMPORTERS = frozenset({"vfs", "vfs.storage.backends", "vfs.storage.backends.memory"})
+ADAPTER_IMPORTERS = frozenset(
+    {"vfs", "vfs.storage.backends", "vfs.storage.backends.sqlite", "vfs.storage.backends.postgres"}
+)
 
 # The layer ladder, bottom first: an import between two units points to a lower rung. A module
 # belongs to the unit that is its deepest named prefix, and units that share a rung stay apart.

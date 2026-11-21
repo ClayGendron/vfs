@@ -23,6 +23,8 @@ from vfs.shell import LineResult
 from vfs.storage import ResolvedPair, StorageBackend, ranking
 from vfs.storage.backends.database.backend import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.postgres import PostgresStorage
+from vfs.storage.backends.sqlite import SQLiteStorage
 from vfs.storage.grants import GrantLevel, Posture
 from vfs.storage.replace import EditOperation
 from vfs.sync import Session, VirtualFileSystem
@@ -59,6 +61,7 @@ __all__ = [
     "Path",
     "PermissionMap",
     "PermissionsPayload",
+    "PostgresStorage",
     "Posture",
     "Principal",
     "PrincipalKind",
@@ -69,6 +72,7 @@ __all__ = [
     "ResultError",
     "RetryClass",
     "Rung",
+    "SQLiteStorage",
     "ScopeChannel",
     "Session",
     "Severity",

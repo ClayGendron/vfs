@@ -2,10 +2,10 @@
 
 One storage implementation, one semantics: the in-memory role (dev
 default, test fixture, zero-infrastructure node) is served by
-:class:`~vfs.storage.backends.database.DatabaseStorage` pointed at a
-private ``sqlite+aiosqlite:///:memory:`` database, so every verb —
-including the trash arc — behaves exactly as the conformance suite
-pins it, on the same code path production engines run.
+:class:`~vfs.storage.backends.sqlite.SQLiteStorage` over a private
+``:memory:`` database, so every verb — including the trash arc —
+behaves exactly as the conformance suite pins it, on the same code path
+production engines run.
 
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())     # tmpfs-like node
 
@@ -28,14 +28,17 @@ from typing import TYPE_CHECKING
 
 from vfs.deadline import WALL_TIME_BUDGET
 from vfs.embedding import HashEmbeddingProvider
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.sqlite import SQLiteStorage
 
 if TYPE_CHECKING:
     from vfs.embedding import EmbeddingProvider
 
+MEMORY_PATH = ":memory:"
+"""The path SQLite reads as a database in memory, private to its one connection."""
 
-class InMemoryStorage(DatabaseStorage):
-    """A ``DatabaseStorage`` pinned to a private in-memory SQLite database.
+
+class InMemoryStorage(SQLiteStorage):
+    """An ``SQLiteStorage`` whose path is a private in-memory database.
 
     Construction-only subclass: every verb, capability, and trait comes
     from ``DatabaseStorage``. Each instance owns a fresh database — two
@@ -64,7 +67,7 @@ class InMemoryStorage(DatabaseStorage):
         embedder: EmbeddingProvider | None = None,
     ) -> None:
         super().__init__(
-            url="sqlite+aiosqlite:///:memory:",
+            path=MEMORY_PATH,
             name=name,
             description=description,
             trash_days=trash_days,

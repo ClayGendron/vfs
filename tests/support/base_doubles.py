@@ -313,6 +313,20 @@ class GatedCloseStorage(SpyCloseStorage):
         await super().close()
 
 
+class MeetsAtCloseStorage(SpyCloseStorage):
+    """Backend whose close returns only once its partner's close has begun: two closed in turn never meet."""
+
+    def __init__(self, here: asyncio.Event, there: asyncio.Event, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._here = here
+        self._there = there
+
+    async def close(self) -> None:
+        self._here.set()
+        await self._there.wait()
+        await super().close()
+
+
 class TransportFailStorage(RecorderStorage):
     """Wire-backend double whose every op raises ``TransportError`` — a dead peer."""
 
