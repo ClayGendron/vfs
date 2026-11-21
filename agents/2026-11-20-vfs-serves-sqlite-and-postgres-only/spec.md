@@ -361,6 +361,10 @@ A second reading on 2026-11-21 found every finding closed, except M5 in part, an
 
 ## Choices to confirm
 
+Confirmed on 2026-11-21: choices 1, 2 and 4 stand as written. Choice 3 is not yet confirmed.
+
+Since this spec was written, `DatabaseStorage(session_factory=...)` was removed by the branch `a-cancelled-call-leaves-its-storage-intact`, and a storage always builds its own engine from `url=` and `engine_arguments=`. Decision 10's borrowed-engine example and landing 3's mismatch tests name `session_factory=`. Before landing 3 is built they are recut: the mismatch is a URL of the other engine, such as `SQLiteStorage(url="postgresql+asyncpg://...")`, refused with both dialects named. Landings 1 and 2 are unaffected.
+
 1. **The warning is a `logging` record, not a Python warning.** D17 and X7 give the reason. The other choice is `warnings.warn` with a public `UnsupportedDialectWarning`, which a caller filters by category, at the price of a second channel and a new public type.
 2. **The dropped engines resolve to the floor with the warning**, and are not refused by name. Decision 3 gives the reason.
 3. **The tested Postgres versions are stated but not enforced** in this spec. Decision 7 gives the reason.
