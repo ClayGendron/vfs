@@ -30,22 +30,39 @@ One pattern may expand to at most 64 arms, the value of [`MAX_PATTERN_ARMS`](htt
 
 An entry is one file or one directory in the file tree. A file is an entry with content, and a directory is an entry with none.
 
-The path a [mount](#mount) is attached at is an entry too. It is an empty directory, stored in the mount above it. The directory is the entry. The storage backend attached there is the mount.
+The path a [mount](#mount) is attached at is an entry too. It is an empty directory, stored in the mount above it. The directory is the entry. The [storage](#storage) attached there is the mount.
 
 ## Kernel
 
-The kernel is the object that holds the file tree and answers every call on it. For each call it finds the [mount](#mount) that holds the path, checks the call against the permissions of that mount, and sends the call to the storage backend of that mount with the name of the caller. The storage backend decides what that caller may see or change. **Every call passes through the kernel, so no call reaches a storage backend unchecked.**
+The kernel is the object that holds the file tree and answers every call on it. For each call it finds the [mount](#mount) that holds the path, checks the call against the permissions of that mount, and sends the call to the [storage](#storage) of that mount with the name of the caller. The storage decides what that caller may see or change. **Every call passes through the kernel, so no call reaches a storage unchecked.**
 
-In code the kernel is `AsyncVirtualFileSystem`, with calls you `await`. `VirtualFileSystem` is the same kernel with plain calls. One kernel is one file tree. A kernel never holds another kernel, and two file trees are joined only through a storage backend.
+In code the kernel is `AsyncVirtualFileSystem`, with calls you `await`. `VirtualFileSystem` is the same kernel with plain calls. One kernel is one file tree. A kernel never holds another kernel, and two file trees are joined only through a storage.
 
 The name follows the kernel of an operating system, which every call on a file passes through.
 
 ## Mount
 
-A mount is a storage backend attached at a path in the file tree. **Every path belongs to exactly one mount, the deepest one at or above it.** With one mount at `/` and one at `/projects`, the path `/projects/app/main.py` belongs to the mount at `/projects`.
+A mount is [storage](#storage) attached at a path in the file tree. **Every path belongs to exactly one mount, the deepest one at or above it.** With one mount at `/` and one at `/projects`, the path `/projects/app/main.py` belongs to the mount at `/projects`.
 
 A mount is attached at an [entry](#entry), an empty directory. `fs.add_mount()` makes that directory when it is absent. **The directory is stored. The mount is not.** The mount lasts only while the file system is open. `fs.remove_mount()` removes the mount and then its directory.
 
 While a mount is attached, its path shows the top of the mounted storage and never the directory beneath it. `fs.ls("/")` and `fs.stat("/projects")` return the same row for `/projects`. The name of a mount is never hidden from a caller who can list the directory it is in.
 
 Adding or removing a mount is a write at its path. A read-only mount takes no new mount beneath it and loses none. The caller must also hold `read_write` at that path, as for a change to who can access it. `fs.add_mount(..., posture=...)` sets the level that everyone holds at the root of the mounted storage, before the mount can be reached. A posture set deeper in that storage stays.
+
+## Storage
+
+A storage is an object that keeps [entries](#entry) and answers the calls made on them. It is where the files are held. **A storage has no place in the file tree until it is attached as a [mount](#mount).** The [kernel](#kernel) then sends it every call on a path that mount holds.
+
+A storage knows only its own paths, which start at its own root. The mount gives that root a path in the file tree. The same storage attached at `/data` or at `/archive` holds the same entries.
+
+A storage also decides what each caller may see or change. The kernel passes it the name of the caller with every call.
+
+In code a storage is any object with the members of `StorageBackend`. It has a name and a description, it can be read, and it declares the other calls it answers. Two classes come with VFS.
+
+| Class | Where the entries are kept |
+|---|---|
+| `DatabaseStorage` | A SQL database, reached through SQLAlchemy |
+| `InMemoryStorage` | A SQLite database in memory, which is gone when the storage is closed |
+
+A kernel that is given no storage makes an `InMemoryStorage` for its root. A storage can also wrap another kernel, and that is the only way two file trees are joined.

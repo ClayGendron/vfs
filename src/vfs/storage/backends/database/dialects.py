@@ -175,8 +175,8 @@ class DialectProfile:
     count (Oracle's ORA-01795 at 1,000 is the generic floor);
     ``arbitration`` names how concurrent create resolves (native upsert
     vs catch-and-retry — the portable fallback). ``session_settings``
-    run at every op-session start (connection state a borrowed pool
-    cannot be assumed to carry); ``file_settings`` run once at first
+    run at every checkout of a connection (state that each connection
+    must carry); ``file_settings`` run once at first
     touch (database-file state). Isolation pins are ``None`` where the
     engine's default is the declared choice.
 
@@ -299,9 +299,8 @@ class DialectProfile:
     Server's hint also names ``FORCESEEK``: under the ``values``
     membership form a locking read that the optimizer plans as a scan
     takes an update lock on every row and escalates to a table lock,
-    so the seek is forced where the lock is held (measured: two key
-    locks per row, never a table lock, at 40,000 rows in one
-    transaction).
+    so the seek is forced where the lock is held (measured: two key locks
+    per row, never a table lock, at 40,000 rows in one transaction).
 
     ``share_lock`` declares the shared lock a mint proves its label under
     (:class:`ShareLock`), which SQLAlchemy renders on two engines of five.
@@ -413,6 +412,10 @@ class DialectProfile:
     Oracle's embed page hashes the entry table per page, and the probe
     is unmeasured on all three. A SQLite planner that took the ``LIMIT``
     into its filter estimate would let the join come back.
+
+    ``attempts_out_of_reach`` declares that a try of a call's transaction
+    runs out of its caller's reach, because SQLAlchemy throws away a
+    connection a cancellation reached: on SQLite, the database or its lock.
     """
 
     name: str
@@ -437,8 +440,6 @@ class DialectProfile:
     tuple_in: bool = False
     like_bracket_class: bool = False
     content_bytes: bool = False
-    # How bulk_insert reaches the engine: Core's executemany, or the
-    # driver's own on the session's connection — measured per engine.
     bulk_insert: BulkInsertMode = "core"
     vector_distance: VectorDistance = "none"
     vector_dimension_cap: int | None = None
@@ -455,8 +456,6 @@ class DialectProfile:
     range_settings: tuple[str, ...] = ()
     range_fence: str | None = None
     relabel_rows: int = RELABEL_ROWS
-    # The cosine distance function as a precondition: probe, fix, and the
-    # install statement the explicit verb alone runs; ``None`` declares none.
     vector_function: VectorFunction | None = None
     scope_facts_beside_fan: bool = False
     statistics_listing: str | None = None
@@ -465,6 +464,7 @@ class DialectProfile:
     # The ``sqlalchemy.func`` name that sizes a stored body without reading it, which SQLAlchemy does not model:
     # exact bytes on SQL Server, encoding bytes on Postgres and MariaDB, characters elsewhere (the floor's ``length``).
     stored_length: str = "length"
+    attempts_out_of_reach: bool = False
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -522,6 +522,7 @@ SQLITE: Final = DialectProfile(
     rarity_hint="unlikely",
     # Plan-pinned: the chunk pages' entry probe plans no per-page Bloom filter where the join builds one.
     probe_entry_filter=True,
+    attempts_out_of_reach=True,
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -752,8 +753,7 @@ def lock_rows(stmt: Select[_Row], table: Table, profile: DialectProfile) -> Sele
 # fixed predicates (the liveness filter, projection, depth caps).
 _FILTER_BIND_RESERVE: Final = 32
 
-# Depth units held back from each OR-fan chunk for the fixed predicates
-# AND-chained above the fan.
+# Depth units held back from each OR-fan chunk for the fixed predicates AND-chained above the fan.
 EXPRESSION_DEPTH_RESERVE: Final = 64
 
 

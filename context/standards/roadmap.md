@@ -449,7 +449,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 | `CREATE SCHEMA` for host apps, bulk path by driver, privilege refusals classified | missing (spec 157 draft) |
 | `install_extensions` | built on the storage; not reachable from the router |
 | 10k count pins | write (and at the router since X2, `tests/base/test_write_at_scale.py:128`), edges, glob, delete/restore, tombstoned read, traverse; none for move, copy, mkdir, sweep, grep, search, grants |
-| Pool configuration | none; a borrowed MSSQL factory skips `use_setinputsizes=False` |
+| Pool configuration | built: `engine_arguments=` goes to SQLAlchemy beside the URL, and `use_setinputsizes=False` always holds on SQL Server |
 | MariaDB guarded updates | per-row round trips (spec 080 researched) |
 | ANN index provisioned | Postgres only; MariaDB and Oracle profiles say `ann`, run exact |
 
@@ -473,11 +473,11 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 #### D3 — Provisioning for host apps · spec 157 · M · gate b
 
-*Why.* The first three things a production host hit: `schema="vfs"` needs a hand-made schema; a psycopg session factory crashes on the first bulk insert; a role without `CREATE` gets `internal`. *Depends on.* D2. *Acceptance.*
+*Why.* The first three things a production host hit: `schema="vfs"` needs a hand-made schema; a psycopg URL crashes on the first bulk insert; a role without `CREATE` gets `internal`. *Depends on.* D2. *Acceptance.*
 1. `DatabaseStorage(url=postgres, schema="vfs_demo")` on a database with no such schema serves its first `write`; same on the SQL Server leg; on SQLite, MariaDB and Oracle first touch issues no schema statement (counted).
 2. Through a role without `CREATE`, first touch refuses `vfs.unavailable` (spec 157 §2; `retryable=False`) with `data["schema"]` and `data["privilege"] == "CREATE"`, never a traceback.
 3. The bulk path is chosen by driver (spec 157's proposed `bulk_insert_mode`; today's helper is `dialects.bulk_insert`): `"copy"` only when the driver is asyncpg; a `postgresql+psycopg://` leg runs the conformance contract and a 10,000-file write lands in `"core"` with ≥ 2 insert pages counted.
-4. A borrowed `mssql+aioodbc` factory without `use_setinputsizes=False` is refused `vfs.invalid` at first touch naming the kwarg (lean), pinned with a non-Latin1 path round-trip on the MSSQL leg.
+4. Built in part: a storage always builds its engine, so `use_setinputsizes=False` always holds on a `mssql+aioodbc` URL, and another value in `engine_arguments` is refused at construction naming the key. Still to do: the non-Latin1 path round-trip on the MSSQL leg.
 5. `fs.install_extensions(path)` runs the storage's install for one mount: a no-op success on SQLite, the real install on Postgres; the name joins the management allowlist.
 
 #### D4 — Every verb has a 10k count pin, parametrized over the engine legs · M · gate b
@@ -501,10 +501,10 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 2. A `workflow_dispatch` input runs any leg against `pip install vfs-py==<version>` in a clean venv with no Rust and no C compiler on the runner.
 3. The run against the last beta is recorded in the `0.1.0` release notes (CI evidence).
 
-#### D7 — Pool and borrowed-host posture, per-engine how-tos · M · gate f
+#### D7 — Pool posture, per-engine how-tos · M · gate f
 
-*Depends on.* D3. Adds `pool=` as an additive constructor argument. *Acceptance.*
-1. `DatabaseStorage(url, pool=PoolConfig(size=, max_overflow=, pre_ping=, recycle=))`; the params drift test lists the four fields; the `:memory:` path ignores them and keeps `StaticPool`.
+*Depends on.* D3. The pool is configured through `engine_arguments=`, which is built. *Acceptance.*
+1. Built: `DatabaseStorage(url, engine_arguments={"pool_size": ..., "max_overflow": ..., "pool_pre_ping": ..., "pool_recycle": ...})` configures the pool; an in-memory URL keeps `StaticPool`, and another pool class or a recycle is refused at construction.
 2. A test kills the connection between two ops on each engine leg and asserts the next op succeeds after exactly one `backend_unavailable` retry (retry spy).
 3. `docs/how-to/` gains one page each for SQLite, Postgres, SQL Server and Oracle (URL, extra, provisioning privilege, the first-touch refusal when the vector function is absent), fence-tested where SQLite suffices.
 
@@ -854,7 +854,7 @@ Nothing is built (EXECUTED 2026-11-15). MCP ships with 0.1.0 (D2, Clay, 2026-11-
 *Acceptance.*
 1. `docs/reference/result.md`: `Result`, `Observation`, `ResultError`, the `ErrorKind` table generated from the enum (a test asserts every kind appears), `|` merging, `to_payload`/`from_payload`.
 2. `docs/reference/api.md` (K9) is the one signature page; a narrative page per verb family links to it; the import test runs against `api.md` only.
-3. `docs/reference/storage.md`: constructor parameters, built vs borrowed, `install_extensions`, the schema contract (D2).
+3. `docs/reference/storage.md`: constructor parameters, `engine_arguments` and the `engine` property, `install_extensions`, the schema contract (D2).
 4. No page under `docs/` is a heading with no body.
 
 #### X5 — Install page and the one setup recipe · S · gate f
@@ -1033,7 +1033,7 @@ Measured throughput from the spec archive (status lines "landed 2026-MM"): July 
 2. H6 → 0.2 except `cancel(ticket)` and `cancel(run_id)` (S).
 3. M3's `input_required` mapping → 0.2; ship only its fallback (the `pending` text and payload as a `complete` error result) and the `answer`/`resume` tools. H3's LangGraph host does not need the wire mapping.
 4. K7 → keep the atomic-unit pin (criterion 1, as a D4 pin) and the trait; move crash injection, `engine_error` and `features()` to 0.1.x.
-5. D7 → 0.1.x; document `engine_kwargs` pass-through in D3's how-to.
+5. D7 → 0.1.x; document the `engine_arguments` pass-through in D3's how-to.
 6. H5's MCP-elicitation leg → 0.2; keep the host-tool interrupt, the guest's asks and the shell stage.
 7. T4's supervisor and respawn → 0.1.x; in-process and plain stdio only.
 8. T5's numpy/pandas bundle → 0.1.x; ship the stdlib-only guest first. The guest's shape and the door do not change.

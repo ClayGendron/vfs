@@ -40,9 +40,9 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
     would otherwise finalize at garbage-collection time against a closed
     loop, which under workers surfaces as an unhandled thread exception in
     whatever test runs next. ``close()`` is idempotent, so already-closed
-    instances are fine, and a borrowed-engine close never disposes. A
-    storage a module-scoped fixture built is constructed before this
-    fixture patches, so it is not tracked and must close in its fixture.
+    instances are fine. A storage a module-scoped fixture built is
+    constructed before this fixture patches, so it is not tracked and must
+    close in its fixture.
     """
     created: list[DatabaseStorage] = []
     original = DatabaseStorage.__init__

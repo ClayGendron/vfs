@@ -11,12 +11,17 @@
   },
   {
     "term": "Kernel",
-    "summary": "The object that holds the file tree, checks every call and sends it to the storage backend that holds the path.",
+    "summary": "The object that holds the file tree, checks every call and sends it to the storage that holds the path.",
     "types": ["AsyncVirtualFileSystem"]
   },
   {
     "term": "Mount",
-    "summary": "A storage backend attached at a path in the file tree.",
+    "summary": "Storage attached at a path in the file tree.",
     "types": ["Mount"]
+  },
+  {
+    "term": "Storage",
+    "summary": "An object that keeps entries and answers the calls on them, attached to the file tree as a mount.",
+    "types": ["StorageBackend"]
   }
 ]

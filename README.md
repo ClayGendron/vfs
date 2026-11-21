@@ -39,16 +39,16 @@ assert written.success and found.success
 Asynchronous, for servers and agents:
 
 ```python
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from vfs import AsyncVirtualFileSystem
 
-# Your application's engine and session factory — any SQLAlchemy URL works.
-engine = create_async_engine("sqlite+aiosqlite:///enterprise.db")
-sessions = async_sessionmaker(engine, expire_on_commit=False)
+# Any SQLAlchemy URL works. Engine arguments size the pool the storage builds.
+enterprise = DatabaseStorage(
+    url="sqlite+aiosqlite:///enterprise.db",
+    engine_arguments={"pool_size": 5, "pool_pre_ping": True},
+)
 
 kernel = AsyncVirtualFileSystem()
-await kernel.add_mount(DatabaseStorage(session_factory=sessions), "/enterprise")
+await kernel.add_mount(enterprise, "/enterprise")
 await kernel.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge", permissions="read")
 
 written = await kernel.write(path="/enterprise/policies/mfa.md", content="All logins require MFA.", parents=True)
@@ -122,7 +122,7 @@ assert {"read", "glob", "grep", "search", "write"} <= node.capabilities()
 node.close()
 ```
 
-Database backends come in exactly two constructions: give one a URL and it builds and owns its engine, or hand it your application's session factory and it borrows yours — ownership follows construction, never a flag.
+A database backend builds its engine from a URL, owns it, and disposes it at `close()`. Pass `engine_arguments=` for what a URL cannot carry (the pool's size and class, `pool_pre_ping`, `connect_args`, `async_creator`). The engine is at `storage.engine` for listeners alone: put a `do_connect` hook or tracing on `storage.engine.sync_engine`, and open no connection or session on it, which beside a call on an in-memory storage costs the database.
 
 Permissions compose the same way: each node carries a permission map (`"read"`, `"read_write"`, or a per-prefix map of those two), enforced at the routing chokepoint before anything dispatches. The map lives on the node, not on the data: two nodes over one schema do not see each other's maps.
 
