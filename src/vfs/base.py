@@ -157,10 +157,6 @@ _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patter
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 
 
-CLOSED_DETAIL: Final = "the filesystem is closed"
-"""The refusal of every verb called after ``close()``, by the router and by its synchronous face."""
-
-
 class ResolvedTerminal(NamedTuple):
     """Where a path landed, as the :term:`mount` that holds it and the path inside that mount.
 
@@ -3071,7 +3067,7 @@ class AsyncVirtualFileSystem:
 
     def _closed_error(self, op: Op) -> Result:
         """Return the ``backend_unavailable`` refusal for a verb called after ``close()``."""
-        return self._error(ErrorKind.backend_unavailable, op=op, detail=CLOSED_DETAIL)
+        return self._error(ErrorKind.backend_unavailable, op=op, detail="the filesystem is closed")
 
 
 # ---------------------------------------------------------------------------

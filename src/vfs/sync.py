@@ -30,7 +30,7 @@ import threading
 import warnings
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from vfs.base import CLOSED_DETAIL, AsyncVirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
@@ -60,6 +60,9 @@ LOOP_THREAD_DETAIL: Final = (
     "called from the facade's own loop thread; a callback running on the loop uses AsyncVirtualFileSystem"
 )
 """The deadlock refusal: a call that would block the loop on a future the same loop must finish."""
+
+CLOSED_DETAIL: Final = "the filesystem is closed"
+"""The closed refusal, the same words the router mints after its own close."""
 
 CLOSED_MANAGEMENT_DETAIL: Final = "the filesystem is closed; the loop thread has stopped"
 """The closed refusal for a management method, which raises by contract."""
@@ -172,7 +175,10 @@ class VirtualFileSystem:
         return self
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -745,7 +751,10 @@ class Session:
         return self
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:
         self.close()
 
