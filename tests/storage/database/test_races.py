@@ -204,7 +204,7 @@ class TestMkedgeEndpointLocks:
                 created = await storage.mkedge(edges=[edge])
             assert created.success is True
             assert created.observations[0].status == "created"
-            deleted = await asyncio.wait_for(pending["delete"], timeout=60)
+            deleted = await pending["delete"]
             assert deleted.success is True
             # Converged: the cascade swept the edge the lock let land first,
             # proven by absence through the public verb.
@@ -449,9 +449,6 @@ class TestExpectedVersionRivals:
 # The row lock an append holds
 # ---------------------------------------------------------------------------
 
-# How long a call beside a held lock may run before the test is stopped as hung. Never a measurement.
-_HUNG_AFTER_SECONDS = 60.0
-
 
 class TestAppendLock:
     """An append locks the one row it adds to: no reader waits on it, and no writer of another file does."""
@@ -467,14 +464,15 @@ class TestAppendLock:
                 returned: list[bool] = []
 
                 async def while_locked() -> None:
-                    # The append has locked its row and read its body, and has not committed.
+                    # The append has locked its row and read its body, and has not committed; a call
+                    # that waits on that lock never returns, and the run's deadline ends the test.
                     calls = (
                         beside.read(path=Path("/log.txt")),
                         beside.stat(path=Path("/log.txt")),
                         beside.grep(pattern="needle"),
                         beside.edit(path=Path("/other.txt"), edits=[EditOperation(old="x", new="y")]),
                     )
-                    results = await asyncio.wait_for(asyncio.gather(*calls), _HUNG_AFTER_SECONDS)
+                    results = await asyncio.gather(*calls)
                     returned.extend(result.success for result in results)
 
                 handler, _ = _self_clearing("write:before-apply", while_locked)

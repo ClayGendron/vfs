@@ -24,6 +24,7 @@ from vfs.deadline import CHECK_EVERY, Deadline
 from vfs.models.media import MAX_RENDER_DETAIL_LENGTH
 from vfs.rendering import (
     RENDER_CHARS,
+    RENDER_SECONDS,
     UNSUPPORTED_GENERATION,
     BundledRenderer,
     Renderer,
@@ -430,7 +431,8 @@ class TestContainerRefusal:
         monkeypatch.setattr("vfs.deadline.monotonic", clock)
         reads = watch()
         detail = "pptx: the container was not verified within 60 seconds"
-        assert _check(data, renderer="pptx", deadline=Deadline(at=60.0)) == Rendering("failed", detail=detail)
+        limits = RenderLimits(seconds=RENDER_SECONDS)
+        assert _check(data, limits, "pptx", deadline=Deadline(at=60.0)) == Rendering("failed", detail=detail)
         assert clock.reads == 2
         assert len(reads.chunks) == CHECK_EVERY
         idle = _Clock()

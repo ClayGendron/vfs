@@ -18,8 +18,10 @@ drops a worker's stderr, so a stack written there is lost.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import faulthandler
 import io
+import math
 import os
 import re
 import signal
@@ -36,7 +38,17 @@ import greenlet
 import pytest
 from sqlalchemy import Engine, create_engine, event
 
+from vfs import base as base_module
+from vfs import chain as chain_module
+from vfs import fanout as fanout_module
+from vfs import listing as listing_module
+from vfs.base import AsyncVirtualFileSystem
+from vfs.rendering import RenderLimits
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.postgres import PostgresStorage
+from vfs.storage.backends.sqlite import SQLiteStorage
+from vfs.sync import VirtualFileSystem
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -51,6 +63,25 @@ pytest.register_assert_rewrite(*HELPER_PACKAGES)
 HANG_DIR_VAR: Final = "VFS_TEST_HANG_DIR"
 """Where each worker's file of hung tests goes; ``test-hangs/`` under the root when unset."""
 HANG_DIR_DEFAULT: Final = "test-hangs"
+
+UNBOUNDED_ARGUMENTS: Final = frozenset(
+    {"grep_wall_seconds", "search_wall_seconds", "glob_wall_seconds", "embed_timeout_seconds", "close_timeout"}
+)
+"""The time budgets a storage or a router takes, each given ``math.inf`` by default in a test."""
+# Read before any fixture wraps a constructor, so the defaults patched are the ones each call reads.
+_BUDGETED_INITS: Final = tuple(
+    vars(kind)["__init__"]
+    for kind in (
+        DatabaseStorage,
+        SQLiteStorage,
+        PostgresStorage,
+        InMemoryStorage,
+        AsyncVirtualFileSystem,
+        VirtualFileSystem,
+    )
+)
+_STAGE_MODULES: Final = (base_module, chain_module, fanout_module, listing_module)
+"""The router's modules whose matching stages read ``WALL_TIME_BUDGET`` at each call."""
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -115,6 +146,47 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
         await storage.close()
     loop = asyncio.get_running_loop()
     await asyncio.gather(*(future for future in stopped if future.get_loop() is loop), return_exceptions=True)
+
+
+@pytest.fixture(autouse=True)
+def _unbounded_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Leave every budget a test does not name unbounded: each storage and router stage wall, a render, a close.
+
+    A shipped budget of seconds fires on a machine slow enough, in a test
+    that tests no budget, and fails it for the machine's speed. A test of a
+    budget names its own, by argument or by patching the module's constant,
+    and the run's deadline bounds every other wait.
+    """
+    for init in _BUDGETED_INITS:
+        defaults = init.__kwdefaults__
+        for name in UNBOUNDED_ARGUMENTS & defaults.keys():
+            monkeypatch.setitem(defaults, name, math.inf)
+    for module in _STAGE_MODULES:
+        monkeypatch.setattr(module, "WALL_TIME_BUDGET", math.inf)
+    render = RenderLimits.__init__
+    shipped = render.__defaults__
+    assert shipped is not None
+    limits = {field.name: default for field, default in zip(dataclasses.fields(RenderLimits), shipped, strict=True)}
+    monkeypatch.setattr(render, "__defaults__", tuple({**limits, "seconds": math.inf}.values()))
+
+
+@pytest.fixture
+def thread_gate() -> Iterator[Callable[[], threading.Event]]:
+    """A maker of gates a test's threads wait on with no bound of their own, each opened at teardown.
+
+    A test that fails or outlives its deadline before it opens a gate frees
+    the thread waiting there as it tears down, so no pool shutdown or exit
+    waits on it. Ask for it after any fixture that joins that thread.
+    """
+    made: list[threading.Event] = []
+
+    def make() -> threading.Event:
+        made.append(gate := threading.Event())
+        return gate
+
+    yield make
+    for gate in made:
+        gate.set()
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ from tests.support.shared_builds import build_once, shared_directory
 from tests.support.statements import is_statistics_statement
 from vfs import deadline as deadline_module
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, Authority, Principal
-from vfs.deadline import Deadline
+from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.ops import VERB_RUNGS
@@ -1046,11 +1046,10 @@ class TestPostureGate:
         assert judged.calls == []
         assert addressed.calls == [(("/z/*.md",),)]
 
-    async def test_a_gate_past_its_wall_refuses_the_call(
-        self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_gate_past_its_wall_refuses_the_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: the gate's deadline read dropped, or a gate that reached its
         wall serving part of the call instead of refusing it whole."""
+        storage = InMemoryStorage(glob_wall_seconds=WALL_TIME_BUDGET)
         read_body = _Spied(backend_module.glob_rows)
         monkeypatch.setattr(backend_module, "glob_rows", read_body)
         read: list[str] = []
@@ -1072,6 +1071,7 @@ class TestPostureGate:
         assert read_body.calls == []
         assert 1 <= len(read) <= 200
         assert read == [str(root) for root in _SCOPE_ROOTS[: len(read)]]
+        await storage.close()
 
     @pytest.mark.slow
     @pytest.mark.asyncio(loop_scope="module")

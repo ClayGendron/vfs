@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool, QueuePool
 from ulid import ULID
 
-from tests.support.database_helpers import _fresh_url, writer_engine
+from tests.support.database_helpers import _fresh_url, _waits_out_every_lock, writer_engine
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.authority import EVERYONE_NAME
 from vfs.models import Entry
@@ -321,6 +321,9 @@ class TestFirstTouch:
     async def test_two_instances_first_touch_concurrently(self, tmp_path) -> None:
         a = DatabaseStorage(url=_fresh_url(tmp_path))
         b = DatabaseStorage(url=_fresh_url(tmp_path))
+        # The second to the file waits on the first's provisioning commit, never on the busy budget.
+        _waits_out_every_lock(a)
+        _waits_out_every_lock(b)
         first, second = await asyncio.gather(a.first_touch(), b.first_touch())
         assert first.success is True
         assert second.success is True

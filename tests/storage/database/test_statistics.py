@@ -670,8 +670,8 @@ class TestPlannerStatistics:
             await asyncio.Event().wait()
 
         task = asyncio.create_task(caller())
+        # The cancel lands while the pass runs its first ANALYZE, the moment a pass the caller owned would lose.
         await first.wait()
-        await asyncio.sleep(0.005)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

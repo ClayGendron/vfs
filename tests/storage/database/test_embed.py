@@ -732,8 +732,8 @@ class TestRefusals:
         provider = ScriptedProvider(token_of=len, real_batch_tokens=300, max_batch_tokens=300, max_batch_inputs=64)
         files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
         storage = await _fresh(tmp_path, files, embedder=provider, embed_concurrency=1)
-        # A hang guard only: a split that held its slot would wait on itself forever.
-        result = await asyncio.wait_for(storage.rebuild(), 60)
+        # A split that held its slot would wait on itself forever, until the run's deadline ends the test.
+        result = await storage.rebuild()
         assert result.errors == [] and _extra(result)["unembedded"] == 0
         await storage.close()
 

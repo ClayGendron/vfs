@@ -1037,7 +1037,7 @@ class TestBudgets:
     ) -> None:
         """Guards: the kernel's completion flag ignored, a stopped batch's postings dropped,
         or the wall recorded once per batch instead of once per call."""
-        storage = await _indexed(tmp_path)
+        storage = await _indexed(tmp_path, search_wall_seconds=WALL_TIME_BUDGET)
         dirty = [
             Entry(path=Path("/dirty/a.txt"), content="tokens early\n"),
             Entry(path=Path("/dirty/b.txt"), content="tokens later\n"),
@@ -1069,7 +1069,7 @@ class TestBudgets:
         """Guards: the deadline unread between batches, so an expired call keeps fetching bodies,
         or the batches counted before the wall dropped from the answer."""
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
-        storage = await _fresh(tmp_path, files)
+        storage = await _fresh(tmp_path, files, search_wall_seconds=WALL_TIME_BUDGET)
         monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
         real_clock, real_kernel = deadline_module.monotonic, search_module.overlay_postings
         skew = {"seconds": 0.0}

@@ -322,14 +322,21 @@ async def _serialization_point_blocks_a_rival_topology_verb(env_var: str) -> Non
 
         async def rival() -> None:
             seams.clear("delete:post-snapshot")
+            reached = asyncio.Event()
+
+            def writer_reached(conn: object, options: dict[str, object]) -> None:
+                if options.get("vfs_writer"):
+                    reached.set()
+
+            # The move's writer options are set on its connection just before its first statement, the point.
+            event.listen(storage._host.engine.sync_engine, "set_connection_execution_options", writer_reached)
             move = storage.move(operations=[ResolvedPair(src=Path("/x.txt"), dest=Path("/y.txt"))])
             tasks.append(asyncio.ensure_future(move))
-            # Give the rival time to reach — and block on — the point.
-            await asyncio.sleep(0.5)
+            await reached.wait()
 
         with seams.installed("delete:post-snapshot", rival):
             victim = await storage.delete(path=Path("/x.txt"))
-        rival_result = await asyncio.wait_for(tasks[0], timeout=60)
+        rival_result = await tasks[0]
         assert victim.success is True, victim.errors
         assert rival_result.success is False
         assert rival_result.errors[0].kind == ErrorKind.not_found
