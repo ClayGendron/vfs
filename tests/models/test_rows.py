@@ -209,7 +209,7 @@ class TestBuildVFSTables:
         keys = {str(index.name): [column.name for column in index.columns] for index in tables.entry.indexes}
         assert keys["ix_vfs_entries_index_pending"] == ["encoded", "chunked", "indexable", "deleted_at", "id"]
         assert keys["ix_vfs_entries_render_status"] == ["render_status", "deleted_at", "id"]
-        assert SCHEMA_FORMAT_VERSION == 27
+        assert SCHEMA_FORMAT_VERSION == 28
 
     def test_mounts_in_different_schemas_never_share_schema_objects(self, tables: VFSTables) -> None:
         other = build_vfs_tables(schema="tenant")
@@ -380,15 +380,28 @@ class TestBuildVFSTables:
         assert tables.entry.c.everyone_level.nullable is False and tables.entry.c.everyone_level.default is None
 
     def test_the_tombstone_is_two_nullable_columns_each_indexed_alone(self, tables: VFSTables) -> None:
-        # NULL on every live row, so each index holds the deleted rows
-        # alone: the view and the retention sweep seek deleted_at, restore
-        # and the purge seek a root's set.
+        # NULL on every live row, so each index holds the deleted rows alone, the first by its
+        # predicate: the view and the sweep seek deleted_at, restore and the purge a root's set.
         deleted_at, root = tables.entry.c.deleted_at, tables.entry.c.trash_root_id
         assert deleted_at.nullable is True and root.nullable is True and isinstance(root.type, ULIDKey)
         by_name = {str(index.name): index for index in tables.entry.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_deleted_at"].columns] == ["deleted_at"]
         assert [c.name for c in by_name["ix_vfs_entries_trash_root"].columns] == ["trash_root_id"]
         assert not any("origin" in name or "restore" in name for name in by_name)
+
+    def test_the_listing_indexes_hold_one_side_of_the_tombstone_each(self, tables: VFSTables) -> None:
+        # A live listing page seeks the live rows alone; the tombstone index never offers it a seek.
+        by_name = {str(index.name): index for index in tables.entry.indexes}
+        sides = {
+            "ix_vfs_entries_live_children": (["parent_id", "name"], "deleted_at IS NULL"),
+            "ix_vfs_entries_live_path": (["path"], "deleted_at IS NULL"),
+            "ix_vfs_entries_deleted_at": (["deleted_at"], "deleted_at IS NOT NULL"),
+        }
+        for name, (columns, predicate) in sides.items():
+            index = by_name[name]
+            assert [c.name for c in index.columns] == columns
+            for dialect in ("sqlite", "postgresql"):
+                assert str(index.dialect_options[dialect]["where"]) == predicate, (name, dialect)
 
     def test_the_stamps_and_the_marks_carry_a_revision(self, tables: VFSTables) -> None:
         # One stamp per principal ever named by an admin write, keyed by

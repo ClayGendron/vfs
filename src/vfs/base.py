@@ -55,11 +55,12 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never,
 from pydantic import ValidationError
 
 from vfs.authority import Authority, caller_for, owner_refusal, warn_if_system_default
-from vfs.chain import admit_rows_in_hand, glob_rows_in_hand, grep_rows_in_hand, judge_in_hand
+from vfs.chain import admit_rows_in_hand, glob_rows_in_hand, grep_rows_in_hand
+from vfs.cursor import Cursor
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
-from vfs.listing import MountListing, PathFilters, gather_settled, skip_record
+from vfs.listing import SCOPED_REFINE_GUIDANCE, MountListing, PathFilters, gather_settled, skip_record
 from vfs.models import (
     MEASURE_OFFLOAD_BYTES,
     MEASURED_BODY,
@@ -138,9 +139,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping, Sequence
 
     from vfs.fanout import ScopePlan
+    from vfs.mounts import AskStorage
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
-    from vfs.pattern_matching import GlobGates
     from vfs.storage.grants import GrantLevel, Posture
 
 # How many more kernels the current request may enter. One is spent per
@@ -155,9 +156,7 @@ _BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore", "sweep"})
 # and the delete of its directory) run as the system actor, not as any caller.
 _ADMIN_AUTHORITY: Final = Authority.system()
 
-# The truncation advice of a fan-out's glob stages: its root probe and
-# admissions, and its planning walk.
-_SCOPED_REFINE_GUIDANCE: Final = "narrow the patterns, or scope with fewer paths"
+# The truncation advice of a fan-out's planning walk.
 _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patterns or brace arms"
 
 # The grant verbs that change membership rows: mount-wide, so they carry no path.
@@ -871,6 +870,8 @@ class AsyncVirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
@@ -886,17 +887,28 @@ class AsyncVirtualFileSystem:
         warning names it. A directory that leads to a mount always shows, at least as a bare row. A
         directory named in ``observations`` that holds or leads to a mount is listed after the others
         that the same mount holds, once for each time it is named.
+
+        ``limit`` lists one page of at most that many rows, in path order, and ``after`` starts
+        it strictly after a path, the ``next_after`` of the page before. That key must name a child of
+        the directory. A page sets ``next_after`` while rows may follow, and a page can be short and
+        still have one. Each page is a read of its own, checked against the caller's rights afresh.
+        A batch in ``observations`` takes no page.
         """
-        refusal = self._gate_params("ls", path=path, observations=observations, columns=columns, authority=authority)
+        refusal = self._gate_params(
+            "ls", path=path, observations=observations, after=after, limit=limit, columns=columns, authority=authority
+        )
         if refusal is not None:
             return refusal
-        return await self._route_single("ls", path, observations, columns=columns, authority=authority)
+        cursor = Cursor.opened("ls", after, limit)
+        return await self._route_single("ls", path, observations, cursor=cursor, columns=columns, authority=authority)
 
     async def tree(
         self,
         path: str,
         max_depth: int | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
@@ -913,11 +925,19 @@ class AsyncVirtualFileSystem:
         noted on the result. A mount beneath it that fails while others answer is reported as a
         warning. Both still show their row. The call is refused with ``budget_exhausted`` when it has
         passed through more kernels than ``hop_budget`` allows.
+
+        ``after`` and ``limit`` page the listing as they page :meth:`ls`, over every mount it reaches,
+        and the key must lie strictly beneath ``path``.
         """
-        refusal = self._gate_params("tree", path=path, max_depth=max_depth, columns=columns, authority=authority)
+        refusal = self._gate_params(
+            "tree", path=path, max_depth=max_depth, after=after, limit=limit, columns=columns, authority=authority
+        )
         if refusal is not None:
             return refusal
-        return await self._route_single("tree", path, None, max_depth=max_depth, columns=columns, authority=authority)
+        cursor = Cursor.opened("tree", after, limit)
+        return await self._route_single(
+            "tree", path, None, cursor=cursor, max_depth=max_depth, columns=columns, authority=authority
+        )
 
     # -------------------------------------------------------------------
     # public methods — mutations
@@ -1306,6 +1326,8 @@ class AsyncVirtualFileSystem:
         globs_not: tuple[str, ...] = (),
         kind: ObjectKind | None = None,
         max_count: int | None = None,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
@@ -1335,6 +1357,11 @@ class AsyncVirtualFileSystem:
         mount points that match come first, then the mounts that ``paths`` names, and then the other
         mounts in table order.
 
+        ``after`` and ``limit`` page the matches in path order across every mount, as they page
+        :meth:`ls`, and take any path as the key. A page takes no ``max_count`` and no ``observations``.
+        A page cut short by the time budget carries the ``truncated`` warning, and its key resumes after
+        the last row it judged; a page that judged no row ends the listing there, with the warning.
+
         The call returns a :class:`Result`. The set of matches is the same wherever the mounts are
         placed. The order is not, so the first ``max_count`` rows can differ from one layout to
         another. A root that is not there is an error for that root, beside the rows of the roots that
@@ -1352,11 +1379,16 @@ class AsyncVirtualFileSystem:
             globs_not=globs_not,
             kind=kind,
             max_count=max_count,
+            after=after,
+            limit=limit,
             columns=columns,
             authority=authority,
         )
         if refusal is not None:
             return refusal
+        cursor = Cursor.opened("glob", after, limit)
+        if cursor is not None and (problem := cursor.refusal()) is not None:
+            return self._error(ErrorKind.invalid, op="glob", detail=problem)
         try:
             arms = expand_channel("pattern", (pattern,))
             globs_not = expand_channel("globs_not", globs_not)
@@ -1385,6 +1417,7 @@ class AsyncVirtualFileSystem:
             "glob",
             paths=paths,
             row_cap=max_count,
+            cursor=cursor,
             filters=PathFilters(admissions=arms, exclusions=globs_not, ext=ext, ext_not=ext_not),
             kind=kind,
             max_count=max_count,
@@ -1806,6 +1839,7 @@ class AsyncVirtualFileSystem:
         path: str | None,
         observations: list[Observation] | None,
         *,
+        cursor: Cursor | None = None,
         authority: Authority | None = None,
         **kwargs: Any,
     ) -> Result:
@@ -1816,7 +1850,8 @@ class AsyncVirtualFileSystem:
         :term:`mount` and the mounts are asked at the same time. With ``path``, one mount is found and
         the gate is asked. The storage is then called once, unless a listing reaches the mounts beneath
         the path, as :meth:`_dispatch_read` says. A delete, a restore or a sweep is refused with
-        ``busy`` first when the path is a mount point or holds one.
+        ``busy`` first when the path is a mount point or holds one. A ``cursor`` pages the listing, and
+        a key that cannot resume it is refused with ``invalid`` before any storage is called.
         """
         if not self._mounts:
             return self._closed_error(op)
@@ -1839,7 +1874,20 @@ class AsyncVirtualFileSystem:
         err = self._gate_entry(terminal.mount, op, write_rels=(terminal.rel,), subtree=subtree)
         if err is not None:
             return err
-        return await self._dispatch_read(terminal.mount, op, path=terminal.rel, authority=authority, **kwargs)
+        if cursor is None:
+            return await self._dispatch_read(terminal.mount, op, path=terminal.rel, authority=authority, **kwargs)
+        if (problem := cursor.refusal(terminal.mount.path, terminal.rel)) is not None:
+            return self._error(ErrorKind.invalid, op=op, detail=problem)
+        answer = await self._dispatch_read(
+            terminal.mount,
+            op,
+            None,
+            cursor.asking(self._call_storage),
+            path=terminal.rel,
+            authority=authority,
+            **kwargs,
+        )
+        return cursor.page(answer)
 
     async def _dispatch_grouped_observations(
         self,
@@ -1939,6 +1987,7 @@ class AsyncVirtualFileSystem:
         row_cap: int | None = None,
         ranked: _Ranked | None = None,
         filters: PathFilters | None = None,
+        cursor: Cursor | None = None,
         authority: Authority | None = None,
         **kwargs: object,
     ) -> Result:
@@ -1966,7 +2015,8 @@ class AsyncVirtualFileSystem:
         the call, whatever the others returned. That holds even when a region also covers a named
         mount. The mount is then asked once, whole, and its answer is still merged plainly.
         ``row_cap`` applies the caller's limit again after the merge, in merge order, so the limit is
-        not multiplied by the number of mounts.
+        not multiplied by the number of mounts. A ``cursor`` asks each mount for its page and cuts the
+        merged rows to one page of the whole listing.
 
         The verb's check of its arguments has already refused ``paths`` together with
         ``observations``, and a ``row_cap`` that is neither ``None`` nor at least 1. The call takes
@@ -1994,7 +2044,10 @@ class AsyncVirtualFileSystem:
 
             if filters is not None:
                 if op == "glob":
-                    built = await self._glob_dispatches(plan, listing, paths, filters, authority=authority, **kwargs)
+                    ask = self._call_storage if cursor is None else cursor.asking(self._call_storage)
+                    built = await self._glob_dispatches(
+                        plan, listing, paths, filters, ask=ask, authority=authority, **kwargs
+                    )
                 else:
                     built = await self._grep_dispatches(
                         plan, listing, paths, filters, op, authority=authority, **kwargs
@@ -2024,7 +2077,8 @@ class AsyncVirtualFileSystem:
             merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
             if ranked is not None:
                 return self._with_skips(await self._rank_fanout(ranked, branch_results, merged), skips)
-            return self._with_skips(self._cap_rows(merged, op, row_cap), skips)
+            merged = self._cap_rows(merged, op, row_cap) if cursor is None else cursor.page(merged)
+            return self._with_skips(merged, skips)
         finally:
             self._exit_hop(grant.token)
 
@@ -2085,6 +2139,7 @@ class AsyncVirtualFileSystem:
         paths: tuple[str, ...],
         filters: PathFilters,
         *,
+        ask: AskStorage,
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
@@ -2110,10 +2165,10 @@ class AsyncVirtualFileSystem:
         so.
 
         The roots are checked by a separate probe that runs at the same time, grouped by the mount
-        that holds each root, in :meth:`_root_probe`. No change to the calls above can drop it. It
-        judges a root's own row against the name arms alone, because a path arm joined under a root
-        needs one more segment than the root has. It applies every filter, so a root's row is never
-        returned past a filter the caller gave.
+        that holds each root, in :meth:`MountListing.root_probes <vfs.listing.MountListing.root_probes>`.
+        No change to the calls above can drop it. It judges a root's own row against the name arms
+        alone, because a path arm joined under a root needs one more segment than the root has. It
+        applies every filter, so a root's row is never returned past a filter the caller gave.
 
         :meth:`MountListing.matched <vfs.listing.MountListing.matched>` judges the mount points at the
         same time. ``settle`` drops those whose own directory a storage refused to list, and asks the
@@ -2136,13 +2191,13 @@ class AsyncVirtualFileSystem:
         kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
         cap = cast("int | None", kwargs.get("max_count"))
-        probes, unverifiable = self._root_probes(roots, gates, kind, columns, listing=listing, authority=authority)
+        probes, unverifiable = listing.root_probes(self._call_storage, roots, gates, kind, columns, authority)
         points = listing.matched(roots, filters, kind)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
             (
                 key,
                 listing.called(
-                    self._call_storage,
+                    ask,
                     capable[key],
                     "glob",
                     patterns=tuple(sorted(live or ())),
@@ -2209,7 +2264,7 @@ class AsyncVirtualFileSystem:
                 root for root, verdict in zip(operands, verdicts, strict=True) if gates.admits(verdict, None)
             )
             if not completed:
-                records.append(wall_truncation(_SCOPED_REFINE_GUIDANCE))
+                records.append(wall_truncation(SCOPED_REFINE_GUIDANCE))
         reach = globs or ("**",)
         scope = await planned_scope(
             owners, tuple(capable), skip_paths, roots, patterns, exclusions, reach, frozenset(admitted)
@@ -2240,7 +2295,7 @@ class AsyncVirtualFileSystem:
                     ),
                 )
             )
-        probes, unverifiable = self._root_probes(roots, None, None, None, listing=listing, authority=authority)
+        probes, unverifiable = listing.root_probes(self._call_storage, roots, None, None, None, authority)
         return _Dispatches(probes, branches, self._scope_skips(plan, scope, [*records, *unverifiable]))
 
     @staticmethod
@@ -2254,68 +2309,6 @@ class AsyncVirtualFileSystem:
         if not scope.completed:
             skips.append(wall_truncation(_PLANNING_REFINE_GUIDANCE))
         return [*skips, *records]
-
-    def _root_probes(
-        self,
-        roots: tuple[Path, ...],
-        gates: GlobGates | None,
-        kind: str | None,
-        columns: frozenset[str] | None,
-        *,
-        listing: MountListing,
-        authority: Authority | None,
-    ) -> tuple[list[Coroutine[Any, Any, Result]], list[ResultError]]:
-        """Build one probe for each :term:`mount` that holds roots the caller named.
-
-        The call returns the probes, and a warning for each root that cannot be checked, as
-        :meth:`MountListing.probed <vfs.listing.MountListing.probed>` groups them. ``gates`` judge the
-        roots' own rows, on the process pool. With ``None``, no row is returned. The probes read
-        ``listing``, the copy of the mount table the rest of the call reads.
-        """
-        grouped, unverifiable = listing.probed(roots)
-        coros: list[Coroutine[Any, Any, Result]] = [
-            self._root_probe(mount, rels, gates, kind, columns, listing=listing, authority=authority)
-            for mount, rels in grouped.values()
-        ]
-        return coros, unverifiable
-
-    async def _root_probe(
-        self,
-        mount: Mount,
-        rels: list[Path],
-        gates: GlobGates | None,
-        kind: str | None,
-        columns: frozenset[str] | None,
-        *,
-        listing: MountListing,
-        authority: Authority | None,
-    ) -> Result:
-        """Check the roots that one :term:`mount` holds, with one ``stat`` of all of them.
-
-        The ``stat`` takes no hop of the call's budget, because the search holds one already. A root
-        that is not there is reported as an error by the storage itself. ``gates`` decide whether the
-        row of a root that is there joins the result. For ``glob`` it joins when a name arm matches and no
-        exclusion, extension filter or ``kind`` drops it. A root is tested like any other row and is
-        never let through untested. For ``grep``, ``gates`` is ``None`` and no row joins, because
-        only a storage can test content. The rows are judged in one hop, within a time budget that
-        starts when the judging starts. If the hop does not finish, only the rows it judged are
-        returned, with one warning.
-        """
-        probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
-        result = await listing.listed(
-            self._call_storage, mount, "stat", observations=probe, columns=columns, authority=authority
-        )
-        kept: list[Observation] = []
-        records: list[ResultError] = []
-        if gates is not None:
-            deadline = Deadline.after(WALL_TIME_BUDGET)
-            judged, completed = await judge_in_hand(gates, list(result.observations), deadline)
-            kept = [row for row in judged if kind is None or row.kind == kind]
-            if not completed:
-                records.append(wall_truncation(_SCOPED_REFINE_GUIDANCE))
-        # The probe answers for the caller's verb, not as a verb of its own:
-        # an op-less envelope merges without leaking ``stat`` into the result.
-        return result.model_copy(update={"ops": (), "observations": kept, "errors": [*result.errors, *records]})
 
     @staticmethod
     def _merge_fanout(
@@ -2844,23 +2837,27 @@ class AsyncVirtualFileSystem:
         """
         return await self._listing.called(self._call_storage, mount, op, authority=authority, **kwargs)
 
-    async def _dispatch_read(self, mount: Mount, op: Op, listing: MountListing | None = None, **kwargs: Any) -> Result:
+    async def _dispatch_read(
+        self, mount: Mount, op: Op, listing: MountListing | None = None, ask: AskStorage | None = None, /, **kwargs: Any
+    ) -> Result:
         """Send ``op`` to ``mount`` as :meth:`_dispatch_entry` does, and let the listing verbs read the mount table.
 
         ``ls``, ``stat`` and ``tree`` show the mounts beneath a directory, so each takes one hop of the
         call's budget and is refused with ``budget_exhausted`` when none is left. ``listing`` is the
-        copy of the table to read, and the table as it is now when it is ``None``.
+        copy of the table to read, and the table as it is now when it is ``None``. ``ask`` is the call
+        on a storage, :meth:`_call_storage` unless a cursor pages it.
         """
         listing = self._listing if listing is None else listing
+        ask = self._call_storage if ask is None else ask
         if op == "ls" or op == "stat" or op == "tree":
             grant = self._enter_hop(op=op)
             if grant.refusal is not None:
                 return grant.refusal
             try:
-                return await listing.listed(self._call_storage, mount, op, **kwargs)
+                return await listing.listed(ask, mount, op, **kwargs)
             finally:
                 self._exit_hop(grant.token)
-        return await listing.called(self._call_storage, mount, op, **kwargs)
+        return await listing.called(ask, mount, op, **kwargs)
 
     async def _call_storage(
         self,

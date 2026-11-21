@@ -76,7 +76,14 @@ if TYPE_CHECKING:
 # which verbs it serves (that is ``capabilities()``). An absent key means
 # the trait is not declared, never a default.
 TraitKey = Literal[
-    "grep_tier", "grep_staleness", "search_signals", "search_staleness", "version_encoding", "durability", "arbitration"
+    "grep_tier",
+    "grep_staleness",
+    "search_signals",
+    "search_staleness",
+    "version_encoding",
+    "durability",
+    "arbitration",
+    "listing_cursor",
 ]
 TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
@@ -88,6 +95,7 @@ TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "version_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
+    "listing_cursor": frozenset({"keyset"}),
 }
 """Per-key value vocabulary; the traits drift test pins declarations to it."""
 
@@ -121,7 +129,16 @@ class ResolvedPair(NamedTuple):
 
 @runtime_checkable
 class SupportsRead(Protocol):
-    """The read family: point reads and listings."""
+    """The read family: point reads and listings.
+
+    ``ls`` of one path and ``tree`` take a page, ``after`` and ``limit``,
+    as ``SupportsPatternSearch.glob`` does. The kernel passes them only to
+    a storage that declares the ``listing_cursor`` trait, which then
+    returns at most ``limit`` rows strictly after the key, in path order,
+    and sets ``next_after`` to the last of them while more follow. Any
+    other storage is asked for its whole listing and the kernel cuts the
+    page, so a storage that cannot page never sees the two arguments.
+    """
 
     async def read(
         self,
@@ -146,6 +163,8 @@ class SupportsRead(Protocol):
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
+        after: Path | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
@@ -155,6 +174,8 @@ class SupportsRead(Protocol):
         *,
         path: Path,
         max_depth: int | None = None,
+        after: Path | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
@@ -285,6 +306,8 @@ class SupportsPatternSearch(Protocol):
         ext_not: tuple[str, ...] = (),
         kind: ObjectKind | None = None,
         max_count: int | None = None,
+        after: Path | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         scope: ScopeChannel | None = None,
         authority: Authority | None = None,

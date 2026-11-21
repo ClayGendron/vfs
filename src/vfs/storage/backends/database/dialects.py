@@ -28,17 +28,19 @@ import sqlite3
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeVar, cast
 
-from sqlalchemy import bindparam, insert
+from sqlalchemy import Table, bindparam, insert
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.schema import ColumnDefault
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
 
-    from sqlalchemy import Select, Table
+    from sqlalchemy import Select
     from sqlalchemy.engine import Dialect
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql import ClauseElement
+    from sqlalchemy.sql.compiler import SQLCompiler
 
 # ---------------------------------------------------------------------------
 # Stale-snapshot signal
@@ -292,6 +294,18 @@ class DialectProfile:
     regression. A SQLite planner that took the ``LIMIT`` into its filter
     estimate would let the join come back.
 
+    ``live_index_hint`` is the table hint, ``{index}`` in it the index's
+    name, that holds a live listing page to the partial index over the
+    live rows — a plan pin SQLAlchemy takes no position on. SQLite's
+    planner costs that index by its statistics, and a delete changes no
+    row count, so the statistics vfs keeps are not refreshed by one: after
+    a mass delete they still count the tombstones in the live index, and
+    the planner then reads the full path index with every tombstone in
+    the page's range. Postgres takes no hint and keeps its own statistics,
+    through autovacuum, which counts a tombstone as a change. SQLAlchemy's
+    SQLite compiler drops every table hint, so :func:`_indexed_by` renders
+    this one, and only an ``INDEXED BY`` hint.
+
     ``attempts_out_of_reach`` declares that a try of a call's transaction
     runs out of its caller's reach, because SQLAlchemy throws away a
     connection a cancellation reached: on SQLite, the database or its lock.
@@ -326,6 +340,7 @@ class DialectProfile:
     statistics_listing: str | None = None
     rarity_hint: str | None = None
     probe_entry_filter: bool = False
+    live_index_hint: str | None = None
     # The ``sqlalchemy.func`` name that sizes a stored body without reading it, which SQLAlchemy does not model:
     # encoding bytes on Postgres, characters elsewhere (the floor's ``length``).
     stored_length: str = "length"
@@ -390,6 +405,8 @@ SQLITE: Final = DialectProfile(
     rarity_hint="unlikely",
     # Plan-pinned: the chunk pages' entry probe plans no per-page Bloom filter where the join builds one.
     probe_entry_filter=True,
+    # Plan-pinned: a live listing page reads its partial index on statistics that predate a mass delete.
+    live_index_hint="INDEXED BY {index}",
     attempts_out_of_reach=True,
 )
 
@@ -828,6 +845,20 @@ def is_insufficient_privilege(exc: BaseException) -> bool:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+@compiles(Table, "sqlite")
+def _indexed_by(element: Table, compiler: SQLCompiler, **kw: Any) -> str:
+    """A table in a FROM clause on SQLite, with the ``INDEXED BY`` hint a statement declares for it.
+
+    SQLAlchemy hands each table its hint and its SQLite compiler renders
+    none. This renders an ``INDEXED BY`` hint, the one ``live_index_hint``
+    declares, and still drops every other, so a table renders as before
+    unless a statement pins it.
+    """
+    text = compiler.visit_table(element, **kw)
+    hint = (kw.get("fromhints") or {}).get(element)
+    return f"{text} {hint}" if kw.get("asfrom") and isinstance(hint, str) and hint.startswith("INDEXED BY ") else text
 
 
 # ISO 9075 classes 42 (syntax/access-rule violation) and 07 (dynamic

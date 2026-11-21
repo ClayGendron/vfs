@@ -40,6 +40,7 @@ from vfs import base as base_module
 from vfs import chain as chain_module
 from vfs import deadline as deadline_module
 from vfs import fanout as fanout_module
+from vfs import listing as listing_module
 from vfs.authority import EVERYONE_NAME, Authority
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import Deadline
@@ -658,14 +659,14 @@ async def test_the_root_probe_builds_each_name_arm_once(monkeypatch: pytest.Monk
     probing = [False]
     during: list[Any] = []
     real_program = glob_module.glob_program
-    real_probe = base_module.AsyncVirtualFileSystem._root_probe
+    real_probe = listing_module.MountListing._root_probe
 
     def counted_program(*args: Any, **kwargs: Any) -> Any:
         if probing[0]:
             during.append(args)
         return real_program(*args, **kwargs)
 
-    async def flagged_probe(self: AsyncVirtualFileSystem, *args: Any, **kwargs: Any) -> Any:
+    async def flagged_probe(self: listing_module.MountListing, *args: Any, **kwargs: Any) -> Any:
         probing[0] = True
         try:
             return await real_probe(self, *args, **kwargs)
@@ -673,7 +674,7 @@ async def test_the_root_probe_builds_each_name_arm_once(monkeypatch: pytest.Monk
             probing[0] = False
 
     monkeypatch.setattr(glob_module, "glob_program", counted_program)
-    monkeypatch.setattr(base_module.AsyncVirtualFileSystem, "_root_probe", flagged_probe)
+    monkeypatch.setattr(listing_module.MountListing, "_root_probe", flagged_probe)
     result = await fs.glob("{a,b}*.txt", paths=(*matching, *others))
     assert sorted(result.paths) == sorted(matching)
     assert during == []

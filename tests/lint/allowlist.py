@@ -16,6 +16,7 @@ from __future__ import annotations
 UPWARD_IMPORT_ALLOWANCE: frozenset[tuple[str, str]] = frozenset(
     {
         ("vfs.base", "vfs.session"),
+        ("vfs.sync_session", "vfs.sync"),
         ("vfs.results.preview", "vfs.pattern_matching.grep"),
         ("vfs.results.render", "vfs.pattern_matching.grep"),
         ("vfs.models.signals", "vfs.storage.ranking"),
@@ -23,13 +24,12 @@ UPWARD_IMPORT_ALLOWANCE: frozenset[tuple[str, str]] = frozenset(
 )
 
 MODULE_LINE_BASELINE: dict[str, int] = {
-    "src/vfs/base.py": 3103,
-    "src/vfs/storage/backends/database/backend.py": 1537,
+    "src/vfs/base.py": 3100,
+    "src/vfs/storage/backends/database/backend.py": 1509,
     "src/vfs/storage/backends/database/rights.py": 1539,
-    "src/vfs/storage/backends/database/reads.py": 1243,
+    "src/vfs/storage/backends/database/reads.py": 1164,
     "src/vfs/storage/backends/database/writes.py": 1415,
     "src/vfs/storage/backends/database/engine.py": 1008,
-    "src/vfs/sync.py": 1087,
 }
 
 OPEN_QUESTION_ALLOWANCE: dict[str, int] = {

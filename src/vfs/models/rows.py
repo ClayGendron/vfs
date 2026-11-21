@@ -132,7 +132,11 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 27
+SCHEMA_FORMAT_VERSION: Final = 28
+
+# The partial indexes over the live rows alone that a listing page seeks: a directory's children, and a subtree.
+LIVE_CHILDREN_INDEX: Final = "ix_vfs_entries_live_children"
+LIVE_PATH_INDEX: Final = "ix_vfs_entries_live_path"
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -209,6 +213,15 @@ def _body_bytes() -> LargeBinary:
 def _timestamp() -> DateTime:
     """A zone-aware instant that keeps sub-second precision on both engines."""
     return DateTime(timezone=True)
+
+
+def _on_side(*, trashed: bool) -> dict[str, Any]:
+    """The predicate of an index that holds one side of the tombstone, on each engine that takes a partial index.
+
+    An engine outside the two builds the index whole, which serves the same reads with the other side in it.
+    """
+    predicate = text("deleted_at IS NOT NULL" if trashed else "deleted_at IS NULL")
+    return {"sqlite_where": predicate, "postgresql_where": predicate}
 
 
 def _uuid_native(dialect: Dialect) -> bool:
@@ -423,9 +436,12 @@ def build_vfs_tables(
         # The everyone leg of a partial read: "rows under /p everyone may
         # see" is one seek here; the leading column alone serves the rest.
         Index("ix_vfs_entries_everyone_path", "everyone_level", "path"),
-        # The trash view and the retention sweep seek the tombstoned rows
-        # alone here; restore and sweep clear or purge a root's set by it.
-        Index("ix_vfs_entries_deleted_at", "deleted_at"),
+        # The trash view and the retention sweep seek the tombstoned rows here, and it holds them alone,
+        # so no live listing is planned onto its seek of the live rows on a table that is mostly tombstones.
+        Index("ix_vfs_entries_deleted_at", "deleted_at", **_on_side(trashed=True)),
+        # A listing page seeks the live rows alone, so a tombstone in its range costs no read.
+        Index(LIVE_CHILDREN_INDEX, "parent_id", "name", **_on_side(trashed=False)),
+        Index(LIVE_PATH_INDEX, "path", **_on_side(trashed=False)),
         Index("ix_vfs_entries_trash_root", "trash_root_id"),
         # The twin lookups: a body hash shared by many rows is found by index, never a scan.
         Index("ix_vfs_entries_content_hash", "content_hash"),

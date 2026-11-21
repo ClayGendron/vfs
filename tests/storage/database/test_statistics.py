@@ -31,6 +31,7 @@ from sqlalchemy.util import greenlet_spawn
 
 from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock
 from tests.support.plan_store import (
+    PATH_INDEXES,
     PLAN_ARMS,
     PLAN_EXTENSIONS,
     chunk_entries,
@@ -225,10 +226,10 @@ async def _stat_rows(storage: DatabaseStorage, table: str | None = None) -> list
     return [(str(row[0]), None if row[1] is None else str(row[1]), str(row[2])) for row in rows]
 
 
-async def _deleted_at_stat(storage: DatabaseStorage) -> str:
-    """The tombstone index's ``sqlite_stat1`` text: the row count, then the rows per distinct value."""
+async def _trash_root_stat(storage: DatabaseStorage) -> str:
+    """The trash-root index's ``sqlite_stat1`` text: the row count, then the rows per distinct value, all one NULL."""
     [stat] = [
-        stat for _tbl, idx, stat in await _stat_rows(storage, "vfs_entries") if idx == "ix_vfs_entries_deleted_at"
+        stat for _tbl, idx, stat in await _stat_rows(storage, "vfs_entries") if idx == "ix_vfs_entries_trash_root"
     ]
     return stat
 
@@ -378,8 +379,8 @@ class TestPlannerStatistics:
         storage = DatabaseStorage(url=_copied(large_store, tmp_path))
         rows = await _stat_rows(storage, "vfs_entries")
         indexes = await _index_list(storage, "vfs_entries")
-        assert len(rows) == len(indexes) == 14
-        assert await _deleted_at_stat(storage) == "11201 11201"
+        assert len(rows) == len(indexes) == 16
+        assert await _trash_root_stat(storage) == "11201 11201"
         await storage.close()
 
     @pytest.mark.slow
@@ -398,7 +399,9 @@ class TestPlannerStatistics:
             details = await _plan(storage, statement, parameters)
             searches += [detail for detail in details if detail.startswith("SEARCH vfs_entries")]
             assert not any("SCAN vfs_entries" in detail for detail in details), details
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
+        assert searches and all(any(f"INDEX {name} " in detail for name in PATH_INDEXES) for detail in searches), (
+            searches
+        )
         assert not any("ix_vfs_entries_deleted_at" in detail or "ix_vfs_entries_kind" in detail for detail in searches)
         await storage.close()
 
@@ -501,7 +504,9 @@ class TestPlannerStatistics:
             for detail in await _plan(y, statement, parameters)
             if detail.startswith("SEARCH")
         ]
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
+        assert searches and all(any(f"INDEX {name} " in detail for name in PATH_INDEXES) for detail in searches), (
+            searches
+        )
         for index in range(100):
             assert (await y.stat(path=Path(f"/d{index % CROSSING_ROOTS:05d}/a/f00.py"))).success is True
         assert len(invalidations) == 1
@@ -576,7 +581,7 @@ class TestPlannerStatistics:
         async with storage._host.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_no_begin": True})
             assert (await conn.exec_driver_sql("PRAGMA analysis_limit")).scalar_one() == 0
-        stat = await _deleted_at_stat(storage)
+        stat = await _trash_root_stat(storage)
         first, second = stat.split()
         assert first == second and first.isdigit()
         await storage.close()
@@ -680,7 +685,7 @@ class TestPlannerStatistics:
         assert read.success is True and len(read.observations) == len(entries)
         await storage._host.settle_statistics()
         rows = len(entries) + CROSSING_ROOTS * 3 + 1
-        assert await _deleted_at_stat(storage) == f"{rows} {rows}"
+        assert await _trash_root_stat(storage) == f"{rows} {rows}"
         assert _count(traced, PASS_BEGIN) == 1
         assert _count(traced, ENTRIES_ANALYZE) == 1
         assert _pass_outcome(traced) == "commit"
@@ -911,7 +916,7 @@ class TestPlannerStatistics:
         assert (await storage.write(entries=_entries(LARGE_ROOTS), parents=True)).success is True
         await storage._host.settle_statistics()
         rows = await _stat_rows(storage, "vfs_entries")
-        assert len(rows) == len(await _index_list(storage, "vfs_entries")) == 14
+        assert len(rows) == len(await _index_list(storage, "vfs_entries")) == 16
         assert invalidations == []
         await storage.close()
         assert (await storage.first_touch()).success is True

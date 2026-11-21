@@ -43,6 +43,7 @@ from vfs.storage.backends.database import addressing as addressing_module
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import rights as rights_module
+from vfs.storage.backends.database import scoped_gate as scoped_gate_module
 from vfs.storage.backends.database.addressing import addressed_by
 from vfs.storage.backends.database.dialects import SQLITE
 from vfs.storage.backends.database.engine import EngineHost
@@ -1006,10 +1007,10 @@ class TestPostureGate:
         """Guards: a scoped anonymous call judged at the bare roots, at the root
         for an empty entry-wide channel, or judged inline on the loop; and the
         judged order drifting from entry-wide first, then root order by arm order."""
-        chain = _Spied(backend_module.posture_chain)
-        refusals = _Spied(backend_module.posture_refusals)
-        monkeypatch.setattr(backend_module, "posture_chain", chain)
-        monkeypatch.setattr(backend_module, "posture_refusals", refusals)
+        chain = _Spied(scoped_gate_module.posture_chain)
+        refusals = _Spied(scoped_gate_module.posture_refusals)
+        monkeypatch.setattr(scoped_gate_module, "posture_chain", chain)
+        monkeypatch.setattr(scoped_gate_module, "posture_refusals", refusals)
         anon = Authority.anonymous()
         arms = ("src/**", "*.py")
         patterns = ("/z/*.md",)
@@ -1032,9 +1033,9 @@ class TestPostureGate:
     ) -> None:
         """Guards: the scope's judged paths built for every caller, as the
         entry-wide addressed paths are, though a named caller is never judged."""
-        judged = _Spied(backend_module.scope_judged)
+        judged = _Spied(scoped_gate_module.scope_judged)
         addressed = _Spied(backend_module.addressed_by)
-        monkeypatch.setattr(backend_module, "scope_judged", judged)
+        monkeypatch.setattr(scoped_gate_module, "scope_judged", judged)
         monkeypatch.setattr(backend_module, "addressed_by", addressed)
         ann = Authority.of(Principal("ann"))
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**", "*.py"))
@@ -1116,7 +1117,7 @@ class TestPostureGate:
         wall and serving the call anyway."""
         read_body = _Spied(backend_module.glob_rows)
         monkeypatch.setattr(backend_module, "glob_rows", read_body)
-        real = getattr(backend_module, stage)
+        real = getattr(scoped_gate_module, stage)
 
         def expired(*args: Any, **kwargs: Any) -> Any:
             return real(*args, **{**kwargs, "deadline": Deadline(at=-1.0)})
@@ -1124,7 +1125,7 @@ class TestPostureGate:
         async def expired_read(*args: Any, **kwargs: Any) -> Any:
             return await real(*args, **{**kwargs, "deadline": Deadline(at=-1.0)})
 
-        monkeypatch.setattr(backend_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
+        monkeypatch.setattr(scoped_gate_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
         for verb in ("glob", "grep", "search"):
             if verb == "glob":
