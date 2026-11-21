@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 3: fg: refused: job control past the call is not supported\n"
+}

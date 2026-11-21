@@ -139,6 +139,8 @@ fn new_shell(hub: HubRef, source: Rc<str>, config: &Config) -> Result<Shell, Fat
         source,
         hashed: BTreeMap::new(),
         in_funsub: false,
+        literal_splits: false,
+        single_word: false,
         pending_outputs: Vec::new(),
     };
     for (name, value) in &config.env {

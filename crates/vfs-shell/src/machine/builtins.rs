@@ -416,6 +416,7 @@ async fn echo(sh: &mut Shell, args: &[String]) -> Status {
 }
 
 async fn printf_builtin(sh: &mut Shell, args: &[String]) -> Status {
+    const USAGE: &str = "printf: usage: printf [-v var] format [arguments]\n";
     let mut rest = args;
     let mut target = None;
     if rest.first().map(String::as_str) == Some("-v") {
@@ -423,14 +424,25 @@ async fn printf_builtin(sh: &mut Shell, args: &[String]) -> Status {
         rest = rest.get(2..).unwrap_or_default();
         if target.is_none() {
             err(sh, "printf", "-v: option requires an argument").await?;
+            sh.error_text(USAGE).await?;
             return Ok(2);
         }
     }
     if rest.first().map(String::as_str) == Some("--") {
         rest = rest.get(1..).unwrap_or_default();
+    } else if let Some(option) = rest.first().filter(|f| f.starts_with('-') && f.len() > 1) {
+        let option = option.clone();
+        err(
+            sh,
+            "printf",
+            &format!("{}: invalid option", option.get(..2).unwrap_or(&option)),
+        )
+        .await?;
+        sh.error_text(USAGE).await?;
+        return Ok(2);
     }
     let Some(format) = rest.first() else {
-        err(sh, "printf", "usage: printf [-v var] format [arguments]").await?;
+        sh.error_text(USAGE).await?;
         return Ok(2);
     };
     let needs_time = format.contains("%(");
@@ -460,7 +472,10 @@ async fn printf_builtin(sh: &mut Shell, args: &[String]) -> Status {
             }
         }
         None => {
-            write_or_die(sh, 1, &printed.bytes).await?;
+            if !write_or_die(sh, 1, &printed.bytes).await? {
+                err(sh, "printf", "write error: Bad file descriptor").await?;
+                return Ok(1);
+            }
         }
     }
     Ok(printed.status)

@@ -63,7 +63,6 @@ pub fn backslash(text: &str) -> String {
             ' ' | '\t'
                 | '!'
                 | '"'
-                | '#'
                 | '$'
                 | '&'
                 | '\''
@@ -82,9 +81,7 @@ pub fn backslash(text: &str) -> String {
                 | '{'
                 | '|'
                 | '}'
-        ) || (ch == '~' && index == 0)
-            || (ch == '=' && false)
-            || (ch == ',' && false);
+        ) || (matches!(ch, '~' | '#') && index == 0);
         if special {
             out.push('\\');
         }
@@ -193,7 +190,7 @@ pub fn declaration(name: &str, var: &Var) -> String {
     }
 }
 
-fn assoc_key(key: &str) -> String {
+pub fn assoc_key(key: &str) -> String {
     let plain = !key.is_empty()
         && key.chars().all(|c| {
             c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ',' | ':' | '+' | '@' | '%')

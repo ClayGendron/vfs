@@ -114,9 +114,6 @@ fn bracket_end(chars: &[PatChar], open: usize) -> Option<usize> {
         if *ch == ']' && !quoted {
             return Some(index);
         }
-        if *ch == '/' {
-            return None;
-        }
         index = index.saturating_add(1);
     }
     None

@@ -310,6 +310,10 @@ pub struct Shell {
     pub source: Rc<str>,
     pub hashed: BTreeMap<String, String>,
     pub in_funsub: bool,
+    /// Expanding the word of an unquoted `${x:-word}`: its literal text splits too.
+    pub literal_splits: bool,
+    /// Expanding a word that will be one string: unquoted `$*` joins on `IFS` there.
+    pub single_word: bool,
     /// Each `>(list)` of the current command: its descriptor, what was written, and the list.
     pub pending_outputs: Vec<(u32, ReadEnd, crate::syntax::ast::List)>,
 }
@@ -332,6 +336,8 @@ impl Shell {
         child.next_child = 0;
         child.next_request = 0;
         child.subshell = child.subshell.saturating_add(1);
+        child.single_word = false;
+        child.literal_splits = false;
         child.jobs = Vec::new();
         child.bash_pid = self
             .bash_pid

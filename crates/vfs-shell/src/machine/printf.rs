@@ -44,7 +44,11 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
     while let Some(&byte) = format.get(index) {
         index = index.saturating_add(1);
         if byte == b'\\' {
-            let (decoded, used, _) = escape(format.get(index..).unwrap_or_default(), false);
+            let rest = format.get(index..).unwrap_or_default();
+            if rest.first() == Some(&b'x') && !rest.get(1).is_some_and(u8::is_ascii_hexdigit) {
+                out.errors.push("missing hex digit for \\x".to_owned());
+            }
+            let (decoded, used, _) = escape(rest, false);
             out.bytes.extend_from_slice(&decoded);
             index = index.saturating_add(used);
             continue;
@@ -62,7 +66,7 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
         let spec_start = index;
         let mut flags = String::new();
         while let Some(&f) = format.get(index) {
-            if b"-+ #0".contains(&f) {
+            if b"-+ #0'".contains(&f) {
                 flags.push(char::from(f));
                 index = index.saturating_add(1);
             } else {
@@ -72,8 +76,8 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
         let mut width: Option<i64> = None;
         if format.get(index) == Some(&b'*') {
             index = index.saturating_add(1);
-            let arg = take(args, next).unwrap_or("0");
-            width = Some(number(arg, out).0);
+            let arg = take(args, next);
+            width = Some(number(arg, true, out).0);
         } else {
             let start = index;
             while format.get(index).is_some_and(u8::is_ascii_digit) {
@@ -90,8 +94,8 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
             index = index.saturating_add(1);
             if format.get(index) == Some(&b'*') {
                 index = index.saturating_add(1);
-                let arg = take(args, next).unwrap_or("0");
-                precision = Some(number(arg, out).0);
+                let arg = take(args, next);
+                precision = Some(number(arg, true, out).0);
             } else {
                 let start = index;
                 while format.get(index).is_some_and(u8::is_ascii_digit) {
@@ -112,7 +116,7 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
             width = Some(w.saturating_neg());
         }
         // Length modifiers are accepted and ignored.
-        while format.get(index).is_some_and(|b| b"hlLqjzt".contains(b)) {
+        while format.get(index).is_some_and(|b| b"hlLjzt".contains(b)) {
             index = index.saturating_add(1);
         }
         let width = width.map(|w| usize::try_from(w).unwrap_or(0).min(MAX_WIDTH));
@@ -126,10 +130,8 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
                     .unwrap_or_default(),
             )
             .into_owned();
-            out.errors.push(format!(
-                "`{}': missing format character",
-                spec.trim_start_matches('%')
-            ));
+            out.errors
+                .push(format!("`{}': missing format character", spec));
             out.status = 1;
             return true;
         };
@@ -146,7 +148,7 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
             }
             b'b' => {
                 let arg = take(args, next).unwrap_or("");
-                let (mut bytes, _, stop) = expand_b(arg.as_bytes());
+                let (mut bytes, _, stop) = expand_escapes(arg.as_bytes(), true);
                 if let Some(p) = precision {
                     bytes.truncate(p);
                 }
@@ -155,10 +157,27 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
                     return true;
                 }
             }
-            b'q' => {
+            b'q' | b'Q' => {
                 let arg = take(args, next).unwrap_or("");
-                let quoted = super::quote::backslash(arg);
-                pad(&mut out.bytes, quoted.as_bytes(), width, left, false);
+                // `%Q` cuts the argument to the precision before quoting; `%q` cuts the quoted text.
+                let mut quoted = if conversion == b'Q' {
+                    let cut: String = match precision {
+                        Some(p) => String::from_utf8_lossy(
+                            arg.as_bytes().get(..p.min(arg.len())).unwrap_or_default(),
+                        )
+                        .into_owned(),
+                        None => arg.to_owned(),
+                    };
+                    super::quote::backslash(&cut).into_bytes()
+                } else {
+                    super::quote::backslash(arg).into_bytes()
+                };
+                if conversion == b'q'
+                    && let Some(p) = precision
+                {
+                    quoted.truncate(p);
+                }
+                pad(&mut out.bytes, &quoted, width, left, false);
             }
             b'c' => {
                 let arg = take(args, next).unwrap_or("");
@@ -169,15 +188,17 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
                 pad(&mut out.bytes, &bytes, width, left, false);
             }
             b'd' | b'i' | b'o' | b'u' | b'x' | b'X' => {
-                let arg = take(args, next).unwrap_or("");
-                let (value, unsigned) = number(arg, out);
+                let arg = take(args, next);
+                let (value, unsigned) = number(arg, matches!(conversion, b'd' | b'i'), out);
                 let text = integer_text(value, unsigned, conversion, &flags, precision);
                 let zero = flags.contains('0') && !left && precision.is_none();
                 pad_number(&mut out.bytes, &text, width, left, zero);
             }
             b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => {
-                let arg = take(args, next).unwrap_or("");
-                let value = float(arg, out);
+                let value = match take(args, next) {
+                    Some(arg) => float(arg, out),
+                    None => 0.0,
+                };
                 let text = float_text(value, conversion, &flags, precision.unwrap_or(6));
                 let zero = flags.contains('0') && !left && value.is_finite();
                 pad_number(&mut out.bytes, &text, width, left, zero);
@@ -200,7 +221,7 @@ fn one_pass(format: &[u8], args: &[String], next: &mut usize, out: &mut Printed,
                         let seconds = match arg {
                             None | Some("") => now,
                             Some(text) => {
-                                let value = number(text, out).0;
+                                let value = number(Some(text), true, out).0;
                                 if value == -1 || value == -2 {
                                     now
                                 } else {
@@ -268,7 +289,11 @@ fn pad_number(out: &mut Vec<u8>, text: &str, width: Option<usize>, left: bool, z
 }
 
 /// A C integer argument: its value, and whether it is to be read as unsigned.
-fn number(arg: &str, out: &mut Printed) -> (i64, bool) {
+/// A missing argument is zero; an empty or bad one is an error that still prints.
+fn number(arg: Option<&str>, signed: bool, out: &mut Printed) -> (i64, bool) {
+    let Some(arg) = arg else {
+        return (0, false);
+    };
     let trimmed = arg.trim_start();
     if let Some(rest) = trimmed
         .strip_prefix('\'')
@@ -279,11 +304,12 @@ fn number(arg: &str, out: &mut Printed) -> (i64, bool) {
             false,
         );
     }
+    let fail = |message: &str, out: &mut Printed| {
+        out.errors.push(format!("{arg}: {message}"));
+        out.status = 1;
+    };
     if trimmed.is_empty() {
-        if !arg.is_empty() || arg.is_empty() {
-            out.errors.push(format!("{arg}: invalid number"));
-            out.status = 1;
-        }
+        fail("invalid number", out);
         return (0, false);
     }
     let (negative, body) = match trimmed.as_bytes().first() {
@@ -291,13 +317,13 @@ fn number(arg: &str, out: &mut Printed) -> (i64, bool) {
         Some(b'+') => (false, trimmed.get(1..).unwrap_or_default()),
         _ => (false, trimmed),
     };
-    let (radix, digits) =
+    let (radix, digits, kind) =
         if let Some(hex) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
-            (16, hex)
+            (16, hex, "invalid hex number")
         } else if body.len() > 1 && body.starts_with('0') {
-            (8, body.get(1..).unwrap_or_default())
+            (8, body.get(1..).unwrap_or_default(), "invalid octal number")
         } else {
-            (10, body)
+            (10, body, "invalid number")
         };
     let mut value: u64 = 0;
     let mut used = 0usize;
@@ -316,23 +342,22 @@ fn number(arg: &str, out: &mut Printed) -> (i64, bool) {
         used = used.saturating_add(1);
     }
     let rest = digits.get(used..).unwrap_or_default();
-    if used == 0
-        && !(radix == 16 && digits.is_empty())
-        && !(radix == 8 && digits.is_empty() && body == "0")
-        || !rest.is_empty()
-    {
-        out.errors.push(format!("{arg}: invalid number"));
-        out.status = 1;
+    if (used == 0 && radix != 8) || !rest.is_empty() {
+        fail(kind, out);
     }
-    let limit = if negative { 1u64 << 63 } else { u64::MAX };
+    let limit = if !signed {
+        u64::MAX
+    } else if negative {
+        1u64 << 63
+    } else {
+        i64::MAX as u64
+    };
     if overflow || value > limit {
-        out.errors
-            .push(format!("{arg}: Numerical result out of range"));
-        out.status = 1;
-        return if negative {
-            (i64::MIN, false)
-        } else {
-            (i64::MAX, false)
+        fail("Numerical result out of range", out);
+        return match (signed, negative) {
+            (true, true) => (i64::MIN, false),
+            (true, false) => (i64::MAX, false),
+            (false, _) => (-1, true),
         };
     }
     if negative {
@@ -600,8 +625,13 @@ pub fn escape(rest: &[u8], echo_style: bool) -> (Vec<u8>, usize, bool) {
     }
 }
 
-/// `%b` and `echo -e`: escapes decoded; true when `\c` ends the output.
+/// `echo -e`: escapes decoded; true when `\c` ends the output.
 pub fn expand_b(text: &[u8]) -> (Vec<u8>, usize, bool) {
+    expand_escapes(text, false)
+}
+
+/// Escapes decoded as `%b` (`printf_style`, where `\nnn` is octal too) or `echo -e` reads them.
+pub fn expand_escapes(text: &[u8], printf_style: bool) -> (Vec<u8>, usize, bool) {
     let mut out = Vec::new();
     let mut index = 0usize;
     while let Some(&byte) = text.get(index) {
@@ -610,7 +640,13 @@ pub fn expand_b(text: &[u8]) -> (Vec<u8>, usize, bool) {
             out.push(byte);
             continue;
         }
-        let (decoded, used, stop) = escape(text.get(index..).unwrap_or_default(), true);
+        let rest = text.get(index..).unwrap_or_default();
+        let (decoded, used, stop) =
+            if printf_style && rest.first().is_some_and(|b| (b'1'..=b'7').contains(b)) {
+                escape(rest, false)
+            } else {
+                escape(rest, true)
+            };
         if stop {
             return (out, index, true);
         }

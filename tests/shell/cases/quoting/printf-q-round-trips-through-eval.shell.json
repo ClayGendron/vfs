@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 5: eval: refused: dynamic evaluation: a line is parsed whole before it runs\n"
+}

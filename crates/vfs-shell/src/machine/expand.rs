@@ -119,8 +119,10 @@ pub async fn expand_single(
     word: &Word,
     mode: Mode,
 ) -> Result<String, Flow> {
-    let fields = expand_parts(ctx, sh, &word.parts, false, mode != Mode::Fields).await?;
-    let mut fields = fields;
+    let saved = std::mem::replace(&mut sh.single_word, true);
+    let fields = expand_parts(ctx, sh, &word.parts, false, mode != Mode::Fields).await;
+    sh.single_word = saved;
+    let mut fields = fields?;
     if mode == Mode::Assignment {
         assignment_tildes(sh, &mut fields);
     }
@@ -153,21 +155,13 @@ pub async fn compile_pattern(ctx: &Ctx<'_>, sh: &mut Shell, word: &Word) -> Resu
     Ok(Pattern::compile(&chars, sh.options.shopt("extglob")))
 }
 
-fn join_fields(sh: &Shell, fields: &[Field]) -> String {
-    let separator = sh
-        .ifs()
-        .and_then(|ifs| ifs.chars().next())
-        .map_or(String::new(), |c| c.to_string());
-    let separator = if sh.ifs().is_none() {
-        " ".to_owned()
-    } else {
-        separator
-    };
+/// Fields of a word that becomes one string: they join with spaces, as `"$@"` does there.
+fn join_fields(_sh: &Shell, fields: &[Field]) -> String {
     let texts: Vec<String> = fields
         .iter()
         .map(|f| f.pieces.iter().map(|p| p.text.as_str()).collect())
         .collect();
-    texts.join(&separator)
+    texts.join(" ")
 }
 
 fn backslash_in_expansion(chars: &[PatChar]) -> bool {
@@ -498,6 +492,11 @@ where
         let mut out = Builder::new();
         for (index, part) in parts.iter().enumerate() {
             match part {
+                WordPart::Literal(text)
+                    if sh.literal_splits && !quoted && !(index == 0 && text.starts_with('~')) =>
+                {
+                    out.push(text.clone(), Kind::Expanded);
+                }
                 WordPart::Literal(text) => {
                     if quoted {
                         out.push(text.clone(), Kind::Quoted);
@@ -534,7 +533,10 @@ where
                     out.push(text.clone(), Kind::Quoted)
                 }
                 WordPart::Double(inner) => {
-                    let fields = expand_parts(ctx, sh, inner, true, false).await?;
+                    let saved = std::mem::replace(&mut sh.literal_splits, false);
+                    let fields = expand_parts(ctx, sh, inner, true, false).await;
+                    sh.literal_splits = saved;
+                    let fields = fields?;
                     merge(&mut out, fields);
                     if let Some(field) = out.fields.last_mut() {
                         field.keep = field.keep || !inner_has_at(inner);
@@ -878,7 +880,9 @@ where
                     .vars
                     .names()
                     .into_iter()
-                    .filter(|n| n.starts_with(&prefix))
+                    .filter(|n| {
+                        n.starts_with(&prefix) && sh.vars.get(n).is_some_and(|v| v.value.is_some())
+                    })
                     .collect();
                 return Ok(list_fields(sh, names, *at, quoted));
             }
@@ -891,6 +895,26 @@ where
             }
             _ => {}
         }
+        if matches!(&expansion.param, Param::Named(name) if name.is_empty()) {
+            sh.error_text(&format!(
+                "bash: line {}: ${{}}: bad substitution\n",
+                sh.lineno
+            ))
+            .await?;
+            return Err(Flow::CommandFailed(1));
+        }
+        // `${!ref}` where `ref` is a nameref names its target.
+        if expansion.indirect
+            && matches!(expansion.op, ParamOp::Plain)
+            && let Param::Named(name) = &expansion.param
+            && let Some(var) = sh.vars.get(name).filter(|v| v.has(vars::NAMEREF))
+        {
+            let target = match &var.value {
+                Some(Value::Scalar(text)) => text.clone(),
+                _ => String::new(),
+            };
+            return Ok(vec![one(target, kind)]);
+        }
         let mut got = lookup(ctx, sh, &expansion.param).await?;
         if expansion.indirect {
             let target = match &got {
@@ -900,7 +924,12 @@ where
                     if sh.options.nounset {
                         return unbound(sh, &name).await;
                     }
-                    String::new()
+                    sh.error_text(&format!(
+                        "bash: line {}: {}: invalid indirect expansion\n",
+                        sh.lineno, name
+                    ))
+                    .await?;
+                    return Err(Flow::Discard(1));
                 }
             };
             if target.is_empty() && got.is_unset() {
@@ -912,7 +941,7 @@ where
                         sh.lineno, target
                     ))
                     .await?;
-                    return Err(Flow::CommandFailed(1));
+                    return Err(Flow::Discard(1));
                 };
                 got = lookup_owned(ctx, sh, &param).await?;
             }
@@ -957,7 +986,7 @@ where
                 match which {
                     DefaultKind::Use => {
                         if absent {
-                            expand_parts(ctx, sh, &word.parts, quoted, !quoted).await
+                            default_word(ctx, sh, word, quoted).await
                         } else {
                             Ok(got_fields(sh, got, quoted))
                         }
@@ -973,7 +1002,7 @@ where
                                 Vec::new()
                             })
                         } else {
-                            expand_parts(ctx, sh, &word.parts, quoted, !quoted).await
+                            default_word(ctx, sh, word, quoted).await
                         }
                     }
                     DefaultKind::Assign => {
@@ -996,7 +1025,7 @@ where
                                     sh.lineno, name
                                 ))
                                 .await?;
-                                return Err(Flow::CommandFailed(1));
+                                return Err(Flow::Discard(1));
                             }
                         }
                         Ok(vec![one(value, kind)])
@@ -1093,6 +1122,19 @@ where
     })
 }
 
+/// The word of `${x:-word}` or `${x:+word}`: unquoted, its literal text splits as an expansion's does.
+async fn default_word(
+    ctx: &Ctx<'_>,
+    sh: &mut Shell,
+    word: &Word,
+    quoted: bool,
+) -> Result<Vec<Field>, Flow> {
+    let saved = std::mem::replace(&mut sh.literal_splits, !quoted && !sh.single_word);
+    let fields = expand_parts(ctx, sh, &word.parts, quoted, !quoted).await;
+    sh.literal_splits = saved;
+    fields
+}
+
 async fn unbound<T>(sh: &mut Shell, name: &str) -> Result<T, Flow> {
     sh.error_text(&format!(
         "bash: line {}: {}: unbound variable\n",
@@ -1122,8 +1164,8 @@ fn got_fields(sh: &Shell, got: Got, quoted: bool) -> Vec<Field> {
         }],
         Got::Scalar(text) => vec![one(text, kind)],
         Got::List(items, at) => {
-            if quoted && !at {
-                return vec![one(join_star(sh, &items), Kind::Quoted)];
+            if (quoted || sh.single_word) && !at {
+                return vec![one(join_star(sh, &items), kind)];
             }
             if items.is_empty() {
                 return vec![Field {
@@ -1545,7 +1587,7 @@ async fn substring(
                             sh.lineno, n
                         ))
                         .await?;
-                        return Err(Flow::CommandFailed(1));
+                        return Err(Flow::Discard(1));
                     }
                     end
                 }
@@ -1605,7 +1647,7 @@ async fn substring(
                     sh.lineno, n
                 ))
                 .await?;
-                return Err(Flow::CommandFailed(1));
+                return Err(Flow::Discard(1));
             }
             let mut selected: Vec<String> = entries
                 .into_iter()
@@ -1660,6 +1702,14 @@ async fn transform(
             if got.is_unset() {
                 return Ok(got_fields(sh, Got::Unset, quoted));
             }
+            let whole = matches!(param, Param::Element(_, sub) if matches!(sub.as_literal(), Some("@" | "*")));
+            if whole && let Some(var) = sh.vars.get(&name) {
+                let text = quote::declaration(&name, var);
+                return Ok(vec![one(
+                    text,
+                    if quoted { Kind::Quoted } else { Kind::Expanded },
+                )]);
+            }
             let text = match sh.vars.get(&name) {
                 Some(var) if !name.is_empty() => {
                     let flags = quote::attr_letters(var);
@@ -1705,15 +1755,19 @@ async fn transform(
             let assoc = sh.vars.get(&name).is_some_and(vars::Var::is_assoc);
             let quote_key = |k: &str| {
                 if assoc {
-                    quote::single(k)
+                    quote::assoc_key(k)
                 } else {
                     k.to_owned()
                 }
             };
             if op == 'K' {
-                let mut text = String::new();
+                let mut words = Vec::new();
                 for (k, v) in &pairs {
-                    text.push_str(&format!("{} {} ", quote_key(k), quote::single(v)));
+                    words.push(format!("{} {}", quote_key(k), quote::double(v)));
+                }
+                let mut text = words.join(" ");
+                if assoc {
+                    text.push(' ');
                 }
                 Ok(vec![one(
                     text,
@@ -1722,8 +1776,8 @@ async fn transform(
             } else {
                 let mut items = Vec::new();
                 for (k, v) in pairs {
-                    items.push(quote_key(&k));
-                    items.push(quote::single(&v));
+                    items.push(k);
+                    items.push(v);
                 }
                 Ok(got_fields(sh, Got::List(items, true), quoted))
             }
