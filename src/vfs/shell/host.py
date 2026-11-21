@@ -22,6 +22,7 @@ import time
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
+from vfs.deadline import Deadline
 from vfs.native import extension
 from vfs.offload import call_offloaded, offload_pool
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
@@ -104,7 +105,7 @@ async def run_line(
     env: Sequence[tuple[str, str]] = ENVIRONMENT,
     limits: Mapping[str, int] | None = None,
     fuel: int | None = None,
-    deadline: float = DEADLINE_SECONDS,
+    deadline: Deadline | None = None,
 ) -> LineResult:
     """Run ``line`` as ``authority`` and return its output, its exit status and its evidence.
 
@@ -114,13 +115,14 @@ async def run_line(
     failure of the call. ``env`` is the environment the line starts with, and ``limits`` lowers
     or raises the machine's budgets by name (``memory_bytes``, ``loop_iterations``,
     ``function_depth``, ``output_bytes``, ``slice``, ``module_memory_bytes`` and the parse
-    budgets). ``fuel`` is the instructions the line may execute and ``deadline`` the seconds it
-    may take in all.
+    budgets). ``fuel`` is the instructions the line may execute, and ``deadline`` the instant it
+    must end by, ``DEADLINE_SECONDS`` from the call when not given.
 
     The machine runs inside its WebAssembly module, one slice at a time on the process pool, so
     the event loop never waits on it. A cancelled call cancels the line: the slice running then
     ends within one tick of the runtime's clock.
     """
+    deadline = deadline if deadline is not None else Deadline.after(DEADLINE_SECONDS)
     if authority.actor.is_system:
         detail = "a line never runs as the system actor; name the caller's authority"
         return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
@@ -136,7 +138,7 @@ async def run_line(
         pid=PID,
         limits=dict(limits) if limits is not None else None,
         fuel=fuel,
-        deadline=deadline,
+        deadline=deadline.remaining(),
     )
     try:
         machine = await call_offloaded(offload_pool(), start)

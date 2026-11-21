@@ -15,6 +15,7 @@ import pytest
 
 from vfs import AsyncVirtualFileSystem, VirtualFileSystem
 from vfs.authority import Authority, Principal
+from vfs.deadline import Deadline
 from vfs.native import extension
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
@@ -222,9 +223,9 @@ UNBOUNDED_LOOP = {"loop_iterations": 10**12}
 
 
 @pytest.mark.parametrize(
-    ("line", "limits", "fuel", "deadline", "kind", "status", "named"),
+    ("line", "limits", "fuel", "seconds", "kind", "status", "named"),
     [
-        ("while :; do :; done", UNBOUNDED_LOOP, 10**8, 30.0, ErrorKind.budget_exhausted, 137, "fuel"),
+        ("while :; do :; done", UNBOUNDED_LOOP, 10**8, None, ErrorKind.budget_exhausted, 137, "fuel"),
         ("while :; do :; done", UNBOUNDED_LOOP, 10**15, 0.05, ErrorKind.timeout, 124, "deadline"),
         (
             "while :; do echo 123456789; done",
@@ -244,12 +245,13 @@ async def test_each_wall_ends_a_line_and_the_process_goes_on(
     line: str,
     limits: dict[str, int] | None,
     fuel: int | None,
-    deadline: float,
+    seconds: float | None,
     kind: ErrorKind,
     status: int,
     named: str,
 ) -> None:
     fs = AsyncVirtualFileSystem()
+    deadline = Deadline.after(seconds) if seconds is not None else None
     result = await run_line(fs, line, ADA, limits=limits, fuel=fuel, deadline=deadline)
     assert result.success is False
     assert result.errors[-1].kind == kind
@@ -284,12 +286,24 @@ async def test_the_event_loop_runs_while_a_line_computes() -> None:
     assert beats > 5, "each slice runs on the pool, so the loop runs between them"
 
 
-async def test_a_cancelled_call_cancels_its_line() -> None:
+async def test_a_cancelled_call_cancels_its_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    hops = 0
+    real_hop = host_module.call_offloaded
+
+    async def counted(executor: Any, work: Callable[[], Any]) -> Any:
+        nonlocal hops
+        hops += 1
+        return await real_hop(executor, work)
+
+    monkeypatch.setattr(host_module, "call_offloaded", counted)
     fs = AsyncVirtualFileSystem()
-    line = fs.cli("while :; do :; done", authority=ADA)
+    line = run_line(fs, "while :; do :; done", ADA, limits=UNBOUNDED_LOOP, fuel=10**15)
     task = asyncio.create_task(line)
-    for _ in range(20):
-        await asyncio.sleep(0)
+    for _ in range(100_000):
+        if hops >= 3:
+            break
+        await asyncio.sleep(0.001)
+    assert hops >= 3, "the line is running its slices"
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
