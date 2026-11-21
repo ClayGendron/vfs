@@ -403,6 +403,29 @@ class CursorContract:
         assert rows == sorted(whole)
         assert sum(len(page.result.warnings) for page in pages) == 1
 
+    @pytest.mark.parametrize("matched", [0, 5])
+    @pytest.mark.parametrize("cut_at", [1, 3, 5])
+    async def test_a_wall_beside_an_exhausted_fan_statement_serves_the_others(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch, matched: int, cut_at: int
+    ) -> None:
+        names = [f"/z/f{i:03d}.txt" for i in range(200)] + [f"/a/f{i:03d}.txt" for i in range(matched)]
+        ok(await storage.write(entries=[Entry(path=Path(p), content="x") for p in names], parents=True))
+        # A first statement over /z, and a second of 100 patterns that match `matched` files or none.
+        patterns = (*names[:200], *(f"/a/f{i:03d}.txt" for i in range(100)))
+        monkeypatch.setattr(reads_module, "arm_budget", lambda *args, **kwargs: 200)
+        whole = list(ok(await storage.glob(patterns=patterns, authority=SYSTEM)).paths)
+        real = reads_module.judge_rows
+        calls = [0]
+
+        async def one_cut(*args: Any, **kwargs: Any) -> Any:
+            verdicts, completed = await real(*args, **kwargs)
+            calls[0] += 1
+            return verdicts, completed and calls[0] != cut_at
+
+        monkeypatch.setattr(reads_module, "judge_rows", one_cut)
+        rows, _pages = await drain(storage, storage.glob, 10, patterns=patterns, authority=SYSTEM)
+        assert rows == sorted(whole)
+
     async def test_a_page_whose_wall_judges_nothing_ends_the_listing_loudly(
         self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
     ) -> None:

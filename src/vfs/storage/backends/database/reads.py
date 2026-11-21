@@ -456,9 +456,12 @@ async def glob_rows(
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
     queried = fetched | ROW_GATE_FIELDS | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
     finished = [True]
+    # Whether the batch judged last was cut short by the wall: what a page's fill stops on.
+    cut = [False]
 
     async def judged(candidates: Sequence[RowMapping]) -> list[Observation]:
         """The candidates the compiled patterns and the view admit, in path order, roads included."""
+        cut[0] = False
         matched: dict[str, RowMapping] = {}
         hidden: dict[bool, list[str]] = {False: [], True: []}
         for trashed, gates in sides.items():
@@ -468,6 +471,7 @@ async def glob_rows(
             rows = [(mapping["path"], mapping["name"]) for mapping in side]
             verdicts, completed = await judge_rows(executor, gates, rows, deadline=deadline)
             finished[0] = finished[0] and completed
+            cut[0] = cut[0] or not completed
             for mapping, verdict in zip(side, verdicts, strict=True):
                 if not gates.admits(verdict, mapping["ext"], marked_only=_under_meta_root(mapping["path"])):
                     continue
@@ -484,7 +488,7 @@ async def glob_rows(
     key: Path | None = None
     if paged:
         streams = _candidate_streams(session, entry, queried, builders)
-        found = await filled(streams, judged, after=after, limit=limit, stopped=lambda: not finished[0])
+        found = await filled(streams, judged, after=after, limit=limit, cut=lambda: cut[0])
         served, key = keyed(found.rows, found.frontier, after=after, limit=limit)
     else:
         served = await judged(await _pattern_candidates(session, entry, queried, [build(None) for build in builders]))

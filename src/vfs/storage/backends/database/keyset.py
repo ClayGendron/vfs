@@ -62,7 +62,7 @@ async def filled(
     *,
     after: str | None,
     limit: int | None,
-    stopped: Callable[[], bool] = lambda: False,
+    cut: Callable[[], bool] = lambda: False,
 ) -> Filled:
     """Fetch from ``streams`` until ``limit + 1`` shown rows lie at or before the frontier, or none has more.
 
@@ -71,12 +71,13 @@ async def filled(
     ``limit=None`` each stream is read whole in one statement. The
     frontier is the last path the slowest unfinished stream fetched;
     every row at or before it is in hand. A fill after the first batch
-    asks only the streams at the frontier. Once ``stopped`` says so after a
-    batch, as when its judge ran out of time, the fill ends with the
-    round: each stream read from then on stands at the last row it
-    showed, every other where it last read, and the frontier is the least
-    of them, so the next page reads again what was not judged and loses no
-    row of another stream. A stop that leaves no row past ``after`` safe ends the fill
+    asks only the streams at the frontier. ``cut`` says whether the batch
+    ``emit`` last handled was cut short, as when its judge ran out of
+    time. Once one is, the fill ends with the round: a stream whose batch
+    was cut stands at the last row it showed, every other is finished or
+    stands where it last read, as with no cut, and the frontier is the
+    least of them, so the next page reads again what was not judged and
+    loses no row of another stream. A stop that leaves no row past ``after`` safe ends the fill
     with no row and no frontier, and the caller's warning says the
     listing was cut short.
     """
@@ -87,20 +88,22 @@ async def filled(
     batch = wanted
     frontier: str | None = None
     due = list(unfinished)
+    halted = False
     while due:
         for index in due:
             rows = await streams[index](positions[index], batch)
             got = await emit(rows)
             for row in got:
                 shown.setdefault(row.path, row)
-            if stopped():
-                # Rows a batch left unjudged lie after its last shown row; once stopped, that is where it stands.
+            if cut():
+                # Rows a cut batch left unjudged lie after its last shown row; that is where its stream stands.
+                halted = True
                 positions[index] = max((row.path for row in got), default=positions[index])
             elif batch is None or len(rows) < batch:
                 unfinished.remove(index)
             else:
                 positions[index] = rows[-1]["path"]
-        if stopped():
+        if halted:
             return _held(shown, positions, unfinished, after)
         frontier = min((position for index in unfinished if (position := positions[index]) is not None), default=None)
         if wanted is None or batch is None or frontier is None or sum(path <= frontier for path in shown) >= wanted:
@@ -114,9 +117,9 @@ async def filled(
 def _held(
     shown: dict[str, Observation], positions: list[str | None], unfinished: list[int], after: str | None
 ) -> Filled:
-    """The rows a stopped fill can serve: those at or before the least position of every stream with rows left.
+    """The rows a cut fill can serve: those at or before the least position of every stream with rows left.
 
-    The stream whose batch stopped the fill is among them. When that least
+    Each stream whose batch was cut is among them. When that least
     position is no further than ``after``, nothing can be served safely.
     """
     bounds = [positions[index] for index in unfinished]
