@@ -1,9 +1,10 @@
-"""An attempt out of reach of its caller's cancellation: the task, the mark and the refused commit.
+"""An attempt out of reach of its caller's cancellation: the task, the mark and the refusals.
 
 Each test runs ``run_out_of_reach`` over an attempt that waits where the
 test tells it to, so the cancellation lands at a known point and no test
 reads a clock. The sessions are real ones over an in-memory SQLite
-database. The same laws on a whole storage are in
+database, and what the database was sent is counted, statement by
+statement. The same laws on a whole storage are in
 ``tests/storage/test_cancelled_call.py``.
 """
 
@@ -13,17 +14,30 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.exc import InvalidRequestError
-from sqlalchemy.orm import Session
+from sqlalchemy import Engine, event, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from tests.support.cancelled_callers import collect_what_was_dropped, reports_of_the_loop, turns_of_the_loop
-from vfs.storage.backends.database.attempts import CANCELLED_ATTEMPT, AttemptSession, run_out_of_reach
+from tests.support.cancelled_callers import (
+    IN_MEMORY,
+    collect_what_was_dropped,
+    reports_of_the_loop,
+    turns_of_the_loop,
+)
+from vfs.storage.backends.database.attempts import (
+    ATTEMPT,
+    CANCELLED_ATTEMPT,
+    AttemptSessions,
+    attempt_begins,
+    run_out_of_reach,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
-    from sqlalchemy import Engine
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+ADD_TWO = "INSERT INTO kept VALUES (2)"
+ADD_THREE = "INSERT INTO kept VALUES (3)"
 
 
 class Waiting:
@@ -66,26 +80,63 @@ def failing(error: BaseException) -> Callable[[], Any]:
     return fail
 
 
-def rows_of(engine: Engine) -> list[int]:
-    with engine.connect() as connection:
-        return list(connection.execute(text("SELECT n FROM kept ORDER BY n")).scalars())
+async def cancelled_at(gate: Waiting, attempt: Callable[[], Awaitable[Any]]) -> BaseException | None:
+    """Cancel the caller of *attempt* while it waits at *gate*, let it go, and return what the attempt raised."""
+    raised: list[BaseException] = []
+
+    async def recorded() -> Any:
+        try:
+            return await attempt()
+        except Exception as error:
+            raised.append(error)
+            raise
+
+    caller = asyncio.ensure_future(run_out_of_reach(recorded))
+    await gate.started.wait()
+    caller.cancel()
+    await turns_of_the_loop()
+    gate.let_go()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    return raised[0] if raised else None
+
+
+def listeners(target: Any, name: str) -> int:
+    """How many listeners the event *name* has on *target*, those of its class and its engine among them."""
+    return len(list(getattr(target.dispatch, name)))
+
+
+class Kept:
+    """An in-memory database of one table with one row, and every statement and checkout it saw since it was made.
+
+    ``taken`` makes the sessions a host takes for its attempts. ``own``
+    makes the sessions an application makes for itself on the same engine.
+    """
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        self.engine = engine
+        self.own = async_sessionmaker(engine)
+        self.taken = AttemptSessions(self.own)
+        self.sent: list[str] = []
+        self.checkouts: list[object] = []
+        event.listen(engine.sync_engine, "before_cursor_execute", lambda *sent: self.sent.append(sent[2]))
+        event.listen(engine.sync_engine, "checkout", lambda *checkout: self.checkouts.append(checkout[0]))
+
+    async def rows(self) -> list[int]:
+        async with self.own() as session:
+            return list((await session.execute(text("SELECT n FROM kept ORDER BY n"))).scalars())
 
 
 @pytest.fixture
-def kept(engine: Engine) -> Engine:
-    """The shared in-memory engine, holding one table with one row."""
-    with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE kept (n INTEGER)"))
-        connection.execute(text("INSERT INTO kept VALUES (1)"))
-    return engine
-
-
-def adding_a_row(session: Session) -> Callable[[], Any]:
-    def add() -> None:
-        session.execute(text("INSERT INTO kept VALUES (2)"))
-        session.commit()
-
-    return add
+async def kept() -> AsyncIterator[Kept]:
+    engine = create_async_engine(IN_MEMORY)
+    # A host's transaction control tells each transaction of its engine to the attempt, as this does.
+    event.listen(engine.sync_engine, "begin", attempt_begins)
+    async with engine.begin() as connection:
+        await connection.execute(text("CREATE TABLE kept (n INTEGER)"))
+        await connection.execute(text("INSERT INTO kept VALUES (1)"))
+    yield Kept(engine)
+    await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -183,87 +234,174 @@ class TestACancelledCaller:
 # ---------------------------------------------------------------------------
 
 
-class TestTheMark:
-    async def test_a_commit_outside_any_attempt_is_not_refused(self, kept: Engine) -> None:
-        with AttemptSession(kept) as session:
-            adding_a_row(session)()
-        assert rows_of(kept) == [1, 2]
+class TestAnAttemptNobodyCancelled:
+    async def test_a_session_outside_any_attempt_sends_and_commits(self, kept: Kept) -> None:
+        async with kept.taken() as session:
+            await session.execute(text(ADD_TWO))
+            await session.commit()
+        assert kept.sent == [ADD_TWO]
+        assert await kept.rows() == [1, 2]
 
-    async def test_a_commit_inside_an_attempt_nobody_cancelled_is_not_refused(self, kept: Engine) -> None:
-        with AttemptSession(kept) as session:
-            attempt = Waiting(adding_a_row(session))
-            attempt.let_go()
-            await run_out_of_reach(attempt)
-        assert rows_of(kept) == [1, 2]
+    async def test_a_session_inside_an_attempt_sends_and_commits(self, kept: Kept) -> None:
+        async def attempt() -> None:
+            async with kept.taken() as session:
+                await session.execute(text(ADD_TWO))
+                await session.commit()
 
-    async def test_a_marked_attempt_is_refused_at_its_commit(self, kept: Engine) -> None:
-        """Guards the mark and the listener: with either gone, the cancelled attempt's row is committed."""
-        refusals: list[BaseException] = []
-        with AttemptSession(kept) as session:
+        await run_out_of_reach(attempt)
+        assert kept.sent == [ADD_TWO]
+        assert await kept.rows() == [1, 2]
 
-            def commit() -> None:
-                try:
-                    adding_a_row(session)()
-                except InvalidRequestError as refusal:
-                    refusals.append(refusal)
-                    raise
-
-            await cancelled_while_it_waits(Waiting(commit))
-        assert [str(refusal) for refusal in refusals] == [CANCELLED_ATTEMPT]
-        assert rows_of(kept) == [1]
-
-    async def test_a_marked_attempt_is_refused_at_the_release_of_a_savepoint(self, kept: Engine) -> None:
-        """A marked attempt stops at the first savepoint it releases and sends nothing after it."""
-        refusals: list[BaseException] = []
-        with AttemptSession(kept) as session:
-
-            def release() -> None:
-                savepoint = session.begin_nested()
-                session.execute(text("INSERT INTO kept VALUES (2)"))
-                try:
-                    savepoint.commit()
-                except InvalidRequestError as refusal:
-                    refusals.append(refusal)
-                    raise
-
-            await cancelled_while_it_waits(Waiting(release))
-        assert [str(refusal) for refusal in refusals] == [CANCELLED_ATTEMPT]
-
-    async def test_a_plain_session_commits_inside_a_marked_attempt(self, kept: Engine) -> None:
-        """Guards where the listener is registered: on ``Session`` itself it would refuse every session there is."""
-        with Session(kept) as session:
-            await cancelled_while_it_waits(Waiting(adding_a_row(session)))
-        assert rows_of(kept) == [1, 2]
-
-    async def test_the_mark_of_one_attempt_is_not_seen_by_the_next(self, kept: Engine) -> None:
+    async def test_the_mark_of_one_attempt_is_not_seen_by_the_next(self, kept: Kept) -> None:
         await cancelled_while_it_waits(Waiting())
-        with AttemptSession(kept) as session:
-            attempt = Waiting(adding_a_row(session))
-            attempt.let_go()
-            await run_out_of_reach(attempt)
-        assert rows_of(kept) == [1, 2]
 
-    async def test_a_task_started_inside_an_attempt_carries_its_mark(self, kept: Engine) -> None:
-        """A task copies the context it is started in, and the mark with it, so its commit is refused too."""
-        refusals: list[BaseException] = []
-        with AttemptSession(kept) as session:
-            started = Waiting()
+        async def attempt() -> None:
+            async with kept.taken() as session:
+                await session.execute(text(ADD_TWO))
+                await session.commit()
 
-            async def child() -> None:
-                await started()
-                try:
-                    adding_a_row(session)()
-                except InvalidRequestError as refusal:
-                    refusals.append(refusal)
+        await run_out_of_reach(attempt)
+        assert await kept.rows() == [1, 2]
 
-            async def attempt() -> None:
-                await asyncio.ensure_future(child())
 
-            caller = asyncio.ensure_future(run_out_of_reach(attempt))
-            await started.started.wait()
-            caller.cancel()
-            await turns_of_the_loop()
-            started.let_go()
-            with pytest.raises(asyncio.CancelledError):
-                await caller
-        assert [str(refusal) for refusal in refusals] == [CANCELLED_ATTEMPT]
+class TestAMarkedAttempt:
+    async def test_it_is_refused_at_its_next_statement(self, kept: Kept) -> None:
+        """Guards the watch on the session's connection: without it every statement of a marked attempt is sent."""
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.taken() as session:
+                await session.execute(text(ADD_TWO))
+                await gate()
+                await session.execute(text(ADD_THREE))
+
+        refusal = await cancelled_at(gate, attempt)
+        assert (str(refusal), kept.sent) == (CANCELLED_ATTEMPT, [ADD_TWO])
+        assert await kept.rows() == [1]
+
+    async def test_it_is_refused_at_its_commit(self, kept: Kept) -> None:
+        """Guards the refused commit: a commit is no statement, so without it a marked write lands."""
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.taken() as session:
+                await session.execute(text(ADD_TWO))
+                await gate()
+                await session.commit()
+
+        refusal = await cancelled_at(gate, attempt)
+        assert (str(refusal), kept.sent) == (CANCELLED_ATTEMPT, [ADD_TWO])
+        assert await kept.rows() == [1]
+
+    async def test_it_is_refused_the_first_statement_of_a_session_it_had_entered(self, kept: Kept) -> None:
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.taken() as session:
+                await gate()
+                await session.execute(text(ADD_TWO))
+
+        refusal = await cancelled_at(gate, attempt)
+        assert (str(refusal), kept.sent) == (CANCELLED_ATTEMPT, [])
+
+    async def test_it_is_refused_at_a_savepoint(self, kept: Kept) -> None:
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.taken() as session:
+                connection = await session.connection()
+                await gate()
+                async with connection.begin_nested():
+                    await connection.execute(text(ADD_TWO))
+
+        refusal = await cancelled_at(gate, attempt)
+        assert (str(refusal), kept.sent) == (CANCELLED_ATTEMPT, [])
+
+    async def test_it_enters_no_session(self, kept: Kept) -> None:
+        """Guards the refusal at the entry: without it a marked attempt checks a connection out before it stops."""
+        gate = Waiting()
+        entered: list[AsyncSession] = []
+
+        async def attempt() -> None:
+            await gate()
+            async with kept.taken() as session:
+                entered.append(session)
+
+        refusal = await cancelled_at(gate, attempt)
+        assert (str(refusal), entered, kept.checkouts) == (CANCELLED_ATTEMPT, [], [])
+
+    async def test_a_task_it_started_carries_its_mark(self, kept: Kept) -> None:
+        """A task copies the context it is started in, and the mark with it, so its statements are refused too."""
+        gate = Waiting()
+
+        async def child() -> None:
+            async with kept.taken() as session:
+                await gate()
+                await session.execute(text(ADD_TWO))
+
+        async def attempt() -> None:
+            await asyncio.ensure_future(child())
+
+        refusal = await cancelled_at(gate, attempt)
+        assert (str(refusal), kept.sent) == (CANCELLED_ATTEMPT, [])
+
+
+class TestASessionTheApplicationMakes:
+    """The refusals belong to the sessions a host takes, and nothing of them is left on the engine."""
+
+    async def test_it_sends_and_commits_inside_a_marked_attempt(self, kept: Kept) -> None:
+        """Guards whose sessions are refused: a refusal told by the mark alone would stop this session too."""
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.own() as session:
+                await gate()
+                await session.execute(text(ADD_TWO))
+                await session.commit()
+
+        assert await cancelled_at(gate, attempt) is None
+        assert kept.sent == [ADD_TWO]
+        assert await kept.rows() == [1, 2]
+
+    async def test_the_engine_is_not_told_of_the_attempts_that_use_it(self, kept: Kept) -> None:
+        engine = kept.engine.sync_engine
+        async with kept.taken() as session:
+            await session.execute(text(ADD_TWO))
+            bind = session.sync_session.get_bind()
+        async with kept.taken() as session:
+            # One view of an engine serves every session a host takes on it.
+            assert session.sync_session.get_bind() is bind
+        # A host's session is bound to a view of the engine that carries the option, over the same pool.
+        assert isinstance(bind, Engine)
+        assert (bind is engine, bind.pool is engine.pool) == (False, True)
+        assert (bind.get_execution_options().get(ATTEMPT), engine.get_execution_options().get(ATTEMPT)) == (True, None)
+        async with kept.own() as session:
+            assert session.sync_session.get_bind() is engine
+
+
+class TestWhatTheRefusalsCost:
+    """Counted on a session nobody cancels: what a host's session carries that the application's does not."""
+
+    async def test_an_attempt_puts_one_listener_on_its_session_and_one_on_its_connection(self, kept: Kept) -> None:
+        own: dict[str, int] = {}
+        taken: dict[str, int] = {}
+
+        async def attempt() -> None:
+            for sessions, counted in ((kept.own, own), (kept.taken, taken)):
+                async with sessions() as session:
+                    connection = (await session.connection()).sync_connection
+                    counted["commit"] = listeners(session.sync_session, "before_commit")
+                    counted["statement"] = listeners(connection, "before_cursor_execute")
+
+        await run_out_of_reach(attempt)
+        assert {name: taken[name] - own[name] for name in own} == {"commit": 1, "statement": 1}
+        assert kept.sent == []
+
+    async def test_outside_an_attempt_a_connection_is_not_watched(self, kept: Kept) -> None:
+        """Guards the test for a mark: the statistics pass runs in no attempt, and has no caller to be cancelled."""
+        async with kept.own() as own, kept.taken() as taken:
+            watched = [
+                listeners((await session.connection()).sync_connection, "before_cursor_execute")
+                for session in (own, taken)
+            ]
+        assert watched[0] == watched[1]

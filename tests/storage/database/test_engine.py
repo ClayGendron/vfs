@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from sqlalchemy import create_engine, event, insert, select, text, update
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import QueuePool
 from ulid import ULID
 
@@ -31,6 +31,7 @@ from vfs.results import ErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
+from vfs.storage.backends.database.attempts import ATTEMPT, attempt_begins
 from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, ValueCap, profile_for
 from vfs.storage.backends.database.engine import (
     EngineHost,
@@ -39,7 +40,7 @@ from vfs.storage.backends.database.engine import (
 from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +450,47 @@ class TestLifecycle:
         assert getattr(engine, "_vfs_sqlite_control", False) is True
         assert len(engine.pool.dispatch.checkout) == installed  # ty: ignore[unresolved-attribute]
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Where an attempt runs
+# ---------------------------------------------------------------------------
+
+
+class TestWhereAnAttemptRuns:
+    async def test_on_sqlite_an_attempt_runs_in_a_task_of_its_own_from_the_first(self, tmp_path) -> None:
+        """Guards the choice by dialect: a host that was handed its sessions over a file ran in its caller's task."""
+        engine = create_async_engine(_fresh_url(tmp_path))
+        host = EngineHost(session_factory=async_sessionmaker(engine, expire_on_commit=False))
+        ran: list[asyncio.Task[object] | None] = []
+
+        async def attempt() -> None:
+            ran.append(asyncio.current_task())
+
+        await host.with_retry(attempt)
+        assert ran != [asyncio.current_task()]
+        await engine.dispose()
+
+    async def test_off_sqlite_an_attempt_runs_in_its_callers_task_on_the_factorys_own_sessions(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Guards every other engine: nothing of the cancellation rule reaches a dialect that is not SQLite."""
+        # An unknown dialect is served on the generic floor under its own name.
+        monkeypatch.setattr(engine_module, "profile_for", lambda _name: profile_for("duckdb"))
+        engine = create_async_engine(_fresh_url(tmp_path))
+        host = EngineHost(session_factory=async_sessionmaker(engine, expire_on_commit=False))
+        ran: list[asyncio.Task[object] | None] = []
+
+        async def attempt() -> None:
+            ran.append(asyncio.current_task())
+
+        await host.with_retry(attempt)
+        session = host.session_factory()
+        assert ran == [asyncio.current_task()]
+        assert (type(session), session.sync_session.get_bind()) == (AsyncSession, engine.sync_engine)
+        assert event.contains(engine.sync_engine, "begin", attempt_begins) is False
+        assert session.sync_session.get_bind().get_execution_options().get(ATTEMPT) is None
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------

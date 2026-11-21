@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from tests.support.cancelled_callers import turns_of_the_loop
 from vfs.paths import Path
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.attempts import CANCELLED_ATTEMPT, run_out_of_reach
+from vfs.storage.backends.database.attempts import CANCELLED_ATTEMPT, AttemptSessions, run_out_of_reach
 from vfs.storage.backends.database.oneconnection import (
     SerializedSession,
     SerializedSessions,
@@ -107,8 +107,8 @@ class TestCallsTakeTurns:
     async def test_an_attempt_marked_while_it_waits_its_turn_enters_no_session_and_gives_the_lock_back(
         self, one_connection: AsyncEngine
     ) -> None:
-        """Guards ``__aenter__``: the refusal at the turn, and the lock it must give back when it refuses."""
-        lock = asyncio.Lock()
+        """Guards ``__aenter__``: the session it wraps refuses a marked attempt, and the lock is given back then."""
+        sessions = SerializedSessions(AttemptSessions(async_sessionmaker(one_connection)))
         checked_out: list[object] = []
         event.listen(one_connection.sync_engine, "checkout", lambda *connection: checked_out.append(connection))
         entered: list[AsyncSession] = []
@@ -116,23 +116,22 @@ class TestCallsTakeTurns:
 
         async def attempt() -> None:
             try:
-                async with SerializedSession(AsyncSession(one_connection), lock) as session:
+                async with sessions() as session:
                     entered.append(session)
                     await session.execute(text("SELECT 1"))
             except InvalidRequestError as refusal:
                 refusals.append(str(refusal))
                 raise
 
-        await lock.acquire()
-        behind = asyncio.ensure_future(run_out_of_reach(attempt))
-        await turns_of_the_loop()
-        behind.cancel()
-        await turns_of_the_loop()
-        lock.release()
+        async with sessions():
+            behind = asyncio.ensure_future(run_out_of_reach(attempt))
+            await turns_of_the_loop()
+            behind.cancel()
+            await turns_of_the_loop()
         with pytest.raises(asyncio.CancelledError):
             await behind
         assert (entered, checked_out, refusals) == ([], [], [CANCELLED_ATTEMPT])
-        assert lock.locked() is False
+        assert sessions._lock.locked() is False
 
 
 # ---------------------------------------------------------------------------

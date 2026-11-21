@@ -5,7 +5,9 @@ open. Two rules follow from that, and this module holds both.
 
 Calls take turns. One connection cannot run two transactions at once, so
 each session holds a lock from the moment it is entered until it is left.
-An attempt that was marked while it waited for its turn sends nothing.
+An attempt that was marked while it waited for its turn is refused by the
+session inside this one as it enters, so it sends nothing and gives its
+turn up.
 
 A second connection is a new database. When the pool opens one, the
 host is told, so that its next call provisions the schema again.
@@ -18,13 +20,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import event
 
-from vfs.storage.backends.database.attempts import refuse_a_marked_attempt
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy import Engine
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # ---------------------------------------------------------------------------
@@ -36,9 +36,9 @@ class SerializedSession:
     """One session that holds the host lock from the moment it is entered until it is left.
 
     A session that is never entered takes no lock. Every other attribute is
-    the attribute of the session it wraps. If the attempt is already marked
-    when its turn comes, entering raises ``InvalidRequestError`` and gives
-    the lock back, and nothing is sent to the database.
+    the attribute of the session it wraps. If entering that session fails,
+    as it does for an attempt that was marked while it waited, the lock is
+    given back.
     """
 
     def __init__(self, session: AsyncSession, lock: asyncio.Lock) -> None:
@@ -51,7 +51,6 @@ class SerializedSession:
     async def __aenter__(self) -> AsyncSession:
         await self._lock.acquire()
         try:
-            refuse_a_marked_attempt()
             return await self._session.__aenter__()
         except BaseException:
             self._lock.release()
@@ -72,7 +71,7 @@ class SerializedSessions:
     second task waits for the first to leave.
     """
 
-    def __init__(self, factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, factory: Callable[[], AsyncSession]) -> None:
         self._factory = factory
         self._lock = asyncio.Lock()
 

@@ -75,7 +75,7 @@ from vfs.models import encoded_at_creation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
-from vfs.storage.backends.database.attempts import AttemptSession, run_out_of_reach
+from vfs.storage.backends.database.attempts import AttemptSessions, attempt_begins, run_out_of_reach
 from vfs.storage.backends.database.dialects import (
     SQLITE_VEC_PROBE,
     DialectProfile,
@@ -214,27 +214,18 @@ class EngineHost:
         # MySQL family's packet); read at first touch, ``None`` elsewhere.
         self.value_cap: ValueCap | None = None
         self._engine: AsyncEngine | None
+        # The factory as it was built or handed; on SQLite the policy wraps it at first use.
         self.session_factory: Callable[[], AsyncSession]
-        # Whether each attempt runs in a task of its own; a borrowed host learns it at first touch.
-        self._out_of_reach = False
         if session_factory is not None:
             self._engine = None
             self.session_factory = session_factory
         else:
             engine = create_async_engine(str(url), **engine_arguments(str(url)))
             self._engine = engine
-            factory = async_sessionmaker(engine, expire_on_commit=False)
-            # A caller that is cancelled is never cut off inside a SQLite connection.
-            if engine.dialect.name == "sqlite":
-                self._out_of_reach = True
-                factory.configure(sync_session_class=AttemptSession)
-            # One shared DBAPI connection cannot overlap transactions: ops
-            # serialize, and a re-minted connection re-arms first touch.
+            self.session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            # A re-minted connection to a database that lives in one connection re-arms first touch.
             if isinstance(engine.sync_engine.pool, StaticPool):
-                self.session_factory = SerializedSessions(factory)
                 rearm_on_fresh_connection(engine.sync_engine, self._rearm)
-            else:
-                self.session_factory = factory
         # Dialect policy defers to first use: a borrowed host cannot
         # know its dialect before its first session exists.
         self._profile: DialectProfile | None = None
@@ -355,7 +346,7 @@ class EngineHost:
             return await self._probe_vector_function(function)
 
         try:
-            return await (run_out_of_reach(install) if self._out_of_reach else install())
+            return await (run_out_of_reach(install) if self.profile.name == "sqlite" else install())
         except DBAPIError as exc:
             origin = driver_origin(exc)
             if is_insufficient_privilege(origin):
@@ -379,16 +370,16 @@ class EngineHost:
         do not retry in lockstep and collide again; the base delay bounds
         the longest wait the same as an unjittered schedule would.
 
-        On a SQLite database this host opened, and on any database that lives
-        in memory, a caller that is cancelled waits for the attempt in hand
-        to end, and its own cancellation is raised then. A cancellation that
-        reached the connection would close an in-memory database, and could
-        leave a database in a file locked against its next writer.
+        On SQLite each attempt runs in a task of its own. A caller that is
+        cancelled waits for the attempt in hand, which ends the statement
+        in flight, sends no other and is rolled back, and its own
+        cancellation is raised then; ``attempts.py`` has the reasons. On
+        every other engine an attempt runs in its caller's task.
         """
         step = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):
             try:
-                return await (run_out_of_reach(fn) if self._out_of_reach else fn())
+                return await (run_out_of_reach(fn) if self.profile.name == "sqlite" else fn())
             except (DBAPIError, StaleSnapshot) as exc:
                 if not isinstance(exc, StaleSnapshot) and not is_retryable(self.profile, exc):
                     raise
@@ -598,6 +589,11 @@ class EngineHost:
             profile = profile_for(dialect.name)
             if profile.name == "sqlite" and isinstance(bind, Engine):
                 _install_sqlite_transaction_control(bind, profile)
+                # The sessions of an attempt: once its caller is cancelled, it is refused what it would send next.
+                sessions = AttemptSessions(self.session_factory)
+                # One shared DBAPI connection cannot overlap transactions: the sessions of a pool vfs built take turns.
+                serialized = self._engine is not None and isinstance(bind.pool, StaticPool)
+                self.session_factory = SerializedSessions(sessions) if serialized else sessions
             # Only an engine vfs built replaces its stale connections: a
             # host application's pool and its connections are never touched.
             if self._engine is not None and profile.statistics_listing is not None:
@@ -612,7 +608,6 @@ class EngineHost:
             await self._apply_file_settings(profile)
         if profile.statistics_listing is not None:
             self.in_memory = await self._read_in_memory()
-            self._out_of_reach |= self.in_memory
             if self._replaces and (self.in_memory or not self.statistics_enabled):
                 event.remove(self.engine.sync_engine, "checkout", self._replace_stale)
                 self._replaces = False
@@ -1036,6 +1031,7 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
 
     @event.listens_for(sync_engine, "begin")
     def _on_begin(conn) -> None:  # noqa: ANN001
+        attempt_begins(conn)
         options = conn.get_execution_options()
         if options.get("vfs_no_begin"):
             return

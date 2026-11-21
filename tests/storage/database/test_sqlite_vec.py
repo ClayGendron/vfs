@@ -3,6 +3,7 @@ that withholds ranked search from a dialect with no distance function."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import Any, Final
 
@@ -126,15 +127,32 @@ class TestInstallExtensions:
         await storage.close()
 
     async def test_a_storage_handed_its_sessions_over_a_file_proves_the_function_too(self, tmp_path: Any) -> None:
-        # This host runs no attempt out of reach, so the verb runs in its caller's task.
         engine = create_async_engine(_url(tmp_path))
         storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
         result = await storage.install_extensions()
         assert result.success is True, result.errors
         assert storage._host.vector_version is not None
-        assert storage._host._out_of_reach is False
         await storage.close()
         await engine.dispose()
+
+    async def test_off_sqlite_the_verb_runs_in_its_callers_task(self, tmp_path: Any, monkeypatch) -> None:
+        """Guards every other engine: the verb is run out of its caller's reach on SQLite alone."""
+        # The generic floor, declaring a function to prove. Nothing loads it off SQLite, so it is missing.
+        declared = replace(GENERIC, vector_function=VectorFunction(SQLITE_VEC_PROBE, "ask a DBA"))
+        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        ran: list[asyncio.Task[Any] | None] = []
+        probe = storage._host._probe_vector_function
+
+        async def probed(function: VectorFunction) -> Any:
+            ran.append(asyncio.current_task())
+            return await probe(function)
+
+        monkeypatch.setattr(storage._host, "_probe_vector_function", probed)
+        [refusal] = (await storage.install_extensions()).errors
+        assert (refusal.kind, "ask a DBA" in refusal.message) == (ErrorKind.unavailable, True)
+        assert ran == [asyncio.current_task()]
+        await storage.close()
 
     async def test_an_install_the_engine_refuses_classifies_and_never_raises(self, tmp_path: Any, monkeypatch) -> None:
         url = _url(tmp_path)
