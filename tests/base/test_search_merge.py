@@ -15,7 +15,7 @@ from vfs import chain as chain_module
 from vfs import deadline as deadline_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.chain import admit_rows_in_hand
-from vfs.models import Match, Observation
+from vfs.models import Entry, Match, Observation
 from vfs.paths import Path
 from vfs.rerank import FANOUT_CAP, BM25Rerank, Candidate
 from vfs.results import ErrorKind, Result, ResultError
@@ -139,6 +139,15 @@ async def test_a_row_at_a_storage_root_in_hand_is_left_out_as_a_directory_is() -
     for alone in ("/", "/m", "/.vfs/trash"):
         answer = await root.search("lantern", observations=[Observation(path=Path(alone))])
         assert (answer.success, answer.paths, answer.errors) == (True, (), []), alone
+
+
+async def test_a_storage_given_head_rows_and_globs_answers_as_for_a_directory_row_and_globs() -> None:
+    storage = InMemoryStorage()
+    assert (await storage.write(entries=[Entry(path=Path("/notes/a.md"), content="lantern")], parents=True)).success
+    globs = ("/notes/**",)
+    beside_root = await storage.search(query="lantern", observations=[Observation(path=Path("/"))], globs=globs)
+    beside_dir = await storage.search(query="lantern", observations=[Observation(path=Path("/notes"))], globs=globs)
+    assert beside_root.success is True and beside_root.paths == beside_dir.paths == ("/notes/a.md",)
 
 
 async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:

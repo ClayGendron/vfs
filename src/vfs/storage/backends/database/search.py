@@ -284,7 +284,7 @@ async def search_rows(
         return Result(ops=("search",), errors=[classified(ErrorKind.invalid, detail=detail)])
     if observations:
         held = tuple(escape_glob(str(row.path)) for row in observations if str(row.path) not in HEAD_ROWS)
-        if not held:
+        if not held and not globs:
             return Result(ops=("search",))
         globs = (*globs, *held)
     try:
