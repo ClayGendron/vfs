@@ -15,6 +15,7 @@ This module is not public. The kernel builds a :class:`MountListing` each time i
 from __future__ import annotations
 
 import asyncio
+import bisect
 import heapq
 from collections import Counter
 from dataclasses import dataclass, field
@@ -117,7 +118,8 @@ class MountListing:
     bare rows of the directories in it that lead to a mount point. ``points`` is the bare row of
     every mount point and of every directory above one, apart from the root. A ``glob`` judges them.
     Each of these lists is in path order, so no answer depends on the order of a set or on the
-    order the mounts were added in.
+    order the mounts were added in. ``ordered`` is every mount path in path order, which
+    :meth:`beneath` searches, and ``rank`` gives each mount path its place in the table.
     """
 
     mounts: Mapping[Path, Mount]
@@ -126,9 +128,13 @@ class MountListing:
     inside: Mapping[Path, tuple[Mount, ...]] = field(init=False)
     roads: Mapping[Path, tuple[Observation, ...]] = field(init=False)
     points: tuple[Observation, ...] = field(init=False)
+    ordered: tuple[Path, ...] = field(init=False)
+    rank: Mapping[Path, int] = field(init=False)
 
     def __post_init__(self) -> None:
         table = dict(self.mounts)
+        object.__setattr__(self, "ordered", tuple(sorted(table)))
+        object.__setattr__(self, "rank", {path: index for index, path in enumerate(table)})
         above: set[Path] = set()
         for path in table:
             node = path
@@ -162,12 +168,40 @@ class MountListing:
         """
         return self.mounts.get(self._owner(path))
 
+    def governing(self, path: Path) -> tuple[Mount, ...]:
+        """Return the mounts at or above ``path``, the root's first, or none for an empty table.
+
+        The call cuts the path at each ``/`` and looks each prefix up in the table as plain text, so it
+        costs the depth of the path and never the number of mounts. A table that holds only the root
+        answers at once.
+        """
+        root = self.mounts.get(ROOT)
+        if not self.above:
+            return () if root is None else (root,)
+        found: list[Mount] = []
+        node: str = path
+        while node != ROOT:
+            if (mount := self.mounts.get(node)) is not None:
+                found.append(mount)
+            node = _parent(node)
+        if root is not None:
+            found.append(root)
+        return tuple(reversed(found))
+
     def beneath(self, path: Path) -> list[Mount]:
         """Return the mounts that lie strictly beneath ``path``, in table order.
 
+        The mount paths that start with ``path`` and a ``/`` are one run of :attr:`ordered`, found by
+        a binary search, so the call costs the log of the number of mounts and the mounts it returns.
         This says where calls are sent, and not what a caller may see.
         """
-        return [mount for key, mount in self.mounts.items() if key != path and _lies_in(key, path)]
+        if path == ROOT:
+            keys = [key for key in self.ordered if key != ROOT]
+        else:
+            # "0" is the character after "/", so the run ends before the first path that starts with it.
+            start = bisect.bisect_left(self.ordered, path + "/")
+            keys = list(self.ordered[start : bisect.bisect_left(self.ordered, path + "0", start)])
+        return [self.mounts[key] for key in sorted(keys, key=self.rank.__getitem__)]
 
     async def called(
         self, ask: AskStorage, mount: Mount, op: Op, *, authority: Authority | None = None, **kwargs: Any
@@ -588,11 +622,6 @@ def skip_record(op: Op, mount: Mount) -> ResultError:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _lies_in(path: Path, directory: Path) -> bool:
-    """Return whether ``path`` is ``directory`` or lies beneath it."""
-    return directory in (path, ROOT) or path.startswith(directory + "/")
 
 
 def _between(path: Path, directory: Path) -> list[Path]:

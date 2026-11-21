@@ -2691,21 +2691,13 @@ class AsyncVirtualFileSystem:
         Every :term:`mount` at or above ``full`` that has a map contributes it, with the path as that
         mount's storage sees it. Each map can only tighten what the maps above it allow.
         """
-        layers: list[PermissionLayer] = []
-        for mount_path in reversed(self._sorted_mount_paths):
-            if mount_path != ROOT and full != mount_path and not full.startswith(mount_path + "/"):
-                continue
-            permission_map = self._mounts[mount_path].permissions
-            if permission_map is None:
-                continue
-            layers.append(
-                PermissionLayer(
-                    permission_map=permission_map,
-                    rel=full.without_mount(mount_path),
-                    mount_prefix=mount_path,
-                )
+        return [
+            PermissionLayer(
+                permission_map=mount.permissions, rel=full.without_mount(mount.path), mount_prefix=mount.path
             )
-        return layers
+            for mount in self._listing.governing(full)
+            if mount.permissions is not None
+        ]
 
     def _require_mount(self, mount_path: Path) -> Mount:
         """Return the :term:`mount` at ``mount_path``. Raise ``ValueError`` when there is none."""

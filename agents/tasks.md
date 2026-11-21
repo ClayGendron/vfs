@@ -75,7 +75,6 @@ Each was shown by a script that ran, unless it says "read". The review records n
 
 ## Cost and structure
 
-- [ ] **Two scans of the mount table grow with a batch.** `_permission_layers` scans it once for each row, 2,000,000 visits for 10,000 rows and 200 mounts, and `MountListing.beneath` once for each named root. Before the listing rule.
 - [ ] **A storage searches 10,000 rows in hand close to its time budget.** 8 to 9 seconds against 10, on SQLite in memory, measured once by the clock.
 - [ ] **A storage builds every `glob` candidate before it applies the limit.** Before the listing rule.
 - [ ] **Every mounted root in a listing is asked at once.** With 200 database mounts, one `ls` opens 200 transactions together. Read.

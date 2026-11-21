@@ -12,7 +12,7 @@ from vfs import AsyncVirtualFileSystem, InMemoryStorage
 from vfs import base as base_module
 from vfs import listing as listing_module
 from vfs.authority import Authority, Principal
-from vfs.models import Observation
+from vfs.models import Entry, Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, classified
 from vfs.results.kinds import Severity
@@ -585,26 +585,46 @@ async def test_a_batch_that_names_a_directory_above_a_mount_twice_lists_it_once(
     assert parent.calls == [("ls", {"path": "/a", "columns": None})]
 
 
-async def test_the_containment_checks_of_a_listing_do_not_grow_with_mounts_times_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def _path_checks(mounts: int, call: Callable[[AsyncVirtualFileSystem], Awaitable[Result]]) -> int:
+    """Return how many prefix tests of a path ``call`` makes on a kernel with ``mounts`` mounts beside ``/data``."""
+    fs = AsyncVirtualFileSystem(storage=BindableStorage())
+    for index in range(mounts):
+        await fs.add_mount(RecorderStorage(name=f"m{index}"), f"/m{index:03}")
     checks = 0
-    original = listing_module._lies_in
+    original = Path.startswith
 
-    def counted(path: Path, directory: Path) -> bool:
+    def startswith(path: Path, *args: Any) -> bool:
         nonlocal checks
         checks += 1
-        return original(path, directory)
+        return original(path, *args)
 
-    parent = BindableStorage()
-    fs = AsyncVirtualFileSystem(storage=parent)
-    mounted = [f"/m{index:02}" for index in range(50)]
-    for path in mounted:
-        await fs.add_mount(BindableStorage(), path)
-    monkeypatch.setattr(listing_module, "_lies_in", counted)
-    ok(await fs.ls("/"))
-    ok(await fs.stat(observations=[Observation(path=f"/f{index}") for index in range(1_000)]))
-    assert checks <= len(mounted)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "startswith", startswith)
+        ok(await call(fs))
+    return checks
+
+
+async def test_the_containment_checks_of_a_listing_do_not_grow_with_mounts_times_rows() -> None:
+    async def stat(fs: AsyncVirtualFileSystem) -> Result:
+        return await fs.stat(observations=[Observation(path=f"/f{index}") for index in range(1_000)])
+
+    assert await _path_checks(50, stat) == await _path_checks(1, stat)
+
+
+async def test_the_gate_of_a_batch_write_does_not_scan_the_mount_table_for_each_row() -> None:
+    entries = [Entry(path=Path(f"/data/f{index}.txt"), content="x") for index in range(1_000)]
+
+    async def write(fs: AsyncVirtualFileSystem) -> Result:
+        return await fs.write(entries=entries, parents=True)
+
+    assert await _path_checks(200, write) == await _path_checks(1, write)
+
+
+async def test_a_glob_over_named_roots_does_not_scan_the_mount_table_for_each_root() -> None:
+    async def glob(fs: AsyncVirtualFileSystem) -> Result:
+        return await fs.glob(pattern="*.txt", paths=tuple(f"/data/d{index}" for index in range(100)))
+
+    assert await _path_checks(200, glob) == await _path_checks(1, glob)
 
 
 async def test_glob_beneath_roots_that_hold_no_mount_point_judges_no_mount_point(
