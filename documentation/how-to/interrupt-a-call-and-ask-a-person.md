@@ -36,6 +36,8 @@ This policy interrupts every call that would change something under `/contracts`
 | `call.arguments` | The arguments of the call, by name |
 | `call.authority` | Who is making the call |
 
+If all you want is for a person to see every change, or every change under some folders, you do not need to write a function. [Use a Ready-Made Policy](#use-a-ready-made-policy) shows the one that VFS ships.
+
 A policy can only narrow what a caller may do. VFS checks the caller's access first, so a call the caller has no right to make is refused before the policy sees it. **A policy must return a decision. If it returns anything else, or raises, the call is refused.**
 
 Create the file system with the policy, and add a contract.
@@ -290,6 +292,49 @@ while result.interrupted:
 ```
 
 Here `ask_a_person` stands for your own code.
+
+## Use a Ready-Made Policy
+
+VFS ships one policy, named `review`. It allows every call that only reads, and it interrupts every call that would change something. Name it when you create the file system.
+
+```python
+fs = VirtualFileSystem(policy="review")
+```
+
+A person now sees every change before it lands. That is right for a small set of files that matter. Over a whole file system it asks too often, and a person who is asked all day stops reading what they approve. So give it the folders it should cover.
+
+```python
+from vfs import policies
+
+fs = VirtualFileSystem(
+    policy=policies.review(paths=["/contracts", "/finance"]),
+)
+```
+
+A path covers the folder and everything inside it, as a grant does. A call that names several paths is covered when any one of them is.
+
+**With no policy, nothing is interrupted.** That is the default, and it is the mode to use when an agent should work without stopping.
+
+To use a ready-made policy together with your own, combine them.
+
+```python
+fs = VirtualFileSystem(
+    policy=policies.strictest(
+        policies.review(paths=["/contracts"]),
+        policy,
+    ),
+)
+```
+
+`strictest` asks each policy and takes the strictest answer. A denial wins over an interrupt, and an interrupt wins over an allow. The order you list them in does not matter.
+
+A session can carry a policy of its own, which is how one application runs a careful agent beside a free one.
+
+```python
+careful = fs.open_session(Authority.of(Principal("scout")), policy="review")
+```
+
+A session's policy is added to the file system's, and the strictest answer wins. **A session can ask for more review. It can never ask for less.**
 
 ## Find Interrupts That Are Waiting
 
