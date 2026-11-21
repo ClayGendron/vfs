@@ -1206,6 +1206,13 @@ impl Fault {
         }
     }
 
+    fn spent() -> Fault {
+        Fault {
+            message: "the regular expression is too complex to match the pattern space".to_owned(),
+            status: 4,
+        }
+    }
+
     fn no_regex() -> Fault {
         Fault {
             message: "-e expression #1, char 0: no previous regular expression".to_owned(),
@@ -1680,7 +1687,10 @@ impl<'a> Machine<'a> {
     fn search(&mut self, index: Option<usize>) -> Result<bool, Fault> {
         let regex = self.regex(index)?;
         let chars: Vec<char> = self.space.chars().collect();
-        Ok(regex.find_at(&chars, 0).is_some())
+        Ok(regex
+            .find_at(&chars, 0)
+            .map_err(|_| Fault::spent())?
+            .is_some())
     }
 
     fn substitute(&mut self, subst: &Subst) -> Result<(), Fault> {
@@ -1693,7 +1703,7 @@ impl<'a> Machine<'a> {
         let mut previous_end: Option<usize> = None;
         let mut any = false;
         while from <= chars.len() {
-            let Some(caps) = regex.find_at(&chars, from) else {
+            let Some(caps) = regex.find_at(&chars, from).map_err(|_| Fault::spent())? else {
                 break;
             };
             let Some(Some((start, end))) = caps.first().copied() else {

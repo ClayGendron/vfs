@@ -2,7 +2,13 @@
 //! agents type, and the 100 that touch every construct. Every one parses,
 //! and the run rate, the share whose every command name runs here, is held
 //! at its measured floor.
-#![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::string_slice
+)]
 
 use std::path::PathBuf;
 
@@ -19,7 +25,10 @@ fn commands(file: &str) -> Vec<String> {
         .map(|line| {
             let start = line.find("\"cmd\": \"").unwrap() + 8;
             let body = &line[start..line.len() - 2];
-            body.replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
+            body.replace("\\\"", "\"")
+                .replace("\\n", "\n")
+                .replace("\\t", "\t")
+                .replace("\\\\", "\\")
         })
         .collect()
 }
@@ -34,7 +43,10 @@ fn run_rate(lines: &[String]) -> usize {
         config.cwd = "/work".to_owned();
         let outcome = host.run(line, config);
         let stderr = String::from_utf8_lossy(&outcome.stderr);
-        if !stderr.contains("command not found") && !stderr.contains("refused") && outcome.ended.is_none() {
+        if !stderr.contains("command not found")
+            && !stderr.contains("refused")
+            && outcome.ended.is_none()
+        {
             ran += 1;
         }
     }
@@ -47,7 +59,10 @@ fn every_measured_command_parses() {
         let lines = commands(file);
         assert_eq!(lines.len(), 100);
         for line in &lines {
-            assert!(parse(line, &ParseLimits::default()).is_ok(), "{file}: {line}");
+            assert!(
+                parse(line, &ParseLimits::default()).is_ok(),
+                "{file}: {line}"
+            );
         }
     }
 }

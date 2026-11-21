@@ -25,6 +25,8 @@ The interpreter does no input or output of its own. It asks for every effect as 
 
 A line never runs as the system actor.
 
+The interpreter runs inside a WebAssembly module, in a runtime linked into vfs. The runtime is the wall around the line. It counts every instruction the line executes, holds the module's memory under a hard limit, and ends the line when its deadline passes or its call is cancelled. A fault inside the interpreter ends that line with an error; the process goes on. Each line runs in a fresh instance, one slice at a time on vfs's worker pool, so the event loop keeps serving other calls while a line computes.
+
 A program's own non-zero status is not a failure of the call: `grep` with no match exits 1, and the call still succeeds. A verb that a program was refused, such as a `read` of a file the caller may not see, is kept on the result as a warning.
 
 ## The Language
@@ -53,6 +55,7 @@ These programs run inside the shell and print what GNU coreutils, grep, sed and 
 | 1 to 125 | The last command's own status. |
 | 2 | The line did not parse, or it holds a refused word. |
 | 127 | A command was not found. |
+| 124 | The line's deadline passed. |
 | 130 | The line was cancelled. |
 | 137 | A budget ended the line. |
 
@@ -68,7 +71,14 @@ A line runs under budgets. A host may set each of them, lower or higher.
 | Stages in one pipeline | 64 |
 | Loop iterations in the line | 1,000,000 |
 | Nested function calls | 256 |
+| Compound commands and substitutions open inside one another | 1,000 |
 | Bytes the shell holds at once | 64 MiB |
+| Bytes written to standard output and error | 16 MiB |
+| Instructions executed | 20,000,000,000, about five seconds of work |
+| Memory of the module | 256 MiB |
+| Seconds from the line's start to its end, its verbs included | 30 |
+
+The instruction count is a function of the line and its replies, and the result reports it as `fuel_used`. An arithmetic expression or a `[[ ]]` condition counts each link of a long chain, such as `1+1+1`, against the parse depth, so a chain thousands of links long is an error rather than a crash. A regular expression that cannot be matched within its own budget fails with status 2 and says so; it never answers "no match".
 
 ## How Closely It Follows Bash
 

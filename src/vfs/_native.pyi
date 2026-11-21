@@ -85,6 +85,8 @@ class ShellMachine:
         programs: list[str],
         pid: int,
         limits: dict[str, int] | None = None,
+        fuel: int | None = None,
+        deadline: float | None = None,
     ) -> None: ...
     def step(
         self, replies: list[tuple[str, str, object]]
@@ -92,3 +94,5 @@ class ShellMachine:
     def cancel(self) -> None: ...
     @property
     def memory_used(self) -> int: ...
+    @property
+    def fuel_used(self) -> int: ...

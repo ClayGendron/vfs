@@ -2,7 +2,7 @@
 //! or, with `-r`, directory trees walked through the machine's requests.
 
 use super::{Prog, describe};
-use crate::machine::regex::{Regex, bre_to_ere};
+use crate::machine::regex::{Regex, Spent, bre_to_ere};
 use crate::machine::{EntryKind, Flow, Reply, Request};
 
 #[derive(Default)]
@@ -286,6 +286,14 @@ pub async fn grep(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
             if show_name { &shown } else { "" },
             show_name,
         );
+        if result.spent {
+            prog.err(&format!(
+                "{shown}: the pattern is too complex to match a line"
+            ))
+            .await?;
+            status_error = true;
+            continue;
+        }
         if result.selected > 0 {
             any = true;
         }
@@ -364,14 +372,20 @@ async fn walk(
 struct Searched {
     selected: u64,
     output: Vec<u8>,
+    /// A line the pattern could not be matched against within its budget.
+    spent: bool,
 }
 
 /// The matches of a line: each a character range, honouring `-w`.
-fn line_matches(regex: &Regex, options: &Options, chars: &[char]) -> Vec<(usize, usize)> {
+fn line_matches(
+    regex: &Regex,
+    options: &Options,
+    chars: &[char],
+) -> Result<Vec<(usize, usize)>, Spent> {
     let mut found = Vec::new();
     let mut from = 0usize;
     while from <= chars.len() {
-        let Some(captures) = regex.find_at(chars, from) else {
+        let Some(captures) = regex.find_at(chars, from)? else {
             break;
         };
         let Some(Some((start, end))) = captures.first().copied() else {
@@ -396,7 +410,7 @@ fn line_matches(regex: &Regex, options: &Options, chars: &[char]) -> Vec<(usize,
             start.saturating_add(1)
         };
     }
-    found
+    Ok(found)
 }
 
 fn is_word(ch: char) -> bool {
@@ -411,6 +425,7 @@ fn search(regex: &Regex, options: &Options, bytes: &[u8], name: &str, show_name:
     }
     let mut out = Vec::new();
     let mut selected = 0u64;
+    let mut spent = false;
     let mut last_printed: Option<usize> = None;
     let mut after_left = 0usize;
     let context = options.after > 0 || options.before > 0;
@@ -435,7 +450,10 @@ fn search(regex: &Regex, options: &Options, bytes: &[u8], name: &str, show_name:
             }
         }
         let chars: Vec<char> = line.chars().collect();
-        let matches = line_matches(regex, options, &chars);
+        let Ok(matches) = line_matches(regex, options, &chars) else {
+            spent = true;
+            break;
+        };
         let is_match = !matches.is_empty() != options.invert;
         if is_match && !options.max.is_some_and(|max| selected >= max) {
             selected = selected.saturating_add(1);
@@ -491,5 +509,6 @@ fn search(regex: &Regex, options: &Options, bytes: &[u8], name: &str, show_name:
     Searched {
         selected,
         output: out,
+        spent,
     }
 }

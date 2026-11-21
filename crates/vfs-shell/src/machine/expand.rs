@@ -433,16 +433,15 @@ fn single_char(text: &str) -> Option<char> {
     (chars.next().is_none() && first.is_ascii_alphabetic()).then_some(first)
 }
 
+/// `value` zero-padded to `width` characters, the sign inside the width. Written here, since the
+/// formatter refuses a width past 65,535.
 fn pad_number(value: i64, width: usize) -> String {
-    if value < 0 {
-        format!(
-            "-{:0>width$}",
-            value.unsigned_abs(),
-            width = width.saturating_sub(1)
-        )
-    } else {
-        format!("{value:0>width$}")
-    }
+    let digits = value.unsigned_abs().to_string();
+    let sign = if value < 0 { "-" } else { "" };
+    let zeros = width
+        .saturating_sub(sign.len())
+        .saturating_sub(digits.len());
+    format!("{sign}{}{digits}", "0".repeat(zeros))
 }
 
 // ---------------------------------------------------------------------------

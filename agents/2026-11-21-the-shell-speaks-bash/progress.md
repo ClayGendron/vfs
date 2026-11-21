@@ -2,22 +2,23 @@
 
 ## Step in hand
 
-Steps 6 and 7: the vfs host, `cli` on the public surface, the reference page, and the remaining corpus cases.
+The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done in this commit); the host-resolved program request; one write per redirection; the differential fuzzer; a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
 
 ## Score
 
-3,179 of 3,320 corpus cases pass against `MemoryHost` (95.8%), `scripts/shell_score.sh`. Every case parses, or classifies as bash classifies it. A one-in-ten sample of the passing language-tier cases runs through the vfs host under pytest (`tests/shell/test_host.py`) and agrees.
+3,179 of 3,320 corpus cases pass against `MemoryHost` (95.8%), `scripts/shell_score.sh`. Every case parses, or classifies as bash classifies it. A one-in-ten sample of the passing language-tier cases runs through the vfs host under pytest (`tests/shell/test_host.py`), now inside the module, and agrees.
 
 The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and so does its 100-command coverage set. 72 of the weighted 100 run (`crates/vfs-shell/tests/measured_corpus.rs`). Each of the other 28 names a program this shell never runs: `git` (10), `uv` (7), `docker` (3), `date` (3), and `awk`, `curl`, `diff`, `perl`, `pgrep`, `pkill`, `ps`, `psql`, `python3`, `sleep` and `uname` once each.
 
 ## Done
 
-- **Step 0.** `research-runtime.md`, `research-bash-suites.md`, and the spec review `reviews/spec-review.md` with its disposition.
+- **Step 0.** `research-runtime.md`, `research-bash-suites.md`, and the spec review `reviews/spec-review.md` with its disposition. A third memo, `research-prior-art.md`, studies how bashkit, just-bash, brush, mvdan-sh and Oils confine and bound a line, against commit `10224a7`.
 - **Step 1.** The recorder `scripts/shell_record.py`, the referee `debian:sid-slim` pinned by digest (bash 5.3.15, GNU coreutils 9.12), the seed tree `tests/shell/world/`, the case format `tests/shell/README.md`, 3,320 recorded cases in 38 areas, `known_failures.txt`, `deltas.txt` with 35 refusal records, and `scripts/shell_score.sh`.
 - **Step 2.** `crates/vfs-shell`: no dependencies, no unsafe code, the clippy denials of decision 9, the source rules of decisions 1, 4 and 9, the parser, and the parser fuzz target. Reviewed in `reviews/step-1-2-code-review.md`, with its disposition.
 - **Steps 3 to 5.** The machine: async Rust polled inside `step`, keyed requests, pipes, jobs, every expansion, the builtins, the counted memory, the slice, and cancel. The programs: `cat`, `cp`, `cut`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `tee`, `touch`, `tr`, `uniq` and `wc`. The laws and the machine fuzz target are in `crates/vfs-shell/tests/laws.rs`. The module is `crates/vfs-shell-wasm`; its laws run under `wasmi` in `crates/vfs-shell-wasm/tests/module_laws.rs`.
-- **Step 6.** `vfs.shell.run_line`, the native `ShellMachine` in `vfs-core`, and `cli` on `AsyncVirtualFileSystem`, `AsyncSession`, `VirtualFileSystem` and `Session`. Each request is one public verb with the admitted authority, a spied test holds it, and the system actor is refused.
-- **Step 7.** `documentation/reference/shell.md`.
+- **Step 6.** `vfs.shell.run_line`, the binding `ShellMachine` in `vfs-core`, and `cli` on `AsyncVirtualFileSystem`, `AsyncSession`, `VirtualFileSystem` and `Session`, returning `vfs.LineResult`. Each request is one public verb with the admitted authority, a spied test holds it, and the system actor is refused.
+- **The runtime carried.** `vfs-core` links `wasmtime` 51 and embeds the module its build script compiles. `ShellMachine` runs each line in a fresh instance: fuel is the line's instruction budget, an epoch thread ticking every 10 ms ends a slice at the deadline or a cancel, a resource limiter holds the module's memory, and a fault is a trap that ends the line. The host runs every slice on the offload pool with the interpreter lock released. Measured through `fs.cli` on the review's lines: the 160-deep recursion ends on the nesting budget, the replace loop and a 2⁴⁰ call tree end on fuel, the busy loop on its iteration budget, the print loop on the output budget, and a 200,000-`touch` loop on the deadline; the process lives, and a 50 ms heartbeat beside each line missed none of its beats.
+- **Step 7.** `documentation/reference/shell.md`, and `LineResult` on the results reference page.
 
 ## Decided inside the laws
 
@@ -29,19 +30,23 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - A file written through a redirection is created or truncated when it is opened, as bash does. Its bytes are held and written in one appending request when the redirection ends; a read of the same path writes them first.
 - A loop iteration is one run of a loop's body.
 - The vfs host reads each body once for the line and forgets it at any mutation. A verb a program was refused is kept as a warning: a program's failure is not the call's.
-- `cli` is a management method, not an op, and joins `MANAGEMENT_METHODS`. It returns `vfs.shell.LineResult`, a `Result` with `stdout`, `stderr` and `exit_status`.
+- `cli` is a management method, not an op, and joins `MANAGEMENT_METHODS`. On the synchronous face it is a management hop, so a closed face raises as the other management methods do.
+- The budgets the runtime adds, each a named constant: `FUEL` 20,000,000,000 instructions (about five seconds of the machine's work), `FUEL_SLICE` 10,000,000 (about a millisecond), `MODULE_MEMORY_BYTES` 256 MiB, a 4 MiB native stack for the module's frames and an 8 MiB shadow stack in its memory, and `DEADLINE_SECONDS` 30 in the host. The machine adds `OUTPUT_BYTES` 16 MiB and `NESTING` 1,000. The deadline ends a line with status 124, as `timeout` does, and the kind `vfs.timeout`.
+- One nesting budget counts compound commands, function bodies and substitutions together, so the product of the function depth and the parse depth no longer reaches the stack. Each link of an arithmetic or `[[ ]]` chain counts against its parse depth, so `1+1+…` 70,000 links long is an arithmetic error where bash computes it. The stacks are sized so that every declared budget fires before the runtime's stack limit, measured by the probes above.
+- A regular-expression search that spends its step or depth budget fails: `[[ =~ ]]` returns 2, `grep` reports the file and exits 2, `sed` exits 4. It never answers "no match".
+- A `printf` precision or a brace-expansion width past 65,535 is written out by the machine, since the standard formatter panics there; the digits past a double's exact expansion are zeros.
 
 ## Reported and not taken
 
-- The vfs host drives the native build, not the module in a runtime. `research-runtime.md` recommends linking `wasmtime` into `vfs-core`, at about 3.5 MB of wheel; that is decision 15's carriage, and it is not built.
-- The binding does not release the interpreter lock during a slice: the machine is not `Send`, by design, so a slice runs on the calling thread.
-- `grep -r` and `find` walk through `list` and `read` instead of the indexed verbs.
-- The Oils spec-suite rate is not measured, and the differential fuzzer is not built.
+- `cli` takes no `limits`, `fuel` or `deadline`, so a caller cannot lower a budget; `run_line` takes all three. Adding them to the public method changes its signature.
+- `grep -r` and `find` walk through `list` and `read` instead of the indexed verbs; the program request, next, is what lets the host serve them.
+- The Oils spec-suite rate is not measured. The prior-art memo ran 468 Oils cases against the crate: 363 agree, 39 differ, 66 were skipped; its section 6 lists the differences not in the corpus.
 - The weighted sample's run rate is 72%, below the 85% the spec names. Every line that does not run names a program the roadmap says never runs.
 - Roadmap F1 (removing `SupportsRun`), `move(replace=)` and `glob(case_mode=)` are not built.
 - `printf` floats use 64-bit doubles where bash uses `long double`, so `%.20f` and `1e309` differ.
-- The regular-expression engine has no back-references, and a match longer than 4,000 characters ends the search.
+- The regular-expression engine backtracks, with no back-references, and fails a search past 4,000 characters of depth; a Pike-style engine would be linear. Glob and extglob matching backtrack too: `*a*a*a*a*b` over 100,000 characters spends the line's fuel where bash answers in milliseconds.
+- The building of a wheel from the sdist now needs the `wasm32-unknown-unknown` target beside the Rust toolchain.
 
 ## Next
 
-The remaining 141 known failures, the step 3 to 5 review's findings, then the pull request.
+The host-resolved program request, then one write per redirection, the differential fuzzer, and the review of steps 3 to 7.

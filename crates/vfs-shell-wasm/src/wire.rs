@@ -2,9 +2,10 @@
 //! string in base64. A host in any language can speak it with its own JSON.
 
 use shell::machine::{
-    Config, Entry, EntryKind, HostError, Limits, ProgramKind, Reply, Request, RequestKey, Status,
-    Step, Stream, WriteMode,
+    Config, Entry, EntryKind, HostError, Limits, ProgramKind, Reply, Request, RequestKey,
+    StartError, Status, Step, Stream, WriteMode,
 };
+use shell::syntax::ParseError;
 
 /// Nesting a document may have; deeper input is refused, never recursed into.
 const DEPTH: u32 = 32;
@@ -111,7 +112,10 @@ pub fn decode_start(text: &str) -> Result<(String, Config), String> {
                 limits.u64_or("function_depth", u64::from(defaults.function_depth)),
             )
             .unwrap_or(u32::MAX),
+            nesting: u32::try_from(limits.u64_or("nesting", u64::from(defaults.nesting)))
+                .unwrap_or(u32::MAX),
             slice: limits.u64_or("slice", defaults.slice),
+            output_bytes: limits.u64_or("output_bytes", defaults.output_bytes),
             parse: shell::syntax::ParseLimits {
                 source_bytes: usize::try_from(
                     limits.u64_or("source_bytes", defaults.parse.source_bytes as u64),
@@ -314,6 +318,287 @@ pub fn encode_request(key: &RequestKey, request: &Request) -> String {
             "{{\"key\":{key},\"op\":\"value\",\"name\":{}}}",
             quote(name)
         ),
+    }
+}
+
+/// Why a line could not start, as the module answers `start`.
+pub fn encode_start_error(error: &StartError) -> String {
+    let (kind, message, line, column) = match error {
+        StartError::Parse(ParseError::Syntax(at, message)) => {
+            ("syntax", message.clone(), at.line, at.column)
+        }
+        StartError::Parse(ParseError::Refused(at, construct, reason)) => (
+            "refused",
+            format!("{construct}: {reason}"),
+            at.line,
+            at.column,
+        ),
+        StartError::Parse(ParseError::Budget(which, limit)) | StartError::Budget(which, limit) => (
+            "budget",
+            format!("{which} budget of {limit} exceeded"),
+            0,
+            0,
+        ),
+    };
+    format!(
+        "{{\"error\":{{\"kind\":\"{kind}\",\"message\":{},\"line\":{line},\"column\":{column}}}}}",
+        quote(&message)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// The host's half: what it sends, and how it reads what comes back
+// ---------------------------------------------------------------------------
+
+/// The `start` document for a line and its configuration.
+pub fn encode_start(source: &str, config: &Config) -> String {
+    let pairs: Vec<String> = config
+        .env
+        .iter()
+        .map(|(k, v)| format!("[{},{}]", quote(k), quote(v)))
+        .collect();
+    let args: Vec<String> = config.args.iter().map(|a| quote(a)).collect();
+    let programs: Vec<String> = config
+        .programs
+        .iter()
+        .map(|(name, _)| quote(name))
+        .collect();
+    let l = &config.limits;
+    format!(
+        "{{\"source\":{},\"env\":[{}],\"cwd\":{},\"name\":{},\"args\":[{}],\"stdin\":\"{}\",\"programs\":[{}],\"pid\":{},\"limits\":{{\"memory_bytes\":{},\"loop_iterations\":{},\"function_depth\":{},\"nesting\":{},\"slice\":{},\"output_bytes\":{},\"source_bytes\":{},\"tokens\":{},\"depth\":{},\"pipeline_stages\":{}}}}}",
+        quote(source),
+        pairs.join(","),
+        quote(&config.cwd),
+        quote(&config.name),
+        args.join(","),
+        base64_encode(&config.stdin),
+        programs.join(","),
+        config.pid,
+        l.memory_bytes,
+        l.loop_iterations,
+        l.function_depth,
+        l.nesting,
+        l.slice,
+        l.output_bytes,
+        l.parse.source_bytes,
+        l.parse.tokens,
+        l.parse.depth,
+        l.parse.pipeline_stages,
+    )
+}
+
+/// The `step` document for the replies to what the machine asked.
+pub fn encode_replies(replies: &[(RequestKey, Reply)]) -> String {
+    let items: Vec<String> = replies
+        .iter()
+        .map(|(key, reply)| {
+            let key = quote(&key.to_string());
+            match reply {
+                Reply::Data { bytes, eof } => format!(
+                    "{{\"key\":{key},\"reply\":\"data\",\"bytes\":\"{}\",\"eof\":{eof}}}",
+                    base64_encode(bytes)
+                ),
+                Reply::Done => format!("{{\"key\":{key},\"reply\":\"done\"}}"),
+                Reply::Stat { kind, size } => format!(
+                    "{{\"key\":{key},\"reply\":\"stat\",\"kind\":\"{}\",\"size\":{size}}}",
+                    kind_name(*kind)
+                ),
+                Reply::Entries(entries) => {
+                    let listed: Vec<String> = entries
+                        .iter()
+                        .map(|e| {
+                            format!(
+                                "{{\"name\":{},\"kind\":\"{}\"}}",
+                                quote(&e.name),
+                                kind_name(e.kind)
+                            )
+                        })
+                        .collect();
+                    format!(
+                        "{{\"key\":{key},\"reply\":\"entries\",\"entries\":[{}]}}",
+                        listed.join(",")
+                    )
+                }
+                Reply::Text(text) => format!(
+                    "{{\"key\":{key},\"reply\":\"text\",\"text\":{}}}",
+                    quote(text)
+                ),
+                Reply::Error(error) => format!(
+                    "{{\"key\":{key},\"reply\":\"error\",\"error\":\"{}\"}}",
+                    error_name(*error)
+                ),
+            }
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// How a step ended, as a host reads it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WireStatus {
+    Running,
+    Done(i32),
+    /// Why the line ended outside its own control, as the machine words it, and its status.
+    Ended(String, i32),
+}
+
+/// One step's answer, as a host reads it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WireStep {
+    pub output: Vec<(Stream, Vec<u8>)>,
+    pub requests: Vec<(RequestKey, Request)>,
+    pub status: WireStatus,
+    /// Bytes the machine holds, as it counts them.
+    pub memory: u64,
+}
+
+/// Read what `step` left in the buffer; an `error` document is returned as `Err`.
+pub fn decode_step(text: &str) -> Result<WireStep, String> {
+    let doc = parse(text)?;
+    if let Some(error) = doc.get("error").and_then(Json::text) {
+        return Err(error.to_owned());
+    }
+    let mut output = Vec::new();
+    for chunk in doc.get("output").map(Json::list).unwrap_or_default() {
+        if let [Json::Number(fd), Json::Text(bytes)] = chunk.list() {
+            let stream = if *fd == 2.0 {
+                Stream::Stderr
+            } else {
+                Stream::Stdout
+            };
+            output.push((stream, base64_decode(bytes)));
+        }
+    }
+    let mut requests = Vec::new();
+    for item in doc.get("requests").map(Json::list).unwrap_or_default() {
+        requests.push(decode_request(item).ok_or("a request the host cannot read")?);
+    }
+    let status = doc.get("status").ok_or("a step without a status")?;
+    let code = |key: &str| i32::try_from(status.u64_or(key, 1)).unwrap_or(1);
+    let status = if let Some(reason) = status.get("ended").and_then(Json::text) {
+        WireStatus::Ended(reason.to_owned(), code("status"))
+    } else if status.get("done").is_some() {
+        WireStatus::Done(code("done"))
+    } else {
+        WireStatus::Running
+    };
+    Ok(WireStep {
+        output,
+        requests,
+        status,
+        memory: doc.u64_or("memory", 0),
+    })
+}
+
+/// One request as `encode_request` wrote it.
+pub fn decode_request(item: &Json) -> Option<(RequestKey, Request)> {
+    let key = parse_key(item.get("key")?.text()?)?;
+    let text = |name: &str| item.get(name).and_then(Json::text).map(str::to_owned);
+    let flag = |name: &str| matches!(item.get(name), Some(Json::Bool(true)));
+    let request = match item.get("op")?.text()? {
+        "read" => Request::Read {
+            path: text("path")?,
+            offset: item.u64_or("offset", 0),
+            length: item.u64_or("length", 0),
+        },
+        "write" => Request::Write {
+            path: text("path")?,
+            data: item.get("data").map(Json::bytes).unwrap_or_default(),
+            mode: match item.get("mode")?.text()? {
+                "append" => WriteMode::Append,
+                "create_new" => WriteMode::CreateNew,
+                _ => WriteMode::Truncate,
+            },
+        },
+        "touch" => Request::Touch {
+            path: text("path")?,
+        },
+        "stat" => Request::Stat {
+            path: text("path")?,
+        },
+        "list" => Request::List {
+            path: text("path")?,
+        },
+        "mkdir" => Request::Mkdir {
+            path: text("path")?,
+            parents: flag("parents"),
+        },
+        "remove" => Request::Remove {
+            path: text("path")?,
+            recursive: flag("recursive"),
+        },
+        "copy" => Request::Copy {
+            from: text("from")?,
+            to: text("to")?,
+            recursive: flag("recursive"),
+        },
+        "move" => Request::Move {
+            from: text("from")?,
+            to: text("to")?,
+        },
+        "value" => Request::Value {
+            name: text("name")?,
+        },
+        _ => return None,
+    };
+    Some((key, request))
+}
+
+/// Why `start` refused a line: its kind, message, line and column.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartRefusal {
+    pub kind: String,
+    pub message: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+/// Read what `start` left in the buffer: started, or why not.
+pub fn decode_started(text: &str) -> Result<(), StartRefusal> {
+    let refusal = |kind: &str, message: String| StartRefusal {
+        kind: kind.to_owned(),
+        message,
+        line: 0,
+        column: 0,
+    };
+    let doc = parse(text).map_err(|message| refusal("internal", message))?;
+    match doc.get("error") {
+        None => Ok(()),
+        Some(Json::Text(message)) => Err(refusal("internal", message.clone())),
+        Some(error) => Err(StartRefusal {
+            kind: error
+                .get("kind")
+                .and_then(Json::text)
+                .unwrap_or("internal")
+                .to_owned(),
+            message: error
+                .get("message")
+                .and_then(Json::text)
+                .unwrap_or_default()
+                .to_owned(),
+            line: u32::try_from(error.u64_or("line", 0)).unwrap_or(0),
+            column: u32::try_from(error.u64_or("column", 0)).unwrap_or(0),
+        }),
+    }
+}
+
+fn kind_name(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::Directory => "directory",
+        EntryKind::File => "file",
+    }
+}
+
+fn error_name(error: HostError) -> &'static str {
+    match error {
+        HostError::NotFound => "not_found",
+        HostError::NotADirectory => "not_a_directory",
+        HostError::IsADirectory => "is_a_directory",
+        HostError::Exists => "exists",
+        HostError::NotEmpty => "not_empty",
+        HostError::PermissionDenied => "permission_denied",
+        HostError::Unsupported => "unsupported",
+        HostError::Invalid => "invalid",
     }
 }
 

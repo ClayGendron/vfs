@@ -1,35 +1,74 @@
-//! The shell's machine for Python: `ShellMachine` runs one line, asks its
-//! host through the requests each `step` returns, and is given the replies
-//! on the next. A panic inside the machine is caught here, answered as one
-//! internal error, and poisons that machine; the process goes on.
+//! The shell's machine for Python: `ShellMachine` runs one line inside the
+//! machine's WebAssembly module, asks its host through the requests each
+//! `step` returns, and is given the replies on the next.
+//!
+//! The runtime is the wall around the line. It counts every instruction the
+//! module executes against the line's fuel, holds its memory under a hard
+//! limit, ends a slice that runs past the deadline or a cancel within one
+//! epoch tick, and turns a fault in the machine (a panic, a stack overflow)
+//! into a trap that ends this line and nothing else. Each line runs in a
+//! fresh instance, so a line's fuel is a function of the line and its
+//! replies. A slice runs with the interpreter lock released.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use shell::machine::{
-    Config, Entry, EntryKind, HostError, Limits, Machine, ProgramKind, Reply, Request, RequestKey, StartError, Status, Stream,
-    WriteMode,
+    Config, Entry, EntryKind, HostError, Limits, ProgramKind, Reply, Request, Stream, WriteMode,
 };
-use shell::syntax::ParseError;
+use shell_wasm::wire::{self, WireStatus};
+use wasmtime::{
+    Caller, Engine, Linker, Memory, Module, ResourceLimiter, Store, Trap, TypedFunc, UpdateDeadline,
+};
+
+/// The machine as a WebAssembly module, built by this crate's build script.
+const MODULE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shell.wasm"));
+
+/// Instructions a line may execute: about five seconds of the machine's work on a laptop.
+pub const FUEL: u64 = 20_000_000_000;
+/// Instructions between two returns from `step` when nothing is asked: about a millisecond.
+pub const FUEL_SLICE: u64 = 10_000_000;
+/// Bytes of linear memory an instance may grow to: the machine's own count, with room for its allocator.
+pub const MODULE_MEMORY_BYTES: usize = 256 << 20;
+/// Bytes of native stack the module's own frames may take before the call traps.
+const WASM_STACK_BYTES: usize = 4 << 20;
+/// How often the epoch advances; a deadline or a cancel is seen within one tick.
+const EPOCH_TICK: Duration = Duration::from_millis(10);
+
+/// The status a line exits with when its deadline passes, as `timeout` exits.
+const DEADLINE_STATUS: i32 = 124;
+const BUDGET_STATUS: i32 = 137;
+const CANCELLED_STATUS: i32 = 130;
+
+type StepTuple<'py> = (
+    Vec<(u8, Bound<'py, PyBytes>)>,
+    Vec<(String, &'static str, Bound<'py, PyDict>)>,
+    (&'static str, i32, Option<String>),
+);
 
 /// One line of bash, run over requests its Python host answers.
-#[pyclass(unsendable, module = "vfs._native")]
+#[pyclass(frozen, module = "vfs._native")]
 pub struct ShellMachine {
-    machine: Option<Machine>,
+    instance: Mutex<Option<Instance>>,
+    cancelled: Arc<AtomicBool>,
+    memory_used: AtomicU64,
+    fuel_used: AtomicU64,
 }
-
-type StepTuple<'py> = (Vec<(u8, Bound<'py, PyBytes>)>, Vec<(String, &'static str, Bound<'py, PyDict>)>, (&'static str, i32, Option<String>));
 
 #[pymethods]
 impl ShellMachine {
     /// Parse `source` and make a machine ready to run it. A line that does not
-    /// parse raises `ValueError(kind, message, line, column)`.
+    /// parse raises `ValueError(kind, message, line, column)`; `fuel` is the
+    /// line's instructions and `deadline` the seconds it may run in all.
     #[new]
-    #[pyo3(signature = (source, *, env, cwd, name, args, stdin, programs, pid, limits=None))]
+    #[pyo3(signature = (source, *, env, cwd, name, args, stdin, programs, pid, limits=None, fuel=None, deadline=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
+        py: Python<'_>,
         source: &str,
         env: Vec<(String, String)>,
         cwd: String,
@@ -39,81 +78,108 @@ impl ShellMachine {
         programs: Vec<String>,
         pid: u32,
         limits: Option<std::collections::HashMap<String, u64>>,
+        fuel: Option<u64>,
+        deadline: Option<f64>,
     ) -> PyResult<Self> {
-        let mut config = Config {
+        let config = Config {
             env,
             cwd,
             name,
             args,
             stdin,
-            programs: programs.into_iter().map(|p| (p, ProgramKind::Library)).collect(),
+            programs: programs
+                .into_iter()
+                .map(|p| (p, ProgramKind::Library))
+                .collect(),
             pid,
-            limits: Limits::default(),
+            limits: limits_from(limits.as_ref()),
         };
-        if let Some(limits) = limits {
-            let get = |key: &str| limits.get(key).copied();
-            let l = &mut config.limits;
-            if let Some(v) = get("memory_bytes") {
-                l.memory_bytes = usize::try_from(v).unwrap_or(usize::MAX);
-            }
-            if let Some(v) = get("loop_iterations") {
-                l.loop_iterations = v;
-            }
-            if let Some(v) = get("function_depth") {
-                l.function_depth = u32::try_from(v).unwrap_or(u32::MAX);
-            }
-            if let Some(v) = get("slice") {
-                l.slice = v;
-            }
-            if let Some(v) = get("source_bytes") {
-                l.parse.source_bytes = usize::try_from(v).unwrap_or(usize::MAX);
-            }
-            if let Some(v) = get("tokens") {
-                l.parse.tokens = u32::try_from(v).unwrap_or(u32::MAX);
-            }
-            if let Some(v) = get("depth") {
-                l.parse.depth = u32::try_from(v).unwrap_or(u32::MAX);
-            }
-            if let Some(v) = get("pipeline_stages") {
-                l.parse.pipeline_stages = u32::try_from(v).unwrap_or(u32::MAX);
-            }
+        let start = wire::encode_start(source, &config);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let fuel = fuel.unwrap_or(FUEL);
+        let slice = limits
+            .as_ref()
+            .and_then(|l| l.get("fuel_slice").copied())
+            .unwrap_or(FUEL_SLICE);
+        let memory = limits
+            .as_ref()
+            .and_then(|l| l.get("module_memory_bytes").copied())
+            .map_or(MODULE_MEMORY_BYTES, |v| {
+                usize::try_from(v).unwrap_or(usize::MAX)
+            });
+        let deadline =
+            deadline.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0)));
+        let watched = Arc::clone(&cancelled);
+        let (instance, answer) = py
+            .detach(move || -> Result<(Instance, String), String> {
+                let mut instance = Instance::new(fuel, slice, memory, deadline, watched)?;
+                let answer = instance
+                    .call(Export::Start, start.as_bytes())
+                    .map_err(|ended| ended.0)?;
+                Ok((instance, answer))
+            })
+            .map_err(|message| PyValueError::new_err(("internal", message, 0u32, 0u32)))?;
+        if let Err(refusal) = wire::decode_started(&answer) {
+            return Err(PyValueError::new_err((
+                refusal.kind,
+                refusal.message,
+                refusal.line,
+                refusal.column,
+            )));
         }
-        let started = catch_unwind(AssertUnwindSafe(|| Machine::new(source, config)));
-        match started {
-            Ok(Ok(machine)) => Ok(ShellMachine { machine: Some(machine) }),
-            Ok(Err(StartError::Parse(error))) => Err(parse_error(&error)),
-            Ok(Err(StartError::Budget(which, limit))) => {
-                Err(PyValueError::new_err(("budget", format!("{which} budget of {limit} exceeded"), 0u32, 0u32)))
-            }
-            Err(_) => Err(PyValueError::new_err(("internal", "the parser failed".to_owned(), 0u32, 0u32))),
-        }
+        let used = instance.fuel_used();
+        Ok(ShellMachine {
+            instance: Mutex::new(Some(instance)),
+            cancelled,
+            memory_used: AtomicU64::new(0),
+            fuel_used: AtomicU64::new(used),
+        })
     }
 
     /// Give the replies to what the last step asked, and run on. Returns the
     /// output, the requests, and the status: `("running", 0, None)`,
     /// `("done", status, None)` or `("ended", status, reason)`.
-    fn step<'py>(&mut self, py: Python<'py>, replies: Vec<(String, String, Bound<'py, PyAny>)>) -> PyResult<StepTuple<'py>> {
+    fn step<'py>(
+        &self,
+        py: Python<'py>,
+        replies: Vec<(String, String, Bound<'py, PyAny>)>,
+    ) -> PyResult<StepTuple<'py>> {
         let mut decoded = Vec::new();
         for (key, kind, value) in replies {
-            let Some(key) = parse_key(&key) else {
+            let Some(key) = wire::parse_key(&key) else {
                 return Err(PyValueError::new_err(format!("not a request key: {key}")));
             };
             decoded.push((key, decode_reply(&kind, &value)?));
         }
-        let Some(machine) = self.machine.as_mut() else {
-            return Ok((Vec::new(), Vec::new(), ("ended", 1, Some("Internal(\"the machine is poisoned\")".to_owned()))));
+        let document = wire::encode_replies(&decoded);
+        let outcome = py.detach(|| self.run_step(document.as_bytes()))?;
+        let answer = match outcome {
+            Err(Ended(reason, status)) => {
+                return Ok((Vec::new(), Vec::new(), ("ended", status, Some(reason))));
+            }
+            Ok(answer) => answer,
         };
-        let step = match catch_unwind(AssertUnwindSafe(|| machine.step(decoded))) {
+        let step = match wire::decode_step(&answer) {
             Ok(step) => step,
-            Err(_) => {
-                self.machine = None;
-                return Ok((Vec::new(), Vec::new(), ("ended", 1, Some("Internal(\"the machine panicked\")".to_owned()))));
+            Err(message) => {
+                self.drop_instance();
+                return Ok((
+                    Vec::new(),
+                    Vec::new(),
+                    ("ended", 1, Some(format!("Internal({message:?})"))),
+                ));
             }
         };
+        self.memory_used.store(step.memory, Ordering::Relaxed);
         let output = step
             .output
             .iter()
-            .map(|(stream, bytes)| (if *stream == Stream::Stdout { 1u8 } else { 2u8 }, PyBytes::new(py, bytes)))
+            .map(|(stream, bytes)| {
+                (
+                    if *stream == Stream::Stdout { 1u8 } else { 2u8 },
+                    PyBytes::new(py, bytes),
+                )
+            })
             .collect();
         let mut requests = Vec::new();
         for (key, request) in &step.requests {
@@ -121,53 +187,352 @@ impl ShellMachine {
             requests.push((key.to_string(), op, args));
         }
         let status = match step.status {
-            Status::Running => ("running", 0, None),
-            Status::Done(code) => ("done", code, None),
-            Status::Ended(fatal, code) => ("ended", code, Some(format!("{fatal:?}"))),
+            WireStatus::Running => ("running", 0, None),
+            WireStatus::Done(code) => ("done", code, None),
+            WireStatus::Ended(reason, code) => ("ended", code, Some(reason)),
         };
         if status.0 != "running" {
-            self.machine = None;
+            self.drop_instance();
         }
         Ok((output, requests, status))
     }
 
-    /// Stop the line: its next step ends it.
-    fn cancel(&mut self) {
-        if let Some(machine) = self.machine.as_mut() {
-            machine.cancel();
-        }
+    /// Stop the line: a running slice ends within one epoch tick, and the next step ends the line.
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
     }
 
     /// Bytes the machine holds now, as it counts them.
     #[getter]
-    fn memory_used(&self) -> usize {
-        self.machine.as_ref().map_or(0, Machine::memory_used)
+    fn memory_used(&self) -> u64 {
+        self.memory_used.load(Ordering::Relaxed)
+    }
+
+    /// Instructions the line has executed so far.
+    #[getter]
+    fn fuel_used(&self) -> u64 {
+        self.fuel_used.load(Ordering::Relaxed)
     }
 }
 
-fn parse_error(error: &ParseError) -> PyErr {
-    match error {
-        ParseError::Syntax(at, message) => PyValueError::new_err(("syntax", message.clone(), at.line, at.column)),
-        ParseError::Refused(at, construct, reason) => {
-            PyValueError::new_err(("refused", format!("{construct}: {reason}"), at.line, at.column))
+impl ShellMachine {
+    fn run_step(&self, document: &[u8]) -> PyResult<Result<String, Ended>> {
+        let mut guard = self
+            .instance
+            .try_lock()
+            .map_err(|_| PyRuntimeError::new_err("a step of this line is already running"))?;
+        let Some(instance) = guard.as_mut() else {
+            return Ok(Err(Ended("Internal(\"the line has ended\")".to_owned(), 1)));
+        };
+        if self.cancelled.load(Ordering::SeqCst) {
+            *guard = None;
+            return Ok(Err(Ended("Cancelled".to_owned(), CANCELLED_STATUS)));
         }
-        ParseError::Budget(which, limit) => {
-            PyValueError::new_err(("budget", format!("{which} budget of {limit} exceeded"), 0u32, 0u32))
+        let outcome = instance.call(Export::Step, document);
+        self.fuel_used
+            .store(instance.fuel_used(), Ordering::Relaxed);
+        if outcome.is_err() {
+            *guard = None;
+        }
+        Ok(outcome)
+    }
+
+    fn drop_instance(&self) {
+        if let Ok(mut guard) = self.instance.lock() {
+            *guard = None;
         }
     }
 }
 
-fn parse_key(text: &str) -> Option<RequestKey> {
-    let (task, ordinal) = text.split_once('#')?;
-    let task = task.split('.').map(|n| n.parse::<u32>().ok()).collect::<Option<Vec<u32>>>()?;
-    Some(RequestKey {
-        task,
-        ordinal: ordinal.parse().ok()?,
-    })
+// ---------------------------------------------------------------------------
+// The runtime
+// ---------------------------------------------------------------------------
+
+struct Runtime {
+    engine: Engine,
+    module: Module,
+}
+
+/// The engine and the compiled module, made once a process, and the thread that advances the epoch.
+fn runtime() -> Result<&'static Runtime, String> {
+    static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let mut config = wasmtime::Config::new();
+            config.consume_fuel(true);
+            config.epoch_interruption(true);
+            config.async_stack_size(WASM_STACK_BYTES);
+            config.max_wasm_stack(WASM_STACK_BYTES);
+            let engine =
+                Engine::new(&config).map_err(|e| format!("the runtime did not start: {e}"))?;
+            let module = Module::new(&engine, MODULE)
+                .map_err(|e| format!("the shell module did not compile: {e}"))?;
+            let ticking = engine.clone();
+            std::thread::Builder::new()
+                .name("vfs-shell-epoch".to_owned())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(EPOCH_TICK);
+                        ticking.increment_epoch();
+                    }
+                })
+                .map_err(|e| format!("the epoch thread did not start: {e}"))?;
+            Ok(Runtime { engine, module })
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+/// Why the runtime stopped a call: the reason in the machine's own words, and the status.
+struct Ended(String, i32);
+
+/// What the epoch callback stopped a call for.
+#[derive(Clone, Copy)]
+enum Stop {
+    Cancelled,
+    Deadline,
+}
+
+struct Data {
+    memory_limit: usize,
+    memory_refused: bool,
+    /// The fuel the store held when this step began, and the slice it may spend.
+    step_start: u64,
+    slice: u64,
+    cancelled: Arc<AtomicBool>,
+    deadline: Option<Instant>,
+    stopped: Option<Stop>,
+}
+
+impl ResourceLimiter for Data {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired > self.memory_limit {
+            self.memory_refused = true;
+            return Err(wasmtime::format_err!("the module's memory limit"));
+        }
+        Ok(true)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Export {
+    Start,
+    Step,
+}
+
+struct Instance {
+    store: Store<Data>,
+    memory: Memory,
+    buffer: TypedFunc<u32, u32>,
+    buffer_address: TypedFunc<(), u32>,
+    start: TypedFunc<u32, u32>,
+    step: TypedFunc<u32, u32>,
+    fuel: u64,
+}
+
+impl Instance {
+    fn new(
+        fuel: u64,
+        slice: u64,
+        memory_limit: usize,
+        deadline: Option<Instant>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<Instance, String> {
+        let runtime = runtime()?;
+        let data = Data {
+            memory_limit,
+            memory_refused: false,
+            step_start: fuel,
+            slice,
+            cancelled,
+            deadline,
+            stopped: None,
+        };
+        let mut store = Store::new(&runtime.engine, data);
+        store.limiter(|data| data);
+        store.set_fuel(fuel).map_err(|e| e.to_string())?;
+        store.set_epoch_deadline(1);
+        store.epoch_deadline_callback(|mut state| {
+            let data = state.data_mut();
+            if data.cancelled.load(Ordering::SeqCst) {
+                data.stopped = Some(Stop::Cancelled);
+                return Ok(UpdateDeadline::Interrupt);
+            }
+            if data.deadline.is_some_and(|at| Instant::now() >= at) {
+                data.stopped = Some(Stop::Deadline);
+                return Ok(UpdateDeadline::Interrupt);
+            }
+            Ok(UpdateDeadline::Continue(1))
+        });
+        let mut linker = Linker::new(&runtime.engine);
+        linker
+            .func_wrap("host", "slice_spent", |caller: Caller<'_, Data>| -> i32 {
+                let left = caller.get_fuel().unwrap_or(0);
+                let data = caller.data();
+                i32::from(data.step_start.saturating_sub(left) >= data.slice)
+            })
+            .map_err(|e| e.to_string())?;
+        let instance = linker
+            .instantiate(&mut store, &runtime.module)
+            .map_err(|e| e.to_string())?;
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .ok_or("the module exports no memory")?;
+        let typed = |store: &mut Store<Data>, name: &str| {
+            instance
+                .get_typed_func::<u32, u32>(store, name)
+                .map_err(|e| e.to_string())
+        };
+        let buffer = typed(&mut store, "buffer")?;
+        let start = typed(&mut store, "start")?;
+        let step = typed(&mut store, "step")?;
+        let buffer_address = instance
+            .get_typed_func::<(), u32>(&mut store, "buffer_address")
+            .map_err(|e| e.to_string())?;
+        Ok(Instance {
+            store,
+            memory,
+            buffer,
+            buffer_address,
+            start,
+            step,
+            fuel,
+        })
+    }
+
+    fn fuel_used(&self) -> u64 {
+        self.fuel.saturating_sub(self.store.get_fuel().unwrap_or(0))
+    }
+
+    /// Put `document` in the module's buffer, call the export, and read back what it left.
+    fn call(&mut self, export: Export, document: &[u8]) -> Result<String, Ended> {
+        self.store.data_mut().step_start = self.store.get_fuel().unwrap_or(0);
+        let len = u32::try_from(document.len())
+            .map_err(|_| Ended("Budget(\"memory\", 4294967295)".to_owned(), BUDGET_STATUS))?;
+        let at = self
+            .buffer
+            .call(&mut self.store, len)
+            .map_err(|e| self.ended(&e))?;
+        self.memory
+            .write(&mut self.store, at as usize, document)
+            .map_err(|e| Ended(format!("Internal({:?})", e.to_string()), 1))?;
+        let func = match export {
+            Export::Start => &self.start,
+            Export::Step => &self.step,
+        };
+        let out_len = func
+            .call(&mut self.store, len)
+            .map_err(|e| self.ended(&e))?;
+        let at = self
+            .buffer_address
+            .call(&mut self.store, ())
+            .map_err(|e| self.ended(&e))?;
+        let mut bytes = vec![0u8; out_len as usize];
+        self.memory
+            .read(&self.store, at as usize, &mut bytes)
+            .map_err(|e| Ended(format!("Internal({:?})", e.to_string()), 1))?;
+        String::from_utf8(bytes).map_err(|_| {
+            Ended(
+                "Internal(\"the module answered with text that is not UTF-8\")".to_owned(),
+                1,
+            )
+        })
+    }
+
+    /// Name why the runtime stopped a call, in the words the machine uses for its own ends.
+    fn ended(&self, error: &wasmtime::Error) -> Ended {
+        let data = self.store.data();
+        if let Some(stop) = data.stopped {
+            return match stop {
+                Stop::Cancelled => Ended("Cancelled".to_owned(), CANCELLED_STATUS),
+                Stop::Deadline => Ended("Deadline".to_owned(), DEADLINE_STATUS),
+            };
+        }
+        if data.memory_refused {
+            return Ended(
+                format!("Budget(\"module_memory\", {})", data.memory_limit),
+                BUDGET_STATUS,
+            );
+        }
+        match error.downcast_ref::<Trap>() {
+            Some(Trap::OutOfFuel) => {
+                Ended(format!("Budget(\"fuel\", {})", self.fuel), BUDGET_STATUS)
+            }
+            Some(Trap::StackOverflow) => Ended("Budget(\"stack\", 0)".to_owned(), BUDGET_STATUS),
+            Some(trap) => Ended(
+                format!("Internal({:?})", format!("the machine trapped: {trap}")),
+                1,
+            ),
+            None => Ended(format!("Internal({:?})", error.to_string()), 1),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+fn limits_from(given: Option<&std::collections::HashMap<String, u64>>) -> Limits {
+    let mut limits = Limits::default();
+    let Some(given) = given else {
+        return limits;
+    };
+    let get = |key: &str| given.get(key).copied();
+    let size = |v: u64| usize::try_from(v).unwrap_or(usize::MAX);
+    let count = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+    if let Some(v) = get("memory_bytes") {
+        limits.memory_bytes = size(v);
+    }
+    if let Some(v) = get("loop_iterations") {
+        limits.loop_iterations = v;
+    }
+    if let Some(v) = get("function_depth") {
+        limits.function_depth = count(v);
+    }
+    if let Some(v) = get("nesting") {
+        limits.nesting = count(v);
+    }
+    if let Some(v) = get("slice") {
+        limits.slice = v;
+    }
+    if let Some(v) = get("output_bytes") {
+        limits.output_bytes = v;
+    }
+    if let Some(v) = get("source_bytes") {
+        limits.parse.source_bytes = size(v);
+    }
+    if let Some(v) = get("tokens") {
+        limits.parse.tokens = count(v);
+    }
+    if let Some(v) = get("depth") {
+        limits.parse.depth = count(v);
+    }
+    if let Some(v) = get("pipeline_stages") {
+        limits.parse.pipeline_stages = count(v);
+    }
+    limits
 }
 
 fn kind_of(name: &str) -> EntryKind {
-    if name == "directory" { EntryKind::Directory } else { EntryKind::File }
+    if name == "directory" {
+        EntryKind::Directory
+    } else {
+        EntryKind::File
+    }
 }
 
 fn error_of(name: &str) -> HostError {
@@ -192,11 +557,22 @@ fn decode_reply(kind: &str, value: &Bound<'_, PyAny>) -> PyResult<Reply> {
         "done" => Reply::Done,
         "stat" => {
             let (kind, size): (String, u64) = value.extract()?;
-            Reply::Stat { kind: kind_of(&kind), size }
+            Reply::Stat {
+                kind: kind_of(&kind),
+                size,
+            }
         }
         "entries" => {
             let entries: Vec<(String, String)> = value.extract()?;
-            Reply::Entries(entries.into_iter().map(|(name, kind)| Entry { name, kind: kind_of(&kind) }).collect())
+            Reply::Entries(
+                entries
+                    .into_iter()
+                    .map(|(name, kind)| Entry {
+                        name,
+                        kind: kind_of(&kind),
+                    })
+                    .collect(),
+            )
         }
         "text" => Reply::Text(value.extract()?),
         "error" => Reply::Error(error_of(&value.extract::<String>()?)),
@@ -204,10 +580,17 @@ fn decode_reply(kind: &str, value: &Bound<'_, PyAny>) -> PyResult<Reply> {
     })
 }
 
-fn encode_request<'py>(py: Python<'py>, request: &Request) -> PyResult<(&'static str, Bound<'py, PyDict>)> {
+fn encode_request<'py>(
+    py: Python<'py>,
+    request: &Request,
+) -> PyResult<(&'static str, Bound<'py, PyDict>)> {
     let args = PyDict::new(py);
     let op = match request {
-        Request::Read { path, offset, length } => {
+        Request::Read {
+            path,
+            offset,
+            length,
+        } => {
             args.set_item("path", path)?;
             args.set_item("offset", offset)?;
             args.set_item("length", length)?;
@@ -248,7 +631,11 @@ fn encode_request<'py>(py: Python<'py>, request: &Request) -> PyResult<(&'static
             args.set_item("recursive", recursive)?;
             "remove"
         }
-        Request::Copy { from, to, recursive } => {
+        Request::Copy {
+            from,
+            to,
+            recursive,
+        } => {
             args.set_item("source", from)?;
             args.set_item("target", to)?;
             args.set_item("recursive", recursive)?;

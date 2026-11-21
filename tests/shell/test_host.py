@@ -4,8 +4,10 @@ system actor."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +15,7 @@ import pytest
 
 from vfs import AsyncVirtualFileSystem, VirtualFileSystem
 from vfs.authority import Authority, Principal
+from vfs.native import extension
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
 from vfs.shell import host as host_module
@@ -211,9 +214,137 @@ async def test_a_budget_that_ends_a_line_is_its_failure() -> None:
     assert result.exit_status == 137
 
 
+# ---------------------------------------------------------------------------
+# The runtime is the wall: fuel, the deadline, output, nesting and cancel
+# ---------------------------------------------------------------------------
+
+UNBOUNDED_LOOP = {"loop_iterations": 10**12}
+
+
+@pytest.mark.parametrize(
+    ("line", "limits", "fuel", "deadline", "kind", "status", "named"),
+    [
+        ("while :; do :; done", UNBOUNDED_LOOP, 10**8, 30.0, ErrorKind.budget_exhausted, 137, "fuel"),
+        ("while :; do :; done", UNBOUNDED_LOOP, 10**15, 0.05, ErrorKind.timeout, 124, "deadline"),
+        (
+            "while :; do echo 123456789; done",
+            {**UNBOUNDED_LOOP, "output_bytes": 1000},
+            None,
+            30.0,
+            ErrorKind.budget_exhausted,
+            137,
+            "output",
+        ),
+        ("f(){ if :; then { ( f ); }; fi; }; f", None, None, 30.0, ErrorKind.budget_exhausted, 137, "nesting"),
+        ("f(){ echo $( f ); }; f", None, None, 30.0, ErrorKind.budget_exhausted, 137, "function_depth"),
+    ],
+    ids=["fuel", "deadline", "output", "nesting", "function-depth"],
+)
+async def test_each_wall_ends_a_line_and_the_process_goes_on(
+    line: str,
+    limits: dict[str, int] | None,
+    fuel: int | None,
+    deadline: float,
+    kind: ErrorKind,
+    status: int,
+    named: str,
+) -> None:
+    fs = AsyncVirtualFileSystem()
+    result = await run_line(fs, line, ADA, limits=limits, fuel=fuel, deadline=deadline)
+    assert result.success is False
+    assert result.errors[-1].kind == kind
+    assert named in result.errors[-1].message
+    assert result.exit_status == status
+    if named == "output":
+        assert len(result.stdout) == 1000
+    assert (await fs.cli("echo after", authority=ADA)).stdout == "after\n"
+
+
+async def test_a_chain_past_the_depth_budget_is_an_error_not_a_crash() -> None:
+    fs = AsyncVirtualFileSystem()
+    result = await fs.cli("e=$(printf '1+%.0s' {1..70000})1; echo $((e))", authority=ADA)
+    assert result.exit_status == 1, "an expansion error ends the line, as it ends bash"
+    assert "recursion level exceeded" in result.stderr
+    assert (await fs.cli("echo after", authority=ADA)).stdout == "after\n"
+
+
+async def test_the_event_loop_runs_while_a_line_computes() -> None:
+    beats = 0
+
+    async def heart() -> None:
+        nonlocal beats
+        while True:
+            await asyncio.sleep(0)
+            beats += 1
+
+    task = asyncio.create_task(heart())
+    result = await run_line(AsyncVirtualFileSystem(), "while :; do :; done", ADA, limits=UNBOUNDED_LOOP, fuel=10**8)
+    task.cancel()
+    assert result.exit_status == 137
+    assert beats > 5, "each slice runs on the pool, so the loop runs between them"
+
+
+async def test_a_cancelled_call_cancels_its_line() -> None:
+    fs = AsyncVirtualFileSystem()
+    line = fs.cli("while :; do :; done", authority=ADA)
+    task = asyncio.create_task(line)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (await fs.cli("echo after", authority=ADA)).stdout == "after\n"
+
+
+def _machine(line: str, **options: Any) -> Any:
+    return extension().ShellMachine(
+        line, env=[], cwd="/", name="bash", args=[], stdin=b"", programs=[], pid=1000, **options
+    )
+
+
+def test_cancel_ends_a_running_slice_from_another_thread() -> None:
+    machine = _machine("while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15)
+    ended: list[tuple[str, int, str | None]] = []
+    worker = threading.Thread(target=lambda: ended.append(machine.step([])[2]))
+    worker.start()
+    machine.cancel()
+    worker.join()
+    assert ended == [("ended", 130, "Cancelled")]
+    assert machine.step([])[2][0] == "ended"
+
+
+def test_one_line_spends_the_same_fuel_twice() -> None:
+    def spend() -> int:
+        machine = _machine("x=0; for i in {1..2000}; do x=$((x + i)); done; echo $x")
+        while machine.step([])[2][0] == "running":
+            pass
+        return machine.fuel_used
+
+    first = spend()
+    assert first > 0
+    assert spend() == first
+
+
+def test_a_step_already_running_refuses_a_second() -> None:
+    machine = _machine("while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15)
+    worker = threading.Thread(target=lambda: machine.step([]))
+    worker.start()
+    try:
+        for _ in range(1000):
+            try:
+                machine.step([])
+            except RuntimeError as error:
+                assert "already running" in str(error)
+                break
+    finally:
+        machine.cancel()
+        worker.join()
+
+
 @pytest.mark.parametrize(
     ("reason", "kind"),
     [
+        ("Deadline", ErrorKind.timeout),
         ("Cancelled", ErrorKind.cancelled),
         ('Internal("x")', ErrorKind.internal),
         ('Budget("memory", 1)', ErrorKind.budget_exhausted),

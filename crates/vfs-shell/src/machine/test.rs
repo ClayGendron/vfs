@@ -225,7 +225,15 @@ pub fn eval_cond<'b>(
                         2
                     }
                     Ok(regex) => match regex.find(&subject) {
-                        Some((text, captures)) => {
+                        Err(_) => {
+                            sh.error_text(&format!(
+                                "bash: line {}: [[: regular expression too complex to match `{}'\n",
+                                sh.lineno, source
+                            ))
+                            .await?;
+                            2
+                        }
+                        Ok(Some((text, captures))) => {
                             let mut map = BTreeMap::new();
                             for (index, capture) in captures.iter().enumerate() {
                                 let value: String = match capture {
@@ -239,7 +247,7 @@ pub fn eval_cond<'b>(
                             set_value(sh, "BASH_REMATCH", Value::Indexed(map))?;
                             0
                         }
-                        None => {
+                        Ok(None) => {
                             set_value(sh, "BASH_REMATCH", Value::Indexed(BTreeMap::new()))?;
                             1
                         }

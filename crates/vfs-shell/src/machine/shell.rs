@@ -288,6 +288,8 @@ pub struct Shell {
     pub next_child: u32,
     pub next_request: u32,
     pub function_depth: u32,
+    /// Compound commands and substitutions open inside one another, counted against `nesting`.
+    pub nesting: u32,
     pub loop_depth: u32,
     /// Inside an `if` or `while` condition, a `!`, or the left of `&&` and `||`.
     pub in_condition: bool,

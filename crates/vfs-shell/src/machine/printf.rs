@@ -471,7 +471,7 @@ fn float_text(value: f64, conversion: u8, flags: &str, precision: usize) -> Stri
     }
     let body = match conversion.to_ascii_lowercase() {
         b'f' => {
-            let mut text = format!("{magnitude:.precision$}");
+            let mut text = fixed(magnitude, precision);
             if flags.contains('#') && precision == 0 {
                 text.push('.');
             }
@@ -485,8 +485,32 @@ fn float_text(value: f64, conversion: u8, flags: &str, precision: usize) -> Stri
     format!("{sign}{body}")
 }
 
+/// Digits past the point that a double can need: its exact decimal expansion ends by then.
+const EXACT_FRACTION: usize = 1_100;
+/// Significant digits past the first that a double can need, for the same reason.
+const EXACT_SIGNIFICANT: usize = 800;
+
+/// `value` with `precision` digits past the point; the formatter takes at most 65,535, so the
+/// digits past a double's exact expansion, all zero, are written here.
+fn fixed(value: f64, precision: usize) -> String {
+    let mut text = format!("{value:.*}", precision.min(EXACT_FRACTION));
+    text.push_str(&"0".repeat(precision.saturating_sub(EXACT_FRACTION)));
+    text
+}
+
+/// `value` in scientific form with `precision` digits past the point, as `fixed` writes them.
+fn scientific(value: f64, precision: usize) -> String {
+    let text = format!("{value:.*e}", precision.min(EXACT_SIGNIFICANT));
+    let zeros = precision.saturating_sub(EXACT_SIGNIFICANT);
+    if zeros == 0 {
+        return text;
+    }
+    let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
+    format!("{mantissa}{}e{exponent}", "0".repeat(zeros))
+}
+
 fn exponent_text(value: f64, precision: usize, alternate: bool) -> String {
-    let text = format!("{value:.precision$e}");
+    let text = scientific(value, precision);
     let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
     let exponent: i32 = exponent.parse().unwrap_or(0);
     let mut mantissa = mantissa.to_owned();
@@ -501,12 +525,12 @@ fn general_text(value: f64, precision: usize, alternate: bool) -> String {
     let p = if precision == 0 { 1 } else { precision };
     if value == 0.0 {
         return if alternate {
-            format!("{:.*}", p.saturating_sub(1), 0.0)
+            fixed(0.0, p.saturating_sub(1))
         } else {
             "0".to_owned()
         };
     }
-    let exact = format!("{:.*e}", p.saturating_sub(1), value);
+    let exact = scientific(value, p.saturating_sub(1).min(EXACT_SIGNIFICANT));
     let exponent: i64 = exact
         .split_once('e')
         .and_then(|(_, e)| e.parse().ok())
@@ -516,7 +540,7 @@ fn general_text(value: f64, precision: usize, alternate: bool) -> String {
         exponent_text(value, p.saturating_sub(1), alternate)
     } else {
         let decimals = usize::try_from(p_i.saturating_sub(1).saturating_sub(exponent)).unwrap_or(0);
-        format!("{value:.decimals$}")
+        fixed(value, decimals)
     };
     if alternate {
         return text;

@@ -47,16 +47,24 @@ pub struct Limits {
     pub loop_iterations: u64,
     /// Nested function calls.
     pub function_depth: u32,
+    /// Compound commands, substitutions and function bodies open at once, inside one another.
+    pub nesting: u32,
     /// Machine operations between two returns from `step`, when nothing is asked.
     pub slice: u64,
+    /// Bytes the line may write to its standard output and error, together.
+    pub output_bytes: u64,
 }
 
 /// 64 MiB: the tree of a full-size line, its variables and its buffers.
 pub const MEMORY_BYTES: usize = 64 << 20;
 pub const LOOP_ITERATIONS: u64 = 1_000_000;
 pub const FUNCTION_DEPTH: u32 = 256;
+/// A thousand levels: a function at its full depth of calls, each holding a few compound commands.
+pub const NESTING: u32 = 1_000;
 /// About a millisecond of work on a laptop between two returns.
 pub const SLICE: u64 = 10_000;
+/// 16 MiB: far past any listing or file a caller reads back, and a bound on a line that only prints.
+pub const OUTPUT_BYTES: u64 = 16 << 20;
 
 impl Default for Limits {
     fn default() -> Self {
@@ -65,7 +73,9 @@ impl Default for Limits {
             memory_bytes: MEMORY_BYTES,
             loop_iterations: LOOP_ITERATIONS,
             function_depth: FUNCTION_DEPTH,
+            nesting: NESTING,
             slice: SLICE,
+            output_bytes: OUTPUT_BYTES,
         }
     }
 }
@@ -312,6 +322,7 @@ impl Machine {
             limits.slice,
             limits.loop_iterations,
         )));
+        hub.borrow_mut().output_limit = limits.output_bytes;
         let tree_bytes = script.footprint.saturating_add(source.len());
         hub.borrow_mut()
             .charge(tree_bytes)

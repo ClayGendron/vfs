@@ -16,11 +16,14 @@ in chunks is one ``read``; any write, move, copy or delete forgets them.
 
 from __future__ import annotations
 
+import asyncio
 import random
 import time
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
 from vfs.native import extension
+from vfs.offload import call_offloaded, offload_pool
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 
 if TYPE_CHECKING:
@@ -39,6 +42,9 @@ ENVIRONMENT: Final[tuple[tuple[str, str], ...]] = (
     ("TZ", "UTC"),
 )
 """The environment a line starts with."""
+
+DEADLINE_SECONDS: Final = 30.0
+"""The wall a line runs under, from its start to its end, the time its verbs take included."""
 
 PID: Final = 1000
 """``$$`` of every line: the machine is no process, and a fixed value keeps a line a function of its input."""
@@ -82,6 +88,8 @@ class LineResult(Result):
     """What the line wrote to standard output."""
     stderr: str = ""
     """What the line wrote to standard error."""
+    fuel_used: int = 0
+    """The instructions the line executed inside the machine's module, a function of the line and its replies."""
     exit_status: int = 0
     """The last command's status, or 2, 130 or 137 when the line could not run, was cancelled or hit a budget."""
 
@@ -95,31 +103,43 @@ async def run_line(
     stdin: bytes = b"",
     env: Sequence[tuple[str, str]] = ENVIRONMENT,
     limits: Mapping[str, int] | None = None,
+    fuel: int | None = None,
+    deadline: float = DEADLINE_SECONDS,
 ) -> LineResult:
     """Run ``line`` as ``authority`` and return its output, its exit status and its evidence.
 
     The result carries ``stdout`` and ``stderr`` as text and ``exit_status`` as an int. It fails
     only when the line could not run as written: it does not parse, it holds a refused construct,
-    or a budget ended it. A program that exits non-zero is not a failure of the call. ``env`` is
-    the environment the line starts with, and ``limits`` lowers or raises the machine's budgets
-    by name (``memory_bytes``, ``loop_iterations``, ``function_depth``, ``slice`` and the parse
-    budgets).
+    or a budget, the deadline or a cancel ended it. A program that exits non-zero is not a
+    failure of the call. ``env`` is the environment the line starts with, and ``limits`` lowers
+    or raises the machine's budgets by name (``memory_bytes``, ``loop_iterations``,
+    ``function_depth``, ``output_bytes``, ``slice``, ``module_memory_bytes`` and the parse
+    budgets). ``fuel`` is the instructions the line may execute and ``deadline`` the seconds it
+    may take in all.
+
+    The machine runs inside its WebAssembly module, one slice at a time on the process pool, so
+    the event loop never waits on it. A cancelled call cancels the line: the slice running then
+    ends within one tick of the runtime's clock.
     """
     if authority.actor.is_system:
         detail = "a line never runs as the system actor; name the caller's authority"
         return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
+    start = partial(
+        extension().ShellMachine,
+        line,
+        env=[*env, ("PWD", cwd)],
+        cwd=cwd,
+        name=SHELL_NAME,
+        args=[],
+        stdin=stdin,
+        programs=list(extension().SHELL_PROGRAMS),
+        pid=PID,
+        limits=dict(limits) if limits is not None else None,
+        fuel=fuel,
+        deadline=deadline,
+    )
     try:
-        machine = extension().ShellMachine(
-            line,
-            env=[*env, ("PWD", cwd)],
-            cwd=cwd,
-            name=SHELL_NAME,
-            args=[],
-            stdin=stdin,
-            programs=list(extension().SHELL_PROGRAMS),
-            pid=PID,
-            limits=dict(limits) if limits is not None else None,
-        )
+        machine = await call_offloaded(offload_pool(), start)
     except ValueError as error:
         kind, message, line_number, column = error.args
         fact = classified(
@@ -134,13 +154,19 @@ async def run_line(
     stdout = bytearray()
     stderr = bytearray()
     replies: list[tuple[str, str, object]] = []
-    while True:
-        output, requests, (state, status, reason) = machine.step(replies)
-        for stream, chunk in output:
-            (stdout if stream == 1 else stderr).extend(chunk)
-        replies = [(key, *await host.answer(op, args)) for key, op, args in requests]
-        if state != "running":
-            break
+    try:
+        while True:
+            output, requests, (state, status, reason) = await call_offloaded(
+                offload_pool(), partial(machine.step, replies)
+            )
+            for stream, chunk in output:
+                (stdout if stream == 1 else stderr).extend(chunk)
+            replies = [(key, *await host.answer(op, args)) for key, op, args in requests]
+            if state != "running":
+                break
+    except asyncio.CancelledError:
+        machine.cancel()
+        raise
     errors = list(host.evidence)
     if state == "ended":
         errors.append(_ended(reason or ""))
@@ -148,6 +174,7 @@ async def run_line(
         errors=errors,
         stdout=stdout.decode(errors="replace"),
         stderr=stderr.decode(errors="replace"),
+        fuel_used=machine.fuel_used,
         exit_status=status,
     )
 
@@ -163,6 +190,8 @@ def _ended(reason: str) -> ResultError:
         return classified(ErrorKind.budget_exhausted, detail=reason)
     if reason.startswith("Cancelled"):
         return classified(ErrorKind.cancelled)
+    if reason.startswith("Deadline"):
+        return classified(ErrorKind.timeout, detail="the line's deadline passed")
     return classified(ErrorKind.internal, detail=reason)
 
 

@@ -66,7 +66,7 @@ pub extern "C" fn start(len: u32) -> u32 {
                     state.machine = Some(machine);
                     "{\"started\":true}".to_owned()
                 }
-                Err(error) => error_json(&format!("{error:?}")),
+                Err(error) => wire::encode_start_error(&error),
             },
         };
         put(&mut state.buffer, answer)

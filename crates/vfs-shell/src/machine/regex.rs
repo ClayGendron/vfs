@@ -73,14 +73,14 @@ impl Regex {
     }
 
     /// The first match: the whole match and each group, as character ranges.
-    pub fn find(&self, text: &str) -> Option<(Vec<char>, Captures)> {
+    pub fn find(&self, text: &str) -> Result<Option<(Vec<char>, Captures)>, Spent> {
         let chars: Vec<char> = text.chars().collect();
-        let captures = self.find_at(&chars, 0)?;
-        Some((chars, captures))
+        Ok(self.find_at(&chars, 0)?.map(|captures| (chars, captures)))
     }
 
     /// The first match that starts at or after `from`, in `chars`: group 0 is the whole match.
-    pub fn find_at(&self, chars: &[char], from: usize) -> Option<Captures> {
+    /// A search that spends its budget is `Spent`, never a false "no match".
+    pub fn find_at(&self, chars: &[char], from: usize) -> Result<Option<Captures>, Spent> {
         let mut steps = 0u64;
         for start in from..=chars.len() {
             let mut search = Search {
@@ -97,15 +97,19 @@ impl Regex {
                 if let Some(first) = caps.first_mut() {
                     *first = Some((start, end));
                 }
-                return Some(caps);
+                return Ok(Some(caps));
             }
             if steps > STEP_BUDGET {
-                return None;
+                return Err(Spent);
             }
         }
-        None
+        Ok(None)
     }
 }
+
+/// A search that ran out of steps or depth before it could answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spent;
 
 struct Parser<'a> {
     chars: &'a [char],

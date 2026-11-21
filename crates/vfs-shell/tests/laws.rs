@@ -197,6 +197,53 @@ fn the_memory_budget_ends_a_line_before_it_holds_more() {
     );
 }
 
+#[test]
+fn the_output_budget_admits_its_count_and_refuses_one_more() {
+    let limits = Limits {
+        output_bytes: 100,
+        loop_iterations: u64::MAX,
+        ..Limits::default()
+    };
+    let exactly = run(
+        "for i in 1 2 3 4 5 6 7 8 9 10; do echo 123456789; done",
+        limits,
+        |_| {},
+    );
+    assert_eq!(exactly.stdout.len(), 100);
+    assert_eq!(exactly.status, 0);
+    let over = run("while :; do echo 123456789; done", limits, |_| {});
+    assert_eq!(over.status, 137);
+    assert_eq!(
+        over.stdout.len(),
+        100,
+        "what fits is kept, and nothing past it"
+    );
+    assert_eq!(over.ended.as_deref(), Some("Budget(\"output\", 100)"));
+}
+
+#[test]
+fn a_width_or_precision_past_the_formatters_limit_is_written_not_a_panic() {
+    let line = format!(
+        "printf %.65536f 1 | wc -c; printf %.70000e 1 | wc -c; printf %.70000g 1; echo; echo {{{}1..2}} | wc -c",
+        "0".repeat(70_000)
+    );
+    let outcome = run(&line, Limits::default(), |_| {});
+    assert_eq!(outcome.ended, None);
+    assert_eq!(
+        String::from_utf8_lossy(&outcome.stdout),
+        "65538\n70006\n1\n140004\n"
+    );
+}
+
+#[test]
+fn a_regex_search_that_spends_its_budget_fails_and_never_answers_no_match() {
+    let line = "x=$(printf 'a%.0s' {1..5000}); [[ $x =~ ^a*$ ]]; echo $?; echo $x > big; grep -c '^a*$' big; echo $?";
+    let outcome = run(line, Limits::default(), |_| {});
+    assert_eq!(String::from_utf8_lossy(&outcome.stdout), "2\n2\n");
+    let stderr = String::from_utf8_lossy(&outcome.stderr);
+    assert!(stderr.contains("too complex"), "{stderr}");
+}
+
 // ---------------------------------------------------------------------------
 // The slice and cancel
 // ---------------------------------------------------------------------------

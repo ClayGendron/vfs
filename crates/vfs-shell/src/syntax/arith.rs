@@ -212,10 +212,14 @@ impl ArithParser<'_> {
     fn comma(&mut self) -> Result<Expr, ArithError> {
         self.enter()?;
         let mut left = self.assignment()?;
+        let mut links = 0u32;
         while self.eat_op(",", &[]) {
+            self.enter()?;
+            links = links.saturating_add(1);
             let right = self.assignment()?;
             left = Expr::Comma(Box::new(left), Box::new(right));
         }
+        self.depth = self.depth.saturating_sub(links);
         self.leave();
         Ok(left)
     }
@@ -359,9 +363,13 @@ impl ArithParser<'_> {
         };
         self.enter()?;
         let mut left = self.binary(level.saturating_add(1))?;
+        // Each link of a chain deepens the tree its evaluation recurses into, so it counts as depth.
+        let mut links = 0u32;
         'outer: loop {
             for (op, kind, longer) in *ops {
                 if self.eat_op(op, longer) {
+                    self.enter()?;
+                    links = links.saturating_add(1);
                     let right = self.binary(level.saturating_add(1))?;
                     left = Expr::Binary(*kind, Box::new(left), Box::new(right));
                     continue 'outer;
@@ -369,6 +377,7 @@ impl ArithParser<'_> {
             }
             break;
         }
+        self.depth = self.depth.saturating_sub(links);
         self.leave();
         Ok(left)
     }

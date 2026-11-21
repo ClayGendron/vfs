@@ -43,8 +43,10 @@ These are the tree's deliberate threads, and there are no others: the
 process pool; the engine's rayon workers, a global pool the Rust kernels
 start on their first parallel call, as wide as the machine, which the
 Python side neither owns nor re-makes; the synchronous face's loop
-thread (``vfs.sync``); and the executor a local embedding provider is
-constructed with.
+thread (``vfs.sync``); the executor a local embedding provider is
+constructed with; and the shell runtime's epoch thread, one per process
+in the extension, which advances the WebAssembly engine's clock every
+10 ms so a deadline or a cancel ends a running slice of a line.
 
 Across a fork, a child forgets the inherited pool and makes its own on
 its first hop. The engine's pool is not covered. A forked child may

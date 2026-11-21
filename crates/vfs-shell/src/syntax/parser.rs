@@ -1087,15 +1087,19 @@ impl<'a> Parser<'a> {
     fn parse_cond_or(&mut self) -> Parsed<CondExpr> {
         self.enter()?;
         let mut left = self.parse_cond_and()?;
+        let mut links = 0u32;
         loop {
             self.skip_blanks_and_newlines()?;
             if !self.eat("||") {
                 break;
             }
             self.token(2)?;
+            self.enter()?;
+            links = links.saturating_add(1);
             let right = self.parse_cond_and()?;
             left = CondExpr::Or(Box::new(left), Box::new(right));
         }
+        self.depth = self.depth.saturating_sub(links);
         self.leave();
         Ok(left)
     }
@@ -1103,15 +1107,19 @@ impl<'a> Parser<'a> {
     fn parse_cond_and(&mut self) -> Parsed<CondExpr> {
         self.enter()?;
         let mut left = self.parse_cond_not()?;
+        let mut links = 0u32;
         loop {
             self.skip_blanks_and_newlines()?;
             if !self.eat("&&") {
                 break;
             }
             self.token(2)?;
+            self.enter()?;
+            links = links.saturating_add(1);
             let right = self.parse_cond_not()?;
             left = CondExpr::And(Box::new(left), Box::new(right));
         }
+        self.depth = self.depth.saturating_sub(links);
         self.leave();
         Ok(left)
     }

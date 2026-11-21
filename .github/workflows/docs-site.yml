@@ -47,5 +47,8 @@ jobs:
       - name: Install the app and the browser its layout tests run in
         run: cd docs-app && bun install --frozen-lockfile && bunx --bun playwright install --with-deps chromium
 
+      - name: The shell module's target, which the extension's build compiles for
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Export, build, type check and test the docs
         run: scripts/docs.sh check

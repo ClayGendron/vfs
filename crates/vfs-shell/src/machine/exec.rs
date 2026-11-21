@@ -122,6 +122,7 @@ fn new_shell(hub: HubRef, source: Rc<str>, config: &Config) -> Result<Shell, Fat
         next_child: 0,
         next_request: 0,
         function_depth: 0,
+        nesting: 0,
         loop_depth: 0,
         in_condition: false,
         subshell: 0,
@@ -508,6 +509,31 @@ pub fn exec_command<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, command: &'b Comman
 }
 
 fn exec_compound<'b>(
+    ctx: &'b Ctx<'_>,
+    sh: &'b mut Shell,
+    compound: &'b CompoundCommand,
+) -> Exec<'b> {
+    Box::pin(async move {
+        nest(ctx, sh)?;
+        let status = exec_compound_inner(ctx, sh, compound).await;
+        sh.nesting = sh.nesting.saturating_sub(1);
+        status
+    })
+}
+
+/// Open one more level of nesting, or end the line when the budget is spent.
+pub fn nest(ctx: &Ctx<'_>, sh: &mut Shell) -> Result<(), Flow> {
+    if sh.nesting >= ctx.limits.nesting {
+        return Err(Flow::Fatal(Fatal::Budget(
+            "nesting",
+            u64::from(ctx.limits.nesting),
+        )));
+    }
+    sh.nesting = sh.nesting.saturating_add(1);
+    Ok(())
+}
+
+fn exec_compound_inner<'b>(
     ctx: &'b Ctx<'_>,
     sh: &'b mut Shell,
     compound: &'b CompoundCommand,
@@ -1515,6 +1541,7 @@ pub async fn capture(ctx: &Ctx<'_>, sh: &mut Shell, list: &List) -> Result<Strin
         };
     }
     let mut child = sh.fork();
+    nest(ctx, &mut child)?;
     let (reader, writer) = io::pipe(&sh.hub);
     child.fds.insert(1, Fd::PipeOut(writer));
     if !sh.options.shopt("inherit_errexit") {
@@ -1653,6 +1680,7 @@ pub async fn process_sub(
 /// What a list prints, untrimmed.
 async fn capture_raw(ctx: &Ctx<'_>, sh: &mut Shell, list: &List) -> Result<Vec<u8>, Flow> {
     let mut child = sh.fork();
+    nest(ctx, &mut child)?;
     let (reader, writer) = io::pipe(&sh.hub);
     child.fds.insert(1, Fd::PipeOut(writer));
     let (status, bytes) = {

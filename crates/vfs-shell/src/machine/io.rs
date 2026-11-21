@@ -27,6 +27,9 @@ pub struct Hub {
     pub outstanding: BTreeMap<RequestKey, ()>,
     pub replies: BTreeMap<RequestKey, Reply>,
     pub output: Vec<(Stream, Vec<u8>)>,
+    /// Bytes written to the line's own output so far, and how many it may write.
+    pub output_written: u64,
+    pub output_limit: u64,
     pub progress: bool,
     pub memory_used: usize,
     pub memory_limit: usize,
@@ -59,6 +62,8 @@ impl Hub {
             outstanding: BTreeMap::new(),
             replies: BTreeMap::new(),
             output: Vec::new(),
+            output_written: 0,
+            output_limit: u64::MAX,
             progress: false,
             memory_used: 0,
             memory_limit,
@@ -103,6 +108,10 @@ impl Hub {
     pub fn emit(&mut self, stream: Stream, bytes: &[u8]) -> Result<(), Fatal> {
         if bytes.is_empty() {
             return Ok(());
+        }
+        self.output_written = self.output_written.saturating_add(bytes.len() as u64);
+        if self.output_written > self.output_limit {
+            return Err(Fatal::Budget("output", self.output_limit));
         }
         self.charge(bytes.len())?;
         self.progress = true;
