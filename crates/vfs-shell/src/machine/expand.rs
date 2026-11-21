@@ -87,7 +87,8 @@ pub async fn expand_fields(
                         let text: String = chars.iter().map(|(c, _)| *c).collect();
                         sh.error_text(&format!("bash: line {}: no match: {}\n", sh.lineno, text))
                             .await?;
-                        return Err(Flow::CommandFailed(1));
+                        // As any expansion error in bash, it ends the rest of the line, not just the command.
+                        return Err(Flow::Discard(1));
                     }
                     if !sh.options.shopt("nullglob") {
                         out.push(chars.iter().map(|(c, _)| *c).collect());
@@ -1479,6 +1480,11 @@ fn replace(
             text.to_owned()
         }
         ReplaceKind::First | ReplaceKind::All => {
+            // An empty value a pattern matches is replaced once, as bash does; elsewhere an empty
+            // match replaces nothing.
+            if len == 0 && pattern.matches_chars(&[], options) {
+                return render(&[]);
+            }
             let mut out = String::new();
             let mut start = 0;
             let mut replaced = false;
@@ -2029,6 +2035,8 @@ pub fn join_abs(base: &str, name: &str) -> String {
 }
 
 async fn list_dir(sh: &mut Shell, path: &str) -> Result<Vec<Entry>, Flow> {
+    // A file a redirection opened exists from that moment, as in bash, so it is written first.
+    super::exec::sync_path(sh, path).await?;
     let key = sh.key();
     let reply = io::host_call(
         &sh.hub,

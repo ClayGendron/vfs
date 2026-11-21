@@ -345,6 +345,7 @@ async fn walk(
     let mut stack = vec![(root.to_owned(), shown_root.to_owned())];
     while let Some((dir, shown)) = stack.pop() {
         let absolute = prog.abs(&dir);
+        crate::machine::exec::sync_path(prog.sh, &absolute).await?;
         let entries = match prog.request(Request::List { path: absolute }).await? {
             Reply::Entries(entries) => entries,
             _ => continue,

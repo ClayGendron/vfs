@@ -102,7 +102,12 @@ impl Case {
 }
 
 pub fn load_cases() -> Vec<Case> {
-    let root = shell_dir().join("cases");
+    load_cases_from(&shell_dir().join("cases"))
+}
+
+/// Every case under `root`, laid out as the corpus is.
+pub fn load_cases_from(root: &std::path::Path) -> Vec<Case> {
+    let root = root.to_path_buf();
     let mut scripts = Vec::new();
     collect(&root, &mut scripts);
     scripts.sort();

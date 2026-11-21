@@ -394,8 +394,10 @@ impl<'a> Parser<'a> {
             let parts = sub.read_inner(Inner::HereDoc, b"", false)?;
             self.absorb(&sub);
             if !sub.heredocs.is_empty() {
-                return Err(self.error(
-                    "here-document inside a here-document body is not supported".to_owned(),
+                return Err(ParseError::Refused(
+                    self.position(),
+                    "a here-document inside a here-document",
+                    "a substitution in a here-document's body cannot hold a here-document of its own",
                 ));
             }
             Word {
@@ -1499,6 +1501,11 @@ impl<'a> Parser<'a> {
         let mut regex_depth = 0u32;
         while let Some(byte) = self.peek() {
             match byte {
+                // Inside a group of a regular expression, bash keeps a blank as part of the word.
+                b' ' | b'\t' if mode == WordMode::Regex && regex_depth > 0 => {
+                    literal.push(byte);
+                    self.bump(1);
+                }
                 b' ' | b'\t' | b'\n' => break,
                 b';' | b'&' | b'|' | b'<' | b'>' | b'(' | b')' => {
                     if matches!(byte, b'<' | b'>') && self.peek_at(1) == Some(b'(') {

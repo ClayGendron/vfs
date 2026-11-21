@@ -367,7 +367,9 @@ impl ArithParser<'_> {
         let mut links = 0u32;
         'outer: loop {
             for (op, kind, longer) in *ops {
-                if self.eat_op(op, longer) {
+                // After an operand that is no variable, `--` and `++` are an operator and a sign.
+                let signed = matches!(*op, "+" | "-") && !matches!(left, Expr::Var(..));
+                if self.eat_op(op, longer) || (signed && self.eat_op(op, &[&format!("{op}=")])) {
                     self.enter()?;
                     links = links.saturating_add(1);
                     let right = self.binary(level.saturating_add(1))?;

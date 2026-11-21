@@ -2,11 +2,11 @@
 
 ## Step in hand
 
-The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done); the host-resolved program request (done); one write per redirection (done in this commit); the differential fuzzer; a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
+The structural review ([reviews/structural-review.md](reviews/structural-review.md)) redirected the work after step 6. Its five recommendations are taken in its order: the runtime carried and the module run by `cli` (done); the host-resolved program request (done); one write per redirection (done); the differential fuzzer (done in this commit); a fresh review of steps 3 to 7. Reducing the 141 known failures waits until those are done.
 
 ## Score
 
-3,179 of 3,320 corpus cases pass against `MemoryHost` (95.8%), `scripts/shell_score.sh`. Every case parses, or classifies as bash classifies it. A one-in-ten sample of the passing language-tier cases runs through the vfs host under pytest (`tests/shell/test_host.py`), now inside the module, and agrees.
+3,188 of 3,333 corpus cases pass against `MemoryHost` (95.6%), `scripts/shell_score.sh`; the 13 new cases are the differential runs' finds, 9 of them passing. Every case parses, or classifies as bash classifies it. A one-in-ten sample of the passing language-tier cases runs through the vfs host under pytest (`tests/shell/test_host.py`), now inside the module, and agrees.
 
 The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and so does its 100-command coverage set. 72 of the weighted 100 run (`crates/vfs-shell/tests/measured_corpus.rs`). Each of the other 28 names a program this shell never runs: `git` (10), `uv` (7), `docker` (3), `date` (3), and `awk`, `curl`, `diff`, `perl`, `pgrep`, `pkill`, `ps`, `psql`, `python3`, `sleep` and `uname` once each.
 
@@ -19,6 +19,7 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - **Step 6.** `vfs.shell.run_line`, the binding `ShellMachine` in `vfs-core`, and `cli` on `AsyncVirtualFileSystem`, `AsyncSession`, `VirtualFileSystem` and `Session`, returning `vfs.LineResult`. Each request is one public verb with the admitted authority, a spied test holds it, and the system actor is refused.
 - **The runtime carried.** `vfs-core` links `wasmtime` 51 and embeds the module its build script compiles. `ShellMachine` runs each line in a fresh instance: fuel is the line's instruction budget, an epoch thread ticking every 10 ms ends a slice at the deadline or a cancel, a resource limiter holds the module's memory, and a fault is a trap that ends the line. The host runs every slice on the offload pool with the interpreter lock released. Measured through `fs.cli` on the review's lines: the 160-deep recursion ends on the nesting budget, the replace loop and a 2⁴⁰ call tree end on fuel, the busy loop on its iteration budget, the print loop on the output budget, and a 200,000-`touch` loop on the deadline; the process lives, and a 50 ms heartbeat beside each line missed none of its beats.
 - **The program request.** A name that is no builtin, no function and no library program the host mounted is a `Start` request: the host answers that the library runs it, that the host runs it, a refusal with its status and message, or not found. A program the host runs is given its standard input a chunk at a time by `Feed` requests, each answered with what it wrote since and its status once it exits. `MemoryHost` runs plain-function programs and refuses names; the vfs host runs `search` as one call of the `search` verb, refuses `curl` and `wget` with 126 and the network hint, and answers `git`, `sudo`, `python3`, `python` and `perl` with 127 and a hint. The wire carries both directions, and a roundtrip test holds every request and reply.
+- **The differential fuzzer.** `scripts/shell_fuzz.py` generates language-tier scripts from a seed (quoting, every parameter operator, arithmetic, arrays and associative arrays, `[[ ]]` and `=~`, positional parameters, `read` with `IFS`, `printf -v`, pathname expansion with its options, loops with `break` and `continue`, functions, subshells, pipelines of builtins, redirections and here-documents), records them under the pinned bash through the recorder, and judges the shell with the crate's `judge` example. Seeds 3 to 6 ran 2,000 scripts; 37 that bash did not finish within the recorder's 10 seconds were dropped; 2 disagreed (substitution over a set but empty value, and `2--7` in arithmetic), and both were fixed. The last declared run, seed 6 with 500 scripts, found no disagreement. Earlier runs of seeds 1 and 2 found three more (a file a redirection created missing from a listing inside that redirection, `failglob` ending only the command, and blanks inside a group of `=~`), all fixed. The five are kept under `tests/shell/cases/found/` by hash, with eight cases written from the differences the prior-art memo found in the Oils suite; four of those still fail and are listed.
 - **Step 7.** `documentation/reference/shell.md`, and `LineResult` on the results reference page.
 
 ## Decided inside the laws
@@ -42,6 +43,7 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - `cli` takes no `limits`, `fuel` or `deadline`, so a caller cannot lower a budget; `run_line` takes all three. Adding them to the public method changes its signature.
 - `grep -r` and `find` walk through `list` and `read` instead of the indexed verbs. The program request now lets the vfs host serve them itself, as it serves `search`; doing so means printing what GNU grep and find print from the verbs' rows, which is not built.
 - `traverse`, `grant` and the other verbs with no Unix name are not programs yet; each is one more entry beside `search`.
+- The fuzzer's grammar covers the language tier only, with no programs, no `set -e` and no job control; widening it is a matter of more productions.
 - The Oils spec-suite rate is not measured. The prior-art memo ran 468 Oils cases against the crate: 363 agree, 39 differ, 66 were skipped; its section 6 lists the differences not in the corpus.
 - The weighted sample's run rate is 72%, below the 85% the spec names. Every line that does not run names a program the roadmap says never runs.
 - Roadmap F1 (removing `SupportsRun`), `move(replace=)` and `glob(case_mode=)` are not built.
@@ -51,4 +53,4 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 
 ## Next
 
-The differential fuzzer, then the review of steps 3 to 7.
+The review of steps 3 to 7, code and documents, by a fresh reviewer; then the pull request.

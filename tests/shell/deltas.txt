@@ -35,3 +35,4 @@ refusals/trap-err-reports-a-failure refused construct: the shell refuses it befo
 refusals/trap-exit-runs-at-the-end refused construct: the shell refuses it before anything runs
 refusals/trap-p-shows-one-trap refused construct: the shell refuses it before anything runs
 word-splitting/temporary-ifs-on-a-builtin-does-not-affect-its-arguments refused construct: eval, so the shell refuses the line before anything runs
+found/here-document-in-a-substitution-in-a-here-document refused construct: a here-document inside a here-document body, which the parser does not read

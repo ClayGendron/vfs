@@ -72,6 +72,10 @@ filename-expansion/extglob-not-enabled-is-a-syntax-error
 filename-expansion/glob-after-a-dot-slash-prefix
 filename-expansion/globstar-alone-lists-everything
 filename-expansion/globstar-with-a-trailing-slash-lists-directories
+found/default-word-keeps-a-backslash-before-a-letter
+found/extglob-arm-expands-a-variable
+found/here-document-delimited-by-end-of-input
+found/here-document-delimiter-from-an-expansion-is-literal
 functions/declare-capital-f-prints-only-the-name
 functions/exit-in-a-function-in-a-pipeline
 functions/funcname-array-is-the-call-stack

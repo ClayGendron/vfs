@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "none\n\nx=2\nc:1\nafter=2\n3\nfirst=2\npipe=0\nargs=0\nret=3\nb=-3\n3\nargs=0\nret=3\n2\none two\npipe=0\nn0=1\n",
+  "stderr": "bash: line 7: no match: .*\n"
+}

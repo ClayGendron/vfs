@@ -81,23 +81,32 @@ def main(argv: list[str]) -> int:
     if not cases:
         sys.stdout.write("nothing to record\n")
         return 0
+    unstable = record(cases)
+    sys.stdout.write(f"recorded {len(cases) - len(unstable)} of {len(cases)} cases\n")
+    for rel in unstable:
+        sys.stdout.write(f"not recorded, two runs differ: {rel}\n")
+    return 1 if unstable else 0
+
+
+def record(cases: list[str], root: Path = CASES) -> list[str]:
+    """Run each case under ``root`` twice in the pinned image and write its record beside it.
+
+    Returns the cases whose two runs differ, which get no record.
+    """
     version = _bash_version()
     unstable: list[str] = []
     with tempfile.TemporaryDirectory() as scratch:
         out = Path(scratch) / "out"
         out.mkdir()
-        _run_batch(cases, out)
+        _run_batch(cases, out, root)
         for rel in cases:
             first, second = (_read_run(out / f"{rel}.{n}") for n in (1, 2))
             if first != second:
                 unstable.append(rel)
                 continue
-            record = {"image": IMAGE, "bash": version, **first}
-            (CASES / f"{rel}.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
-    sys.stdout.write(f"recorded {len(cases) - len(unstable)} of {len(cases)} cases\n")
-    for rel in unstable:
-        sys.stdout.write(f"not recorded, two runs differ: {rel}\n")
-    return 1 if unstable else 0
+            written = {"image": IMAGE, "bash": version, **first}
+            (root / f"{rel}.json").write_text(json.dumps(written, indent=2, ensure_ascii=False) + "\n")
+    return unstable
 
 
 def _select(prefixes: list[str], *, every: bool) -> list[str]:
@@ -122,7 +131,7 @@ def _bash_version() -> str:
     return done.stdout.strip()
 
 
-def _run_batch(cases: list[str], out: Path) -> None:
+def _run_batch(cases: list[str], out: Path, root: Path) -> None:
     listing = out.parent / "cases.list"
     listing.write_text("".join(f"{rel}\n" for rel in cases))
     driver = _DRIVER.replace("{timeout}", str(CASE_TIMEOUT_SECONDS)).replace("{env}", " ".join(ENVIRONMENT))
@@ -131,7 +140,7 @@ def _run_batch(cases: list[str], out: Path) -> None:
         subprocess.run(
             [
                 "docker", "run", "--rm", "--network=none",
-                "-v", f"{CASES}:/cases:ro",
+                "-v", f"{root}:/cases:ro",
                 "-v", f"{listing}:/cases.list:ro",
                 "-v", f"{seed}:/seed:ro",
                 "-v", f"{out}:/out",

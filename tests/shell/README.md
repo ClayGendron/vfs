@@ -31,3 +31,7 @@ The working directory is `/work`. The environment is exactly `HOME=/home/agent`,
 - **A language case runs no program.** In place of `cat`, read with `while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done`, or with `mapfile`.
 - **A syntax error runs nothing before it.** Bash runs a script command by command, and this shell parses the whole script first. A case about a syntax error has the error in its first command, so bash also runs nothing.
 - **Small.** Most cases are 2 to 15 lines, and none prints more than a few KB.
+
+## What a differential run found
+
+`cases/found/` holds the cases a differential run found: a script on which the shell and bash disagreed. `scripts/shell_fuzz.py` generates language-tier scripts from a seed, records them under the pinned bash and judges the shell against them; with `--keep` it writes each disagreement here, named by its script's hash, and it stays. A found case follows every rule above, and a fixed one passes like any other case. The fuzzer runs outside the gate, since it needs Docker.
