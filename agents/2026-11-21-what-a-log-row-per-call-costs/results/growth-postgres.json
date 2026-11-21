@@ -1,0 +1,148 @@
+{
+  "script": "scripts/measure_growth.py",
+  "arguments": {
+    "engine": "postgres",
+    "days": 30,
+    "chunk_rows": 5000,
+    "deadline": 1200.0
+  },
+  "environment": {
+    "commit": "7d82a7d",
+    "src_dirty": false,
+    "date": "2026-11-21T21:10:08+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39",
+    "postgres": "PostgreSQL 19.0 (Debian 19.0-1.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit; pgvector 0.8.7"
+  },
+  "seconds": 170.0,
+  "rows_per_day": 150000,
+  "first_day_fill": {
+    "seconds": 23.54,
+    "statements": 586
+  },
+  "sizes": {
+    "after_1_day": {
+      "rows": 150000,
+      "heap_bytes": 74940416,
+      "index_bytes": 15720448,
+      "bytes": 90660864,
+      "bytes_per_row": 604.4,
+      "total_relation_bytes": 90718208
+    },
+    "after_30_days": {
+      "rows": 4500000,
+      "heap_bytes": 2324570112,
+      "index_bytes": 467386368,
+      "bytes": 2791956480,
+      "bytes_per_row": 620.4,
+      "total_relation_bytes": 2792628224
+    },
+    "after_reclaiming_1_day": {
+      "rows": 4351362,
+      "heap_bytes": 2324570112,
+      "index_bytes": 467705856,
+      "bytes": 2792275968,
+      "bytes_per_row": 641.7,
+      "total_relation_bytes": 2792947712
+    },
+    "after_vacuum": {
+      "rows": 4351362,
+      "heap_bytes": 2324570112,
+      "index_bytes": 467705856,
+      "bytes": 2792275968,
+      "bytes_per_row": 641.7,
+      "total_relation_bytes": 2792947712
+    },
+    "after_one_more_day": {
+      "rows": 4501362,
+      "heap_bytes": 2327248896,
+      "index_bytes": 485998592,
+      "bytes": 2813247488,
+      "bytes_per_row": 625.0,
+      "total_relation_bytes": 2813919232
+    }
+  },
+  "reclaim": {
+    "chunk_rows": 5000,
+    "chunks": 31,
+    "rows_deleted": 150000,
+    "statements": 31,
+    "seconds": 2.01,
+    "chunk_seconds": {
+      "n": 31,
+      "median_ms": 66.5,
+      "p95_ms": 82.0,
+      "max_ms": 109.9
+    },
+    "probes_baseline": {
+      "read": {
+        "n": 653,
+        "median_ms": 19.021,
+        "p95_ms": 51.302,
+        "max_ms": 250.612,
+        "failures": 0
+      },
+      "write": {
+        "n": 11,
+        "median_ms": 158.055,
+        "p95_ms": 417.059,
+        "max_ms": 417.059,
+        "failures": 0
+      },
+      "log_row": {
+        "n": 27,
+        "median_ms": 13.908,
+        "p95_ms": 44.436,
+        "max_ms": 201.659,
+        "failures": 0
+      }
+    },
+    "probes_during_delete": {
+      "read": {
+        "n": 774,
+        "median_ms": 16.933,
+        "p95_ms": 44.681,
+        "max_ms": 105.351,
+        "failures": 0
+      },
+      "write": {
+        "n": 16,
+        "median_ms": 121.568,
+        "p95_ms": 247.763,
+        "max_ms": 247.763,
+        "failures": 0
+      },
+      "log_row": {
+        "n": 30,
+        "median_ms": 11.981,
+        "p95_ms": 22.024,
+        "max_ms": 29.393,
+        "failures": 0
+      }
+    }
+  },
+  "row_shape": {
+    "verb_mix": {
+      "read": 40,
+      "ls": 12,
+      "glob": 8,
+      "grep": 15,
+      "stat": 0,
+      "write": 15,
+      "edit": 6,
+      "search": 4
+    },
+    "many_path_verbs": [
+      "glob",
+      "grep",
+      "ls",
+      "search"
+    ],
+    "paths_for_many": "uniform 1 to 40, first 16 stored",
+    "share_in_a_run": 0.3
+  }
+}

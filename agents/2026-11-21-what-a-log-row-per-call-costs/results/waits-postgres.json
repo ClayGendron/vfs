@@ -1,0 +1,748 @@
+{
+  "script": "scripts/measure_waits.py",
+  "arguments": {
+    "engine": "postgres",
+    "repeats": 3,
+    "deadline": 900.0
+  },
+  "environment": {
+    "commit": "a34a72f",
+    "src_dirty": false,
+    "date": "2026-11-21T21:06:43+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39",
+    "postgres": "PostgreSQL 19.0 (Debian 19.0-1.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit; pgvector 0.8.7"
+  },
+  "readers": 8,
+  "seconds": 103.9,
+  "cells": [
+    {
+      "mode": "none",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 953,
+          "median_ms": 14.167,
+          "p95_ms": 34.868,
+          "max_ms": 83.204,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 25,
+          "median_ms": 78.238,
+          "p95_ms": 119.613,
+          "max_ms": 146.376,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 7.801,
+          "ok": true,
+          "error": null,
+          "storage_statements": 54,
+          "log_statements": 0
+        },
+        "reads": {
+          "n": 507,
+          "median_ms": 33.339,
+          "p95_ms": 513.147,
+          "max_ms": 841.514,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 14,
+          "median_ms": 456.329,
+          "p95_ms": 1465.059,
+          "max_ms": 1465.059,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "none",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 737,
+          "median_ms": 19.454,
+          "p95_ms": 37.674,
+          "max_ms": 85.083,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 20,
+          "median_ms": 95.925,
+          "p95_ms": 158.553,
+          "max_ms": 158.553,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.719,
+          "ok": true,
+          "error": null,
+          "storage_statements": 47,
+          "log_statements": 0
+        },
+        "reads": {
+          "n": 472,
+          "median_ms": 42.357,
+          "p95_ms": 590.247,
+          "max_ms": 705.1,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 12,
+          "median_ms": 701.042,
+          "p95_ms": 1589.944,
+          "max_ms": 1589.944,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "none",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 876,
+          "median_ms": 16.611,
+          "p95_ms": 27.784,
+          "max_ms": 86.476,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 23,
+          "median_ms": 82.97,
+          "p95_ms": 142.421,
+          "max_ms": 149.731,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 7.801,
+          "ok": true,
+          "error": null,
+          "storage_statements": 47,
+          "log_statements": 0
+        },
+        "reads": {
+          "n": 573,
+          "median_ms": 25.094,
+          "p95_ms": 543.457,
+          "max_ms": 733.462,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 15,
+          "median_ms": 497.586,
+          "p95_ms": 1172.831,
+          "max_ms": 1172.831,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "sync",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 656,
+          "median_ms": 21.059,
+          "p95_ms": 37.769,
+          "max_ms": 85.387,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 23,
+          "median_ms": 87.632,
+          "p95_ms": 156.269,
+          "max_ms": 338.338,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.376,
+          "ok": true,
+          "error": null,
+          "storage_statements": 54,
+          "log_statements": 1
+        },
+        "reads": {
+          "n": 350,
+          "median_ms": 50.353,
+          "p95_ms": 665.142,
+          "max_ms": 1111.557,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 14,
+          "median_ms": 510.717,
+          "p95_ms": 1258.591,
+          "max_ms": 1258.591,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "sync",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 492,
+          "median_ms": 31.11,
+          "p95_ms": 47.244,
+          "max_ms": 85.6,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 18,
+          "median_ms": 115.146,
+          "p95_ms": 307.73,
+          "max_ms": 307.73,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.165,
+          "ok": true,
+          "error": null,
+          "storage_statements": 47,
+          "log_statements": 1
+        },
+        "reads": {
+          "n": 349,
+          "median_ms": 57.903,
+          "p95_ms": 625.037,
+          "max_ms": 1120.079,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 14,
+          "median_ms": 538.275,
+          "p95_ms": 1582.637,
+          "max_ms": 1582.637,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "sync",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 568,
+          "median_ms": 25.554,
+          "p95_ms": 49.569,
+          "max_ms": 111.348,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 19,
+          "median_ms": 109.462,
+          "p95_ms": 172.941,
+          "max_ms": 172.941,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.19,
+          "ok": true,
+          "error": null,
+          "storage_statements": 47,
+          "log_statements": 1
+        },
+        "reads": {
+          "n": 392,
+          "median_ms": 52.866,
+          "p95_ms": 584.214,
+          "max_ms": 979.691,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 14,
+          "median_ms": 626.294,
+          "p95_ms": 1104.996,
+          "max_ms": 1104.996,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "leaned",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 744,
+          "median_ms": 16.808,
+          "p95_ms": 50.994,
+          "max_ms": 103.591,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 14,
+          "median_ms": 129.112,
+          "p95_ms": 225.507,
+          "max_ms": 225.507,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 3,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.071,
+          "seconds": [
+            0.068,
+            0.071,
+            0.0595
+          ],
+          "max_depth_seen_by_a_flush": 258
+        },
+        "buffer_high_water": 258,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.788,
+          "ok": true,
+          "error": null,
+          "storage_statements": 54,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 569,
+          "median_ms": 40.724,
+          "p95_ms": 521.003,
+          "max_ms": 1117.286,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 12,
+          "median_ms": 715.571,
+          "p95_ms": 1655.517,
+          "max_ms": 1655.517,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 2,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.4316,
+          "seconds": [
+            0.0794,
+            0.4316
+          ],
+          "max_depth_seen_by_a_flush": 257
+        },
+        "buffer_high_water": 257,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "leaned",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 763,
+          "median_ms": 19.355,
+          "p95_ms": 42.185,
+          "max_ms": 93.217,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 17,
+          "median_ms": 112.614,
+          "p95_ms": 205.247,
+          "max_ms": 205.247,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 4,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0569,
+          "seconds": [
+            0.0447,
+            0.0442,
+            0.0504,
+            0.0569
+          ],
+          "max_depth_seen_by_a_flush": 256
+        },
+        "buffer_high_water": 256,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.548,
+          "ok": true,
+          "error": null,
+          "storage_statements": 47,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 511,
+          "median_ms": 34.559,
+          "p95_ms": 569.595,
+          "max_ms": 927.763,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 11,
+          "median_ms": 536.844,
+          "p95_ms": 1883.115,
+          "max_ms": 1883.115,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 2,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.2241,
+          "seconds": [
+            0.2241,
+            0.0741
+          ],
+          "max_depth_seen_by_a_flush": 257
+        },
+        "buffer_high_water": 257,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "leaned",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 807,
+          "median_ms": 17.158,
+          "p95_ms": 43.891,
+          "max_ms": 86.029,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 17,
+          "median_ms": 122.05,
+          "p95_ms": 189.383,
+          "max_ms": 189.383,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 3,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0794,
+          "seconds": [
+            0.0794,
+            0.0444,
+            0.0461
+          ],
+          "max_depth_seen_by_a_flush": 258
+        },
+        "buffer_high_water": 258,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 8.365,
+          "ok": true,
+          "error": null,
+          "storage_statements": 47,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 611,
+          "median_ms": 30.094,
+          "p95_ms": 515.518,
+          "max_ms": 919.069,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 12,
+          "median_ms": 623.991,
+          "p95_ms": 1440.318,
+          "max_ms": 1440.318,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 2,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.4278,
+          "seconds": [
+            0.0621,
+            0.4278
+          ],
+          "max_depth_seen_by_a_flush": 258
+        },
+        "buffer_high_water": 258,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    }
+  ]
+}

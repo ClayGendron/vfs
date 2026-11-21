@@ -1,0 +1,26 @@
+{
+  "script": "scripts/measure_build.py",
+  "environment": {
+    "commit": "ad019e7",
+    "src_dirty": false,
+    "date": "2026-11-21T21:22:39+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39"
+  },
+  "entries": 10000,
+  "repeats_ms": [
+    429.0,
+    427.5,
+    436.6,
+    476.4,
+    479.5
+  ],
+  "n": 5,
+  "median_ms": 436.552,
+  "p95_ms": 479.467,
+  "max_ms": 479.467
+}
