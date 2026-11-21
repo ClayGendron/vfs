@@ -108,7 +108,7 @@ Done when, step by step.
 - The crate's name, should it be published apart.
 - The bash version pinned as referee: 5.3 is taken here.
 - Whether the dependency list of the crate is empty or a short declared list (a regular-expression engine for `=~` is the first candidate). It is taken as empty until a case needs one, and each addition is reported.
-None of these stops steps 0 to 5: the native build under `cargo test` serves them all.
+None of these stops steps 0 to 5: the corpus runs on the native build under `cargo test`, and the laws on fuel, memory and deadline run on the module under a runtime taken as a test dependency, however vfs later carries it.
 
 ## One line
 
