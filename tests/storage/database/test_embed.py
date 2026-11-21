@@ -30,7 +30,7 @@ from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
 CORPUS = {
     "/a.txt": "alpha bravo charlie\n",
@@ -47,23 +47,19 @@ def _long_body(tail: str) -> str:
 
 
 class _WaitsForBeats(ScriptedProvider):
-    """A provider whose batch returns once the rebuild heartbeat has fired *wanted* times.
+    """A provider whose batch returns once *beaten* is set, when the rebuild heartbeat has fired enough times.
 
     Proves the loop stayed free while the provider waited: a held loop
-    cannot beat, so the wait runs out its liveness bound and the beat
-    count stays short.
+    cannot beat, so the event is never set and the run's deadline ends
+    the test.
     """
 
-    def __init__(self, beats: Callable[[], int], *, wanted: int) -> None:
+    def __init__(self, beaten: asyncio.Event) -> None:
         super().__init__()
-        self._beats = beats
-        self._wanted = wanted
+        self._beaten = beaten
 
     async def embed_documents(self, texts: Sequence[str]) -> Embedded:
-        for _ in range(100_000):
-            if self._beats() >= self._wanted:
-                break
-            await asyncio.sleep(0)
+        await self._beaten.wait()
         return await super().embed_documents(texts)
 
 
@@ -353,7 +349,8 @@ class TestStep:
         monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.02)
         beats = 0
         paged = False
-        provider = _WaitsForBeats(lambda: beats, wanted=5)
+        beaten = asyncio.Event()
+        provider = _WaitsForBeats(beaten)
         storage = await _fresh(tmp_path, {"/a.txt": "slow body\n"}, embedder=provider)
 
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
@@ -363,6 +360,8 @@ class TestStep:
             beat = statement.startswith("UPDATE") and "lease_heartbeat" in statement
             if paged and beat and "lease_holder=" not in statement:
                 beats += 1
+                if beats == 5:
+                    beaten.set()
 
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
         result = await storage.rebuild()

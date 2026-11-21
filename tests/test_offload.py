@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import subprocess
 import sys
@@ -114,10 +115,9 @@ class _GatedMatcher:
         return [[] for _ in texts], True
 
 
-async def _until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
-    start = monotonic()
+async def _until(predicate: Callable[[], bool]) -> None:
+    """Turn the loop until *predicate* holds; a condition that never holds is ended by the run's deadline."""
     while not predicate():
-        assert monotonic() - start < timeout, "condition never held"
         await asyncio.sleep(0.01)
 
 
@@ -175,18 +175,18 @@ class TestVerifyOffload:
     async def test_count_lines_matches_the_direct_call(self, pool: ThreadPoolExecutor) -> None:
         matcher = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         texts = ["a needle here\nno hit", "nothing", "needle\nneedle"]
-        direct = matcher.count_lines(texts, cap=None, invert=False, budget=5.0)
+        direct = matcher.count_lines(texts, cap=None, invert=False, budget=None)
         offloaded = await VerifyOffload(matcher, pool).count_lines(
-            texts, cap=None, invert=False, deadline=Deadline.after(5.0)
+            texts, cap=None, invert=False, deadline=Deadline.never()
         )
         assert offloaded == direct
 
     async def test_hit_lines_matches_the_direct_call(self, pool: ThreadPoolExecutor) -> None:
         matcher = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         texts = ["a needle here\nno hit", "nothing", "needle\nneedle"]
-        direct = matcher.hit_lines(texts, before=1, after=1, cap=None, invert=False, budget=5.0)
+        direct = matcher.hit_lines(texts, before=1, after=1, cap=None, invert=False, budget=None)
         offloaded = await VerifyOffload(matcher, pool).hit_lines(
-            texts, before=1, after=1, cap=None, invert=False, deadline=Deadline.after(5.0)
+            texts, before=1, after=1, cap=None, invert=False, deadline=Deadline.never()
         )
         assert offloaded == direct
 
@@ -217,10 +217,10 @@ class TestVerifyOffload:
         race the first onto the pool."""
         matcher = _GatedMatcher()
         offload = VerifyOffload(matcher, pool)
-        first = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.after(5.0)))
+        first = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
         await asyncio.sleep(0.05)
         with pytest.raises(RuntimeError, match="one batch in flight"):
-            await offload.count_lines(["b"], cap=None, invert=False, deadline=Deadline.after(5.0))
+            await offload.count_lines(["b"], cap=None, invert=False, deadline=Deadline.never())
         matcher.gate.set()
         counts, completed = await first
         assert counts == [0] and completed is True
@@ -229,7 +229,9 @@ class TestVerifyOffload:
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
         for _ in range(2):
-            counts, completed = await offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.after(5.0))
+            counts, completed = await offload.count_lines(
+                ["a"], cap=None, invert=False, deadline=Deadline.after(math.inf)
+            )
             assert counts == [1] and completed is True
         assert len(matcher.budgets) == 2
 
@@ -271,7 +273,7 @@ class TestLoopResponsiveness:
         holding the loop for the whole batch."""
         ticker = LoopTicker().start()
         offload = VerifyOffload(_HoppingMatcher(ticker), pool)
-        counts, completed = await offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.after(5.0))
+        counts, completed = await offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never())
         ticker.stop()
         assert counts == [1] and completed is True
         assert ticker.hops == 1  # the one batch hopped off the loop and saw it turn
@@ -332,7 +334,7 @@ class TestJudgeRows:
         ticker = LoopTicker().start()
         gates = compile_gates(("*.py",))
         monkeypatch.setattr(gates, "native", lambda deadline: _HoppingSet(ticker))
-        verdicts, completed = await judge_rows(pool, gates, _ROWS, deadline=Deadline.after(5.0))
+        verdicts, completed = await judge_rows(pool, gates, _ROWS, deadline=Deadline.never())
         ticker.stop()
         assert (verdicts, completed) == ([1, 1], True)
         assert ticker.hops == 1
@@ -435,7 +437,7 @@ class TestJudgeRows:
 
         monkeypatch.setattr(glob_module, "glob_set", held)
         gates = compile_gates(("*.py",))
-        deadline = Deadline.after(30.0)
+        deadline = Deadline.never()
         first, second = await asyncio.gather(
             judge_rows(executor, gates, _ROWS, deadline=deadline),
             judge_rows(executor, gates, _ROWS, deadline=deadline),
@@ -448,7 +450,7 @@ class TestJudgeRows:
     async def test_a_shut_pool_judges_inline(self, pool: ThreadPoolExecutor) -> None:
         pool.shutdown(wait=True)
         gates = compile_gates(("*.py",))
-        assert await judge_rows(pool, gates, _ROWS, deadline=Deadline.after(5.0)) == ([1, 0], True)
+        assert await judge_rows(pool, gates, _ROWS, deadline=Deadline.never()) == ([1, 0], True)
 
     async def test_nested_roots_judge_one_pair_per_covering_root(
         self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
@@ -472,7 +474,7 @@ class TestJudgeRows:
         scope = ScopeChannel(roots=(Path("/a"), Path("/a/b")), arms=("**",))
         gates = compile_gates((), scope=scope)
         rows = [("/a/b/x", "x"), ("/a/c", "c"), ("/ab/y", "y")]
-        verdicts, completed = await judge_rows(pool, gates, rows, deadline=Deadline.after(5.0))
+        verdicts, completed = await judge_rows(pool, gates, rows, deadline=Deadline.never())
         assert completed is True
         assert [gates.admits(verdict, None) for verdict in verdicts] == [True, True, False]
         [subjects] = judged
@@ -491,7 +493,7 @@ class TestAbandonment:
     ) -> None:
         matcher = _GatedMatcher()
         offload = VerifyOffload(matcher, pool)
-        task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.after(5.0)))
+        task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
         await _until(matcher.started.is_set)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -505,7 +507,7 @@ class TestAbandonment:
         pool.submit(blocker.wait, 5.0)
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
-        task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.after(5.0)))
+        task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -519,7 +521,7 @@ class TestAbandonment:
         # abandoned while attempt two, on a fresh instance, serves whole.
         abandoned = _GatedMatcher()
         first = VerifyOffload(abandoned, pool)
-        task = asyncio.ensure_future(first.count_lines(["a"], cap=None, invert=False, deadline=Deadline.after(5.0)))
+        task = asyncio.ensure_future(first.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
         await _until(abandoned.started.is_set)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -527,7 +529,7 @@ class TestAbandonment:
         matcher = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         second = VerifyOffload(matcher, pool)
         successor = asyncio.ensure_future(
-            second.count_lines(["a needle", "no hit"], cap=None, invert=False, deadline=Deadline.after(5.0))
+            second.count_lines(["a needle", "no hit"], cap=None, invert=False, deadline=Deadline.never())
         )
         abandoned.gate.set()
         counts, completed = await successor

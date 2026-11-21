@@ -5,6 +5,7 @@ filtering, decoration, and terminal resolution."""
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from tests.support.base_doubles import (
     CannedStorage,
     DictStorage,
     GatedCloseStorage,
+    MeetsAtCloseStorage,
     ReadFamilyStorage,
     RecorderStorage,
     ScopeSpyStorage,
@@ -799,18 +801,16 @@ async def test_close_groups_multiple_failures() -> None:
     assert root._mounts == {}
 
 
+@pytest.mark.timeout(60)
 async def test_close_disposes_concurrently_not_sequentially() -> None:
-    # Two never-releasing backends under a short timeout: sequential
-    # disposal would take ~2x the timeout; concurrent gather takes ~1x.
-    gate = asyncio.Event()  # never set within the test
-    root = AsyncVirtualFileSystem(close_timeout=0.05)
-    await root.add_mount(GatedCloseStorage(gate), "/a")
-    await root.add_mount(GatedCloseStorage(gate), "/b")
-    loop = asyncio.get_event_loop()
-    start = loop.time()
-    with pytest.raises(ExceptionGroup):
-        await root.close()
-    assert loop.time() - start < 0.15
+    # Each close waits for the other's to begin: closed in turn, the first waits for ever and the deadline fails it.
+    first, second = asyncio.Event(), asyncio.Event()
+    a, b = MeetsAtCloseStorage(first, second), MeetsAtCloseStorage(second, first)
+    root = AsyncVirtualFileSystem(close_timeout=math.inf)
+    await root.add_mount(a, "/a")
+    await root.add_mount(b, "/b")
+    await root.close()
+    assert (a.close_count, b.close_count) == (1, 1)
 
 
 async def test_close_cancellation_parks_disposal_for_a_retry() -> None:

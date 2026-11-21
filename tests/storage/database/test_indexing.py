@@ -609,6 +609,8 @@ class TestRebuild:
         def register(dbapi_connection: Any, record: Any) -> None:
             dbapi_connection.create_function("length", 1, counting_length)
 
+        # A pass holding a connection through the dispose would check it back in to a pool nothing closes.
+        await storage._host.settle_statistics()
         await storage._host.engine.dispose()
         statements = _recorded(storage)
         monkeypatch.setattr(indexing, "CHUNK_SLICE_BYTES", 1)
@@ -1623,8 +1625,8 @@ class TestIndexLease:
         task = asyncio.create_task(
             maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
         )
-        await asyncio.wait_for(lost.wait(), timeout=5)
-        await asyncio.wait_for(task, timeout=5)
+        await lost.wait()
+        await task
         await storage.close()
 
     async def test_a_transport_conflict_is_not_a_taken_lease(self, tmp_path, monkeypatch) -> None:
@@ -1639,10 +1641,13 @@ class TestIndexLease:
             errors=[ResultError(kind=ErrorKind.conflict, message="rebuild kept losing", retryable=True)],
         )
         beats = 0
+        fifth = asyncio.Event()
 
         async def stalled_write(op: str, fn: Any) -> Result:
             nonlocal beats
             beats += 1
+            if beats == 5:
+                fifth.set()
             return stalled
 
         monkeypatch.setattr(storage, "_execute_maintenance", stalled_write)
@@ -1650,10 +1655,7 @@ class TestIndexLease:
         task = asyncio.create_task(
             maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
         )
-        for _ in range(50):
-            await asyncio.sleep(0.02)
-            if beats >= 5:
-                break
+        await fifth.wait()
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
@@ -1669,15 +1671,20 @@ class TestIndexLease:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         backdated = maintenance_module._now_ms() - 60_000
         await self._stamped(storage, "MINE", backdated)
+        beat = storage._execute_maintenance
+        landed = asyncio.Event()
+
+        async def landing(op: str, fn: Any) -> Result:
+            result = await beat(op, fn)
+            landed.set()
+            return result
+
+        monkeypatch.setattr(storage, "_execute_maintenance", landing)
         lost = asyncio.Event()
         task = asyncio.create_task(
             maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
         )
-        for _ in range(200):
-            await asyncio.sleep(0.02)
-            _, heartbeat = await self._lease(storage)
-            if heartbeat is not None and heartbeat > backdated:
-                break
+        await landed.wait()
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task

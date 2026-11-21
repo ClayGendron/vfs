@@ -15,19 +15,49 @@ async function topOf(page: Page, selector: string): Promise<number> {
   return page.locator(selector).evaluate((element) => Math.round(element.getBoundingClientRect().top));
 }
 
-// The page's scripts are running. Until then a scroll moves the page and nothing on it follows.
-async function started(page: Page): Promise<void> {
-  await page.locator('[data-slot="theme-toggle"][data-ready]').first().waitFor();
+// Opens a page and waits for it to say its scripts have started, which the layout does once the page has hydrated.
+// Until then a scroll, a click or a key reaches a page whose listeners may not be there yet.
+async function visit(page: Page, path: string): Promise<void> {
+  await page.goto(path);
+  await page.locator("html[data-ready]").waitFor({ state: "attached" });
 }
 
+// Resolves on the scroll event that reports the new position, so every listener the page attached first has run.
+// Two scrolls inside one frame are one event, read at the second position, so waiting on scrollY alone can lose one.
 async function scrollTo(page: Page, y: number): Promise<void> {
-  await page.evaluate((top) => window.scrollTo(0, top), y);
-  await page.waitForFunction((top) => Math.abs(window.scrollY - top) < 2, y);
+  await page.evaluate(
+    (top) =>
+      new Promise<void>((resolve) => {
+        const end = Math.min(Math.max(top, 0), document.documentElement.scrollHeight - window.innerHeight);
+        if (Math.abs(window.scrollY - end) < 2) return resolve();
+        const arrived = () => {
+          if (Math.abs(window.scrollY - end) >= 2) return;
+          window.removeEventListener("scroll", arrived);
+          resolve();
+        };
+        window.addEventListener("scroll", arrived);
+        window.scrollTo(0, top);
+      }),
+    y,
+  );
+}
+
+// Waits for every animation and transition running on the element to finish, so a colour read next is its last.
+async function settled(page: Page, selector: string): Promise<void> {
+  await page
+    .locator(selector)
+    .first()
+    .evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+}
+
+// Two frames have been drawn, so a scroll the last input caused has been applied.
+async function drawn(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
 test("the top of each sidebar stays still as the page scrolls", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const bottom = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
   expect(bottom).toBeGreaterThan(DESKTOP.height);
   for (const selector of [NAVIGATION, TABLE_OF_CONTENTS]) {
@@ -42,22 +72,22 @@ test("the top of each sidebar stays still as the page scrolls", async ({ page })
 
 test("scrolling a sidebar to its end does not scroll the page", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const list = page.locator(TABLE_OF_CONTENTS);
   // The list is taller than the window, so it has an end to scroll past.
   expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   await list.hover();
   for (let turn = 0; turn < 12; turn += 1) await page.mouse.wheel(0, 1200);
-  await page.waitForTimeout(300);
-  expect(await list.evaluate((element) => element.scrollTop + element.clientHeight >= element.scrollHeight - 1)).toBe(
-    true,
-  );
+  await expect
+    .poll(() => list.evaluate((element) => element.scrollTop + element.clientHeight >= element.scrollHeight - 1))
+    .toBe(true);
+  await drawn(page);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
 
 test("the two panels sit inside the page on a wide window", async ({ page }) => {
   await page.setViewportSize(WIDE);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const left = await page.locator(NAVIGATION).evaluate((element) => element.getBoundingClientRect().left);
   const right = await page.locator(TABLE_OF_CONTENTS).evaluate((element) => element.getBoundingClientRect().right);
   // The three columns are one centred block, so each panel is the same distance in from its side.
@@ -71,7 +101,7 @@ test("the two panels sit inside the page on a wide window", async ({ page }) => 
 
 test("the current page's row has no coloured edge", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const row = page.locator(`${NAVIGATION} [aria-current="page"]:visible`);
   await expect(row).toHaveCount(1);
   const edge = await row.evaluate((element) => getComputedStyle(element).borderInlineStartColor);
@@ -109,10 +139,10 @@ const CURRENT_ROW = `${NAVIGATION} [aria-current="page"]:visible`;
 
 test("a hovered row is told by its fill alone, with no edge around it", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const ground = await painted(page, "body", "background-color");
   await page.hover(OTHER_ROW);
-  await page.waitForTimeout(300);
+  await settled(page, OTHER_ROW);
   expect(await page.locator(OTHER_ROW).evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("none");
   const fill = await painted(page, OTHER_ROW, "background-color");
   expect(fill).not.toEqual(ground);
@@ -126,7 +156,7 @@ for (const scheme of ["light", "dark"] as const) {
   test(`a link in a page is the primary colour and underlined, in ${scheme} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize(DESKTOP);
-    await page.goto(LONG_PAGE);
+    await visit(page, LONG_PAGE);
     const ground = await painted(page, "body", "background-color");
     const link = await painted(page, PROSE_LINK, "color");
     // The primary token, read where the design system puts it; the page's own text is a different colour.
@@ -140,7 +170,7 @@ for (const scheme of ["light", "dark"] as const) {
 
 test("inline code has the code ground behind it, as a code block has", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const ground = await painted(page, "body", "background-color");
   const chip = await painted(page, INLINE_CODE, "background-color");
   expect(chip).not.toEqual(ground);
@@ -154,7 +184,7 @@ test("inline code has the code ground behind it, as a code block has", async ({ 
 
 test("the current page's row differs from every other row by weight, not by colour alone", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const weight = (selector: string) =>
     page.locator(selector).evaluate((element) => Number(getComputedStyle(element).fontWeight));
   expect(await weight(CURRENT_ROW)).toBeGreaterThanOrEqual(500);
@@ -165,7 +195,7 @@ test("the current page's row differs from every other row by weight, not by colo
 
 test("the list of a page's headings is titled table of contents", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   await expect(page.getByRole("navigation", { name: "Table of contents" })).toBeVisible();
   await expect(page.locator(TABLE_OF_CONTENTS)).toContainText("table of contents");
   await expect(page.locator(TABLE_OF_CONTENTS)).not.toContainText("on this page");
@@ -176,7 +206,7 @@ const FOLDED_CONTENTS = '[data-slot="docs-toc-folded"]';
 for (const size of [PHONE, { width: 1100, height: 800 }]) {
   test(`a window ${size.width} pixels wide has a table of contents folded under the title`, async ({ page }) => {
     await page.setViewportSize(size);
-    await page.goto(LONG_PAGE);
+    await visit(page, LONG_PAGE);
     // The column beside the page needs 1280 pixels; below that the same list is under the title, closed.
     await expect(page.locator(TABLE_OF_CONTENTS)).toBeHidden();
     const folded = page.locator(FOLDED_CONTENTS);
@@ -193,14 +223,14 @@ for (const size of [PHONE, { width: 1100, height: 800 }]) {
 
 test("the folded table of contents is not shown beside the column", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   await expect(page.locator(TABLE_OF_CONTENTS)).toBeVisible();
   await expect(page.locator(FOLDED_CONTENTS)).toBeHidden();
 });
 
 test("the first Tab stop is a link that skips to the page's content", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   const skip = page.getByRole("link", { name: "Skip to content" });
   // Out of sight until the keyboard reaches it, so it costs a reader with a mouse nothing.
   await expect(skip).not.toBeInViewport();
@@ -218,8 +248,7 @@ const BACK_TO_TOP = '[data-slot="docs-back-to-top"]';
 
 test("a button that returns to the top shows once the reader scrolls back up", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
-  await started(page);
+  await visit(page, LONG_PAGE);
   const button = page.locator(BACK_TO_TOP);
   await expect(button).toBeHidden();
   // Reading down, it stays out of the way; it is for the reader who has turned back.
@@ -235,7 +264,7 @@ test("a button that returns to the top shows once the reader scrolls back up", a
 
 test("printed, a page is its article alone at the paper's width", async ({ page }) => {
   await page.setViewportSize(DESKTOP);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   await page.emulateMedia({ media: "print" });
   const furniture = ['[data-slot="docs-header"]', NAVIGATION, TABLE_OF_CONTENTS, '[data-slot="docs-pager"]', "footer"];
   for (const selector of furniture) await expect(page.locator(selector).first()).toBeHidden();
@@ -252,7 +281,7 @@ const WIDE_OUTPUT_PAGE = "/tutorials/control-who-can-access-files";
 
 test("a block of printed output scrolls sideways, and never up and down", async ({ page }) => {
   await page.setViewportSize(PHONE);
-  await page.goto(WIDE_OUTPUT_PAGE);
+  await visit(page, WIDE_OUTPUT_PAGE);
   const blocks = await page.locator('[data-slot="code-block-content"]').evaluateAll((elements) =>
     elements.map((element) => ({
       sideways: element.scrollWidth > element.clientWidth,
@@ -285,13 +314,14 @@ test("with scripts off, a phone reaches every section and page from a menu under
 
 test("with scripts on, the menu for scripts off is not on the page", async ({ page }) => {
   await page.setViewportSize(PHONE);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
+  // Before the scripts start the browser leaves the menu unparsed anyway; what is pinned is that hydration adds none.
   await expect(page.locator('[data-slot="docs-menu-noscript"]')).toBeHidden();
 });
 
 test("the navigation is a drawer on a phone", async ({ page }) => {
   await page.setViewportSize(PHONE);
-  await page.goto(LONG_PAGE);
+  await visit(page, LONG_PAGE);
   await expect(page.locator(NAVIGATION)).toHaveCount(0);
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   const drawer = page.locator(NAVIGATION);

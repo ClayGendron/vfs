@@ -595,9 +595,15 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
 
 
 async def _apply_stale(storage: DatabaseStorage, plan: WritePlan) -> bool:
-    """Run *plan*'s statements against committed state; whether the guard refused (classified or redriven)."""
+    """Run *plan*'s statements against committed state; whether the guard refused (classified or redriven).
+
+    The session begins as a verb's writer does, holding the write lock from its first read: a plain read
+    transaction that then writes is refused at once if another connection, such as the host's statistics
+    pass, committed in between.
+    """
     host = storage._host
     async with host.session_factory() as session:
+        await session.connection(execution_options={"vfs_writer": True})
         try:
             errors = await _apply(
                 session, host.tables, host.profile, host.parameter_budget, host.membership_budget, plan, overwrite=True

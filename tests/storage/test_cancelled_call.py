@@ -605,12 +605,13 @@ class TestTheCallerWaitsForItsAttempt:
 
 
 # Where a cancellation reaches the connection, the driver leaves a task that never ends and the loop cannot close.
-@pytest.mark.timeout(60, method="thread")
+@pytest.mark.timeout(60)
 class TestACallerCancelledByATimeLimitAndByACancelScope:
     """Two cancellers of one call: a time limit, which cancels with no message, and a scope, which knows its own by one.
 
     The time limit is made to run out by a time that has passed, so no test waits on a clock. The
-    guard above is no measure: in a serial run it names the test where the run would otherwise hang.
+    guard above is no measure: it fails the test whose loop cannot close, in a serial run and under
+    workers alike, where the run would otherwise hang.
     """
 
     @ON_EVERY_HOST
