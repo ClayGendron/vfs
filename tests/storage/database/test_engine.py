@@ -1,24 +1,26 @@
-"""EngineHost lifecycle — the construction XOR, first touch, loops and close, and pool exhaustion.
+"""EngineHost lifecycle — construction, first touch, loops and close, and pool exhaustion.
 
-The construction XOR (built url vs borrowed session factory — never a bare
-engine), idempotent provisioning under the serialization point,
+Construction from a URL and engine arguments, the engine a storage
+builds and owns, idempotent provisioning under the serialization point,
 schema-version verification, restart rebind, cross-loop first touch,
-borrowed-sessions close, the single-connection host (serialized sessions,
-re-minted connections re-arming first touch), and pool exhaustion
-classified rather than raised.
+where an attempt runs, and pool exhaustion classified rather than
+raised. The single-connection host (serialized sessions, re-minted
+connections re-arming first touch) is in ``test_oneconnection.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from sqlalchemy import create_engine, event, insert, select, text, update
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import QueuePool
+from sqlalchemy import create_engine, event, insert, select, update
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool, QueuePool
 from ulid import ULID
 
 from tests.support.database_helpers import _fresh_url
@@ -31,34 +33,105 @@ from vfs.results import ErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
+from vfs.storage.backends.database.attempts import AttemptSession
 from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, ValueCap, profile_for
-from vfs.storage.backends.database.engine import (
-    EngineHost,
-    _install_sqlite_transaction_control,
-    _SerializedSession,
-)
+from vfs.storage.backends.database.drivers import ClosingConnection
+from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+    from sqlalchemy import Engine
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 
 # ---------------------------------------------------------------------------
-# Construction XOR
+# Construction
 # ---------------------------------------------------------------------------
 
 
 class TestConstruction:
-    async def test_url_and_session_factory_together_are_refused(self, tmp_path) -> None:
-        engine = create_async_engine(_fresh_url(tmp_path))
-        factory = async_sessionmaker(engine, expire_on_commit=False)
-        with pytest.raises(ValueError, match="exactly one"):
-            DatabaseStorage(url=_fresh_url(tmp_path), session_factory=factory)
-        await engine.dispose()
+    async def test_a_storage_builds_its_engine_before_first_touch_and_disposes_it_at_close(self, tmp_path) -> None:
+        """The engine is there from construction, so a ``do_connect`` hook or tracing can be put on it."""
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
+        connected: list[object] = []
+        event.listen(storage.engine.sync_engine, "do_connect", lambda *connect: connected.append(connect))
+        assert (storage.engine is storage._host.engine, storage._host._ready, connected) == (True, False, [])
+        assert (await storage.first_touch()).success is True
+        pool = storage.engine.sync_engine.pool
+        assert isinstance(pool, QueuePool)
+        assert (len(connected) >= 1, pool.checkedin() >= 1) == (True, True)
+        await storage.close()
+        assert pool.checkedin() == 0
 
-    def test_neither_url_nor_session_factory_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="exactly one"):
-            DatabaseStorage()
+    async def test_engine_arguments_reach_the_engine_beside_what_vfs_requires(self, tmp_path) -> None:
+        """Guards the merge: an argument of the application that is dropped, or one of VFS's that is lost."""
+        storage = DatabaseStorage(
+            url=_fresh_url(tmp_path),
+            engine_arguments={"pool_size": 2, "max_overflow": 0, "connect_args": {"timeout": 9}},
+        )
+        pool = storage.engine.sync_engine.pool
+        assert isinstance(pool, QueuePool)
+        assert (pool.size(), pool._max_overflow) == (2, 0)
+        assert (await storage.first_touch()).success is True
+        async with storage.engine.connect() as connection:
+            driver = (await connection.get_raw_connection()).driver_connection
+        assert driver is not None
+        assert isinstance(driver._conn, ClosingConnection)
+        await storage.close()
+
+    async def test_a_schema_on_sqlite_is_a_database_attached_through_the_engine(self, tmp_path) -> None:
+        """A SQLite schema is an attached database, so the application attaches it on each connection of the engine."""
+        storage = DatabaseStorage(url=_fresh_url(tmp_path), schema="tenant")
+
+        def attach(dbapi_connection, _record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute(f"ATTACH DATABASE '{tmp_path}/tenant.sqlite' AS tenant")
+            cursor.close()
+
+        event.listen(storage.engine.sync_engine, "connect", attach)
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])).success is True
+        assert (await storage.read(path=Path("/a.txt"))).one().content == "a"
+        async with storage.engine.connect() as connection:
+            held = "SELECT count(*) FROM {}.sqlite_master WHERE name = 'vfs_entries'"
+            tables = [(await connection.exec_driver_sql(held.format(name))).scalar_one() for name in ("tenant", "main")]
+        assert tables == [1, 0]
+        await storage.close()
+
+    def test_an_engine_argument_that_changes_what_vfs_requires_is_refused_at_construction(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match=r"engine_arguments\['connect_args'\]\['factory'\]"):
+            DatabaseStorage(
+                url=_fresh_url(tmp_path), engine_arguments={"connect_args": {"factory": sqlite3.Connection}}
+            )
+
+    @pytest.mark.parametrize(
+        ("given", "named"),
+        [
+            ({"poolclass": NullPool}, r"engine_arguments\['poolclass'\]"),
+            ({"pool_recycle": 3600}, r"engine_arguments\['pool_recycle'\]"),
+            ({"pool": create_engine("sqlite://").pool}, r"engine_arguments\['pool'\]"),
+            ({"isolation_level": "AUTOCOMMIT"}, r"engine_arguments\['isolation_level'\]"),
+        ],
+        ids=["no pool", "a recycle", "a pool of its own", "autocommit"],
+    )
+    def test_an_in_memory_storage_is_refused_what_would_cost_it_its_database_or_its_transactions(
+        self, given, named
+    ) -> None:
+        with pytest.raises(ValueError, match=named):
+            DatabaseStorage(url="sqlite+aiosqlite://", engine_arguments=given)
+
+    async def test_a_storage_in_a_file_takes_no_pool_and_a_recycle(self, tmp_path) -> None:
+        """Guards where the refusal stops: with no pool every call opens its own connection to the one file."""
+        storage = DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments={"poolclass": NullPool})
+        recycled = DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments={"pool_recycle": 3600})
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])).success is True
+        assert (await recycled.read(path=Path("/a.txt"))).one().content == "a"
+        assert isinstance(storage.engine.sync_engine.pool, NullPool)
+        await storage.close()
+        await recycled.close()
+
+    def test_a_storage_in_a_file_is_refused_autocommit(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match=r"engine_arguments\['isolation_level'\] must not be 'AUTOCOMMIT'"):
+            DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments={"isolation_level": "autocommit"})
 
     def test_the_default_description_names_the_schema_when_one_is_set(self, tmp_path) -> None:
         assert DatabaseStorage(url=_fresh_url(tmp_path)).description == "Database storage"
@@ -311,54 +384,22 @@ class TestLifecycle:
 
         assert asyncio.run(touch_and_close()) is not None
 
-    async def test_borrowed_pool_pre_existing_connections_get_session_settings(self, tmp_path) -> None:
-        engine = create_async_engine(_fresh_url(tmp_path))
-        # Pool a connection BEFORE the borrow; checkout must still stamp it.
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
+    async def test_every_checkout_stamps_the_session_settings(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
-        async with engine.connect() as conn:  # the app's own pool is stamped too
+        async with storage.engine.connect() as conn:
             like = (await conn.exec_driver_sql("SELECT 'A' LIKE 'a'")).scalar_one()
             timeout = (await conn.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
         assert like == 0  # case_sensitive_like = ON
         assert timeout == 5000
         await storage.close()
-        await engine.dispose()
 
-    async def test_borrowed_close_never_disposes(self, tmp_path) -> None:
-        engine = create_async_engine(_fresh_url(tmp_path))
-        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-        assert (await storage.first_touch()).success is True
+    async def test_the_dialect_policy_is_resolved_at_construction_with_no_connection(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
+        pool = storage.engine.sync_engine.pool
+        assert isinstance(pool, QueuePool)
+        assert (storage._host.profile.name, pool.checkedin(), pool.checkedout()) == ("sqlite", 0, 0)
         await storage.close()
-        async with engine.connect() as conn:  # the pool must still serve
-            assert (await conn.execute(text("SELECT 1"))).scalar_one() == 1
-        await engine.dispose()
-
-    async def test_a_borrowed_host_never_holds_an_engine(self, tmp_path) -> None:
-        engine = create_async_engine(_fresh_url(tmp_path))
-        storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-        with pytest.raises(RuntimeError, match="borrowed host"):
-            _ = storage._host.engine
-        await engine.dispose()
-
-    async def test_borrowed_dialect_policy_defers_to_first_use(self, tmp_path) -> None:
-        engine = create_async_engine(_fresh_url(tmp_path))
-        maker = async_sessionmaker(engine, expire_on_commit=False)
-        calls = 0
-
-        def factory() -> AsyncSession:
-            nonlocal calls
-            calls += 1
-            return maker()
-
-        storage = DatabaseStorage(session_factory=factory)
-        assert calls == 0  # construction makes no dialect decision
-        assert storage._host.profile.name == "sqlite"
-        assert calls == 1  # resolved from the first session's bind
-        assert (await storage.first_touch()).success is True
-        await storage.close()
-        await engine.dispose()
 
     async def test_built_close_is_idempotent(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_fresh_url(tmp_path))
@@ -430,66 +471,61 @@ class TestLifecycle:
                 parked.set()
                 await asyncio.sleep(60)
 
-        real_engine = host._engine
-        host._engine = cast("AsyncEngine", _ParkedEngine())
+        real_engine = host.engine
+        host.engine = cast("AsyncEngine", _ParkedEngine())
         closing = asyncio.ensure_future(storage.close())
         await parked.wait()
         closing.cancel()
         with pytest.raises(asyncio.CancelledError):
             await closing
-        host._engine = real_engine
+        host.engine = real_engine
         await storage.close()
         assert pool.checkedin() == 0
 
-    def test_sqlite_transaction_control_installs_once_per_engine(self) -> None:
-        # Two hosts borrowing one bind: the second install must be a no-op.
-        engine = create_engine("sqlite://")
-        _install_sqlite_transaction_control(engine, SQLITE)
-        installed = len(engine.pool.dispatch.checkout)  # ty: ignore[unresolved-attribute]
-        _install_sqlite_transaction_control(engine, SQLITE)
-        assert getattr(engine, "_vfs_sqlite_control", False) is True
-        assert len(engine.pool.dispatch.checkout) == installed  # ty: ignore[unresolved-attribute]
-        engine.dispose()
-
 
 # ---------------------------------------------------------------------------
-# Single-connection host — serialized sessions, re-minted connections
+# Where an attempt runs
 # ---------------------------------------------------------------------------
 
 
-class TestSingleConnectionHost:
-    async def test_failed_session_enter_releases_the_host_lock(self) -> None:
-        # A session whose enter fails must not leave the host lock held —
-        # that would deadlock every later op on the storage.
-        class _ExplodingSession:
-            async def __aenter__(self) -> AsyncSession:
-                raise RuntimeError("enter failed")
+class TestWhereAnAttemptRuns:
+    async def test_on_sqlite_an_attempt_runs_in_a_task_of_its_own_on_sessions_that_refuse(self, tmp_path) -> None:
+        """Guards the declaration's two uses: a host that runs in its caller's task, or one whose sessions are plain."""
+        host = EngineHost(url=_fresh_url(tmp_path))
+        ran: list[asyncio.Task[object] | None] = []
 
-            async def __aexit__(self, *exc_info: object) -> None: ...
+        async def attempt() -> None:
+            ran.append(asyncio.current_task())
 
-        lock = asyncio.Lock()
-        session = _SerializedSession(cast("AsyncSession", _ExplodingSession()), lock)
-        with pytest.raises(RuntimeError, match="enter failed"):
-            async with session:
-                pass
-        assert lock.locked() is False
+        await host.with_retry(attempt)
+        session = host.session_factory()
+        assert ran != [asyncio.current_task()]
+        assert (type(session.sync_session), listeners(host.engine.sync_engine)) == (AttemptSession, 1)
+        await host.close()
 
-    async def test_replacement_connection_re_arms_first_touch(self) -> None:
-        # A :memory: database lives inside its one connection: a re-minted
-        # connection is empty, and serving off the stale latch is a lie.
-        storage = DatabaseStorage(url="sqlite+aiosqlite:///:memory:")
-        assert (await storage.first_touch()).success is True
-        host = storage._host
-        assert host._ready is True
-        async with host.engine.connect() as conn:
-            await conn.invalidate()
-        async with host.engine.connect() as conn:  # checkout mints the replacement
-            await conn.execute(text("SELECT 1"))
-        assert host._ready is False
-        result = await storage.stat(path=Path("/"))  # next op re-provisions
-        assert result.success is True
-        assert result.observations[0].kind == "directory"
-        await storage.close()
+    async def test_off_sqlite_an_attempt_runs_in_its_callers_task_on_plain_sessions(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Guards every other engine: nothing of the cancellation rule reaches a dialect that is not SQLite."""
+        # An unknown dialect is served on the generic floor under its own name.
+        monkeypatch.setattr(engine_module, "profile_for", lambda _name: profile_for("duckdb"))
+        host = EngineHost(url=_fresh_url(tmp_path))
+        ran: list[asyncio.Task[object] | None] = []
+
+        async def attempt() -> None:
+            ran.append(asyncio.current_task())
+
+        await host.with_retry(attempt)
+        session = host.session_factory()
+        assert ran == [asyncio.current_task()]
+        assert (type(session.sync_session), listeners(host.engine.sync_engine)) == (Session, 0)
+        await host.close()
+
+
+def listeners(engine: Engine) -> int:
+    """How many listeners *engine* has on the statements its connections send."""
+    watched = "before_cursor_execute"
+    return len(list(getattr(engine.dispatch, watched)))
 
 
 # ---------------------------------------------------------------------------
@@ -501,18 +537,15 @@ class TestPoolExhaustion:
     async def test_pool_exhaustion_classifies_instead_of_raising(self, tmp_path) -> None:
         # sqlalchemy.exc.TimeoutError is not a DBAPIError: the verb must
         # still classify it, never leak it raw (the no-raw-raise criterion).
-        engine = create_async_engine(_fresh_url(tmp_path), pool_size=1, max_overflow=0, pool_timeout=0.2)
-        maker = async_sessionmaker(engine, expire_on_commit=False)
-        storage = DatabaseStorage(session_factory=maker)
+        arguments = {"pool_size": 1, "max_overflow": 0, "pool_timeout": 0.2}
+        storage = DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments=arguments)
         assert (await storage.first_touch()).success is True
-        async with maker() as hog:
-            await hog.connection()  # hold the only pooled connection
+        async with storage.engine.connect():  # hold the only pooled connection
             result = await storage.stat(path=Path("/"))
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.unavailable
         assert result.errors[0].retryable is True
         await storage.close()
-        await engine.dispose()
 
 
 class TestValueCap:

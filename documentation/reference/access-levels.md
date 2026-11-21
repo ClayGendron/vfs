@@ -38,6 +38,8 @@ The table shows each call on a file that someone else created. "Yes" means the c
 
 `sweep` destroys a file for good, and `delete` moves it to the trash.
 
+An append at `add` keeps every byte the file held, and the file keeps its old body as a version. Bytes that are not text turn a text file into a bytes file, and a read of it then returns no text.
+
 ## Files the Caller Created
 
 A named caller owns each file it creates. **An owner may always read, overwrite, edit, and delete their own file**, whatever level they hold at its path, including `none`.
@@ -101,6 +103,8 @@ A mount is a storage attached at a path, and **each storage keeps its own access
 A call made with no authority holds only what everyone holds. When that level does not allow the call, the error is "Unauthenticated".
 
 The `default_authority` argument of `VirtualFileSystem` names the caller for every call that passes no authority.
+
+When that caller is the system actor, every call that passes no authority passes every check. So VFS logs one warning, on the `vfs.authority` logger, when such a file system is made. To silence it where you mean it, such as a bulk load, raise that logger's level with Python's `logging` module.
 
 ## Errors
 

@@ -556,7 +556,7 @@ class TestPatternFan:
         # The scale row: thousands of patterns in one call chunk at the
         # measured 200-arm width — one fan statement per chunk, every one
         # inside the engine's bind and depth caps, one session throughout.
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_url(tmp_path), glob_wall_seconds=math.inf)
         await _seed(storage, [("/part00000/a.parquet", "file", "x")])
         checkouts = 0
         statements: list[str] = []
@@ -1175,7 +1175,7 @@ class TestScopeChannel:
         root, or the facts' binds left out of the budget."""
         budget = mssql.dialect().insertmanyvalues_max_parameters
         monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: budget))
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_url(tmp_path), glob_wall_seconds=math.inf)
         await _seed(storage, [("/d00042/mb.py", "file", "x")])
         ext = ("py", "md", "txt", "rs", "ts", "go", "c", "h", "js", "rb")
         arms = tuple(f"m{stem}*.{suffix}" for stem in "abcd" for suffix in ("py", "md"))

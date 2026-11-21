@@ -10,6 +10,14 @@ You need Python 3.11 or later.
 pip install vfs-py
 ```
 
+That is all you need for this page. It keeps files in memory or in SQLite.
+
+To keep files in PostgreSQL, add its driver instead.
+
+```bash
+pip install "vfs-py[postgres]"
+```
+
 ## Create a File System and Use It
 
 Run this in a Python script, a Python prompt, or a Jupyter notebook.

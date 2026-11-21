@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -3582,6 +3582,7 @@ xlsx = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "anyio" },
     { name = "griffelib" },
     { name = "ipykernel" },
     { name = "packaging" },
@@ -3630,6 +3631,7 @@ provides-extras = ["openai", "langchain", "embed-local", "postgres", "mssql", "m
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anyio", specifier = ">=4.0" },
     { name = "griffelib", specifier = ">=2.4" },
     { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "packaging", specifier = ">=24" },

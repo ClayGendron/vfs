@@ -349,7 +349,7 @@ async def test_update_mount_refuses_when_the_probed_mount_is_replaced_mid_flight
         return real()
 
     monkeypatch.setattr(child, "capabilities", swap_mount)
-    with pytest.raises(ValueError, match="changed while it was being updated"):
+    with pytest.raises(ValueError, match=r"changed while it was being updated\. Retry the update\.$"):
         await fs.update_mount("/m", refresh_caps=True)
 
 
@@ -416,6 +416,30 @@ async def test_masks_never_alter_fanout() -> None:
     assert masked.success == plain.success
     assert [(e.kind, str(e.path or "")) for e in masked.errors] == [(e.kind, str(e.path or "")) for e in plain.errors]
     assert len(masked.observations) == len(plain.observations)
+
+
+def test_the_grant_listing_is_a_read_and_cannot_be_masked() -> None:
+    # grants only lists the grant rows, so refusing it is the storage's rights' job, as for read.
+    with pytest.raises(ValueError, match="grants"):
+        AsyncVirtualFileSystem(deny_ops={"grants"})
+    assert AsyncVirtualFileSystem(deny_ops={"grant", "revoke"}).mounts()[0].deny_ops == frozenset({"grant", "revoke"})
+
+
+async def test_an_empty_mount_path_is_refused_and_never_falls_back_to_the_storage_name() -> None:
+    fs = AsyncVirtualFileSystem(storage=BindableStorage(name="root"))
+    with pytest.raises(ValueError, match="empty"):
+        await fs.add_mount(RecorderStorage(name="named"), path="")
+    assert {r.path for r in fs.mounts()} == {"/"}
+    await fs.add_mount(RecorderStorage(name="named"))
+    assert {r.path for r in fs.mounts()} == {"/", "/named"}
+
+
+def test_a_storage_whose_read_verbs_are_not_callable_cannot_be_mounted() -> None:
+    class Broken(RecorderStorage):
+        read = 5
+
+    with pytest.raises(TypeError, match=r"must be callable, and these are not: read$"):
+        AsyncVirtualFileSystem(storage=Broken())  # ty: ignore[invalid-argument-type]
 
 
 async def test_read_family_masks_are_rejected_at_every_intake() -> None:

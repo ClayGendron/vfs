@@ -15,7 +15,7 @@ from vfs import chain as chain_module
 from vfs import deadline as deadline_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.chain import admit_rows_in_hand
-from vfs.models import Match, Observation
+from vfs.models import Entry, Match, Observation
 from vfs.paths import Path
 from vfs.rerank import FANOUT_CAP, BM25Rerank, Candidate
 from vfs.results import ErrorKind, Result, ResultError
@@ -123,6 +123,31 @@ async def test_observations_across_mounts_merge_the_same_way() -> None:
     assert result.paths == ("/low/l1", "/high/h1", "/high/h2")
     assert _limits(low) == [9] and _limits(high) == [9]
     assert "merge" in _legs(result)
+
+
+async def test_a_row_at_a_storage_root_in_hand_is_left_out_as_a_directory_is() -> None:
+    # The row of a mount point reaches its storage as "/", and the trash view's head as "/.vfs/trash".
+    root = AsyncVirtualFileSystem()
+    assert (await root.write(path="/notes/a.md", content="lantern", parents=True)).success is True
+    await root.add_mount(InMemoryStorage(name="child"), "/m")
+    listed = await root.glob("/*")
+    assert {str(row.path) for row in listed.observations} == {"/m", "/notes"}
+    held = [*listed.observations, Observation(path=Path("/notes/a.md"))]
+    result = await root.search("lantern", observations=held)
+    assert result.success is True, result.error_message
+    assert result.paths == ("/notes/a.md",)
+    for alone in ("/", "/m", "/.vfs/trash"):
+        answer = await root.search("lantern", observations=[Observation(path=Path(alone))])
+        assert (answer.success, answer.paths, answer.errors) == (True, (), []), alone
+
+
+async def test_a_storage_given_head_rows_and_globs_answers_as_for_a_directory_row_and_globs() -> None:
+    storage = InMemoryStorage()
+    assert (await storage.write(entries=[Entry(path=Path("/notes/a.md"), content="lantern")], parents=True)).success
+    globs = ("/notes/**",)
+    beside_root = await storage.search(query="lantern", observations=[Observation(path=Path("/"))], globs=globs)
+    beside_dir = await storage.search(query="lantern", observations=[Observation(path=Path("/notes"))], globs=globs)
+    assert beside_root.success is True and beside_root.paths == beside_dir.paths == ("/notes/a.md",)
 
 
 async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:
@@ -526,14 +551,15 @@ async def test_a_passing_directory_or_ghost_is_left_out_without_an_error() -> No
 
 
 @pytest.mark.parametrize("directory", ["/data", "/"])
-async def test_a_passing_row_at_a_mount_point_or_the_root_fails_the_call(directory: str) -> None:
-    """The row reaches its storage as ``/``, which the storage refuses as a glob."""
+async def test_a_passing_row_at_a_mount_point_or_the_root_is_left_out_as_a_directory_is(directory: str) -> None:
+    """The row reaches its storage as ``/``, which names no file, so only the file beside it is ranked."""
     fs = await _memory({"/x.md": "alpha root"})
     await fs.add_mount(InMemoryStorage(), "/data")
     assert (await fs.write(path="/data/a.md", content="alpha one")).success is True
     rows = [Observation(path=Path(directory), kind="directory"), Observation(path=Path("/data/a.md"))]
     result = await fs.search("alpha", observations=rows, ext_not=("txt",))
-    assert result.success is False and [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert result.success is True and result.errors == []
+    assert result.paths == ("/data/a.md",)
     await fs.close()
 
 

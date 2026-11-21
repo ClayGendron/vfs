@@ -5,7 +5,7 @@ index, one seek per arm, and the cost grows with the store. These pins
 hold the fix: each write detects inside the lock it already holds, a
 crossing write returns at once and one host-tracked pass lands the
 statistics, pooled connections replace themselves when the statistics
-move, in-memory and borrowed connections reload at their next write,
+move, in-memory connections reload at their next write,
 and ``close()`` interrupts a running pass rather than waiting on it.
 Every assertion counts statements, events, rows or plan details.
 """
@@ -19,12 +19,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import aiosqlite
 import pytest
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
 
 from tests.support.database_helpers import _fresh_url, _url
@@ -547,38 +547,6 @@ class TestPlannerStatistics:
         assert read.success is True and len(read.observations) == len(entries)
         await storage.close()
 
-    async def test_a_borrowed_engine_gains_no_replacement_listener(self, tmp_path) -> None:
-        """Guards: a replacement listener on a host application's pool, replacing connections vfs did not make."""
-        url = _url(tmp_path)
-        engine = create_async_engine(url)
-        borrowed = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-        assert (await borrowed.first_touch()).success is True
-        assert len(list(cast("Any", engine.sync_engine.pool).dispatch.checkout)) == 1
-        assert (await borrowed.stat(path=Path("/"))).success is True
-        invalidations = _invalidations(engine)
-        built = DatabaseStorage(url=url)
-        assert (await built.write(entries=_entries(CROSSING_ROOTS), parents=True)).success is True
-        await built._host.settle_statistics()
-        for _ in range(100):
-            assert (await borrowed.stat(path=Path("/"))).success is True
-        assert invalidations == []
-        traced = _trace(engine)
-        selects = _recorded_selects(engine)
-        assert (await borrowed.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
-        assert _count(traced, SCHEMA_RELOAD) == 1
-        await borrowed._host.settle_statistics()
-        assert (await borrowed.glob(patterns=_fan_patterns(50))).success is True
-        searches = [
-            detail
-            for statement, parameters in selects
-            for detail in await _plan(borrowed, statement, parameters)
-            if detail.startswith("SEARCH")
-        ]
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
-        await built.close()
-        await borrowed.close()
-        await engine.dispose()
-
     async def test_a_failed_fingerprint_read_keeps_the_checkout(self, tmp_path, monkeypatch) -> None:
         """Guards: a fingerprint read whose failure fails the caller's verb, or leaves the connection trusted."""
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -609,21 +577,19 @@ class TestPlannerStatistics:
         assert first == second and first.isdigit()
         await storage.close()
 
-    async def test_a_borrowed_engine_analyzes_only_vfs_tables(self, tmp_path) -> None:
-        """Guards: a pass acting on every statement the listing prints, a host application's tables included."""
-        engine = create_async_engine(_url(tmp_path))
-        async with engine.begin() as conn:
-            await conn.exec_driver_sql("CREATE TABLE host_rows (id INTEGER PRIMARY KEY, label TEXT)")
-            await conn.exec_driver_sql("CREATE INDEX ix_host_rows_label ON host_rows (label)")
+    async def test_the_pass_analyzes_only_the_tables_of_the_mount(self, tmp_path) -> None:
+        """Guards: a pass acting on every statement the listing prints, tables that are not the mount's included."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        async with storage.engine.begin() as conn:
+            await conn.exec_driver_sql("CREATE TABLE other_rows (id INTEGER PRIMARY KEY, label TEXT)")
+            await conn.exec_driver_sql("CREATE INDEX ix_other_rows_label ON other_rows (label)")
             for index in range(1_000):
-                await conn.exec_driver_sql(f"INSERT INTO host_rows (label) VALUES ('row{index}')")
-        borrowed = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-        assert (await borrowed.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
-        await borrowed._host.settle_statistics()
-        assert await _stat_rows(borrowed, "host_rows") == []
-        assert len(await _stat_rows(borrowed, "vfs_entries")) >= 1
-        await borrowed.close()
-        await engine.dispose()
+                await conn.exec_driver_sql(f"INSERT INTO other_rows (label) VALUES ('row{index}')")
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await storage._host.settle_statistics()
+        assert await _stat_rows(storage, "other_rows") == []
+        assert len(await _stat_rows(storage, "vfs_entries")) >= 1
+        await storage.close()
 
     async def test_a_failed_pass_keeps_the_write_and_the_next_public_write_reports_it(self, tmp_path) -> None:
         """Guards: a pass failure failing the write, or going unreported, or reported more than once."""

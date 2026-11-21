@@ -1,11 +1,14 @@
 """What VFS asks of a database driver when it builds an engine from a URL.
 
-``engine_arguments`` gives the arguments for one URL. Two drivers need
-something. SQL Server through pyodbc needs its text binds left as Unicode.
-SQLite needs its connections opened as ``ClosingConnection``, whose cursors
-close themselves when a statement fails.
+``merge_engine_arguments`` gives the arguments for one URL: the ones the
+application gave, and the ones VFS requires. Two drivers need something.
+SQL Server through pyodbc needs its text binds left as Unicode. SQLite
+needs its connections opened as ``ClosingConnection``, whose cursors
+close themselves when a statement fails, and an in-memory SQLite
+database that SQLAlchemy gives one connection needs to keep it. No
+engine may autocommit.
 
-    create_async_engine(url, **engine_arguments(url))
+    create_async_engine(url, **merge_engine_arguments(url, given))
 
 A statement can fail for an ordinary reason. Another writer holds the
 database for longer than the wait allows, or ``close()`` stops a running
@@ -32,45 +35,95 @@ later let go of it without help, and the close changes nothing there.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from contextlib import suppress
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.engine import make_url
+from sqlalchemy.pool import StaticPool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+_AUTOCOMMIT = "AUTOCOMMIT"
+_ONE_CONNECTION = "an in-memory database lives in its one connection"
 
 # ---------------------------------------------------------------------------
 # Engine arguments
 # ---------------------------------------------------------------------------
 
 
-def engine_arguments(url: str) -> dict[str, Any]:
-    """Return the engine arguments the driver behind ``url`` needs.
+def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Return the arguments for the engine of ``url``: what the application gave, and what VFS requires.
 
-    SQLAlchemy's pyodbc dialect declares ``String`` binds as ANSI
-    ``SQL_VARCHAR`` via setinputsizes, and the server squeezes those
-    through the database codepage before they reach a UTF-8 column —
-    mangling non-Latin1 to ``?``. Disabling setinputsizes restores
-    pyodbc's Unicode default (``SQL_WVARCHAR``), whose conversion into
-    the UTF-8 collation is lossless. pyodbc's ``fast_executemany`` is
-    deliberately *not* set: engine-wide it rewrites UPDATE executemany,
-    whose rowcount the guarded bumps verify, and as a bulk-insert mode it
-    is still one RPC per row, slower than Core's pages on wide rows —
-    SQL Server's bulk inserts take Core's pages.
+    An argument VFS has no stake in passes through as it was given: the
+    pool's class and size, ``pool_pre_ping``, ``async_creator`` and the
+    like. VFS requires a few, and puts each in. Where the application
+    gives another value for one of them, a ``ValueError`` names it and
+    says why, because a storage that dropped it in silence would corrupt
+    text, leave files open or lose its database. ``connect_args`` is
+    merged key by key, and the mapping that was given is not changed.
 
-    A SQLite connection is opened as a ``ClosingConnection``.
+    No engine may autocommit. ``isolation_level`` set to ``AUTOCOMMIT``,
+    on the engine or in its ``execution_options``, is refused on every
+    dialect: a write is one transaction, and under autocommit each of
+    its statements would commit alone.
 
-    A borrowed session factory carries the engine of whoever built it, and
-    that builder applies these arguments itself.
+    SQL Server needs ``use_setinputsizes`` false. SQLAlchemy's pyodbc
+    dialect declares ``String`` binds as ANSI ``SQL_VARCHAR`` via
+    setinputsizes, and the server squeezes those through the database
+    codepage before they reach a UTF-8 column — mangling non-Latin1 to
+    ``?``. Disabling setinputsizes restores pyodbc's Unicode default
+    (``SQL_WVARCHAR``), whose conversion into the UTF-8 collation is
+    lossless. pyodbc's ``fast_executemany`` is deliberately *not* set:
+    engine-wide it rewrites UPDATE executemany, whose rowcount the
+    guarded bumps verify, and as a bulk-insert mode it is still one RPC
+    per row, slower than Core's pages on wide rows — SQL Server's bulk
+    inserts take Core's pages.
+
+    SQLite needs ``connect_args["factory"]`` to be ``ClosingConnection``.
+    SQLAlchemy passes ``connect_args`` to its own connect call only, so
+    an application that gives ``creator`` or ``async_creator`` opens the
+    connections itself, and they are closing ones only if it makes them so.
+
+    An in-memory SQLite database lives in its one connection. Where
+    SQLAlchemy itself gives the URL the pool of one connection, its
+    ``poolclass`` is ``StaticPool``, its ``pool_recycle`` is ``-1``,
+    which is never, and a ``pool`` made by the application is refused.
+    Any other pool, or a recycle, would open a second connection, and
+    that is a new database with no table in it. Two spellings are not
+    covered. SQLAlchemy takes ``file::memory:?uri=true`` and
+    ``file::memory:?cache=shared&uri=true`` for a file, so nothing is
+    required of them, and another pool or a recycle there loses the
+    database as it would on any in-memory URL.
     """
-    backend = make_url(url).get_backend_name()
+    merged = dict(given or {})
+    for within in (None, "execution_options"):
+        # Options that are no mapping hold no isolation level to refuse, and are SQLAlchemy's to refuse.
+        options = merged if within is None else merged.get(within)
+        if isinstance(options, Mapping) and str(options.get("isolation_level")).upper() == _AUTOCOMMIT:
+            raise ValueError(
+                f"{_named('isolation_level', within)} must not be {_AUTOCOMMIT!r}, because a write is one "
+                "transaction, and under autocommit each statement commits alone and a failed write is left half done"
+            )
+    address = make_url(url)
+    backend = address.get_backend_name()
     if backend == "mssql":
-        return {"use_setinputsizes": False}
+        _require(merged, "use_setinputsizes", False, "pyodbc then binds text as Unicode, and as ANSI it stores '?'")
     if backend == "sqlite":
-        return {"connect_args": {"factory": ClosingConnection}}
-    return {}
+        merged["connect_args"] = connect = dict(merged.get("connect_args") or {})
+        _require(
+            connect, "factory", ClosingConnection, "a cursor whose statement failed is closed at once", "connect_args"
+        )
+        # The dialect says which URLs name a database in memory: it gives those the pool of one connection.
+        if address.get_dialect()().get_dialect_pool_class(address) is StaticPool:
+            if "pool" in merged:
+                made = "VFS makes its pool, so leave it out"
+                raise ValueError(f"{_named('pool')} must not be given, because {_ONE_CONNECTION}; {made}")
+            _require(merged, "poolclass", StaticPool, f"{_ONE_CONNECTION}, and another pool opens a second, empty one")
+            _require(merged, "pool_recycle", -1, f"{_ONE_CONNECTION}, and a recycled connection is a new, empty one")
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -132,3 +185,19 @@ class ClosingConnection(sqlite3.Connection):
     def executescript(self, *arguments: Any) -> Any:
         """Run a script of statements on a new cursor and return that cursor."""
         return self.cursor().executescript(*arguments)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _require(arguments: dict[str, Any], key: str, value: object, reason: str, within: str | None = None) -> None:
+    """Put ``value`` at ``key`` of ``arguments``, or raise if the application gave it another value."""
+    if arguments.setdefault(key, value) != value:
+        raise ValueError(f"{_named(key, within)} must be {value!r}, because {reason}; VFS sets it, so leave it out")
+
+
+def _named(key: str, within: str | None = None) -> str:
+    """How an error names one engine argument, as the application wrote it."""
+    return f"engine_arguments[{within!r}][{key!r}]" if within else f"engine_arguments[{key!r}]"

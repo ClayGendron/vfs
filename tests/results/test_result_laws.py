@@ -614,6 +614,36 @@ class TestMergePolicy:
         assert merged.success is False
         assert all(e.is_fatal for e in merged.errors)
 
+    def test_merge_drops_a_repeated_error_and_keeps_the_first_order(self) -> None:
+        a = err(message="a", path="/a")
+        b = err(message="b", path="/b", data={"x": 1, "y": 2})
+        b_again = err(message="b", path="/b", data={"y": 2, "x": 1})
+        b_other = err(message="b", path="/b", data={"x": 9})
+        merged = Result.merge([Result(errors=[a, b]), Result(errors=[b_again, a, b_other])])
+        assert merged.errors == [a, b, b_other]
+
+    def test_merge_compares_errors_a_number_of_times_linear_in_their_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        compared = 0
+        equal = ResultError.__eq__
+
+        def counted(self: ResultError, other: object) -> bool:
+            nonlocal compared
+            compared += 1
+            return equal(self, other)
+
+        monkeypatch.setattr(ResultError, "__eq__", counted)
+
+        def comparisons(n: int) -> int:
+            nonlocal compared
+            compared = 0
+            batches = [Result(errors=[err(message=f"m{i}", path=f"/p{i}") for i in range(n)]) for _ in range(2)]
+            assert len(Result.merge(batches).errors) == n
+            return compared
+
+        assert comparisons(400) <= 2 * comparisons(200) + 2
+
     def test_an_empty_successful_branch_counts_as_progress(self) -> None:
         empty = Result(ops=("grep",))
         dead = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")])

@@ -36,6 +36,7 @@ from vfs.pattern_matching import ScopeChannel
 from vfs.permissions import read_write
 from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.storage import ResolvedPair
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
 # ----------------------------------------------------------------------
@@ -1222,6 +1223,46 @@ async def test_write_if_versions_key_that_names_no_file_of_the_call_is_invalid(k
     assert [error.kind for error in result.errors] == [ErrorKind.invalid]
     assert "if_versions" in result.errors[0].message
     assert a.calls == []
+
+
+async def test_write_if_versions_with_no_entries_is_invalid() -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    result = await root.write([], if_versions={"/a/f.txt": 1})
+    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert "if_versions" in result.errors[0].message
+    assert (await root.write([])).success is True
+    assert a.calls == []
+
+
+async def test_write_if_versions_that_names_one_path_twice_is_invalid() -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    entries = [Entry(path=Path("/a/f.txt"), content="x")]
+    result = await root.write(entries, if_versions={"/a/f.txt": 1, "/a//f.txt": 4})
+    assert [(error.kind, error.data) for error in result.errors] == [(ErrorKind.invalid, {"raw": "/a//f.txt"})]
+    assert "twice" in result.errors[0].message
+    assert a.calls == []
+
+
+async def test_write_a_stale_key_on_one_mount_refuses_that_mount_and_lands_the_other() -> None:
+    root = AsyncVirtualFileSystem()
+    await root.add_mount(InMemoryStorage(), "/a")
+    await root.add_mount(InMemoryStorage(), "/b")
+    seed = [Entry(path=Path(path), content="v1") for path in ("/a/f.txt", "/b/g.txt")]
+    assert (await root.write(seed)).success is True
+    assert (await root.write(path="/a/f.txt", content="v2")).success is True
+    both = [Entry(path=Path(path), content="new") for path in ("/a/f.txt", "/b/g.txt")]
+    result = await root.write(both, if_versions={"/a/f.txt": 1, "/b/g.txt": 1})
+    assert [(error.kind, error.path, error.data) for error in result.errors] == [
+        (ErrorKind.conflict, "/a/f.txt", {"version": 2})
+    ]
+    assert [(o.path, o.status, o.version) for o in result.observations] == [("/b/g.txt", "updated", 2)]
+    bodies = [(await root.read(path=path)).observations[0].content for path in ("/a/f.txt", "/b/g.txt")]
+    assert bodies == ["v2", "new"]
+    await root.close()
 
 
 async def test_write_entries_dispatch_is_depth_sorted_and_stable() -> None:
