@@ -99,3 +99,12 @@ jobs:
 
       - name: Conformance suite
         run: uv run pytest -m postgres --tb=short -n 0
+
+      # A test past its deadline leaves every thread's stack there.
+      - name: Upload the stacks of a hung test
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-hangs-postgres${{ matrix.version }}
+          path: test-hangs/
+          if-no-files-found: ignore

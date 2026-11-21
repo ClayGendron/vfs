@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Select
+from sqlalchemy import Select, event
 from sqlalchemy.dialects import postgresql
 
 from vfs.paths import Path
@@ -73,6 +73,26 @@ def _template() -> pathlib.Path:
     with ThreadPoolExecutor(max_workers=1) as pool:
         pool.submit(asyncio.run, provision()).result()
     return target
+
+
+UNBOUNDED_BUSY_MILLISECONDS = 2**31 - 1
+"""The largest ``busy_timeout`` SQLite takes, about 24 days: a wait no test reaches before its own deadline."""
+
+
+def _waits_out_every_lock(storage: DatabaseStorage) -> None:
+    """Make each connection *storage* checks out wait on a rival's write lock for as long as the rival holds it.
+
+    A write of thousands of files holds the file's lock for seconds, and
+    for longer on a loaded machine, past the shipped five-second
+    ``busy_timeout`` and its retries. A test of two crossing writers waits
+    on the rival's commit, and the run's own deadline bounds that wait.
+    """
+
+    @event.listens_for(storage._host.engine.sync_engine, "checkout")
+    def patient(dbapi_connection, record, proxy) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"PRAGMA busy_timeout = {UNBOUNDED_BUSY_MILLISECONDS}")
+        cursor.close()
 
 
 # ---------------------------------------------------------------------------

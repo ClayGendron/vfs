@@ -715,29 +715,19 @@ async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     for index in range(8):
         await fs.add_mount(RecorderStorage(), f"/m{index}")
-    turns = [0]
-    readings: list[tuple[int, int]] = []
+    ticker = LoopTicker().start()
     real = fanout_module.plan_scope
 
     def watched(*args: Any, **kwargs: Any) -> Any:
-        start = turns[0]
-        plan = real(*args, **kwargs)
-        readings.append((start, turns[0]))
-        return plan
-
-    async def count_turns() -> None:
-        while True:
-            await asyncio.sleep(0)
-            turns[0] += 1
+        ticker.hop()
+        return real(*args, **kwargs)
 
     monkeypatch.setattr(fanout_module, "plan_scope", watched)
-    counter = asyncio.ensure_future(count_turns())
     exclusions = tuple(_arms(f"e{j:02}x") for j in range(31))
     result = await fs.glob(_arms("x") + "*.txt", paths=("/",), globs_not=exclusions)
-    counter.cancel()
+    ticker.stop()
     assert result.ops == ("glob",)
-    [(start, end)] = readings
-    assert end > start
+    assert ticker.hops == 1
     await fs.close()
 
 

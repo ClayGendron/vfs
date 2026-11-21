@@ -346,7 +346,10 @@ class TestReclaim:
     async def test_reclaim_built_epoch_never_touches_the_published_rows(self, tmp_path) -> None:
         storage = await _seeded(tmp_path)
         await _seed_lexical_rows(storage, 7)
+        # Begun as a verb's writer is: a plain transaction that then writes is refused if the rebuild's statistics
+        # pass commits in between.
         async with storage._host.session_factory() as session, session.begin():
+            await session.connection(execution_options={"vfs_writer": True})
             assert (await indexing.reclaim_built_epoch(session, storage._host.tables, 7)).success is True
         for table in _lexical_tables(storage):
             assert await _count(storage, table, epoch=7) == 0
