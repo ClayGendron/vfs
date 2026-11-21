@@ -2803,6 +2803,92 @@ class StorageContract:
         assert [(o.status, o.version) for o in result.observations] == [("updated", 2), ("updated", 3)]
 
     # ------------------------------------------------------------------
+    # An append adds to the end of one file, and loses no line to a rival
+    # ------------------------------------------------------------------
+
+    @needs("write", "read")
+    @pytest.mark.parametrize("seeded", [True, False], ids=["a-file-that-is-there", "an-absent-path"])
+    async def test_twenty_concurrent_appends_keep_every_line(self, storage: ConformanceBackend, seeded: bool) -> None:
+        if seeded:
+            assert (await storage.write(entries=[_file("/log.txt", "line0\n")])).success is True
+        appends = [storage.write(entries=[_file("/log.txt", f"{n}\n")], append=True) for n in range(20)]
+        results = await asyncio.gather(*appends)
+        assert [result.errors for result in results] == [[]] * 20
+        body = (await storage.read(path=Path("/log.txt"))).observations[0].content
+        assert body is not None
+        lines = body.splitlines()
+        assert sorted(lines) == sorted((["line0"] if seeded else []) + [str(n) for n in range(20)])
+        assert await _revision_of(storage, "/log.txt") == len(lines)
+
+    @needs("write", "read", "stat")
+    async def test_an_append_reports_what_it_did_to_the_row(self, storage: ConformanceBackend) -> None:
+        made = await storage.write(entries=[_file("/d/log.txt", "one\n")], append=True, parents=True)
+        assert [(o.path, o.status, o.version) for o in made.observations] == [("/d/log.txt", "created", 1)]
+        grown = await storage.write(entries=[_file("/d/log.txt", "two\n")], append=True)
+        assert [(o.status, o.version, o.size_bytes) for o in grown.observations] == [("updated", 2, 8)]
+        assert (await storage.read(path=Path("/d/log.txt"))).observations[0].content == "one\ntwo\n"
+        # An empty tail leaves the body as it is.
+        same = await storage.write(entries=[_file("/d/log.txt", "")], append=True)
+        assert [(o.status, o.version) for o in same.observations] == [("unchanged", 2)]
+
+    @needs("write", "read", "stat")
+    async def test_an_append_keeps_the_rows_source_when_the_body_allows(self, storage: ConformanceBackend) -> None:
+        both = frozenset({"content", "data"})
+        cases: list[tuple[str | bytes, str | bytes, str, str | None, bytes | None]] = [
+            ("caf", "é".encode(), "text", "café", None),
+            ("old ", b"\xff\xfe", "bytes", None, b"old \xff\xfe"),
+            (b"\x00\x01", b"\x02", "bytes", None, b"\x00\x01\x02"),
+            (b"\x00\x01", "é", "bytes", None, b"\x00\x01\xc3\xa9"),
+        ]
+        for n, (stored, tail, source, content, data) in enumerate(cases):
+            path = f"/f{n}"
+            assert (await storage.write(entries=[_file(path, stored)])).success is True
+            assert (await storage.write(entries=[_file(path, tail)], append=True)).success is True
+            row = (await storage.read(path=Path(path), columns=both)).observations[0]
+            assert (row.content, row.data) == (content, data), (stored, tail)
+            stat = (await storage.stat(path=Path(path))).observations[0]
+            assert (stat.source, stat.version) == (source, 2), (stored, tail)
+            body = stored if isinstance(stored, bytes) else stored.encode()
+            body += tail if isinstance(tail, bytes) else tail.encode()
+            assert (stat.content_hash, stat.size_bytes) == (measure_bytes(body).content_hash, len(body))
+
+    @needs("write", "mkdir", "delete", "read")
+    async def test_an_append_judges_its_target_as_a_write_does(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/d"))
+        onto_directory = await storage.write(entries=[_file("/d", "x")], append=True)
+        assert [(e.kind, e.path) for e in onto_directory.errors] == [(ErrorKind.wrong_kind, "/d")]
+        orphan = await storage.write(entries=[_file("/no/log.txt", "x")], append=True)
+        assert [(e.kind, e.path) for e in orphan.errors] == [(ErrorKind.not_found, "/no")]
+        # A deleted file is absent: the tail is the whole body of the row that comes back.
+        assert (await storage.write(entries=[_file("/gone.txt", "old ")])).success is True
+        assert (await storage.delete(path=Path("/gone.txt"))).success is True
+        back = await storage.write(entries=[_file("/gone.txt", "new")], append=True)
+        assert back.success is True and back.observations[0].status == "updated"
+        assert (await storage.read(path=Path("/gone.txt"))).observations[0].content == "new"
+
+    @needs("write", "read")
+    async def test_an_append_with_an_expected_version_lands_at_most_once(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/log.txt", "one\n")])).success is True
+        expecting_one = {Path("/log.txt"): 1}
+        first = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
+        assert first.success is True, first.errors
+        # The reply was lost and the call is sent again: the version moved on, and nothing is added twice.
+        again = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
+        assert [(e.kind, e.data) for e in again.errors] == [(ErrorKind.conflict, {"version": 2})]
+        assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "one\ntwo\n"
+        absent = await storage.write(entries=[_file("/none.txt", "x")], append=True, if_versions={Path("/none.txt"): 1})
+        assert [e.kind for e in absent.errors] == [ErrorKind.not_found]
+
+    @needs("write", "stat")
+    async def test_an_append_takes_one_file(self, storage: ConformanceBackend) -> None:
+        two = [_file("/a.txt", "x"), _file("/b.txt", "x")]
+        for entries in (two, [], [Entry(path=Path("/d"), kind="directory")]):
+            refused = await storage.write(entries=entries, append=True)
+            assert [e.kind for e in refused.errors] == [ErrorKind.invalid], entries
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+        assert (await storage.stat(path=Path("/d"))).success is False
+
+    # ------------------------------------------------------------------
     # Batch observations reflect committed state, never a mid-batch one
     # ------------------------------------------------------------------
     # A version value is never observable before the state it stamps: a

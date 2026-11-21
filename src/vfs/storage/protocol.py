@@ -175,6 +175,7 @@ class SupportsMutation(Protocol):
         entries: list[Entry],
         if_versions: Mapping[Path, int] | None = None,
         if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result: ...

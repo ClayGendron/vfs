@@ -78,6 +78,7 @@ class StagedEntry:
     base_version: int | None = None  # the version the guarded arm compares against
     base_size_bytes: int | None = None  # the replaced body's size at snapshot; the mint pages its reads by it
     base_content: str | None = None  # the replaced text body, when the snapshot joined it; the mint keeps it unread
+    base_data: bytes | None = None  # the replaced bytes body, when the snapshot joined it; its text rides base_content
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
     revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
     expected_version: int | None = None  # the version the caller said it replaces; settle refuses any other
@@ -473,7 +474,9 @@ class WritePlan:
             owner_id=owner_id,
             base_version=row["version"],
             base_size_bytes=row["size_bytes"],
-            base_content=row["content"] if "content" in row and row["source"] == "text" else None,
+            # A text row's body is its text. A bytes row's is its bytes, with the rendering beside them.
+            base_content=row["content"] if "content" in row and (row["source"] == "text" or "data" in row) else None,
+            base_data=row.get("data"),
             version=row["version"] + 1,
         )
 

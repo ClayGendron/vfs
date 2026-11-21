@@ -119,8 +119,9 @@ and the sync facade mirrors both."""
 Rung = Literal["none", "list", "read", "add", "contribute", "read_write"]
 """A rung of the permission ladder. Each rung includes every one below it:
 ``list`` names a row (path and kind), ``read`` reads it, ``add`` creates
-beneath a prefix and alters only one's own rows, ``contribute`` also
-overwrites and edits anyone's, ``read_write`` trashes, moves and grants."""
+beneath a prefix, appends to any file and otherwise alters only one's own
+rows, ``contribute`` also overwrites and edits anyone's, ``read_write``
+trashes, moves and grants."""
 
 RUNGS: Final[tuple[Rung, ...]] = get_args(Rung)
 """The ladder in order, lowest first — the rank of a rung is its index here."""
@@ -181,12 +182,13 @@ axis.
 """
 
 ADDITIVE_WRITE: Final[Needs] = Needs("add", create="add")
-"""The rungs of a write that replaces no stored byte: one that creates a file only where none is.
+"""The rungs of a write that replaces no stored byte: one that only creates, and one that only appends.
 
-Such a write never lands on an occupant, so it cannot widen what its
-caller may destroy, and an occupied target is judged at ``add``. The
-caller then hears ``exists``, which is the true answer, where
-``contribute`` would have refused it with ``permission_denied``.
+Neither can widen what its caller may destroy, so an occupied target is
+judged at ``add``. A create-only write never lands on an occupant, and
+its caller hears ``exists``, the true answer, where ``contribute`` would
+have refused it with ``permission_denied``. An append adds after the
+last byte, and the body it found is kept as a version.
 """
 
 # Grep option vocabularies — shared by the router, the storage protocols,

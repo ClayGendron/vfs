@@ -312,6 +312,7 @@ class VirtualFileSystem:
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -325,6 +326,7 @@ class VirtualFileSystem:
             if_version=if_version,
             if_versions=if_versions,
             if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=authority,
         )
@@ -806,6 +808,7 @@ class Session:
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
     ) -> Result:
         return self._result(
@@ -818,6 +821,7 @@ class Session:
             if_version=if_version,
             if_versions=if_versions,
             if_absent=if_absent,
+            append=append,
             parents=parents,
         )
 

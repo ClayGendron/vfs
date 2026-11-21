@@ -105,6 +105,16 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True, "if_version": 1}) == absent
     assert param_violation("write", {"entries": [], "if_absent": True, "if_versions": {"/f": 1}}) == absent
     assert param_violation("write", {"path": "/f", "content": "x", "if_absent": False, "if_version": 1}) is None
+    assert param_violation("write", {"entries": [], "append": True}) == (
+        "write append=True takes one file: path with content or data"
+    )
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_absent": True}) == (
+        "write takes append or if_absent, not both: an append to an absent path already creates it"
+    )
+    # A flag that is left out is a flag that is off, as on a call that arrives without its defaults.
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_version": 3}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True}) is None
 
 
 # ----------------------------------------------------------------------
@@ -137,6 +147,9 @@ GARBAGE = [
     ("write-versions-non-str-key", lambda fs: fs.write(entries=[], if_versions={1: 1})),
     ("write-versions-zero", lambda fs: fs.write(entries=[], if_versions={"/f.txt": 0})),
     ("write-versions-bool", lambda fs: fs.write(entries=[], if_versions={"/f.txt": True})),
+    ("write-truthy-append", lambda fs: fs.write(path="/f.txt", content="x", append=1)),
+    ("write-append-with-entries", lambda fs: fs.write(entries=[], append=True)),
+    ("write-append-with-if-absent", lambda fs: fs.write(path="/f.txt", content="x", append=True, if_absent=True)),
     ("write-truthy-if-absent", lambda fs: fs.write(path="/f.txt", content="x", if_absent="yes")),
     ("write-absent-with-version", lambda fs: fs.write(path="/f.txt", content="x", if_absent=True, if_version=1)),
     ("write-absent-with-versions", lambda fs: fs.write(entries=[], if_absent=True, if_versions={"/f.txt": 1})),

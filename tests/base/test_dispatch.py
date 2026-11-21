@@ -1183,6 +1183,18 @@ async def test_write_if_version_reaches_the_storage_keyed_by_its_own_path() -> N
     assert child.calls[1][1]["if_versions"] is None
 
 
+async def test_write_append_reaches_the_storage_with_the_tail_as_its_one_entry() -> None:
+    root = AsyncVirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    await root.write(path="/m/log.txt", content="line\n", append=True, if_version=4)
+    kwargs = child.calls[0][1]
+    assert [(entry.path, entry.content) for entry in kwargs["entries"]] == [("/log.txt", "line\n")]
+    assert (kwargs["append"], kwargs["if_absent"], kwargs["if_versions"]) == (True, False, {Path("/log.txt"): 4})
+    await root.write(path="/m/log.txt", content="line\n")
+    assert child.calls[1][1]["append"] is False
+
+
 async def test_write_if_versions_go_to_the_mount_of_each_key() -> None:
     root = AsyncVirtualFileSystem()
     a, b, c = RecorderStorage(), RecorderStorage(), RecorderStorage()

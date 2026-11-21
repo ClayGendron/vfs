@@ -104,6 +104,14 @@ class OnlyWith(NamedTuple):
     msg: str
 
 
+class NotBoth(NamedTuple):
+    """Two flags that may not both be on. A flag that is left out is off."""
+
+    left: str
+    right: str
+    msg: str
+
+
 class Disjoint(NamedTuple):
     """Two sequence parameters that may share no item."""
 
@@ -118,7 +126,7 @@ class Segments(NamedTuple):
     param: str
 
 
-ValueRule = OnlyWith | Disjoint | Segments
+ValueRule = OnlyWith | NotBoth | Disjoint | Segments
 
 
 _AUTHORITY: Final = ParamSpec("authority", "authority", doc="the verified authority behind the call; never on the wire")
@@ -179,6 +187,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             doc="batch form: the version expected at each named file's path",
         ),
         ParamSpec("if_absent", "bool", nullable=False, default=False, doc="create only: refuse a path that is held"),
+        ParamSpec("append", "bool", nullable=False, default=False, doc="single form: add the body to the file's end"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
         _AUTHORITY,
     ),
@@ -512,6 +521,12 @@ VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
     "write": (
         OnlyWith("if_absent", True, "if_version", None, _ABSENT_HAS_NO_VERSION),
         OnlyWith("if_absent", True, "if_versions", None, _ABSENT_HAS_NO_VERSION),
+        OnlyWith("append", True, "entries", None, "write append=True takes one file: path with content or data"),
+        NotBoth(
+            "append",
+            "if_absent",
+            "write takes append or if_absent, not both: an append to an absent path already creates it",
+        ),
     ),
 }
 """Cross-parameter value rules, checked after the shape rules on typed values."""
@@ -669,6 +684,8 @@ def _check_value_rule(op: Op, rule: ValueRule, params: Mapping[str, object]) -> 
         if params.get(rule.param) == rule.value and params.get(rule.other) != rule.allowed:
             return rule.msg
         return None
+    if isinstance(rule, NotBoth):
+        return rule.msg if params.get(rule.left) is True and params.get(rule.right) is True else None
     if isinstance(rule, Disjoint):
         left = params.get(rule.left) or ()
         right = params.get(rule.right) or ()

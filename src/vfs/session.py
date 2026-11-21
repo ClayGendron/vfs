@@ -151,6 +151,7 @@ class AsyncSession:
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
     ) -> Result:
         if (refusal := self._refuse_closed("write")) is not None:
@@ -163,6 +164,7 @@ class AsyncSession:
             if_version=if_version,
             if_versions=if_versions,
             if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=self._authority,
         )

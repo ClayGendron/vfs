@@ -218,6 +218,25 @@ async def test_add_hears_exists_from_a_create_only_write_over_anothers_row(
     assert _kind(await _write(storage, "/inbox/carol.md", who, if_absent=True)) == ErrorKind.permission_denied
 
 
+@pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
+async def test_add_appends_to_anothers_row_and_replaces_none(storage: InMemoryStorage, who: Authority) -> None:
+    await _inbox(storage, "add", "ann", "bob")
+    grown = await _write(storage, "/inbox/carol.md", who, " and more", append=True)
+    assert grown.success is True, grown.errors
+    assert (await storage.read(path=Path("/inbox/carol.md"), authority=CAROL)).observations[0].content == "x and more"
+    # Adding to the end removes nothing. Replacing the body still needs contribute.
+    assert _kind(await _write(storage, "/inbox/carol.md", who)) == ErrorKind.permission_denied
+    # Another's tombstone: an append at it is a restore, which add lacks.
+    assert (await storage.delete(path=Path("/inbox/carol.md"), authority=CAROL)).success is True
+    assert _kind(await _write(storage, "/inbox/carol.md", who, append=True)) == ErrorKind.permission_denied
+
+
+async def test_a_list_holder_cannot_append(storage: InMemoryStorage) -> None:
+    await _inbox(storage, "list", "bob")
+    assert _kind(await _write(storage, "/inbox/carol.md", BOB, append=True)) == ErrorKind.permission_denied
+    assert (await storage.read(path=Path("/inbox/carol.md"), authority=CAROL)).observations[0].content == "x"
+
+
 async def test_a_create_only_write_over_a_row_tells_a_list_holder_nothing(storage: InMemoryStorage) -> None:
     await _inbox(storage, "list", "bob")
     refused = await _write(storage, "/inbox/carol.md", BOB, if_absent=True)

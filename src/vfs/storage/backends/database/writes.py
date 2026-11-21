@@ -61,6 +61,7 @@ from vfs.models import (
 )
 from vfs.models.rows import ULIDKey
 from vfs.offload import call_offloaded
+from vfs.ops import ADDITIVE_WRITE
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.authorized import admit_landed, admit_staged, admit_targets
 from vfs.storage.backends.database.descent import (
@@ -83,12 +84,12 @@ from vfs.storage.backends.database.dialects import (
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists, stale_version
 from vfs.storage.backends.database.versions import mint_versions
-from vfs.storage.editing import edited_entry
+from vfs.storage.editing import appended, edited_entry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -102,6 +103,7 @@ if TYPE_CHECKING:
 
     from vfs.authority import Authority
     from vfs.models.rows import VFSTables
+    from vfs.ops import Rung
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.replace import EditOperation
@@ -315,6 +317,90 @@ async def edit_rows(
     return await _finish(session, tables, profile, parameter_budget, membership_budget, plan, op="edit", overwrite=True)
 
 
+async def append_rows(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    *,
+    entry: Entry,
+    expected: int | None,
+    parents: bool,
+    authority: Authority | None,
+    executor: Executor,
+    value_cap: ValueCap | None = None,
+) -> Result:
+    """Add *entry*'s body to the end of the file at its path, in the caller's transaction.
+
+    The row is locked first, so a rival appender waits for this
+    transaction to end, and the body is read by a later statement,
+    which at the append's isolation sees what that rival committed.
+    One statement cannot do both: a locking read that waited checks the
+    locked row again, and never the body row joined to it.
+
+    No live file at the path leaves the tail as the whole body: an
+    absent path is created and a deleted file comes back, as a write
+    does. The rest is a write's plan and a write's statements, the
+    guard included, with *expected* judged as a write judges it.
+
+    A rival can still win where the lock cannot reach: two appends that
+    both create an absent path. The loser raises :class:`StaleSnapshot`,
+    so its call runs again and appends to the row the winner made. It
+    never answers ``exists``, and it never replaces the winner's row.
+    """
+    target, rows = entry.path, tables.entry
+    await session.execute(locked_lookup(rows, rows.c.path, [str(target)], [rows.c.entry_id], profile))
+    committed = await _fetch_committed(session, tables, profile, membership_budget, {target}, with_data=True)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
+    body = _body(entry)
+    assert body is not None  # measured_entries refused a file with no body
+    kind, mime_type = entry.kind, entry.mime_type
+    metrics = BodyMetrics(entry.content_hash or "", entry.size_bytes, entry.lines)
+    row = committed.get(str(target))
+    if row is not None and row["deleted_at"] is None and row["kind"] in CONTENT_KINDS:
+        stored = (row["data"] or b"") if row["source"] == "bytes" else (row["content"] or "")
+        body = appended(stored, body)
+        kind, mime_type = row["kind"], row["mime_type"]
+        metrics = await _measured(body, executor)
+    text = isinstance(body, str)
+    status = plan.put_file(
+        target,
+        kind=kind,
+        content=body if text else None,
+        content_hash=metrics.content_hash,
+        size_bytes=metrics.size_bytes,
+        lines=metrics.lines,
+        mime_type=mime_type,
+        overwrite=True,
+        parents=parents,
+        owner_id=entry.owner_id,
+        data=None if text else body,
+        source="text" if text else "bytes",
+        expected=expected,
+    )
+    if status is not None:
+        plan.pending.append((target, status))
+    # A create that loses its name never lands on the winner's row, and the row is judged at the rung of an append.
+    result = await _finish(
+        session,
+        tables,
+        profile,
+        parameter_budget,
+        membership_budget,
+        plan,
+        op="write",
+        overwrite=False,
+        primary=ADDITIVE_WRITE.primary,
+    )
+    if any(
+        error.kind == ErrorKind.exists or (error.kind == ErrorKind.conflict and error.retryable)
+        for error in result.errors
+    ):
+        raise StaleSnapshot(f"a rival wrote {target} while it was appended to")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -328,8 +414,12 @@ async def _fetch_committed(
     targets: set[Path],
     *,
     with_content: bool = False,
+    with_data: bool = False,
 ) -> dict[str, RowMapping]:
-    """One bounded fetch seeds the plan: targets, ancestors, the root — tombstones included, for the plan to judge."""
+    """One bounded fetch seeds the plan: targets, ancestors, the root — tombstones included, for the plan to judge.
+
+    *with_content* joins each row's text, and *with_data* its bytes body beside the text.
+    """
     await seam("write:before-snapshot")
     entry = tables.entry
     columns: list[Column[object]] = [
@@ -347,7 +437,10 @@ async def _fetch_committed(
         entry.c.deleted_at,
     ]
     source: FromClause | None = None
-    if with_content:
+    if with_data:
+        columns += [tables.content.c.content, tables.blobs.c.data]
+        source = tables.bodies_joined(content=True, data=True)
+    elif with_content:
         columns.append(tables.content.c.content)
         source = tables.content_joined()
     paths = targets_with_ancestors(targets)
@@ -364,9 +457,13 @@ async def _finish(
     *,
     op: str,
     overwrite: bool,
+    primary: Rung | None = None,
 ) -> Result:
-    """Execute an error-free plan and assemble the batch's observations."""
-    admit_staged(session, op, plan)
+    """Execute an error-free plan and assemble the batch's observations.
+
+    *primary* is the rung a staged update is judged at, where it is not the verb's own.
+    """
+    admit_staged(session, op, plan, primary)
     # After the rights check on purpose: "unchanged" tells a caller its body
     # equals the stored one, so only a caller who may change the row hears it.
     plan.settle()
@@ -1282,6 +1379,13 @@ def _body(entry: Entry) -> str | bytes | None:
 
 def _measure(body: str | bytes) -> BodyMetrics:
     return measure_text(body) if isinstance(body, str) else measure_bytes(body)
+
+
+async def _measured(body: str | bytes, executor: Executor) -> BodyMetrics:
+    """*body* measured where a write's body is: inline when small, in one offloaded hop at the threshold."""
+    if len(body) < MEASURE_OFFLOAD_BYTES:
+        return _measure(body)
+    return await call_offloaded(executor, lambda: _measure(body))
 
 
 def _stage_edits(

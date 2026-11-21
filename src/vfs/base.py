@@ -921,6 +921,7 @@ class AsyncVirtualFileSystem:
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -954,6 +955,14 @@ class AsyncVirtualFileSystem:
         tell that it landed. A deleted file counts as absent, and the write brings it back with the new
         body. ``if_absent`` cannot be given with an expected version, because an absent file has none.
 
+        If ``append`` is true, the body is added to the end of the file and nothing already in it is
+        changed. It takes ``path`` with ``content`` or ``data``, and never ``entries``. The file is read
+        and written inside the storage in one step, so callers that append to one file at the same time
+        each keep what they added. A path that holds no file is created with the body as its whole
+        contents. A text file stays text while what is added is text, and becomes a bytes file when it
+        is not. An append sent twice adds its body twice. Give ``if_version`` with it to add at most
+        once: the second call then finds a later version and is refused with ``conflict``.
+
         If ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
         missing parents are made, as ``mkdir -p`` makes them. ``if_absent`` and ``parents`` apply to
         every entry in the call.
@@ -973,6 +982,7 @@ class AsyncVirtualFileSystem:
             if_version=if_version,
             if_versions=if_versions,
             if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=authority,
         )
@@ -995,7 +1005,7 @@ class AsyncVirtualFileSystem:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
         expected = None if if_version is None else {path: if_version}
         return await self._route_entry_batch(
-            [entry], if_versions=expected, if_absent=if_absent, parents=parents, authority=authority
+            [entry], if_versions=expected, if_absent=if_absent, append=append, parents=parents, authority=authority
         )
 
     async def edit(
@@ -2431,6 +2441,7 @@ class AsyncVirtualFileSystem:
         *,
         if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -2491,6 +2502,7 @@ class AsyncVirtualFileSystem:
                 entries=sorted(group, key=lambda e: e.path.depth),
                 if_versions=expected.get(mount.path),
                 if_absent=if_absent,
+                append=append,
                 parents=parents,
                 authority=authority,
             )

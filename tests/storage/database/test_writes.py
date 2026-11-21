@@ -2002,6 +2002,96 @@ class TestExpectedVersion:
         ]
 
 
+class TestAppend:
+    """An append is a lock, a snapshot with the body in it, and then a write's statements."""
+
+    @pytest.mark.parametrize("stored", ["one\n", b"\x00one"], ids=["text", "bytes"])
+    async def test_an_append_reads_the_old_body_once(self, stored: str | bytes, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[_holding("/log", stored)])).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        grown = await storage.write(entries=[_holding("/log", stored)], append=True)
+        assert [(o.status, o.version) for o in grown.observations] == [("updated", 2)]
+        # The lock, the snapshot, the guarded update, the revision read, the version that
+        # keeps the old body, two body deletes and the new body. The mint reads nothing.
+        own = _own(statements)
+        verbs = [statement.split()[0] for statement in own]
+        assert verbs == ["SELECT", "SELECT", "UPDATE", "SELECT", "INSERT", "DELETE", "DELETE", "INSERT"], own
+        assert "vfs_versions" in own[4], own[4]
+        both = frozenset({"content", "data"})
+        row = (await storage.read(path=Path("/log"), columns=both)).one()
+        assert (row.data if isinstance(stored, bytes) else row.content) == stored * 2
+        await storage.close()
+
+    async def test_a_grown_body_is_measured_in_one_hop_at_the_threshold(self, tmp_path, monkeypatch) -> None:
+        hops: list[int] = []
+        real = writes_module.call_offloaded
+
+        async def counted(executor: Any, work: Any) -> Any:
+            hops.append(1)
+            return await real(executor, work)
+
+        monkeypatch.setattr(writes_module, "call_offloaded", counted)
+        monkeypatch.setattr(writes_module, "MEASURE_OFFLOAD_BYTES", 1_000)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        seeded = [Entry(path=Path("/big.txt"), content="a" * 499), Entry(path=Path("/small.txt"), content="a")]
+        assert (await storage.write(entries=seeded)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/big.txt"), content="b" * 500)], append=True)).success
+        assert hops == []
+        # The tail is small and is measured in place. The body it leaves is at the threshold.
+        assert (await storage.write(entries=[Entry(path=Path("/big.txt"), content="c")], append=True)).success
+        assert hops == [1]
+        assert (await storage.write(entries=[Entry(path=Path("/small.txt"), content="b")], append=True)).success
+        assert hops == [1]
+        stat = (await storage.stat(path=Path("/big.txt"))).one()
+        assert (stat.size_bytes, stat.content_hash) == (
+            1_000,
+            hashlib.sha256(b"a" * 499 + b"b" * 500 + b"c").hexdigest(),
+        )
+        await storage.close()
+
+    async def test_an_append_that_loses_its_guard_runs_again_and_lands(self, tmp_path, monkeypatch) -> None:
+        # The lock makes this unreachable between appenders. A rival that takes no lock can still reach it.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/log.txt"), content="one\n")])).success is True
+        sessions = attempts(monkeypatch, storage)
+        entry = storage._host.tables.entry
+
+        async def rival() -> None:
+            moved = update(entry).where(entry.c.path == "/log.txt").values(version=5, content_hash="another body")
+            await sessions[-1].execute(moved)
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="two\n")], append=True)
+        assert grown.success is True, grown.errors
+        assert len(sessions) == 2
+        assert (await storage.read(path=Path("/log.txt"))).one().content == "one\ntwo\n"
+        await storage.close()
+
+    async def test_an_append_that_loses_the_creation_of_its_path_runs_again(self, tmp_path, monkeypatch) -> None:
+        # Two appends to an absent path both create it, and no row is there to lock.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        sessions = attempts(monkeypatch, storage)
+
+        async def rival() -> None:
+            await land(sessions[-1], storage._host.tables, "/log.txt", "eve", "read_write", body="rival\n")
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="mine\n")], append=True)
+        # Never "exists", and never the rival's row replaced: the call ran again from a new snapshot.
+        assert grown.success is True, grown.errors
+        assert len(sessions) == 2
+        await storage.close()
+
+
+def _holding(path: str, body: str | bytes) -> Entry:
+    """A file entry at *path* that holds *body*, as text or as bytes."""
+    return Entry(path=Path(path), data=body) if isinstance(body, bytes) else Entry(path=Path(path), content=body)
+
+
 def _statements_of(storage: DatabaseStorage) -> list[str]:
     """A list that fills with every statement *storage* sends from now on, the statistics pass's left out."""
     statements: list[str] = []

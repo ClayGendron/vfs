@@ -85,9 +85,10 @@ async def mint_versions(
     by_id = {staged.entry_id: staged for staged in replaced}
     revision = await read_revision(session, tables)
     ordered = [by_id[entry_id] for entry_id in sorted(by_id)]
-    held = [(s.entry_id, s.base_content, None) for s in ordered if s.base_content is not None]
+    in_hand = [s for s in ordered if s.base_content is not None or s.base_data is not None]
+    held = [(s.entry_id, s.base_content, s.base_data) for s in in_hand]
     minted = await _mint_rows(session, tables, held, by_id, authority=authority, revision=revision, now=now)
-    unread = [s for s in ordered if s.base_content is None]
+    unread = [s for s in ordered if s.base_content is None and s.base_data is None]
     for page in byte_chunked(unread, _pre_image_size, BLOB_PAGE_BYTES):
         for ids in chunked([staged.entry_id for staged in page], membership_budget):
             minted += await _mint_page(

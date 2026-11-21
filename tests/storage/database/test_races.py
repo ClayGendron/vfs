@@ -455,6 +455,49 @@ class TestExpectedVersionRivals:
 
 
 # ---------------------------------------------------------------------------
+# The row lock an append holds
+# ---------------------------------------------------------------------------
+
+# How long a call beside a held lock may run before the test is stopped as hung. Never a measurement.
+_HUNG_AFTER_SECONDS = 60.0
+
+
+class TestAppendLock:
+    """An append locks the one row it adds to: no reader waits on it, and no writer of another file does."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_reads_and_other_writes_return_while_an_append_holds_its_lock(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            seeded = [Entry(path=Path("/log.txt"), content="needle one\n"), Entry(path=Path("/other.txt"), content="x")]
+            assert (await storage.write(entries=seeded)).success
+            beside = sibling(env_var, storage)
+            try:
+                assert (await beside.first_touch()).success is True
+                returned: list[bool] = []
+
+                async def while_locked() -> None:
+                    # The append has locked its row and read its body, and has not committed.
+                    calls = (
+                        beside.read(path=Path("/log.txt")),
+                        beside.stat(path=Path("/log.txt")),
+                        beside.grep(pattern="needle"),
+                        beside.edit(path=Path("/other.txt"), edits=[EditOperation(old="x", new="y")]),
+                    )
+                    results = await asyncio.wait_for(asyncio.gather(*calls), _HUNG_AFTER_SECONDS)
+                    returned.extend(result.success for result in results)
+
+                handler, _ = _self_clearing("write:before-apply", while_locked)
+                with seams.installed("write:before-apply", handler):
+                    grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="two\n")], append=True)
+                assert grown.success is True, grown.errors
+                assert returned == [True, True, True, True]
+                assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "needle one\ntwo\n"
+            finally:
+                await beside.close()
+            await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
 # Observation honesty — edit/overwrite under ancestor relocation
 # ---------------------------------------------------------------------------
 
