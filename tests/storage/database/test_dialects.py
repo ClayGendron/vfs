@@ -292,7 +292,7 @@ class TestDialectPolicy:
         monkeypatch.setattr(AsyncSession, "connection", spy)
         read = await storage.read(path=Path("/f.txt"))
         assert read.observations[0].content == "x"
-        write = await storage.write(entries=[Entry(path=Path("/g.txt"), content="y")], overwrite=True)
+        write = await storage.write(entries=[Entry(path=Path("/g.txt"), content="y")])
         assert write.success is True
         assert {"isolation_level": "SERIALIZABLE"} in stamped  # the read op
         assert {"vfs_writer": True, "isolation_level": "SERIALIZABLE"} in stamped  # the write op

@@ -19,8 +19,8 @@ and before the bodies are replaced, so it reads the pre-image under the
 same lock that guards the write. The pre-image's metrics are measured
 from the body itself, never copied from the entry row: an arbitration
 clobber has already overwritten that row's columns by the time the mint
-runs. A row whose snapshot already joined its text body (an edit's)
-mints from that copy: the guarded update proved the row unchanged since
+runs. A row whose snapshot already joined its body (an edit's text,
+or an append's text or bytes) mints from that copy: the guarded update proved the row unchanged since
 the snapshot, so the copy is the pre-image and a second read would
 fetch the same bytes. The rest are read one page at a time — a page is
 bounded by the blob page's bytes, metered by each replaced body's size
@@ -85,9 +85,10 @@ async def mint_versions(
     by_id = {staged.entry_id: staged for staged in replaced}
     revision = await read_revision(session, tables)
     ordered = [by_id[entry_id] for entry_id in sorted(by_id)]
-    held = [(s.entry_id, s.base_content, None) for s in ordered if s.base_content is not None]
+    in_hand = [s for s in ordered if s.base_content is not None or s.base_data is not None]
+    held = [(s.entry_id, s.base_content, s.base_data) for s in in_hand]
     minted = await _mint_rows(session, tables, held, by_id, authority=authority, revision=revision, now=now)
-    unread = [s for s in ordered if s.base_content is None]
+    unread = [s for s in ordered if s.base_content is None and s.base_data is None]
     for page in byte_chunked(unread, _pre_image_size, BLOB_PAGE_BYTES):
         for ids in chunked([staged.entry_id for staged in page], membership_budget):
             minted += await _mint_page(
