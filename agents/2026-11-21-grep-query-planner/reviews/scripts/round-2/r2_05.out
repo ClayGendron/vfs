@@ -1,0 +1,4 @@
+'(ab)\\1': refused by the gate or crate (backreferences are not supported)
+'(?=foo)bar': refused by the gate or crate (look-around assertions are not supported)
+'a(?i)b': refused by the gate or crate (global flags not at the start of the expression at)
+checked 3277 hit bodies against literals; violations 0

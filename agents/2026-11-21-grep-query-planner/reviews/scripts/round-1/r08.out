@@ -1,0 +1,4 @@
+a) R2 probe rows for file root /include/linux/dcache.h: 0; vfs grep rows: 1
+b) overlapping roots ('/drivers', '/drivers/md', '/drivers/md/bcache'): per-root rows [37340, 296, 31] sum=37667 distinct=37340
+c) range allow-list for 7 roots: 1 statement, 78793 ids (84% of 93759 files), traced peak 3.3 MB; declared budgets: SCAN_TIER_BUDGET 25000, SQLite membership 32766
+   at the reference deployment the same share is 8,403,780 ids

@@ -1,0 +1,2 @@
+today  rows  600 returned  11,662,847 B  server read  11,662,847 B     2.79 ms  c_byte by returned      0.24 ns/B  by read   0.24 ns/B
+instr  rows    1 returned     178,811 B  server read  11,662,847 B    12.83 ms  c_byte by returned     71.77 ns/B  by read   1.10 ns/B

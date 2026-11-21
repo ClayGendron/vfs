@@ -1,0 +1,17 @@
+H1 '[Kk]malloc'         e5 literals=frozenset({'malloc'}) lost=[]
+H1 'Kmalloc|kmalloc'    e5 literals=frozenset({'Kmalloc', 'kmalloc'}) lost=[]
+H1 '(?i)kmalloc'        e5 literals=None lost=[]
+H1 '(?i:KMALLOC)'       e5 literals=None lost=[]
+H2 invert_match: decision 7 never runs the test under invert, so the scan side fetch is unfiltered: rows kept = ['/a/lower.c', '/a/other.c', '/a/upper.c']
+M1 plan: ['SEARCH vfs_entries USING COVERING INDEX ix_vfs_entries_path (path>? AND path<?)']
+M1 /drivers/md    probe returned 301 visited 301; trash side judged on them: 0 tombstoned -> verdict n=301
+M1 /drivers/gpu   probe returned 1025 visited 1025; trash side judged on them: 0 tombstoned -> verdict more than T
+M1 /drivers       probe returned 1025 visited 1025; trash side judged on them: 0 tombstoned -> verdict more than T
+M5 file root /include/linux/dcache.h: probe range rows + own row = 1
+L3 roots ['/drivers', '/drivers/md', '/drivers/md/bcache'] reduce to ['/drivers']
+M3 refusal-first: 'a' over /mm/tests: ['vfs.invalid.unindexable_pattern']
+M3 refusal-first: 'a' over /drivers: ['vfs.invalid.unindexable_pattern']
+M3 allow_scan '^$' over /kernel/kcsan: scan tier 10 rows, in hand 10 rows, identical counts per file: True
+M3 allow_scan 'x*' over /kernel/kcsan: scan tier 10 rows, in hand 10 rows, identical counts per file: True
+M3 allow_scan '.' over /kernel/kcsan: scan tier 10 rows, in hand 10 rows, identical counts per file: True
+L1 SELECT 1 median 0.134 ms (spread 0.126-0.215); a 40k-row count median 0.848 ms

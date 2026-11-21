@@ -30,6 +30,8 @@ jobs:
   conformance:
     name: conformance (postgres ${{ matrix.version }})
     runs-on: ubuntu-24.04
+    # A backstop for a hang: the slowest leg takes about 17 minutes.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
