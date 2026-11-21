@@ -5,6 +5,7 @@ plane runs as the system actor, and the session is sugar over the funnel."""
 from __future__ import annotations
 
 import inspect
+import logging
 import pathlib
 import re
 from typing import Any
@@ -15,11 +16,13 @@ import vfs.authority
 from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.authority import Authority, Principal
 from vfs.base import AsyncVirtualFileSystem
+from vfs.models import Entry
 from vfs.ops import ALL_OPS, Op
+from vfs.paths import Path
 from vfs.results import ErrorKind, Result
 from vfs.session import AsyncSession
 from vfs.storage.backends.memory import InMemoryStorage
-from vfs.sync import Session
+from vfs.sync import Session, VirtualFileSystem
 
 ALICE = Authority.of(Principal("alice"))
 SYSTEM = Authority.system()
@@ -139,6 +142,37 @@ async def test_an_explicit_authority_beats_the_default() -> None:
     assert seen(storage) == [("read", ALICE)]
 
 
+def test_a_system_default_is_warned_of_once_when_the_file_system_is_made(caplog: pytest.LogCaptureFixture) -> None:
+    # The sync face builds one kernel, so it warns once too, never twice.
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        AsyncVirtualFileSystem(storage=RecorderStorage(), default_authority=SYSTEM)
+        with VirtualFileSystem(storage=InMemoryStorage(), default_authority=SYSTEM):
+            pass
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert [record.name for record in warnings] == ["vfs.authority", "vfs.authority"]
+
+
+@pytest.mark.parametrize("default", [None, ALICE, ANON], ids=["none", "alice", "anon"])
+def test_no_other_default_warns(default: Authority | None, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        AsyncVirtualFileSystem(storage=RecorderStorage(), default_authority=default)
+    assert caplog.records == []
+
+
+async def test_each_call_that_falls_back_to_the_default_logs_at_debug_and_no_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), default_authority=SYSTEM)
+    secret = "the body of a file, which no log record carries"
+    caplog.clear()  # the warning as the kernel is made is the test above's
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        assert (await fs.write(path="/f.txt", content=secret)).success is True
+        assert (await fs.read("/f.txt", authority=ALICE)).success is True
+    [record] = caplog.records
+    assert record.levelno == logging.DEBUG and "write" in record.getMessage()
+    assert secret not in record.getMessage()
+
+
 async def test_the_authority_is_threaded_not_cached() -> None:
     # Two calls, two authorities: each dispatch carries its own value.
     storage = RecorderStorage()
@@ -147,6 +181,37 @@ async def test_the_authority_is_threaded_not_cached() -> None:
     await fs.read("/f.txt", authority=ALICE)
     await fs.read("/f.txt", authority=bob)
     assert seen(storage) == [("read", ALICE), ("read", bob)]
+
+
+# ---------------------------------------------------------------------------
+# A declared owner
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("owner", ["*", "anon", "system", "group:eng"])
+@pytest.mark.parametrize("authority", [SYSTEM, ALICE, None], ids=["system", "alice", "none"])
+async def test_a_reserved_owner_refuses_the_whole_write_before_any_storage(
+    owner: str, authority: Authority | None
+) -> None:
+    fs = RecorderFS()
+    entries = [
+        Entry(path=Path("/ok.txt"), content="a"),
+        Entry(path=Path("/f.txt"), content="a", owner_id=owner),
+    ]
+    result = await fs.write(entries=entries, authority=authority)
+    assert result.success is False
+    [error] = result.errors
+    assert (error.kind, error.path) == (ErrorKind.invalid, "/f.txt")
+    assert repr(owner) in error.message
+    assert fs.calls == []
+
+
+async def test_any_other_declared_owner_reaches_the_storage() -> None:
+    fs = RecorderFS()
+    entry = Entry(path=Path("/f.txt"), content="a", owner_id="carol")
+    assert (await fs.write(entries=[entry], authority=SYSTEM)).success is True
+    [(op, kwargs)] = fs.calls
+    assert op == "write" and [e.owner_id for e in kwargs["entries"]] == ["carol"]
 
 
 async def test_a_mount_change_makes_its_directory_as_the_caller_and_does_its_own_work_as_the_system_actor() -> None:

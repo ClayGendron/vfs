@@ -1,11 +1,26 @@
 """The authority value: the three construction doors, the invariants they
-enforce, the derived owner, and the one reserved name."""
+enforce, the derived owner, the reserved names, and the caller a call runs as."""
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from vfs.authority import ANONYMOUS_NAME, MAX_SUBJECTS, SYSTEM_NAME, Authority, Narrowing, Principal, owner_for
+from vfs.authority import (
+    ANONYMOUS_NAME,
+    MAX_SUBJECTS,
+    SYSTEM_NAME,
+    Authority,
+    Narrowing,
+    Principal,
+    caller_for,
+    owner_for,
+    owner_refusal,
+    warn_if_system_default,
+)
+
+RESERVED_OWNERS = ("*", "anon", "system", "group:eng")
 
 ALICE = Principal("alice")
 BOB = Principal("bob")
@@ -170,3 +185,59 @@ def test_anonymous_owns_nothing() -> None:
 
 def test_no_authority_stamps_nothing() -> None:
     assert owner_for(None, declared="alice") is None
+
+
+@pytest.mark.parametrize("declared", RESERVED_OWNERS)
+def test_a_reserved_name_can_own_no_row(declared: str) -> None:
+    # Everyone, a group, the anonymous principal and the system actor name grant rows or
+    # principals that own nothing, so a row stamped with one would be owned by no one real.
+    assert owner_refusal(declared) is not None
+    assert repr(declared) in (owner_refusal(declared) or "")
+    assert owner_for(Authority.system(), declared=declared) is None
+
+
+@pytest.mark.parametrize("declared", [None, "alice", "carol", "systems", "anonymous", "groups", "eng:group"])
+def test_any_other_owner_is_admitted(declared: str | None) -> None:
+    assert owner_refusal(declared) is None
+
+
+# ---------------------------------------------------------------------------
+# The caller a call runs as
+# ---------------------------------------------------------------------------
+
+
+def test_a_named_authority_is_the_caller_and_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    alice = Authority.of(ALICE)
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        assert caller_for(alice, Authority.system(), op="read") is alice
+    assert caplog.records == []
+
+
+def test_a_call_that_names_no_one_falls_back_to_the_default_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    system = Authority.system()
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        assert caller_for(None, system, op="write") is system
+    [record] = caplog.records
+    assert (record.name, record.levelno) == ("vfs.authority", logging.DEBUG)
+    assert "write" in record.getMessage() and "system" in record.getMessage()
+
+
+def test_with_no_default_the_caller_is_anonymous_and_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        assert caller_for(None, None, op="read") == Authority.anonymous()
+    assert caplog.records == []
+
+
+def test_a_system_default_is_warned_of_once(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        warn_if_system_default(Authority.system())
+    [record] = caplog.records
+    assert (record.name, record.levelno) == ("vfs.authority", logging.WARNING)
+    assert "default_authority" in record.getMessage()
+
+
+@pytest.mark.parametrize("default", [None, Authority.of(ALICE), Authority.anonymous()], ids=["none", "alice", "anon"])
+def test_any_other_default_warns_nothing(default: Authority | None, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        warn_if_system_default(default)
+    assert caplog.records == []

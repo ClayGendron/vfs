@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import re
+import tomllib
 from collections import Counter
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -547,6 +548,31 @@ def test_the_clock_the_deadline_and_the_cadence_have_one_home() -> None:
     crate = {path.name: path.read_text() for path in sorted(CRATE.glob("*.rs"))}
     errors += _line_hits(crate, r"PER_CHECK|CLOCK_EVERY", "crates/vfs-core/src", "keeps a cadence of its own")
     assert not errors, "\n".join(errors)
+
+
+def test_vfs_prints_nothing_and_each_logger_is_its_modules_own() -> None:
+    """No module calls ``print``, and every ``getLogger`` takes ``__name__``, so each record is under ``vfs``."""
+    errors: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            where = f"src/vfs/{path.relative_to(SRC)}:{node.lineno}"
+            if isinstance(node.func, ast.Name) and node.func.id == "print":
+                errors.append(f"{where} calls print")
+            logger = isinstance(node.func, ast.Attribute) and node.func.attr == "getLogger"
+            if logger and ([ast.unparse(arg) for arg in node.args] != ["__name__"] or node.keywords):
+                errors.append(f"{where} names a logger other than its module's")
+    assert not errors, "\n".join(errors)
+
+
+def test_get_started_names_the_three_engine_extras_and_no_other() -> None:
+    """The install lines stay few: the base package and one extra per server engine, each one pyproject declares."""
+    page = (REPO / "documentation" / "get-started.md").read_text()
+    named = set(re.findall(r"vfs-py\[([a-z-]+)\]", page))
+    declared = set(tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"])
+    assert named == {"postgres", "mssql", "oracle"}
+    assert named <= declared, f"the page names extras pyproject.toml does not declare: {sorted(named - declared)}"
 
 
 # ---------------------------------------------------------------------------

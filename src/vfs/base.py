@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never,
 
 from pydantic import ValidationError
 
-from vfs.authority import Authority
+from vfs.authority import Authority, caller_for, owner_refusal, warn_if_system_default
 from vfs.chain import admit_rows_in_hand, glob_rows_in_hand, grep_rows_in_hand, judge_in_hand
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
@@ -160,10 +160,6 @@ _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patter
 
 # The grant verbs that change membership rows: mount-wide, so they carry no path.
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
-
-# A call that names nobody runs as the named nobody: it holds only what a
-# mount's posture gives everyone, and the audit still has an actor.
-_ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
 
 
 class ResolvedTerminal(NamedTuple):
@@ -278,7 +274,8 @@ class AsyncVirtualFileSystem:
     ``budget_exhausted``. ``close_timeout`` is how many seconds ``close()`` waits for each storage.
     ``rerankers`` are the stages that ``search`` runs, in order, over the results of several mounts.
     ``default_authority`` is the caller for a call that names none. Without it, such a call runs as the
-    anonymous caller.
+    anonymous caller. If it is the system actor, the kernel logs one warning as it is made, because such
+    a call then passes every rights check. vfs logs through the standard ``logging`` module, under ``vfs``.
 
     A ``storage`` that cannot be read, or a reranker with no ``rerank`` method, raises ``TypeError``. A
     ``deny_ops`` that masks a read operation raises ``ValueError``.
@@ -329,6 +326,7 @@ class AsyncVirtualFileSystem:
         self._hop_budget_default = hop_budget
         self._close_timeout = close_timeout
         self._default_authority = default_authority
+        warn_if_system_default(default_authority)
         self._mount_lock = asyncio.Lock()
         self._posture_writes: set[int] = set()
         self._stranded_disposals: dict[int, StorageBackend] = {}
@@ -628,7 +626,8 @@ class AsyncVirtualFileSystem:
             storage_type=type(mount.storage).__name__,
             storage_path=str(terminal.rel),
         )
-        return await self._probe_location(terminal, row, self._admitted(authority)) if exists else row
+        who = caller_for(authority, self._default_authority, op="locate")
+        return await self._probe_location(terminal, row, who) if exists else row
 
     async def locate_edge(
         self, source: str, target: str, *, exists: bool = False, authority: Authority | None = None
@@ -932,7 +931,8 @@ class AsyncVirtualFileSystem:
         missing parents are made, as ``mkdir -p`` makes them. Both apply to every entry in the call.
 
         The call returns a :class:`Result`. Every entry passes the gate before any storage is called,
-        so a path that is not valid, or a mount that is read-only there, refuses the whole call. Each
+        so a path that is not valid, an ``owner_id`` that names no one, such as ``*``, ``anon``,
+        ``system`` or a ``group:`` name, or a mount that is read-only there, refuses the whole call. Each
         mount then writes its own entries, so one mount can succeed where another fails. An exception
         that the ``entries`` iterable raises while it is read reaches the caller unchanged, and nothing
         has been written at that point.
@@ -2426,6 +2426,8 @@ class AsyncVirtualFileSystem:
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
                 return self._invalid_path(resolved, entry.path, "write")
+            if (refused := owner_refusal(entry.owner_id)) is not None:
+                return self._error(ErrorKind.invalid, op="write", path=resolved.path, detail=refused)
             terminal = self._resolve_terminal(resolved.path)
             err = self._gate_entry(terminal.mount, "write", write_rels=(terminal.rel,))
             if err is not None:
@@ -2625,7 +2627,7 @@ class AsyncVirtualFileSystem:
         ``invalid``, and the refusal names the argument. This check runs first in every public verb,
         so a wrong argument is reported as ``invalid`` even on a closed kernel or a path that is
         ``busy``. Who is calling is not checked here. A call that names no authority runs as the
-        default authority or as the anonymous caller, as :meth:`_admitted` says, and a mount whose
+        default authority or as the anonymous caller, as ``caller_for`` says, and a mount whose
         posture wants a name is what refuses it.
         """
         problem = param_violation(op, params)
@@ -2727,7 +2729,7 @@ class AsyncVirtualFileSystem:
         before anything changes. The call returns what was judged, taken before the storage was asked,
         or ``None`` for the system actor and for a closed kernel.
         """
-        who = self._admitted(authority)
+        who = caller_for(authority, self._default_authority, op="a mount change")
         if who.is_system or not self._mounts:
             return None
         judged = MountJudgement.of(self._mounts, mount_path)
@@ -2797,7 +2799,7 @@ class AsyncVirtualFileSystem:
         The code above carries ``op`` as a value, and this is where it meets a typed method. There is
         one branch for each operation and the last is ``assert_never``, so a verb added to ``ops.py``
         fails the type check until it has a branch here. A storage always receives an authority, which
-        is the one :meth:`_admitted` gives. A storage opens and commits its own transaction inside
+        is the one ``caller_for`` gives. A storage opens and commits its own transaction inside
         each method, and the kernel never sees one.
 
         If the storage lacks the family of methods that ``op`` belongs to, the result is
@@ -2813,7 +2815,7 @@ class AsyncVirtualFileSystem:
         if not self._mounts:
             return self._closed_error(op)
         storage = mount.storage
-        authority = self._admitted(authority)
+        authority = caller_for(authority, self._default_authority, op=op)
         try:
             match op:
                 case "read":
@@ -2912,20 +2914,6 @@ class AsyncVirtualFileSystem:
                     assert_never(op)
         except TransportError as exc:
             return self._error(ErrorKind.backend_unavailable, op=op, path=ROOT, detail=f"the transport failed: {exc}")
-
-    def _admitted(self, authority: Authority | None) -> Authority:
-        """Return the authority that a storage is handed for a call.
-
-        It is the call's own authority when it names one. Otherwise it is the kernel's
-        ``default_authority``, which a bulk load sets to ``Authority.system()``. Otherwise it is the
-        anonymous caller, who holds only what the posture of each :term:`mount` gives everyone. A
-        call always has a named caller, so a storage and its audit always see one.
-        """
-        if authority is not None:
-            return authority
-        if self._default_authority is not None:
-            return self._default_authority
-        return _ANONYMOUS_AUTHORITY
 
     def _backend_unsupported(self, op: Op) -> Result:
         """Return the ``unsupported`` refusal for a storage that lacks the methods ``op`` needs.

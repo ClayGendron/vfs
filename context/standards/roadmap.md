@@ -426,6 +426,8 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 #### I6 — Validate declared owners; the silent-escalation guard · S · gate b
 
+*State, 2026-11-20.* Criterion 1 is built. `write` refuses a declared `owner_id` of `*`, `anon`, `system` or a `group:` name with `vfs.invalid` before any storage is called, whoever the caller is, and the system actor's stamp in a direct storage call writes no owner for one. `write` is the only verb that takes a declared owner; `mkdir`, `copy` and `restore` take none, so they need no check. Criterion 2 is replaced by D17's ruling: there is no `loud=` flag. A kernel made with the system actor as its `default_authority` logs one `WARNING` on the `vfs.authority` logger, and each call that falls back to the default logs at `DEBUG`. The refusal of the system actor by `cli` and `serve()` is not built.
+
 *Why.* The system actor stamps any declared `owner_id` unchecked, and a host whose `default_authority` is the system actor turns every forgotten `authority=` into a system write. *Depends on.* Nothing. D17. *Acceptance.*
 1. A declared `owner_id` of `*`, `anon`, `system` or a `group:` prefix is `vfs.invalid` on `write`, `mkdir`, `copy`, `restore`.
 2. `VirtualFileSystem(default_authority=…, loud=True)` emits exactly one `WARNING` record (X7's logger) per call that fell back to the default; `cli` and `serve()` refuse the system actor regardless.
@@ -857,6 +859,8 @@ Nothing is built (EXECUTED 2026-11-15). MCP ships with 0.1.0 (D2, Clay, 2026-11-
 
 #### X5 — Install page and the one setup recipe · S · gate f
 
+*State, 2026-11-20.* The install lines are ruled few, not complete. The published Get Started page (`documentation/get-started.md`) gives the base install and one extra per server engine, `postgres`, `mssql` and `oracle`, and a lint test holds that set and that each is declared in `pyproject.toml`. The other extras are left off the page on purpose, so the criterion that every extra appears is dropped. The `CONTRIBUTING.md` recipe is not changed.
+
 *State, 2026-11-15.* Partly landed. `docs/how-to/install.md` exists since [the release lane](../specifications/archive/166-the-release-lane-to-0-1-0/spec.md): it carries the pre-release install line and the Alpine note, and a lint test pins the line (`tests/lint/test_code_shape.py:335`). No test asserts every extra appears, and `CONTRIBUTING.md` does not carry the `uv sync --all-extras --group dev` recipe (EXECUTED).
 
 *Acceptance.* `docs/how-to/install.md` lists the extras (a test asserts every `pyproject.toml` extra appears), the wheel platforms from `publish.yml`, "no Rust toolchain on a listed platform", Python 3.11–3.14, and the Alpine note; `CONTRIBUTING.md` and `docs/contributing.md` are one source using `uv sync --all-extras --group dev`.
@@ -868,6 +872,8 @@ Nothing is built (EXECUTED 2026-11-15). MCP ships with 0.1.0 (D2, Clay, 2026-11-
 *Acceptance.* `cli_query_demo.py`, `demo_dbfs.py`, `postgres_backend_playground.ipynb`, `postgres_repo_glob_grep.ipynb`, `repo_postgres_cli_smoke.ipynb` and `story_001_demo.ipynb` are removed (D29); `main.py` is removed or ported; `search_walkthrough.ipynb` is executed in CI via nbclient against the live tree; `glob_residuation.ipynb` uses public names or is removed; a test asserts no file under `examples/` imports `vfs.backends`, `vfs.client`, `vfs.query`, `sqlmodel` or `grover`.
 
 #### X7 — One named logger · S · gate b
+
+*State, 2026-11-20.* Built in part. Each module that logs takes `logging.getLogger(__name__)`, so every record is under `vfs`, and a lint test holds that and that no module calls `print`. The one module that logs today is `vfs.authority`, and what it logs at each level is in its docstrings and in the `default_authority` paragraph of `AsyncVirtualFileSystem`, not in a storage reference page. vfs adds no handler, so the one warning reaches a host that configures no logging through Python's last-resort handler. The suite-wide search for secret bytes in every record (criterion 2) is not built; one test checks that the fallback record carries no body.
 
 *Why.* `src/vfs` has no `import logging`, yet I2 and I6 want warning records and an operator needs somewhere to look. The logger name is public surface. *Depends on.* Nothing. *Acceptance.*
 1. One logger, `vfs`, with child names per package; no `print` in `src/`.
@@ -1086,7 +1092,7 @@ A lean is the assistant's recommendation, not a decision.
 | D14 | Spec 149: add an `attested` provenance? | Add it. | I1 |
 | D15 | What "open" means on the ladder for `serve()`'s refusal (ADR 068 rule 7, after ADR 080 retired the old words). | Refuse when any mount's root everyone-level is `add` or above. | I2 |
 | D16 | MCP servers as the user: host-supplied resolver (a), vfs-owned store (b), token exchange at the edge (c)? Subject sets over a per-user server? | (a) at 0.1.0 (or 0.2 under D2 (iii)); never (c) inside `Authority`; refuse subject sets. | I4 |
-| D17 | Validate declared owners; keep group ownership parked; a `loud=` flag for the default-authority fallback? | Yes to all. | I6 |
+| D17 | Validate declared owners; keep group ownership parked; a `loud=` flag for the default-authority fallback? | Decided 2026-11-20: validate, and keep group ownership parked. No `loud=` flag, because a flag is one more thing a developer must know to set: a system `default_authority` logs one warning when the kernel is made, and the standard `logging` configuration silences it. | I6 |
 | D18 | Oracle naming in the matrix. The compose image is `gvenzl/oracle-free:23-slim`; the vector type arrived in 23.4. | Name the floor 23.4+ and the image tag. | D1 |
 | D19 | Schema lifecycle from `0.1.0b1`: D2 as written? A corrupt version row as `vfs.unavailable.corrupt`? | Yes; yes. | D2 |
 | D20 | Default local embedder: amend ADR 060 to model2vec potion, or build fastembed/MiniLM? | Amend; keep fastembed as a documented LangChain route. | E1 |

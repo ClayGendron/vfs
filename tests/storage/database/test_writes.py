@@ -296,6 +296,18 @@ class TestWriteMechanics:
         assert owners["/shared"] is None
         await storage.close()
 
+    @pytest.mark.parametrize("owner", ["*", "anon", "system", "group:eng"])
+    async def test_the_system_actor_never_stamps_a_reserved_owner(self, tmp_path, owner: str) -> None:
+        # The kernel refuses such a write; a direct storage call still stamps no reserved name.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path("/etl.txt"), content="a", owner_id=owner)]
+        assert (await storage.write(entries=entries, authority=SYSTEM)).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            stamped = (await conn.execute(select(entry.c.owner_id).where(entry.c.path == "/etl.txt"))).scalar_one()
+        assert stamped is None
+        await storage.close()
+
     async def test_overwrite_preserves_entry_identity(self, tmp_path) -> None:
         # Durable references (versions, chunks, edges) hang off entry_id:
         # an overwrite must update the row in place, never re-mint it.
