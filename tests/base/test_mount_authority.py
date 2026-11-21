@@ -118,7 +118,7 @@ async def test_add_mount_makes_its_directories_as_the_caller_would() -> None:
     assert paths(fs) == ["/", "/a/b/c"]
 
 
-async def test_update_mount_is_refused_where_removing_and_adding_the_mount_would_be() -> None:
+async def test_update_mount_is_refused_where_the_mount_above_is_read_only() -> None:
     fs = AsyncVirtualFileSystem()
     await fs.add_mount(InMemoryStorage(), "/data", deny_ops={"sweep"})
     await fs.update_mount("/", permissions="read")
