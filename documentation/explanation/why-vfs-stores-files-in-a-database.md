@@ -36,7 +36,7 @@ The choice has real costs, and they are worth knowing before adopting VFS.
 
 - **Other programs cannot open the files.** An editor, a shell, or a compiler on the machine cannot read a file in VFS. Everything goes through VFS. That is also the point, because it is what makes the kernel the only path to the data.
 - **Every call is a database query.** With SQLite in the same process that is fast. With a database server, each call is a trip across the network.
-- **There is a database to run.** On a laptop it is a single SQLite file. In production it is Postgres, SQL Server, or Oracle, which most teams already operate.
+- **There is a database to run.** On a laptop it is a single SQLite file. In production it is Postgres, which most teams already operate.
 
 ## The Short Version
 

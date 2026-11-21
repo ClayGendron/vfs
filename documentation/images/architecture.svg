@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" id="vfs-architecture" viewBox="0 0 760 520" width="760" height="520" role="img" aria-labelledby="vfs-architecture-title vfs-architecture-desc">
   <title id="vfs-architecture-title">VFS Architecture</title>
-  <desc id="vfs-architecture-desc">An AI agent and the VFS kernel run inside one application process. The agent sends commands to the kernel, and the kernel is the one layer that everything flows through. The kernel reads and writes a database, which is SQLite locally or Postgres, SQL Server, or Oracle in the cloud. The kernel has no access to the host machine's disk, shell, network, or program code by default, and each one is reached only through an explicit grant.</desc>
+  <desc id="vfs-architecture-desc">An AI agent and the VFS kernel run inside one application process. The agent sends commands to the kernel, and the kernel is the one layer that everything flows through. The kernel reads and writes a database, which is SQLite locally or Postgres in the cloud. The kernel has no access to the host machine's disk, shell, network, or program code by default, and each one is reached only through an explicit grant.</desc>
   <style>
     /* Each rule names this figure, so the file can be placed inline in a page and touch nothing else. */
     /* Each colour and the typeface is the page's token when there is one, and the value here when alone. */
@@ -60,7 +60,7 @@
   <text class="note secondary" text-anchor="middle" x="93" y="452">local</text>
 
   <rect class="frame" stroke-width="1" x="150" y="404" width="232" height="66" rx="8"/>
-  <text class="name primary" text-anchor="middle" x="266" y="432">Postgres, SQL Server, Oracle</text>
+  <text class="name primary" text-anchor="middle" x="266" y="432">Postgres</text>
   <text class="note secondary" text-anchor="middle" x="266" y="452">cloud</text>
 
   <!-- The kernel is also the only path to the host, and that path is closed by default. -->

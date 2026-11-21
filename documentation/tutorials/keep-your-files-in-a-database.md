@@ -102,7 +102,7 @@ You gave a file system a database, wrote a file, and read it back after closing 
 - **One argument made the files last.** `storage=DatabaseStorage(url=...)` is the only line that differs from the first tutorial.
 - **The files live in the database.** VFS stores each file as a row and never writes it to your disk as a file.
 
-SQLite is a good fit for a laptop. VFS also runs on Postgres, SQL Server, and Oracle, where the URL names that database instead.
+SQLite is a good fit for a laptop. VFS also runs on Postgres, where the URL names that database instead.
 
 ## Where to Go Next
 

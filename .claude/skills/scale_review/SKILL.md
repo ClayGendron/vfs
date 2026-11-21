@@ -1,6 +1,6 @@
 ---
 name: scale_review
-description: Review a commit set (or a named code area) for correctness and boundedness at production scale — 10,000+-entry batches, the least generous SQL engine, real concurrency. Use when the user asks to "scale review", "check this at scale", "will this survive a 10k batch", "review for Oracle/SQL Server limits", "audit statement growth", or after landing any change that touches the database backend, a write/read builder, or a loop over batch input.
+description: Review a commit set (or a named code area) for correctness and boundedness at production scale — 10,000+-entry batches, the least generous SQL engine, real concurrency. Use when the user asks to "scale review", "check this at scale", "will this survive a 10k batch", "review for the engine caps", "audit statement growth", or after landing any change that touches the database backend, a write/read builder, or a loop over batch input.
 ---
 
 # Scale review — bounded on the least generous engine
@@ -17,10 +17,10 @@ One question, asked of every touched statement, loop, and collection:
 **does this stay correct and bounded when the batch is 10,000+ entries,
 the engine is the tightest one we serve, and other sessions are writing
 at the same time?** Batches of 10,000+ files in a single call are a
-supported contract here, not an edge case — and SQLite's generous limits
-prove nothing, because production runs on Postgres, SQL Server, Oracle,
-and any other SQLAlchemy engine. A design that only works within
-SQLite's caps is a bug, not a style issue.
+supported contract here, not an edge case — and SQLite's single writer
+proves nothing about concurrency, because production runs on Postgres.
+A design that works only on one of the two engines is a bug, not a
+style issue.
 
 The declared budgets live in
 `src/vfs/storage/backends/database/dialects.py`: per-dialect
@@ -68,11 +68,11 @@ looks like at 10,000 entries:
 
 ### 3. Engine floor check
 
-Judge every limit against the tightest cap actually served, never the
-dev engine: Oracle's 1,000-element `IN`-list cap is the `GENERIC`
-floor's `in_list_budget`; SQL Server's ~2,100 bind parameters bounds
-both membership chunks and bulk rows; `key_byte_budget` floors at
-1,700 bytes for index keys. A literal constant like `CHUNK = 5000` is
+Judge every limit against the real caps of the two engines: SQLite's
+32,766 variables and expression depth of 1,000, asyncpg's 32,767 bind
+parameters, and SQLAlchemy's 32,700 parameter budget, which bounds
+both membership chunks and bulk rows. The `GENERIC` floor keeps a
+1,000-element `in_list_budget` and a 1,700-byte `key_byte_budget`. A literal constant like `CHUNK = 5000` is
 a finding: budgets come from the profile and the live dialect, not
 from numbers that happen to fit one engine. Also flag any use of
 engine-specific SQL or behavior (dialect-only functions, SQLite
@@ -131,8 +131,8 @@ committed write does between the read and the write:
 
 Every finding names three things: **the statement or loop** (file,
 function, the construct itself), **the variable that grows with batch
-size**, and **the specific cap or resource it can exceed** (the 1,000
-`IN`-list floor, the ~2,100 bind budget, the key-byte budget,
+size**, and **the specific cap or resource it can exceed** (the 32,700
+parameter budget, the expression depth of 1,000, the key-byte budget,
 round-trip count, resident memory, a lost-update window). "This looks
 slow" is not a finding. If chunking exists, verify the budget it uses
 is the declared one and the merge is correct — a finding may equally
