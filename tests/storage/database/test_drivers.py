@@ -13,6 +13,7 @@ from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool, StaticPool
 
 from vfs.models import Entry
 from vfs.paths import Path
@@ -53,6 +54,8 @@ def connection() -> Iterator[ClosingConnection]:
 MSSQL = "mssql+aioodbc://sa:pw@host/db"
 SQLITE = "sqlite+aiosqlite:////tmp/vfs.sqlite"
 POSTGRES = "postgresql+asyncpg://vfs:vfs@host/vfs"
+IN_MEMORY = ["sqlite+aiosqlite://", "sqlite+aiosqlite:///:memory:", "sqlite+aiosqlite:///file:one?mode=memory&uri=true"]
+"""Each way a URL names a database that lives in its one connection."""
 
 
 class TestTheEngineArguments:
@@ -60,9 +63,16 @@ class TestTheEngineArguments:
         # pyodbc's ANSI setinputsizes mangles non-Latin1 bytes, so only this URL carries the override.
         assert merge_engine_arguments(MSSQL) == {"use_setinputsizes": False}
 
-    @pytest.mark.parametrize("url", ["sqlite+aiosqlite:///:memory:", SQLITE])
-    def test_a_sqlite_url_opens_closing_connections(self, url) -> None:
-        assert merge_engine_arguments(url) == {"connect_args": {"factory": ClosingConnection}}
+    def test_a_sqlite_url_opens_closing_connections(self) -> None:
+        assert merge_engine_arguments(SQLITE) == {"connect_args": {"factory": ClosingConnection}}
+
+    @pytest.mark.parametrize("url", IN_MEMORY)
+    def test_an_in_memory_url_keeps_its_one_connection_too(self, url) -> None:
+        assert merge_engine_arguments(url) == {
+            "connect_args": {"factory": ClosingConnection},
+            "poolclass": StaticPool,
+            "pool_recycle": -1,
+        }
 
     def test_any_other_url_needs_nothing(self) -> None:
         assert merge_engine_arguments(POSTGRES) == {}
@@ -84,6 +94,68 @@ class TestTheEngineArguments:
         assert merge_engine_arguments(MSSQL, {"use_setinputsizes": False}) == {"use_setinputsizes": False}
         given = {"connect_args": {"factory": ClosingConnection}}
         assert merge_engine_arguments(SQLITE, given) == given
+
+    def test_the_mapping_of_the_application_is_left_as_given_on_sql_server(self) -> None:
+        """Guards the copy: a required argument written into the mapping it was given changes the application's own."""
+        given = {"pool_size": 3}
+        assert merge_engine_arguments(MSSQL, given) == {"pool_size": 3, "use_setinputsizes": False}
+        assert given == {"pool_size": 3}
+
+    @pytest.mark.parametrize("url", IN_MEMORY)
+    @pytest.mark.parametrize(
+        ("given", "named"),
+        [
+            ({"poolclass": NullPool}, r"engine_arguments\['poolclass'\]"),
+            ({"poolclass": AsyncAdaptedQueuePool}, r"engine_arguments\['poolclass'\]"),
+            ({"pool_recycle": 3600}, r"engine_arguments\['pool_recycle'\]"),
+        ],
+        ids=["no pool", "a queue pool", "a recycle"],
+    )
+    def test_an_in_memory_url_is_refused_a_pool_that_opens_a_second_connection(self, url, given, named) -> None:
+        """Guards the refusal: a second connection to an in-memory database is a new one with no table in it."""
+        with pytest.raises(ValueError, match=named) as refused:
+            merge_engine_arguments(url, given)
+        assert "because an in-memory database lives in its one connection" in str(refused.value)
+
+    def test_an_in_memory_url_takes_the_pool_of_one_connection_when_it_is_named(self) -> None:
+        merged = merge_engine_arguments(IN_MEMORY[0], {"poolclass": StaticPool, "pool_recycle": -1})
+        assert (merged["poolclass"], merged["pool_recycle"]) == (StaticPool, -1)
+
+    @pytest.mark.parametrize(
+        "given",
+        [{"poolclass": NullPool}, {"poolclass": AsyncAdaptedQueuePool, "pool_size": 2}, {"pool_recycle": 3600}],
+        ids=["no pool", "a queue pool", "a recycle"],
+    )
+    def test_a_url_of_a_file_takes_any_pool(self, given) -> None:
+        """Guards where the refusal stops: a database in a file is there for every connection that opens it."""
+        assert merge_engine_arguments(SQLITE, given) == {**given, "connect_args": {"factory": ClosingConnection}}
+
+    @pytest.mark.parametrize(
+        "url", [SQLITE, IN_MEMORY[0], POSTGRES, MSSQL], ids=["file", "memory", "postgres", "mssql"]
+    )
+    @pytest.mark.parametrize(
+        ("given", "named"),
+        [
+            ({"isolation_level": "AUTOCOMMIT"}, r"engine_arguments\['isolation_level'\]"),
+            ({"isolation_level": "autocommit"}, r"engine_arguments\['isolation_level'\]"),
+            (
+                {"execution_options": {"isolation_level": "AutoCommit"}},
+                r"engine_arguments\['execution_options'\]\['isolation_level'\]",
+            ),
+        ],
+        ids=["on the engine", "in lower case", "in its execution options"],
+    )
+    def test_autocommit_is_refused_on_every_dialect(self, url, given, named) -> None:
+        """Guards the refusal: under autocommit each statement of a write commits alone, and a failed write is torn."""
+        with pytest.raises(ValueError, match=named) as refused:
+            merge_engine_arguments(url, given)
+        assert "must not be 'AUTOCOMMIT', because a write is one transaction" in str(refused.value)
+
+    @pytest.mark.parametrize("url", [SQLITE, POSTGRES, MSSQL], ids=["file", "postgres", "mssql"])
+    def test_any_other_isolation_level_passes_through(self, url) -> None:
+        given = {"isolation_level": "SERIALIZABLE", "execution_options": {"isolation_level": "REPEATABLE READ"}}
+        merged = merge_engine_arguments(url, given)
+        assert {key: merged[key] for key in given} == given
 
     @pytest.mark.parametrize(
         ("url", "given", "named"),

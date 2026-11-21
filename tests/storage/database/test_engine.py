@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import event, insert, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool, QueuePool
 from ulid import ULID
 
 from tests.support.database_helpers import _fresh_url
@@ -102,6 +102,35 @@ class TestConstruction:
             DatabaseStorage(
                 url=_fresh_url(tmp_path), engine_arguments={"connect_args": {"factory": sqlite3.Connection}}
             )
+
+    @pytest.mark.parametrize(
+        ("given", "named"),
+        [
+            ({"poolclass": NullPool}, r"engine_arguments\['poolclass'\]"),
+            ({"pool_recycle": 3600}, r"engine_arguments\['pool_recycle'\]"),
+            ({"isolation_level": "AUTOCOMMIT"}, r"engine_arguments\['isolation_level'\]"),
+        ],
+        ids=["no pool", "a recycle", "autocommit"],
+    )
+    def test_an_in_memory_storage_is_refused_what_would_cost_it_its_database_or_its_transactions(
+        self, given, named
+    ) -> None:
+        with pytest.raises(ValueError, match=named):
+            DatabaseStorage(url="sqlite+aiosqlite://", engine_arguments=given)
+
+    async def test_a_storage_in_a_file_takes_no_pool_and_a_recycle(self, tmp_path) -> None:
+        """Guards where the refusal stops: with no pool every call opens its own connection to the one file."""
+        storage = DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments={"poolclass": NullPool})
+        recycled = DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments={"pool_recycle": 3600})
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])).success is True
+        assert (await recycled.read(path=Path("/a.txt"))).one().content == "a"
+        assert isinstance(storage.engine.sync_engine.pool, NullPool)
+        await storage.close()
+        await recycled.close()
+
+    def test_a_storage_in_a_file_is_refused_autocommit(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match=r"engine_arguments\['isolation_level'\] must not be 'AUTOCOMMIT'"):
+            DatabaseStorage(url=_fresh_url(tmp_path), engine_arguments={"isolation_level": "autocommit"})
 
     def test_the_default_description_names_the_schema_when_one_is_set(self, tmp_path) -> None:
         assert DatabaseStorage(url=_fresh_url(tmp_path)).description == "Database storage"

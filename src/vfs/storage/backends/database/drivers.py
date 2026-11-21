@@ -4,7 +4,8 @@
 application gave, and the ones VFS requires. Two drivers need something.
 SQL Server through pyodbc needs its text binds left as Unicode. SQLite
 needs its connections opened as ``ClosingConnection``, whose cursors
-close themselves when a statement fails.
+close themselves when a statement fails, and an in-memory SQLite
+database needs to keep its one connection. No engine may autocommit.
 
     create_async_engine(url, **merge_engine_arguments(url, given))
 
@@ -38,9 +39,13 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.engine import make_url
+from sqlalchemy.pool import StaticPool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+_AUTOCOMMIT = "AUTOCOMMIT"
+_ONE_CONNECTION = "an in-memory database lives in its one connection"
 
 # ---------------------------------------------------------------------------
 # Engine arguments
@@ -52,10 +57,16 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
 
     An argument VFS has no stake in passes through as it was given: the
     pool's class and size, ``pool_pre_ping``, ``async_creator`` and the
-    like. VFS requires two, and each always holds. Where the application
+    like. VFS requires a few, and puts each in. Where the application
     gives another value for one of them, a ``ValueError`` names it and
     says why, because a storage that dropped it in silence would corrupt
-    text or leave files open. ``connect_args`` is merged key by key.
+    text, leave files open or lose its database. ``connect_args`` is
+    merged key by key, and the mapping that was given is not changed.
+
+    No engine may autocommit. ``isolation_level`` set to ``AUTOCOMMIT``,
+    on the engine or in its ``execution_options``, is refused on every
+    dialect: a write is one transaction, and under autocommit each of
+    its statements would commit alone.
 
     SQL Server needs ``use_setinputsizes`` false. SQLAlchemy's pyodbc
     dialect declares ``String`` binds as ANSI ``SQL_VARCHAR`` via
@@ -70,9 +81,25 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
     inserts take Core's pages.
 
     SQLite needs ``connect_args["factory"]`` to be ``ClosingConnection``.
+    SQLAlchemy passes ``connect_args`` to its own connect call only, so
+    an application that gives ``creator`` or ``async_creator`` opens the
+    connections itself, and they are closing ones only if it makes them so.
+
+    An in-memory SQLite database lives in its one connection, so its
+    ``poolclass`` is ``StaticPool`` and its ``pool_recycle`` is ``-1``,
+    which is never: any other pool, or a recycle, would open a second
+    connection, and that is a new database with no table in it.
     """
     merged = dict(given or {})
-    backend = make_url(url).get_backend_name()
+    for within in (None, "execution_options"):
+        options = merged if within is None else merged.get(within) or {}
+        if str(options.get("isolation_level")).upper() == _AUTOCOMMIT:
+            raise ValueError(
+                f"{_named('isolation_level', within)} must not be {_AUTOCOMMIT!r}, because a write is one "
+                "transaction, and under autocommit each statement commits alone and a failed write is left half done"
+            )
+    address = make_url(url)
+    backend = address.get_backend_name()
     if backend == "mssql":
         _require(merged, "use_setinputsizes", False, "pyodbc then binds text as Unicode, and as ANSI it stores '?'")
     if backend == "sqlite":
@@ -80,6 +107,10 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
         _require(
             connect, "factory", ClosingConnection, "a cursor whose statement failed is closed at once", "connect_args"
         )
+        # The dialect says which URLs name a database in memory: it gives those the pool of one connection.
+        if address.get_dialect()().get_dialect_pool_class(address) is StaticPool:
+            _require(merged, "poolclass", StaticPool, f"{_ONE_CONNECTION}, and another pool opens a second, empty one")
+            _require(merged, "pool_recycle", -1, f"{_ONE_CONNECTION}, and a recycled connection is a new, empty one")
     return merged
 
 
@@ -152,5 +183,9 @@ class ClosingConnection(sqlite3.Connection):
 def _require(arguments: dict[str, Any], key: str, value: object, reason: str, within: str | None = None) -> None:
     """Put ``value`` at ``key`` of ``arguments``, or raise if the application gave it another value."""
     if arguments.setdefault(key, value) != value:
-        named = f"engine_arguments[{within!r}][{key!r}]" if within else f"engine_arguments[{key!r}]"
-        raise ValueError(f"{named} must be {value!r}, because {reason}; VFS sets it, so leave it out")
+        raise ValueError(f"{_named(key, within)} must be {value!r}, because {reason}; VFS sets it, so leave it out")
+
+
+def _named(key: str, within: str | None = None) -> str:
+    """How an error names one engine argument, as the application wrote it."""
+    return f"engine_arguments[{within!r}][{key!r}]" if within else f"engine_arguments[{key!r}]"
