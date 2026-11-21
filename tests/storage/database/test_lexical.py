@@ -17,6 +17,7 @@ from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_r
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.lexical import pure_score_blocks, pure_tokenize
 from tests.support.oracles.postings import decode_postings, decode_varints
+from tests.support.statements import is_statistics_statement
 from vfs.models import Entry
 from vfs.models import lexical as lexical_model
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, term_weight
@@ -395,7 +396,8 @@ class TestTermStatistics:
 
         @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            if "lex_df" in statement:
+            # A statistics pass's ANALYZE of the table can land in the window; it is not the probe's.
+            if "lex_df" in statement and not is_statistics_statement(statement):
                 probes.append(statement)
 
         terms = [f"t{i}" for i in range(7)] + ["rows"]
