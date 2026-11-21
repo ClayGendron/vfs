@@ -1068,6 +1068,46 @@ class TestPlannerStatistics:
         assert isinstance(disposed_pool, QueuePool) and disposed_pool is not engine.sync_engine.pool
         assert disposed_pool.checkedin() == 0
 
+    async def test_a_close_retried_while_the_pass_is_held_leaves_no_pass_running(
+        self, tmp_path, large_store, monkeypatch
+    ) -> None:
+        """Guards: a retried close cancelling the pass again, ending its interrupt loop while it still runs."""
+        url = _copied(large_store, tmp_path)
+        _empty_statistics(url)
+        storage = DatabaseStorage(url=url)
+        host = storage._host
+        file = url.removeprefix("sqlite+aiosqlite:///")
+        rival = sqlite3.connect(file, timeout=0, isolation_level=None)
+        held, stopping = asyncio.Event(), asyncio.Event()
+        real_stop = host.stop_analysis
+
+        @event.listens_for(host.engine.sync_engine, "before_cursor_execute")
+        def hold(conn, cursor, statement, parameters, context, executemany) -> None:
+            if statement == PASS_BEGIN and not held.is_set():
+                rival.execute("BEGIN IMMEDIATE")
+                held.set()
+
+        async def stop_analysis() -> None:
+            stopping.set()
+            await real_stop()
+
+        monkeypatch.setattr(host, "stop_analysis", stop_analysis)
+        first_pool = host.engine.sync_engine.pool
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await held.wait()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(storage.close(), 0.01)
+        stopping.clear()
+        retried = asyncio.ensure_future(storage.close())
+        await stopping.wait()
+        rival.execute("COMMIT")
+        rival.close()
+        await retried
+        assert [task for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)] == []
+        with closing(sqlite3.connect(file)) as connection, connection:
+            assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
+        assert isinstance(first_pool, QueuePool) and first_pool.checkedin() == 0
+
     @pytest.mark.slow
     async def test_a_held_advisory_rides_on_a_topology_verb_and_on_posture(self, tmp_path) -> None:
         """Guards: an advisory drained by the write runner alone, unheard through delete or posture."""

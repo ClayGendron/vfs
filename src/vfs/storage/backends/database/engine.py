@@ -469,16 +469,16 @@ class EngineHost:
     async def stop_analysis(self) -> None:
         """Cancel the analysis task and await only its end, which its interrupt makes a rollback's length.
 
-        The wait is shielded: a caller whose own timeout fires, the
-        router's bounded close, is cancelled alone, and the pass task
-        keeps interrupting its statement until the inner task ends. A
-        cancel forwarded into the pass would end that loop early and
+        The wait is shielded and the task cancelled once: a caller whose own timeout fires, the router's
+        bounded close, is cancelled alone, and a retried close cancels nothing more, so the pass task keeps
+        interrupting its statement until the inner task ends. A second cancel would end that loop early and
         leave the inner task alive to commit on a disposed engine.
         """
         task = self._analysis
         if task is None or task.done():
             return
-        task.cancel()
+        if not task.cancelling():
+            task.cancel()
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:

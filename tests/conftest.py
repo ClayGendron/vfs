@@ -434,9 +434,10 @@ def _watch(statement: str, context: ExecutionContext) -> None:
     state = info.get(_PLAIN)
     if state is None:
         return
-    if not _in_transaction(connection.connection.dbapi_connection):
+    written_first = state == "begun" and (_WRITE.match(statement) or _WRITES_WITHIN.search(statement))
+    if written_first or not _in_transaction(connection.connection.dbapi_connection):
         info[_PLAIN] = None
-    elif state == "begun" and _READ.match(statement) and not _WRITES_WITHIN.search(statement):
+    elif state == "begun" and _READ.match(statement):
         info[_PLAIN] = "read"
     elif state == "read" and (_WRITE.match(statement) or (_READ.match(statement) and _WRITES_WITHIN.search(statement))):
         info[_PLAIN] = None
