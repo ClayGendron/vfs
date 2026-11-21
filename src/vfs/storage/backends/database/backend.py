@@ -139,8 +139,8 @@ class DatabaseStorage:
 
     *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside
     the URL: the pool's class and size, ``pool_pre_ping``, ``connect_args``.
-    A ``ValueError`` refuses autocommit, another value for an argument VFS
-    requires, and a pool that would open a second in-memory database.
+    A ``ValueError`` refuses autocommit, another value for an argument VFS requires, and, on an in-memory
+    URL that SQLAlchemy gives one connection, another pool. The ``file::memory:`` spellings are not covered.
 
     On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait
     for a connection, and is rolled back. A cancelled write changes nothing unless its commit had begun.

@@ -13,6 +13,7 @@ from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool, StaticPool
 
 from vfs.models import Entry
@@ -55,7 +56,9 @@ MSSQL = "mssql+aioodbc://sa:pw@host/db"
 SQLITE = "sqlite+aiosqlite:////tmp/vfs.sqlite"
 POSTGRES = "postgresql+asyncpg://vfs:vfs@host/vfs"
 IN_MEMORY = ["sqlite+aiosqlite://", "sqlite+aiosqlite:///:memory:", "sqlite+aiosqlite:///file:one?mode=memory&uri=true"]
-"""Each way a URL names a database that lives in its one connection."""
+"""Each way a URL names a database that SQLAlchemy itself gives one connection."""
+SHARED_CACHE = ["sqlite+aiosqlite:///file::memory:?cache=shared&uri=true", "sqlite+aiosqlite:///file::memory:?uri=true"]
+"""Two in-memory spellings that SQLAlchemy takes for a file, and gives a pool of many connections."""
 
 
 class TestTheEngineArguments:
@@ -116,6 +119,27 @@ class TestTheEngineArguments:
         with pytest.raises(ValueError, match=named) as refused:
             merge_engine_arguments(url, given)
         assert "because an in-memory database lives in its one connection" in str(refused.value)
+
+    def test_an_in_memory_url_is_refused_a_pool_of_the_applications_making(self) -> None:
+        """Guards the refusal: a pool that is passed in whole is one VFS cannot hold to the one connection."""
+        with pytest.raises(ValueError, match=r"engine_arguments\['pool'\]") as refused:
+            merge_engine_arguments(IN_MEMORY[0], {"pool": create_engine("sqlite://").pool})
+        assert "because an in-memory database lives in its one connection" in str(refused.value)
+
+    def test_a_url_of_a_file_takes_a_pool_of_the_applications_making(self) -> None:
+        pool = create_engine("sqlite://").pool
+        assert merge_engine_arguments(SQLITE, {"pool": pool})["pool"] is pool
+
+    @pytest.mark.parametrize("url", SHARED_CACHE)
+    def test_a_file_memory_spelling_is_not_held_to_one_connection(self, url) -> None:
+        """Pins what is so, and what the docstrings say: SQLAlchemy takes these URLs for a file, so nothing is asked."""
+        given = {"poolclass": NullPool, "pool_recycle": 3600}
+        assert merge_engine_arguments(url, given) == {**given, "connect_args": {"factory": ClosingConnection}}
+
+    @pytest.mark.parametrize("options", [None, ["no", "mapping"]], ids=["none", "a list"])
+    def test_execution_options_that_are_no_mapping_are_left_to_sqlalchemy(self, options) -> None:
+        """Guards the look inside the options: one that is no mapping holds no isolation level to refuse."""
+        assert merge_engine_arguments(POSTGRES, {"execution_options": options}) == {"execution_options": options}
 
     def test_an_in_memory_url_takes_the_pool_of_one_connection_when_it_is_named(self) -> None:
         merged = merge_engine_arguments(IN_MEMORY[0], {"poolclass": StaticPool, "pool_recycle": -1})

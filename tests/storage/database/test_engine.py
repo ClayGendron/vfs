@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from sqlalchemy import event, insert, select, update
+from sqlalchemy import create_engine, event, insert, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool, QueuePool
@@ -108,9 +108,10 @@ class TestConstruction:
         [
             ({"poolclass": NullPool}, r"engine_arguments\['poolclass'\]"),
             ({"pool_recycle": 3600}, r"engine_arguments\['pool_recycle'\]"),
+            ({"pool": create_engine("sqlite://").pool}, r"engine_arguments\['pool'\]"),
             ({"isolation_level": "AUTOCOMMIT"}, r"engine_arguments\['isolation_level'\]"),
         ],
-        ids=["no pool", "a recycle", "autocommit"],
+        ids=["no pool", "a recycle", "a pool of its own", "autocommit"],
     )
     def test_an_in_memory_storage_is_refused_what_would_cost_it_its_database_or_its_transactions(
         self, given, named

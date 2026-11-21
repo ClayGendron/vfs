@@ -5,7 +5,8 @@ application gave, and the ones VFS requires. Two drivers need something.
 SQL Server through pyodbc needs its text binds left as Unicode. SQLite
 needs its connections opened as ``ClosingConnection``, whose cursors
 close themselves when a statement fails, and an in-memory SQLite
-database needs to keep its one connection. No engine may autocommit.
+database that SQLAlchemy gives one connection needs to keep it. No
+engine may autocommit.
 
     create_async_engine(url, **merge_engine_arguments(url, given))
 
@@ -34,6 +35,7 @@ later let go of it without help, and the close changes nothing there.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from contextlib import suppress
 from functools import wraps
 from typing import TYPE_CHECKING, Any
@@ -42,7 +44,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
 _AUTOCOMMIT = "AUTOCOMMIT"
 _ONE_CONNECTION = "an in-memory database lives in its one connection"
@@ -85,15 +87,22 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
     an application that gives ``creator`` or ``async_creator`` opens the
     connections itself, and they are closing ones only if it makes them so.
 
-    An in-memory SQLite database lives in its one connection, so its
-    ``poolclass`` is ``StaticPool`` and its ``pool_recycle`` is ``-1``,
-    which is never: any other pool, or a recycle, would open a second
-    connection, and that is a new database with no table in it.
+    An in-memory SQLite database lives in its one connection. Where
+    SQLAlchemy itself gives the URL the pool of one connection, its
+    ``poolclass`` is ``StaticPool``, its ``pool_recycle`` is ``-1``,
+    which is never, and a ``pool`` made by the application is refused.
+    Any other pool, or a recycle, would open a second connection, and
+    that is a new database with no table in it. Two spellings are not
+    covered. SQLAlchemy takes ``file::memory:?uri=true`` and
+    ``file::memory:?cache=shared&uri=true`` for a file, so nothing is
+    required of them, and another pool or a recycle there loses the
+    database as it would on any in-memory URL.
     """
     merged = dict(given or {})
     for within in (None, "execution_options"):
-        options = merged if within is None else merged.get(within) or {}
-        if str(options.get("isolation_level")).upper() == _AUTOCOMMIT:
+        # Options that are no mapping hold no isolation level to refuse, and are SQLAlchemy's to refuse.
+        options = merged if within is None else merged.get(within)
+        if isinstance(options, Mapping) and str(options.get("isolation_level")).upper() == _AUTOCOMMIT:
             raise ValueError(
                 f"{_named('isolation_level', within)} must not be {_AUTOCOMMIT!r}, because a write is one "
                 "transaction, and under autocommit each statement commits alone and a failed write is left half done"
@@ -109,6 +118,9 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
         )
         # The dialect says which URLs name a database in memory: it gives those the pool of one connection.
         if address.get_dialect()().get_dialect_pool_class(address) is StaticPool:
+            if "pool" in merged:
+                made = "VFS makes its pool, so leave it out"
+                raise ValueError(f"{_named('pool')} must not be given, because {_ONE_CONNECTION}; {made}")
             _require(merged, "poolclass", StaticPool, f"{_ONE_CONNECTION}, and another pool opens a second, empty one")
             _require(merged, "pool_recycle", -1, f"{_ONE_CONNECTION}, and a recycled connection is a new, empty one")
     return merged
