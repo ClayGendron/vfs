@@ -129,9 +129,10 @@ class TestInstallExtensions:
     async def test_off_sqlite_the_verb_runs_in_its_callers_task(self, tmp_path: Any, monkeypatch) -> None:
         """Guards every other engine: the verb is run out of its caller's reach on SQLite alone."""
         # The generic floor, declaring a function to prove. Nothing loads it off SQLite, so it is missing.
+        url = _url(tmp_path)
         declared = replace(GENERIC, vector_function=VectorFunction(SQLITE_VEC_PROBE, "ask a DBA"))
         monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=url)
         ran: list[asyncio.Task[Any] | None] = []
         probe = storage._host._probe_vector_function
 
