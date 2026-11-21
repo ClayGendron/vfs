@@ -46,7 +46,9 @@ Python side neither owns nor re-makes; the synchronous face's loop
 thread (``vfs.sync``); the executor a local embedding provider is
 constructed with; and the shell runtime's epoch thread, one per process
 in the extension, which advances the WebAssembly engine's clock every
-10 ms so a deadline or a cancel ends a running slice of a line.
+10 ms so a deadline or a cancel ends a running slice of a line; and the
+short-lived thread each slice of a line runs on, started by the extension
+from a pool worker with a stack of the module's own size.
 
 Across a fork, a child forgets the inherited pool and makes its own on
 its first hop. The engine's pool is not covered. A forked child may

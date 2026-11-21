@@ -123,6 +123,7 @@ fn new_shell(hub: HubRef, source: Rc<str>, config: &Config) -> Result<Shell, Fat
         next_request: 0,
         function_depth: 0,
         nesting: 0,
+        defer_writes: false,
         loop_depth: 0,
         in_condition: false,
         subshell: 0,
@@ -918,7 +919,10 @@ async fn exec_simple_inner(ctx: &Ctx<'_>, sh: &mut Shell, simple: &SimpleCommand
             }
         }
     }
-    let saved = match apply_redirects(ctx, sh, &simple.redirects).await {
+    sh.defer_writes = writes_nothing_else(sh, &name, &words);
+    let applied = apply_redirects(ctx, sh, &simple.redirects).await;
+    sh.defer_writes = false;
+    let saved = match applied {
         Ok(Ok(saved)) => saved,
         Ok(Err(status)) => {
             if temporary {
@@ -1913,10 +1917,29 @@ pub async fn open_write(
     }
     let absolute = absolute(sh, path);
     sync_path(sh, &absolute).await?;
-    if let Err(error) = openable(sh, &absolute).await? {
-        return Ok(Err(error));
+    if sh.defer_writes {
+        if let Err(error) = openable(sh, &absolute).await? {
+            return Ok(Err(error));
+        }
+        return Ok(Ok(Fd::FileOut(FileWriter::open(&sh.hub, absolute, mode))));
     }
-    Ok(Ok(Fd::FileOut(FileWriter::open(&sh.hub, absolute, mode))))
+    // The command may act before it ends, so the file is created, truncated or judged now, as bash
+    // opens it, and a refusal stops the command before it runs.
+    let writer = FileWriter::open(&sh.hub, absolute, mode);
+    let key = sh.key();
+    FileWriter::flush(&writer, &sh.hub, key).await?;
+    let refused = writer.borrow_mut().error.take();
+    Ok(match refused {
+        Some(error) => Err(error),
+        None => Ok(Fd::FileOut(writer)),
+    })
+}
+
+/// Whether a simple command can act on nothing before its redirections end, so a file it writes
+/// can wait for one write of all its bytes: it only prints, or `cat` copies its standard input.
+fn writes_nothing_else(sh: &Shell, name: &str, words: &[String]) -> bool {
+    !sh.functions.contains_key(name)
+        && (matches!(name, "echo" | "printf" | ":" | "true") || (name == "cat" && words.len() == 1))
 }
 
 /// Judge, by reading alone, whether `path` can be opened for writing: not a directory, and in a

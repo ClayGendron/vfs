@@ -249,7 +249,7 @@ fn a_regex_search_that_spends_its_budget_fails_and_never_answers_no_match() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn each_redirection_is_one_write() {
+fn a_command_that_only_prints_writes_its_file_once_and_any_other_opens_it_first() {
     let line = "echo x > f; echo y >> f; echo z >> new; { echo a; echo b; } > g; set -C; echo n > fresh; set +C; : > empty; cat f g new fresh";
     let outcome = run(line, Limits::default(), |_| {});
     assert_eq!(
@@ -261,9 +261,11 @@ fn each_redirection_is_one_write() {
         .iter()
         .filter(|r| r.contains("Write"))
         .collect();
-    assert_eq!(writes.len(), 6, "{writes:#?}");
+    // The group opens its file with a write of its own, as bash opens it before the group runs.
+    assert_eq!(writes.len(), 7, "{writes:#?}");
+    assert!(writes[3].contains("data: []"), "{writes:#?}");
     assert!(
-        writes[1].contains("Append") && writes[4].contains("CreateNew"),
+        writes[1].contains("Append") && writes[5].contains("CreateNew"),
         "{writes:#?}"
     );
 }

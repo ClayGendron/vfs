@@ -1,9 +1,10 @@
 //! Files over requests. A file opened for reading is read in chunks as it
-//! is consumed. A file opened for writing is truncated or created when it is
-//! opened, as bash does, and its bytes are held and written in one request
-//! when the redirection that opened it ends, or when the held bytes reach a
-//! chunk; a read of the same path writes them first, so the line sees its
-//! own writes.
+//! is consumed. A file opened for writing holds its bytes and writes them
+//! when the redirection that opened it ends, or when they reach a write
+//! chunk, the first write creating, truncating or appending as its operator
+//! says; a command that could act before its redirection ends has that first
+//! write made when the file opens, as bash opens it. A read or a listing of
+//! the same path writes first, so the line sees its own writes.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -11,8 +12,11 @@ use std::rc::{Rc, Weak};
 use super::io::HubRef;
 use super::{Fatal, HostError, Reply, Request, RequestKey, WriteMode};
 
-/// Bytes read or written in one request.
+/// Bytes one read asks for.
 pub const CHUNK: usize = 64 * 1024;
+/// Bytes a file being written holds before it writes them: each write past the first appends,
+/// and a host may rewrite a whole body to append, so writes are few and large.
+pub const WRITE_CHUNK: usize = 8 << 20;
 
 /// Bytes held whole, read from the front.
 pub struct ReadBuffer {
@@ -167,7 +171,7 @@ impl FileWriter {
     pub fn push(&mut self, hub: &HubRef, bytes: &[u8]) -> Result<bool, Fatal> {
         hub.borrow_mut().charge(bytes.len())?;
         self.buffer.extend_from_slice(bytes);
-        Ok(self.buffer.len() >= CHUNK)
+        Ok(self.buffer.len() >= WRITE_CHUNK)
     }
 
     /// Whether a flush would write: bytes are held, or the file is not yet created or truncated.
@@ -216,7 +220,12 @@ pub fn dirty_writers(hub: &HubRef, path: Option<&str>) -> Vec<Rc<RefCell<FileWri
         .filter(|writer| {
             writer.try_borrow().is_ok_and(|this| {
                 this.is_dirty()
-                    && path.is_none_or(|path| this.path == path || this.path.starts_with(path))
+                    && path.is_none_or(|path| {
+                        this.path == path
+                            || this
+                                .path
+                                .starts_with(&format!("{}/", path.trim_end_matches('/')))
+                    })
             })
         })
         .collect()

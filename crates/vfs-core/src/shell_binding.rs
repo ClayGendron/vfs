@@ -107,18 +107,31 @@ impl ShellMachine {
             .map_or(MODULE_MEMORY_BYTES, |v| {
                 usize::try_from(v).unwrap_or(usize::MAX)
             });
-        let deadline =
-            deadline.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0)));
+        // A deadline past what an instant can hold is no deadline at all.
+        let deadline = deadline.and_then(|seconds| {
+            Duration::try_from_secs_f64(seconds.max(0.0))
+                .ok()
+                .and_then(|left| Instant::now().checked_add(left))
+        });
         let watched = Arc::clone(&cancelled);
         let (instance, answer) = py
-            .detach(move || -> Result<(Instance, String), String> {
-                let mut instance = Instance::new(fuel, slice, memory, deadline, watched)?;
-                let answer = instance
-                    .call(Export::Start, start.as_bytes())
-                    .map_err(|ended| ended.0)?;
-                Ok((instance, answer))
+            .detach(move || {
+                on_slice_thread(move || -> Result<(Instance, String), Ended> {
+                    let mut instance = Instance::new(fuel, slice, memory, deadline, watched)
+                        .map_err(|message| Ended(message, 1))?;
+                    let answer = instance.call(Export::Start, start.as_bytes())?;
+                    Ok((instance, answer))
+                })
+                .and_then(|started| started)
             })
-            .map_err(|message| PyValueError::new_err(("internal", message, 0u32, 0u32)))?;
+            .map_err(|Ended(message, status)| {
+                let kind = if status == BUDGET_STATUS {
+                    "budget"
+                } else {
+                    "internal"
+                };
+                PyValueError::new_err((kind, message, 0u32, 0u32))
+            })?;
         if let Err(refusal) = wire::decode_started(&answer) {
             return Err(PyValueError::new_err((
                 refusal.kind,
@@ -228,7 +241,8 @@ impl ShellMachine {
             *guard = None;
             return Ok(Err(Ended("Cancelled".to_owned(), CANCELLED_STATUS)));
         }
-        let outcome = instance.call(Export::Step, document);
+        let outcome =
+            on_slice_thread(|| instance.call(Export::Step, document)).and_then(|called| called);
         self.fuel_used
             .store(instance.fuel_used(), Ordering::Relaxed);
         if outcome.is_err() {
@@ -267,20 +281,64 @@ fn runtime() -> Result<&'static Runtime, String> {
                 Engine::new(&config).map_err(|e| format!("the runtime did not start: {e}"))?;
             let module = Module::new(&engine, MODULE)
                 .map_err(|e| format!("the shell module did not compile: {e}"))?;
-            let ticking = engine.clone();
-            std::thread::Builder::new()
-                .name("vfs-shell-epoch".to_owned())
-                .spawn(move || {
-                    loop {
-                        std::thread::sleep(EPOCH_TICK);
-                        ticking.increment_epoch();
-                    }
-                })
-                .map_err(|e| format!("the epoch thread did not start: {e}"))?;
             Ok(Runtime { engine, module })
         })
         .as_ref()
         .map_err(Clone::clone)
+        .and_then(|runtime| {
+            ensure_ticking(&runtime.engine)?;
+            Ok(runtime)
+        })
+}
+
+/// Start the thread that advances the epoch, once in each process: a process forked after its
+/// first line inherits the runtime but not the thread, and gets a thread of its own here.
+fn ensure_ticking(engine: &Engine) -> Result<(), String> {
+    static TICKING_IN: Mutex<Option<u32>> = Mutex::new(None);
+    let mut ticking_in = TICKING_IN
+        .lock()
+        .map_err(|_| "the epoch thread's record is poisoned".to_owned())?;
+    let process = std::process::id();
+    if *ticking_in == Some(process) {
+        return Ok(());
+    }
+    let ticking = engine.clone();
+    std::thread::Builder::new()
+        .name("vfs-shell-epoch".to_owned())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(EPOCH_TICK);
+                ticking.increment_epoch();
+            }
+        })
+        .map_err(|e| format!("the epoch thread did not start: {e}"))?;
+    *ticking_in = Some(process);
+    Ok(())
+}
+
+/// Bytes of stack a slice's thread has: the module's own frames, and the host's beneath them.
+const SLICE_THREAD_STACK_BYTES: usize = WASM_STACK_BYTES + (4 << 20);
+
+/// Run `work` on a thread with a stack of known size, so the module's frames fit whatever the
+/// calling thread's own stack is.
+fn on_slice_thread<T: Send>(work: impl FnOnce() -> T + Send) -> Result<T, Ended> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("vfs-shell-slice".to_owned())
+            .stack_size(SLICE_THREAD_STACK_BYTES)
+            .spawn_scoped(scope, work)
+            .map_err(|e| {
+                Ended(
+                    format!(
+                        "Internal({:?})",
+                        format!("the slice thread did not start: {e}")
+                    ),
+                    1,
+                )
+            })?
+            .join()
+            .map_err(|_| Ended("Internal(\"the slice thread panicked\")".to_owned(), 1))
+    })
 }
 
 /// Why the runtime stopped a call: the reason in the machine's own words, and the status.

@@ -290,6 +290,8 @@ pub struct Shell {
     pub function_depth: u32,
     /// Compound commands and substitutions open inside one another, counted against `nesting`.
     pub nesting: u32,
+    /// While a simple command's redirections open: whether its files may wait for one write each.
+    pub defer_writes: bool,
     pub loop_depth: u32,
     /// Inside an `if` or `while` condition, a `!`, or the left of `&&` and `||`.
     pub in_condition: bool,

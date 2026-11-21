@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
+import signal
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -161,7 +163,7 @@ async def test_every_request_reaches_a_public_verb_with_the_admitted_authority(m
     assert {verb for verb, _ in calls} >= {"read", "stat", "ls", "write", "mkdir", "delete", "copy", "move"}
 
 
-async def test_each_redirection_is_one_write_verb(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_command_that_only_prints_writes_its_file_once(monkeypatch: pytest.MonkeyPatch) -> None:
     fs = AsyncVirtualFileSystem()
     writes: list[dict[str, Any]] = []
     real_write = fs.write
@@ -176,8 +178,22 @@ async def test_each_redirection_is_one_write_verb(monkeypatch: pytest.MonkeyPatc
     assert [(w["path"], w["content"], w["append"]) for w in writes] == [
         ("/f", "x\n", False),
         ("/f", "y\n", True),
+        ("/g", "", True),
         ("/g", "a\nb\n", True),
-    ]
+    ], "a group can act before it ends, so its file is opened with a write first"
+
+
+async def test_a_command_never_runs_before_its_refused_redirection() -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/w/keep.txt", content="kept", parents=True, authority=SYSTEM))
+    ok(await fs.mkdir("/ro", authority=SYSTEM))
+    ok(await fs.set_posture("/", "none", authority=SYSTEM))
+    ok(await fs.grant("/w", "ada", "read_write", authority=SYSTEM))
+    ok(await fs.grant("/ro", "ada", "read", authority=SYSTEM))
+    result = await fs.cli("{ rm /w/keep.txt; echo done; } > /ro/out.txt; echo status=$?", authority=ADA)
+    assert result.stdout == "status=1\n"
+    assert "/ro/out.txt" in result.stderr
+    assert (await fs.stat("/w/keep.txt", authority=SYSTEM)).success is True
 
 
 async def test_two_authorities_see_different_listings() -> None:
@@ -238,6 +254,30 @@ async def test_search_is_the_search_verb_called_as_the_caller(monkeypatch: pytes
     assert calls == [("nothing-here", ADA)]
     assert result.stdout == "1\n"
     assert "usage: search" in result.stderr
+
+
+async def test_a_limit_that_is_no_ascii_number_is_a_query_word() -> None:
+    result = await AsyncVirtualFileSystem().cli("search -n \u00b2 alpha; echo $?", authority=ADA)
+    assert result.stdout == "1\n"
+
+
+async def test_the_bodies_a_line_holds_stay_under_their_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 10)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/big.txt", content="x" * 100, authority=SYSTEM))
+    ok(await fs.write(path="/small.txt", content="tiny", authority=SYSTEM))
+    reads = 0
+    real_read = fs.read
+
+    async def counted(*args: Any, **kwargs: Any) -> Result:
+        nonlocal reads
+        reads += 1
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(fs, "read", counted)
+    result = await fs.cli("cat /big.txt /big.txt /small.txt /small.txt | wc -c", authority=ADA)
+    assert result.stdout == "208\n"
+    assert reads == 3, "a body past the budget is read again, one under it is held"
 
 
 async def test_a_refused_search_reads_as_its_message_and_is_kept_as_a_warning() -> None:
@@ -379,6 +419,48 @@ def _machine(line: str, **options: Any) -> Any:
     )
 
 
+def test_a_deep_line_ends_on_its_budget_on_a_thread_with_a_small_stack() -> None:
+    ended: list[tuple[str, int, str | None]] = []
+
+    def run() -> None:
+        machine = _machine("f(){ if :; then { ( f ); }; fi; }; f")
+        while (status := machine.step([])[2])[0] == "running":
+            pass
+        ended.append(status)
+
+    previous = threading.stack_size(1 << 20)
+    try:
+        worker = threading.Thread(target=run)
+        worker.start()
+        worker.join()
+    finally:
+        threading.stack_size(previous)
+    assert ended == [("ended", 137, 'Budget("nesting", 1000)')]
+
+
+def test_a_start_that_spends_its_fuel_is_a_budget_and_a_far_deadline_is_none() -> None:
+    with pytest.raises(ValueError, match="fuel") as raised:
+        _machine("echo hi", fuel=0)
+    assert raised.value.args[0] == "budget"
+    machine = _machine("echo hi", deadline=1e300)
+    assert machine.step([])[2] == ("done", 0, None)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="the process forks")
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded")
+def test_a_forked_child_ends_a_line_at_its_deadline() -> None:
+    _machine("echo warm").step([])
+    child = os.fork()
+    if child == 0:  # pragma: no cover - runs in the forked child, which reports by its exit code
+        signal.alarm(30)
+        endless = _machine(
+            "while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15, deadline=0.2
+        )
+        os._exit(0 if endless.step([])[2][1] == 124 else 1)
+    _, status = os.waitpid(child, 0)
+    assert os.waitstatus_to_exitcode(status) == 0, "the child has an epoch thread of its own"
+
+
 def test_cancel_ends_a_running_slice_from_another_thread() -> None:
     machine = _machine("while :; do :; done", limits={**UNBOUNDED_LOOP, "fuel_slice": 10**15}, fuel=10**15)
     ended: list[tuple[str, int, str | None]] = []
@@ -479,6 +561,27 @@ async def test_a_refused_listing_reads_as_its_unix_error() -> None:
     host = host_module._Host(fs, ADA)
     assert await host.answer("list", {"path": "/missing"}) == ("error", "not_found")
     assert [e.severity for e in host.evidence] == [Severity.warning]
+
+
+async def test_an_unknown_request_is_unsupported() -> None:
+    host = host_module._Host(AsyncVirtualFileSystem(), ADA)
+    assert await host.answer("chmod", {"path": "/x"}) == ("error", "unsupported")
+
+
+@pytest.mark.parametrize("limits", [{"memory_byte": 10}, {"memory_bytes": -1}])
+async def test_an_unknown_or_negative_budget_fails_the_call(limits: dict[str, int]) -> None:
+    result = await run_line(AsyncVirtualFileSystem(), "echo hi", ADA, limits=limits)
+    assert result.errors[0].kind == ErrorKind.invalid
+    assert result.exit_status == 2
+
+
+def test_the_module_memory_limit_ends_the_line_and_not_the_process() -> None:
+    machine = _machine(
+        "x=a; while :; do x=$x$x; done", limits={"memory_bytes": 1 << 30, "module_memory_bytes": 32 << 20}
+    )
+    while (status := machine.step([])[2])[0] == "running":
+        pass
+    assert status == ("ended", 137, 'Budget("module_memory", 33554432)')
 
 
 def test_values_that_are_not_functions_of_the_line() -> None:

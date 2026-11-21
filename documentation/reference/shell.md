@@ -20,10 +20,12 @@ The interpreter does no input or output of its own. It asks for every effect as 
 |---|---|
 | reads a file (`cat f`, `< f`, `$(<f)`) | `read` |
 | tests or lists (`[ -f f ]`, `cd d`, `*.md`, `ls`) | `stat`, `ls` |
-| writes (`> f`, `>> f`, `touch f`) | `stat` to judge the target, then one `write` with the bytes, with `append` or `if_absent` |
+| writes (`> f`, `>> f`, `touch f`) | `write`, with `append` or `if_absent` |
 | `mkdir`, `rm`, `cp`, `mv` | `mkdir`, `delete`, `copy`, `move` |
 
 A line never runs as the system actor.
+
+A redirection is opened as bash opens it, before its command runs, so a command never acts before vfs refuses its file. When the command only prints (`echo`, `printf`, `:`, `true`, or `cat` of a here-document), its file is judged with a `stat` and written with one `write` of all its bytes. Any other command could act first, so its file is opened with a `write` of no bytes, and what the command prints follows in a second `write`. Output past 8 MiB is written in more than one request.
 
 The interpreter runs inside a WebAssembly module, in a runtime linked into vfs. The runtime is the wall around the line. It counts every instruction the line executes, holds the module's memory under a hard limit, and ends the line when its deadline passes or its call is cancelled. A fault inside the interpreter ends that line with an error; the process goes on. Each line runs in a fresh instance, one slice at a time on vfs's worker pool, so the event loop keeps serving other calls while a line computes.
 
@@ -70,7 +72,7 @@ The interpreter runs no other program itself. It asks vfs for every other name, 
 
 ## Budgets
 
-A line runs under budgets. A host may set each of them, lower or higher.
+A line runs under budgets. `cli` runs every line at these defaults; `vfs.shell.run_line` takes each of them, lower or higher.
 
 | Budget | Default |
 |---|---|
@@ -91,4 +93,4 @@ The instruction count is a function of the line and its replies, and the result 
 
 ## How Closely It Follows Bash
 
-The shell is tested against a corpus of 3,320 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image. A run compares standard output and the exit status exactly, and standard error as empty or not.
+The shell is tested against a corpus of 3,333 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not.

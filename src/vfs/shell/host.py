@@ -45,6 +45,24 @@ ENVIRONMENT: Final[tuple[tuple[str, str], ...]] = (
 )
 """The environment a line starts with."""
 
+LIMITS: Final = frozenset(
+    {
+        "memory_bytes",
+        "loop_iterations",
+        "function_depth",
+        "nesting",
+        "output_bytes",
+        "slice",
+        "fuel_slice",
+        "module_memory_bytes",
+        "source_bytes",
+        "tokens",
+        "depth",
+        "pipeline_stages",
+    }
+)
+"""The budgets ``run_line`` takes by name in ``limits``."""
+
 DEADLINE_SECONDS: Final = 30.0
 """The wall a line runs under, from its start to its end, the time its verbs take included."""
 
@@ -52,6 +70,9 @@ PID: Final = 1000
 """``$$`` of every line: the machine is no process, and a fixed value keeps a line a function of its input."""
 
 _KIND_OF: Final[dict[str, str]] = {"directory": "directory"}
+
+BODY_CACHE_BYTES: Final = 64 << 20
+"""Bytes of file bodies a line's host holds for the line, as much as the machine itself may hold."""
 
 _BODY: Final = frozenset({"content", "data"})
 """The columns a read asks for: a bytes body comes back only when ``data`` is named."""
@@ -131,16 +152,20 @@ async def run_line(
     only when the line could not run as written: it does not parse, it holds a refused construct,
     or a budget, the deadline or a cancel ended it. A program that exits non-zero is not a
     failure of the call. ``env`` is the environment the line starts with, and ``limits`` lowers
-    or raises the machine's budgets by name (``memory_bytes``, ``loop_iterations``,
-    ``function_depth``, ``output_bytes``, ``slice``, ``module_memory_bytes`` and the parse
-    budgets). ``fuel`` is the instructions the line may execute, and ``deadline`` the instant it
-    must end by, ``DEADLINE_SECONDS`` from the call when not given.
+    or raises the machine's budgets by name, each one of :data:`LIMITS`; an unknown name or a
+    negative value fails the call as ``invalid``. ``fuel`` is the instructions the line may
+    execute, and ``deadline`` the instant it must end by, ``DEADLINE_SECONDS`` from the call when
+    not given.
 
     The machine runs inside its WebAssembly module, one slice at a time on the process pool, so
     the event loop never waits on it. A cancelled call cancels the line: the slice running then
     ends within one tick of the runtime's clock.
     """
     deadline = deadline if deadline is not None else Deadline.after(DEADLINE_SECONDS)
+    refused = sorted(name for name, value in (limits or {}).items() if name not in LIMITS or value < 0)
+    if refused:
+        detail = f"no such budget, or a negative one: {', '.join(refused)}; the budgets are {', '.join(sorted(LIMITS))}"
+        return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
     if authority.actor.is_system:
         detail = "a line never runs as the system actor; name the caller's authority"
         return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
@@ -222,6 +247,7 @@ class _Host:
         self._fs = fs
         self._authority = authority
         self._bodies: dict[str, bytes] = {}
+        self._held = 0
         self._running: dict[str, tuple[str, list[str], str]] = {}
         self.evidence: list[ResultError] = []
 
@@ -240,6 +266,7 @@ class _Host:
         if op == "feed":
             return await self._feed(args)
         self._bodies.clear()
+        self._held = 0
         return await self._mutate(op, args)
 
     async def _read(self, path: str, offset: int, length: int) -> tuple[str, object]:
@@ -251,7 +278,9 @@ class _Host:
                 return refusal
             row = result.observations[0]
             body = row.data if row.data is not None else (row.content or "").encode()
-            self._bodies[path] = body
+            if self._held + len(body) <= BODY_CACHE_BYTES:
+                self._bodies[path] = body
+                self._held += len(body)
         end = offset + length
         return "data", (body[offset:end], end >= len(body))
 
@@ -295,7 +324,7 @@ class _Host:
     async def search(self, words: list[str], cwd: str) -> tuple[bytes, bytes, int]:
         """``search [-n LIMIT] QUERY [PATH...]``: the paths :meth:`search` ranks first, one a line."""
         limit, rest = 10, list(words)
-        if len(rest) >= 2 and rest[0] == "-n" and rest[1].isdigit():
+        if len(rest) >= 2 and rest[0] == "-n" and rest[1].isascii() and rest[1].isdigit():
             limit, rest = int(rest[1]), rest[2:]
         if not rest:
             return b"", b"search: usage: search [-n LIMIT] QUERY [PATH...]\n", 2
@@ -326,8 +355,10 @@ class _Host:
             result = await fs.delete(args["path"], cascade=args["recursive"], authority=who)
         elif op == "copy":
             result = await fs.copy(args["source"], args["target"], authority=who)
-        else:
+        elif op == "move":
             result = await fs.move(args["source"], args["target"], authority=who)
+        else:
+            return "error", "unsupported"
         return self._refusal(result) or ("done", None)
 
     def _refusal(self, result: Result, *, keep: bool = True) -> tuple[str, object] | None:
