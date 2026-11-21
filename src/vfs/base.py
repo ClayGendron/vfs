@@ -413,8 +413,8 @@ class AsyncVirtualFileSystem:
         later. If the call fails after the posture was set, the posture stays.
         """
         require_storage(storage)
-        mount_name = path or storage.name
-        if not mount_name:
+        mount_name = storage.name if path is None else path
+        if path is None and not mount_name:
             msg = "add_mount needs a path or a named storage"
             raise ValueError(msg)
         mount_path = normalize_mount_path(mount_name)
@@ -529,7 +529,7 @@ class AsyncVirtualFileSystem:
         async with self._mount_lock:
             mount = self._require_mount(mount_path)
             if refresh_caps and mount.storage is not current.storage:
-                msg = f"Mount at {mount_path} changed while it was being updated — retry"
+                msg = f"Mount at {mount_path} changed while it was being updated. Retry the update."
                 raise ValueError(msg)
             require_judgement_stands(judged, "update the mount at", mount_path, self._mounts)
             # The root has no mount above it, so nothing above can refuse a change to it.
