@@ -140,7 +140,27 @@ Tooling: `ruff check`, `ruff format --check` and `ty` PASS in the gate at `f3659
 
 ## Disposition
 
-Awaits the author: one line per finding, H1 to H4, M1 to M3 and L1 to L4.
+H1 fixed in `2ebca5f`: a door found through the key's prefix is shown only when the subtree's own narrowed statement, read within the door's range, shows a row beneath it, the rule the whole `tree` applies; `view.road` is no longer asked by a tree page. Pinned by `test_a_paged_tree_shows_no_road_the_whole_tree_does_not` on every leg; `review/adversarial/door_divergence.py` now prints equal for all three scenarios and `review/adversarial/property.py` finds 0 mismatches in 150 seeds.
+
+H2 fixed in `2ebca5f`: the fan is a list of one builder per statement, each building only its own chunk's arms or root clauses from the key; the keyless arms are built once and reused, so an unpaged call builds each arm once as before. Pinned by `test_a_page_of_ten_thousand_patterns_builds_each_chunk_once_a_fetch` (slow): a second page over 10,000 patterns builds at most one keyed arm per pattern, and no statement passes the parameter budget.
+
+H3 fixed in `2ebca5f`: SQLite's live `ls` and `tree` pages carry `INDEXED BY` their partial index, declared as `live_index_hint` on the dialect profile and rendered by a `Table` compile hook that adds only a hint a statement declares; trash-view pages carry none. Pinned by `test_a_live_page_keeps_its_index_on_statistics_that_predate_a_mass_delete` on every leg, which went red with the hint set to `None` and green with it; `review/plan_settled.py` now names `ix_vfs_entries_live_path` for the tree page.
+
+H4 fixed in `664c5b1` and `a8ea63f`: tests for each of the nine lines (the storage's refused pages, the missing and file `ls` targets, the door road, the scope-clause glob page, the kernel's key outside a mount-point target), and the two slow statistics plan pins that named `ix_vfs_entries_path` literally; `scripts/ci.sh` at `a8ea63f` passed every step at 100.00% coverage, 7210 passed, exit 0.
+
+M1 fixed in `2ebca5f`: `filled` takes a `stopped` test, and a glob page whose judge reached its wall ends at its last shown row with that row as its key and the `truncated` warning, so the next page reads the unjudged rows again. Pinned by `test_a_glob_page_that_reaches_its_wall_stops_and_keeps_its_key`: one limited select, ten rows, the key, one warning.
+
+M2 fixed in `2ebca5f`: `test_a_page_costs_the_statements_of_a_whole_call` pins, on every leg, that a page of `ls`, `tree` and `glob` issues the statements of the whole call, one more for a named caller's `tree` page, and on SQLite the spec's figures: 3 for the system actor's `ls` and `tree`, 2 for its `glob`, 5 for a named caller's `ls`.
+
+M3 not fixed, written as `agents/2026-11-21-the-sync-session-twin-imports-nothing-above-it/spec.md`: a protocol typed back-reference fails `test_the_constructors_and_the_context_managers_are_twins`, which pins the twin's constructor annotation as `VirtualFileSystem`; the spec moves both together.
+
+L1 not fixed, by the fix text given: the spec's landing notes now say a relative key is rooted like every path argument and how criterion 4 is read.
+
+L2 fixed in `2ebca5f`: the `ls_rows` docstring says a page of the trash head reads every tombstone of the mount and sorts the roots among them, a set `sweep` bounds.
+
+L3 not fixed, by the fix text given: the `tree_rows` docstring and the spec's landing notes say a road directory counts toward `limit` and can be the key.
+
+L4 fixed in `2ebca5f`: one pure `resumes(op, target, key)` and the two refusal texts live in `vfs/results/paging.py`, which the kernel's cursor, the storage's `page_refused` and `params.py` import; `vfs/paths.py` was not chosen because the texts are refusals, which the results layer owns.
 
 ## Verdict
 
