@@ -12,11 +12,10 @@ sweep in ``trash.py``, over the kit in ``serialized.py``; and
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")
 
-A storage builds and owns its engine, and ``close()`` disposes it. First
-touch runs at the first routed op or at ``first_touch``, on the caller's
-loop. Each protocol method runs in one session under retry: a retryable
-outcome restarts it from its first read, and a driver failure that
-escapes retry returns a classified ``Result``, never an exception.
+A storage builds and owns its engine, and ``close()`` disposes it. First touch runs at the
+first routed op or at ``first_touch``, on the caller's loop. Each protocol method runs in one
+session under retry: a retryable outcome restarts it from its first read, and a driver failure
+that escapes retry returns a classified ``Result``, never an exception.
 """
 
 from __future__ import annotations
@@ -139,12 +138,12 @@ class DatabaseStorage:
     and only the ``set_posture`` verb changes it.
 
     *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside
-    the URL: the pool's class and size, ``pool_pre_ping``, ``connect_args``,
-    ``async_creator``. One that VFS itself requires may not be changed.
+    the URL: the pool's class and size, ``pool_pre_ping``, ``connect_args``.
+    A ``ValueError`` refuses autocommit, another value for an argument VFS
+    requires, and a pool that would open a second in-memory database.
 
-    On SQLite a cancelled caller waits while its call ends the statement
-    in flight, or its wait for a connection, and is rolled back: a
-    cancelled write changes nothing unless its commit had begun.
+    On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait
+    for a connection, and is rolled back. A cancelled write changes nothing unless its commit had begun.
     """
 
     def __init__(
@@ -207,7 +206,11 @@ class DatabaseStorage:
 
     @property
     def engine(self) -> AsyncEngine:
-        """The storage's own engine, for a ``do_connect`` hook or tracing. ``close()`` disposes it, and no one else."""
+        """The engine this storage built and owns, for listeners alone.
+
+        Put a ``do_connect`` hook or a tracing listener on ``engine.sync_engine``. Open no connection and no session
+        on it. On an in-memory storage, one opened beside a call costs the database. ``close()`` disposes the engine.
+        """
         return self._host.engine
 
     @property
@@ -259,8 +262,7 @@ class DatabaseStorage:
             "search_signals": "hybrid" if self._host.embedder is not None else "lexical",
             "search_staleness": "overlay",
         }
-        # Tuned engines are the measured ones; only they may claim full
-        # durability — unknown dialects resolve to GENERIC-renamed names.
+        # Tuned engines are the measured ones, and only they claim full durability: an unknown dialect is not one.
         if self._host.profile.name in PROFILES:
             declared["durability"] = "full"
         return declared
@@ -1361,8 +1363,7 @@ class DatabaseStorage:
             detail = f"{op} kept losing to concurrent changes: {exc.context}"
             return Result(ops=(op,), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:
-            # SQLAlchemyError, not just DBAPIError: pool exhaustion
-            # (TimeoutError) is an operating condition, never a raise.
+            # SQLAlchemyError and not just DBAPIError: pool exhaustion is an operating condition, never a raise.
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])
 
     async def _rows(self, op: str, fn: Callable[[AsyncSession], Awaitable[T]]) -> T:
@@ -1494,8 +1495,7 @@ class DatabaseStorage:
         try:
             result = await self._host.with_retry(attempt)
         except StaleSnapshot as exc:
-            # Guards kept proving the snapshot stale through every redrive:
-            # an honest transient outcome, never a torn commit.
+            # Guards kept proving the snapshot stale through every redrive: a transient outcome, never a torn commit.
             detail = f"{op} kept losing to concurrent changes: {exc.context}"
             return Result(ops=(op,), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:

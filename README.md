@@ -122,7 +122,7 @@ assert {"read", "glob", "grep", "search", "write"} <= node.capabilities()
 node.close()
 ```
 
-A database backend builds its engine from a URL, owns it, and disposes it at `close()`. Pass `engine_arguments=` for what a URL cannot carry (the pool's size and class, `pool_pre_ping`, `connect_args`, `async_creator`), and reach the engine itself at `storage.engine` to attach a `do_connect` hook or tracing.
+A database backend builds its engine from a URL, owns it, and disposes it at `close()`. Pass `engine_arguments=` for what a URL cannot carry (the pool's size and class, `pool_pre_ping`, `connect_args`, `async_creator`). The engine is at `storage.engine` for listeners alone: put a `do_connect` hook or tracing on `storage.engine.sync_engine`, and open no connection or session on it, which beside a call on an in-memory storage costs the database.
 
 Permissions compose the same way: each node carries a permission map (`"read"`, `"read_write"`, or a per-prefix map of those two), enforced at the routing chokepoint before anything dispatches. The map lives on the node, not on the data: two nodes over one schema do not see each other's maps.
 

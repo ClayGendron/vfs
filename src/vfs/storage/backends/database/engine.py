@@ -2,10 +2,10 @@
 
 :class:`EngineHost` owns one mount's database connectivity: it builds
 the engine from a URL and the engine arguments it is given, makes every
-session that runs on it, and disposes it at ``close()``. No session, no
-connection and no transaction of a mount is shared with anything else.
-Construction binds nothing to a loop, so a host made on one loop can
-make its first touch on another.
+session that runs on it, and disposes it at ``close()``. An application
+may put listeners on the engine, and must open no connection or session
+on it: beside a call on an in-memory database, one costs the database.
+Construction binds nothing to a loop, so first touch may be on another.
 
 The dialect is known once the engine is built, so its declared policy
 is resolved at construction, with no IO. First touch is idempotent and
@@ -197,7 +197,7 @@ class EngineHost:
         # The engine's single-value cap where it is a server setting (the
         # MySQL family's packet); read at first touch, ``None`` elsewhere.
         self.value_cap: ValueCap | None = None
-        # The engine is the host's own: nothing else makes a session, a connection or a transaction on it.
+        # The engine is the host's own: an application puts listeners on it, and opens no connection or session.
         self.engine: AsyncEngine = create_async_engine(url, **merge_engine_arguments(url, engine_arguments))
         bind = self.engine.sync_engine
         # The declared policy and the live dialect it is read beside, both known with no IO.
