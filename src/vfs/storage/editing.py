@@ -5,6 +5,9 @@ a content-bearing row, the edit sequence threads through the replacement
 engine, and the result re-enters ``Entry`` validation so edits obey the
 same content invariants writes do. That agreement lives here rather than
 in each backend, so it cannot drift.
+
+An append's body is composed here for the same reason: which source a
+row keeps when a tail is added is one rule, never a backend's choice.
 """
 
 from __future__ import annotations
@@ -43,3 +46,24 @@ def edited_entry(
         return Entry(path=target, kind=cast("ObjectKind", kind), content=outcome.content)
     except ValidationError as exc:
         return classified(ErrorKind.invalid, target, detail=validation_message(exc))
+
+
+def appended(stored: str | bytes, tail: str | bytes) -> str | bytes:
+    """The body an append leaves: *stored*, then *tail*, as text when the row was text and the result still is.
+
+    A row keeps its source when the joined body allows it. A bytes body
+    takes the tail as bytes, a text tail as its UTF-8. A text body takes
+    a text tail as it is, and a bytes tail when those bytes are UTF-8 and
+    hold no NUL. Any other bytes tail turns the row into a bytes row,
+    since the joined body is no longer text. The type of the result is
+    the source of the row it leaves.
+    """
+    if isinstance(stored, bytes):
+        return stored + (tail if isinstance(tail, bytes) else tail.encode())
+    if isinstance(tail, str):
+        return stored + tail
+    try:
+        text = tail.decode()
+    except UnicodeDecodeError:
+        return stored.encode() + tail
+    return stored.encode() + tail if "\x00" in text else stored + text

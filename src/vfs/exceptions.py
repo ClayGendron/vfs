@@ -51,7 +51,7 @@ class UnauthenticatedError(VFSError):
 
 
 class WriteConflictError(VFSError):
-    """Write rejected — file exists with overwrite=False, or target is invalid."""
+    """Write rejected — file exists with if_absent=True, or target is invalid."""
 
 
 class ValidationError(VFSError):

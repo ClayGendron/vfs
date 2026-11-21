@@ -1501,7 +1501,7 @@ class TestVanishedChunks:
         storage = await _fresh(tmp_path)
         emptied = Entry(path=Path("/notes.txt"), content="")
         binary = Entry(path=Path("/docs/tokens.md"), data=b"\x89PNG\r\n\x00\xff\xfe")
-        assert (await storage.write(entries=[emptied, binary], overwrite=True)).success is True
+        assert (await storage.write(entries=[emptied, binary])).success is True
         host = storage._host
         asked = sorted(await _entry_ids(storage, ["/notes.txt", "/docs/tokens.md", "/src/lexer.py"]))
         [kept] = await _entry_ids(storage, ["/src/lexer.py"])
@@ -1526,7 +1526,7 @@ class TestVanishedChunks:
 
         async def rival() -> None:
             if not committed:  # once: the second attempt meets the state this left
-                written = await storage.write(entries=[body], overwrite=True)
+                written = await storage.write(entries=[body])
                 committed.append(written.success and (await storage.rebuild()).success)
 
         with installed("search:before-chunk-texts", rival):
@@ -1554,7 +1554,7 @@ class TestVanishedChunks:
                 pair = ResolvedPair(src=Path("/d/a.txt"), dest=Path("/h/a.txt"))
                 moved = await storage.move(operations=[pair], authority=SYSTEM)
                 rewritten = [Entry(path=Path("/h/a.txt"), content="tokens moved\n")]
-                written = await storage.write(entries=rewritten, overwrite=True, authority=SYSTEM)
+                written = await storage.write(entries=rewritten, authority=SYSTEM)
                 committed.append(moved.success and written.success and (await storage.rebuild()).success)
 
         with installed("search:before-chunk-texts", rival):

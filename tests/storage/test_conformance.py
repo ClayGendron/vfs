@@ -522,7 +522,7 @@ class TestMSSQLChunkGuardRegression:
             async def rival() -> None:
                 seams.clear("rebuild:before-chunk-flip")
                 fresh = Entry(path=Path("/r.txt"), content="fresh needle")
-                assert (await storage.write(entries=[fresh], overwrite=True)).success is True
+                assert (await storage.write(entries=[fresh])).success is True
 
             with seams.installed("rebuild:before-chunk-flip", rival):
                 assert (await storage.rebuild()).success is True

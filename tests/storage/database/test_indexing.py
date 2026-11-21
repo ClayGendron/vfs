@@ -924,7 +924,7 @@ class TestFlagAlgebra:
 
         async def rival() -> None:
             fresh = Entry(path=Path("/a.txt"), content="fresh needle")
-            assert (await storage.write(entries=[fresh], overwrite=True)).success is True
+            assert (await storage.write(entries=[fresh])).success is True
 
         with installed("rebuild:before-publish", rival):
             assert (await storage.rebuild()).success is True
@@ -1368,14 +1368,15 @@ class TestChunkProvenance:
             assert row.chunk_generation == chunk_generation()
         await storage.close()
 
-    async def test_same_body_overwrite_skips_the_resplit(self, tmp_path) -> None:
+    async def test_a_body_written_away_and_back_skips_the_resplit(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         assert (await storage.rebuild()).success is True
         statements: list[str] = []
         self._record_into(storage, statements)
-        # A same-body overwrite dirties the entry (content writes reset the
-        # flags) but leaves the hash equal: the pass must not touch chunks.
+        # Two writes dirty the entry (each resets the flags) and leave the
+        # hash where the chunks were built: the pass must not touch chunks.
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="other = 1\n")])).success is True
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         row = await self._entry_row(storage, "/a.py")
         assert row.chunked is False
@@ -2083,10 +2084,11 @@ class TestIndexedStamp:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success is True
 
-        async def overwrite() -> None:
-            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+        async def away_and_back() -> None:
+            for body in ("other body", "alpha body"):
+                assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content=body)])).success
 
-        with installed("rebuild:before-publish", overwrite):
+        with installed("rebuild:before-publish", away_and_back):
             assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/a.txt") == (False, False)
         assert await _stamp(storage, "/a.txt") == await _epoch(storage)

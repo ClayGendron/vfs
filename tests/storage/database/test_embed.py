@@ -617,7 +617,7 @@ class TestRefusals:
         edited = LONG_MD.replace("charlie delta", "echo foxtrot")
         copy = LONG_MD.replace("alpha bravo", "golf hotel")
         writes = [Entry(path=Path("/w/long.md"), content=edited), Entry(path=Path("/w/copy.md"), content=copy)]
-        assert (await storage.write(entries=writes, overwrite=True)).success is True
+        assert (await storage.write(entries=writes)).success is True
         second = await storage.rebuild()
         assert second.success is True
         assert refused_text not in _sent(provider)

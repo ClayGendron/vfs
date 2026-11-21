@@ -158,7 +158,7 @@ class TestForwardOrdering:
             handler, rival_results = _self_clearing("write:before-apply", lambda: storage.delete(path=Path("/d")))
             with seams.installed("write:before-apply", handler):
                 if verb == "write":
-                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")], overwrite=True)
+                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")])
                 else:
                     victim = await storage.edit(edits=[EditOperation(old="old", new="mine")], path=Path("/d/f.txt"))
             assert rival_results and rival_results[0].success is True
@@ -410,6 +410,94 @@ class TestAncestorMintConvergence:
 
 
 # ---------------------------------------------------------------------------
+# An expected version against a rival that commits inside the window
+# ---------------------------------------------------------------------------
+
+
+class TestExpectedVersionRivals:
+    """A rival commits between the snapshot and the update, and the answer is the same on every engine.
+
+    An engine that probes a missed guard answers from the probe. An
+    engine that runs the call again answers from the new snapshot.
+    """
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_with_another_body_is_a_conflict_that_names_its_version(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="rival")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.write(entries=[Entry(path=target, content="mine")], if_versions={target: 1})
+            assert rivals and rivals[0].success is True
+            assert [(e.kind, e.path, e.data, e.retryable) for e in victim.errors] == [
+                (ErrorKind.conflict, "/a.txt", {"version": 2}, False)
+            ]
+            assert (await storage.read(path=target)).observations[0].content == "rival"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_with_the_same_body_leaves_the_write_unchanged(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="same")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.write(entries=[Entry(path=target, content="same")], if_versions={target: 1})
+            assert rivals and rivals[0].success is True
+            assert victim.success is True, victim.errors
+            assert [(o.status, o.version) for o in victim.observations] == [("unchanged", 2)]
+            await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
+# The row lock an append holds
+# ---------------------------------------------------------------------------
+
+# How long a call beside a held lock may run before the test is stopped as hung. Never a measurement.
+_HUNG_AFTER_SECONDS = 60.0
+
+
+class TestAppendLock:
+    """An append locks the one row it adds to: no reader waits on it, and no writer of another file does."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_reads_and_other_writes_return_while_an_append_holds_its_lock(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            seeded = [Entry(path=Path("/log.txt"), content="needle one\n"), Entry(path=Path("/other.txt"), content="x")]
+            assert (await storage.write(entries=seeded)).success
+            beside = sibling(env_var, storage)
+            try:
+                assert (await beside.first_touch()).success is True
+                returned: list[bool] = []
+
+                async def while_locked() -> None:
+                    # The append has locked its row and read its body, and has not committed.
+                    calls = (
+                        beside.read(path=Path("/log.txt")),
+                        beside.stat(path=Path("/log.txt")),
+                        beside.grep(pattern="needle"),
+                        beside.edit(path=Path("/other.txt"), edits=[EditOperation(old="x", new="y")]),
+                    )
+                    results = await asyncio.wait_for(asyncio.gather(*calls), _HUNG_AFTER_SECONDS)
+                    returned.extend(result.success for result in results)
+
+                handler, _ = _self_clearing("write:before-apply", while_locked)
+                with seams.installed("write:before-apply", handler):
+                    grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="two\n")], append=True)
+                assert grown.success is True, grown.errors
+                assert returned == [True, True, True, True]
+                assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "needle one\ntwo\n"
+            finally:
+                await beside.close()
+            await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
 # Observation honesty — edit/overwrite under ancestor relocation
 # ---------------------------------------------------------------------------
 
@@ -482,7 +570,7 @@ class TestGhostRefusal:
                     )
                 )
                 await session.commit()
-            victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")], overwrite=True)
+            victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")])
             assert victim.success is False
             assert all(e.kind == ErrorKind.conflict and e.retryable for e in victim.errors)
             async with host.session_factory() as session:
@@ -700,7 +788,7 @@ class TestExhaustionClassification:
                     outcomes = []
                     for n in range(per_writer):
                         entries = [Entry(path=Path("/hot.txt"), content=f"{tag}-{n}")]
-                        outcomes.append(await instance.write(entries=entries, overwrite=True))
+                        outcomes.append(await instance.write(entries=entries))
                     return outcomes
 
                 rounds = await asyncio.gather(*(hammer(instance, k) for k, instance in enumerate(instances)))
@@ -757,7 +845,7 @@ class TestGrepEpochConsistency:
 
             async def demote() -> Result:
                 entries = [Entry(path=Path("/b.txt"), content="needle beta v2")]
-                return await storage.write(entries=entries, overwrite=True)
+                return await storage.write(entries=entries)
 
             handler, rival_results = _self_clearing("grep:after-pointer-read", demote)
             with seams.installed("grep:after-pointer-read", handler):
@@ -818,7 +906,7 @@ class TestSearchChunkConsistency:
                 if rival == "sweep":
                     return await storage.sweep(path=Path("/notes.txt"))
                 rewritten = [Entry(path=Path("/notes.txt"), content="A stream of tokens, rewritten.\n")]
-                written = await storage.write(entries=rewritten, overwrite=True)
+                written = await storage.write(entries=rewritten)
                 return written if not written.success else await storage.rebuild()
 
             real = search_module._chunk_texts
@@ -949,7 +1037,7 @@ class TestBuildAgreement:
                 seams.clear("rebuild:before-lexical")
                 outcomes.append((await rival.delete(path=Path("/d"))).success)
                 same = Entry(path=Path("/a.txt"), content="alpha body")
-                outcomes.append((await rival.write(entries=[same], overwrite=True)).success)
+                outcomes.append((await rival.write(entries=[same])).success)
                 outcomes.append((await rival.restore(path=Path("/b.txt"))).success)
 
             received: dict[str, int] = {}
@@ -1404,7 +1492,9 @@ class TestGenerationConsistency:
         for verb, path in (("refresh", "/p.txt"), ("rebuild", "/q.txt")):
             entries = [Entry(path=Path(path), content=f"{path} body words")]
             assert (await storage.write(entries=entries)).success
-            with seams.installed(f"{verb}:before-publish", _written_once(storage, f"{verb}:before-publish", entries)):
+            away = [Entry(path=Path(path), content="other words")]
+            rewrite = _written_once(storage, f"{verb}:before-publish", away, entries)
+            with seams.installed(f"{verb}:before-publish", rewrite):
                 assert (await getattr(storage, verb)()).success is True
             row = await _row(storage, path)
             assert row.encoded is False and row.indexed_epoch == max(await _live_epochs(storage))
@@ -1648,12 +1738,13 @@ def _refreshing_once(rival: DatabaseStorage) -> tuple[list[int], Any]:
     return seen, refreshed_once
 
 
-def _written_once(storage: DatabaseStorage, name: str, entries: list[Entry]) -> Any:
-    """A seam handler that uninstalls itself and writes *entries* through *storage*."""
+def _written_once(storage: DatabaseStorage, name: str, *batches: list[Entry]) -> Any:
+    """A seam handler that uninstalls itself and writes each of *batches* through *storage*, in order."""
 
     async def written() -> None:
         seams.clear(name)
-        assert (await storage.write(entries=entries)).success
+        for entries in batches:
+            assert (await storage.write(entries=entries)).success
 
     return written
 
