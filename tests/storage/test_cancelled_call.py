@@ -568,10 +568,13 @@ class TestTheCallerWaitsForItsAttempt:
         assert (await fs.read("/a.txt")).one().content == "old"
 
 
+# Where a cancellation reaches the connection, the driver leaves a task that never ends and the loop cannot close.
+@pytest.mark.timeout(60, method="thread")
 class TestACallerCancelledByATimeLimitAndByACancelScope:
     """Two cancellers of one call: a time limit, which cancels with no message, and a scope, which knows its own by one.
 
-    The time limit is made to run out by a time that has passed, so no test waits on a clock.
+    The time limit is made to run out by a time that has passed, so no test waits on a clock. The
+    guard above is no measure: in a serial run it names the test where the run would otherwise hang.
     """
 
     @ON_EVERY_HOST
