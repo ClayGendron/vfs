@@ -6,20 +6,21 @@ It is the first landing of the work in `spec.md` in this directory, and it stand
 
 ## What was built, and where it differs
 
-Built on 2026-11-20, on the branch `a-cancelled-call-leaves-its-storage-intact`, and corrected the same day after a code review of the build. The text below this section is the spec as it was read, and it is not rewritten. The build differs from it in eight ways.
+Built on 2026-11-20, on the branch `a-cancelled-call-leaves-its-storage-intact`, corrected the same day after a code review of the build, and widened on 2026-11-21 by decisions 9 and 10, which were taken after that review. Decisions 1 to 8 below are the spec as it was read. "Left as it is" and "Not checked" are corrected where decisions 9 and 10 changed them, and each correction says so. The build differs from decisions 1 to 8 in nine ways.
 
-- **Decision 7 is changed: a database in a file is covered too.** The fix applies to every SQLite database that VFS opens from a URL. The build cancelled a write on a database in a file at each of its 81 driver round trips. No row was lost at any. At 3 of the 81, each a `SELECT` inside the write's transaction, the next write was refused with `conflict` after its four attempts, and it succeeded once `gc.collect()` had run. The experiment this spec rests on had checked the rows after each cut and had not tried the next write. With the fix, the next write works after every cut of a `stat`, a `read` and a `write`, in memory and in a file, and no connection is thrown away.
-- **A storage that is handed a session factory is as this spec left it.** It is run out of reach when its database is in memory, with no refusal at the commit, so a cancelled write there always lands. It is not run out of reach when its database is a file. The in-memory case, which "Not checked" lists as not run, is now run by two tests: a cancelled `stat` costs no connection and no row, and a write cancelled at its first change has landed.
-- **First touch is covered from its first run** on a storage VFS opened from a URL, because the dialect is known from the URL. "Left as it is" says otherwise for the first first touch. The first call on a fresh storage, which makes the first touch and then writes a file, is cancelled at each of its driver round trips, 614 in memory and 618 in a file on 2026-11-20. No connection is thrown away at any, the next write works after every one, and the first call's file is absent before the commit of its write and there whole from that commit on.
+- **Decision 7 is changed twice.** First, a database in a file is covered too. The build cancelled a write on a database in a file at each of its 81 driver round trips. No row was lost at any. At 3 of the 81, each a `SELECT` inside the write's transaction, the next write was refused with `conflict` after its four attempts, and it succeeded once `gc.collect()` had run. The experiment this spec rests on had checked the rows after each cut and had not tried the next write. Second, decision 9 covers a storage that was handed its session factory. Every server engine is still left as it is.
+- **A storage that is handed a session factory is covered as one that built its engine is.** Decisions 9 and 10 replace what this spec left: such a storage over an in-memory database was run out of reach only after its first touch and its cancelled write always landed, and over a file it was not run out of reach at all.
+- **Decision 3 is widened by decision 10.** A marked unit is refused its next statement and its entry into a session, and not only its commit. The listener of decision 8, registered on a `Session` subclass, is gone: no session class is made, and the refusals are put on each session the host takes.
+- **Decision 4 falls out of decision 10.** An attempt that was marked while it waited for its turn is refused as it enters its session, by the same check every SQLite session makes. The serialized session only gives the lock back.
+- **First touch is covered from its first run** on every SQLite storage, because the dialect is read from the session's bind before the first attempt, with no IO. "Left as it is" said otherwise for the first first touch.
 - **The caller is raised the cancellation it was cancelled with.** Decision 5 says that one cancellation is raised when the unit has ended. It is the first one the caller caught, the same exception and not a new one. A canceller that knows its own cancellation by the message on it, as an anyio cancel scope does, does not know a new one, and the error then escapes the scope.
 - **`install_extensions` runs out of reach too.** Decision 8 hands each attempt of `with_retry` to the function that runs it out of reach. `install_extensions` is the one method of the host that opens a session outside `with_retry`, and a cancellation inside its probe closed an in-memory database. Its install and its probe now run as one attempt.
-- **A cancelled call that waits on a worker thread waits for the thread.** A `grep` hands its verify batch to a worker thread inside its attempt. Before the build, a cancelled `grep` left the worker behind and its caller was back at once. Now its caller is back when the attempt has ended, which is when the worker has. The test `test_a_cancelled_grep_leaves_the_next_call_whole` in `tests/test_offload.py` held the old order and failed on this branch; it now cancels the call, calls again while the worker is held, lets the worker go and awaits the cancelled call last.
-- **"Unit of work" is "attempt" in the code,** the word `with_retry` already used for it.
-- **The module of decision 8 is two.** `attempts.py` holds the task, the mark and the refusal, which a database in a file needs too. `oneconnection.py` holds the serialized sessions and the re-arm.
+- **A cancelled call that waits on a worker thread waits for the thread.** A `grep` hands its verify batch to a worker thread inside its attempt. Before the build, a cancelled `grep` left the worker behind and its caller was back at once. Now its caller is back when the attempt has ended, which is when the worker has. The mark stops statements and not the thread. The test `test_a_cancelled_grep_leaves_the_next_call_whole` in `tests/test_offload.py` held the old order and failed on this branch; it now cancels the call, calls again while the worker is held, lets the worker go and awaits the cancelled call last.
+- **"Unit of work" is "attempt" in the code, and the module of decision 8 is two.** `attempts.py` holds the task, the mark and the refusals, which every SQLite storage needs. `oneconnection.py` holds the serialized sessions and the re-arm.
 
-The rule of decision 3 for a task started inside a unit is stated in the module docstring of `attempts.py`. No code depends on it today: the one task that outlives a write, the statistics pass, is started after the write's attempt has ended.
+The rule of decision 3 for a task started inside a unit is stated in the module docstring of `attempts.py`. No code depends on it today: the one task that outlives a write, the statistics pass, is started after the write's attempt has ended, and SQLAlchemy's own task that closes a session only rolls back.
 
-The tests are `tests/storage/test_cancelled_call.py` for a whole storage, `tests/storage/database/test_attempts.py` for the task, the mark and the refused commit, and `tests/storage/database/test_oneconnection.py` for the serialized sessions and the re-arm. The mutants they kill are rows T1 to T23 of `context/standards/mutant-ledger.md`. No server engine was run.
+The tests are `tests/storage/test_cancelled_call.py` for a whole storage on each of the four SQLite hosts, `tests/storage/database/test_attempts.py` for the task, the mark and the refusals, `tests/storage/database/test_oneconnection.py` for the serialized sessions and the re-arm, and `TestWhereAnAttemptRuns` in `tests/storage/database/test_engine.py` for the choice by dialect. The mutants they kill are rows T1 to T35 of `context/standards/mutant-ledger.md`, of which T18 and T19 are retired. No server engine was run.
 
 ## The outcome wanted
 
@@ -201,11 +202,72 @@ A new module, `src/vfs/storage/backends/database/oneconnection.py`, takes what i
 
 Reason: the serialized sessions and the re-arm exist for the same fact as this fix. One module then says everything that fact costs.
 
+### 9. Every SQLite storage runs each attempt out of reach
+
+Decided on 2026-11-20, after the code review of the build. On SQLite each attempt runs in a task of its own, whether the storage built its engine from a URL or was handed a session factory, and whether the database is in memory or in a file. First touch is included, and so is `install_extensions`. The dialect is read from the bind of a session that is never entered, in `EngineHost._policy`, before the first attempt. Whether the database is in memory decides nothing about where an attempt runs.
+
+On every other engine an attempt runs in its caller's task, as before. `TestWhereAnAttemptRuns` pins both halves.
+
+Executed on 2026-11-21, on the build before this decision. Each of seven calls was cancelled inside the first statement of its transaction, on a storage that was handed a session factory over a file. Each of the seven cost one connection, thrown away by SQLAlchemy. After the cancelled `delete` of a directory the next write was refused, which is the locked writer of the changed decision 7. With the decision built, no connection is lost and the next write works after each of the seven.
+
+Reason: the defect of this spec is a cancellation that reaches a SQLite connection, and it does not depend on who made the engine. Two rules, one for a built engine and one learned at first touch for a handed one over memory, left the handed file with neither.
+
+### 10. A marked attempt sends no statement after the one in flight
+
+Decided on 2026-11-20, with decision 9. Once an attempt is marked, the statement in flight ends and no other is sent. The attempt is refused at four places, each with `InvalidRequestError`, and its transaction is then rolled back.
+
+- **At the entry of a session.** A marked attempt checks no connection out. This is decision 4, for every SQLite session.
+- **Before each statement.** The statement that opens a transaction, `BEGIN` or `BEGIN IMMEDIATE`, is one of them, and so are the statements of a savepoint.
+- **At the commit.** A commit is a call of the driver and not a statement, so it keeps its own refusal, which is the refusal of decision 3.
+- **Not at a rollback.** A rollback to a savepoint is let through, and the rollback that ends the transaction is the driver's own call. They are what unwinds the attempt.
+
+What this gives, on each of the four SQLite hosts alike. A read stops at its next statement, where it ran to its end. A delete of a directory, which releases no savepoint, stops at its next statement, where it sent every one and was stopped by its commit alone. A write that is cancelled before its commit has begun changes nothing, on a handed session factory too, where it always landed. A write that is cancelled at its commit or after has landed whole.
+
+One thing is still sent. A connection that the pool is checking out has its settings stamped by the pool's own checkout listener: a probe for the vector function and six `PRAGMA` statements, and on a file engine that VFS built a read of the planner statistics. A refusal raised in that listener makes SQLAlchemy throw the connection away, which is the defect of this spec. The listener belongs to the pool, so it cannot tell a session VFS took from one the application made. A checkout that has begun therefore sends all its statements, and the attempt is refused at its `BEGIN`.
+
+How it is built.
+
+- The host wraps the session factory it built or was handed, once, when its dialect is known. Each session it takes is an `AttemptSession`. Entering one refuses a marked attempt, puts a `before_commit` listener on that session, and binds that session to a view of its engine, made by `Engine.execution_options`, that shares the engine's pool and carries the option `vfs_attempt`.
+- The listener that VFS already puts on the `begin` event of every SQLite engine it serves, to send the `BEGIN`, calls `attempt_begins` first. For a connection that carries the option, inside an attempt, `attempt_begins` puts a `before_cursor_execute` listener on that connection. The connection is the session's own and ends with its transaction.
+- Nothing is put on the engine, on its pool, on a DBAPI connection or on a session class. A session the application makes on the same engine carries no option and no listener, and is refused nothing, even inside a marked attempt.
+
+Executed on 2026-11-21 as a spike, on SQLAlchemy 2.0.52 with aiosqlite, before the build. Each candidate was asked which statements it sees.
+
+| Candidate | Sees | Does not see |
+|---|---|---|
+| `do_orm_execute` on the session | a statement passed to `session.execute` | a statement sent through `session.connection()`, which is how first touch, the statistics step and the savepoints send theirs; the `BEGIN`; a flush |
+| `before_commit` on the session | `session.commit()` | a commit made on the connection; no code of VFS makes one |
+| `before_cursor_execute` on the session's connection, put there at the session's `after_begin` | every statement through the connection: Core, driver SQL, a flush, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` | the `BEGIN`, which is sent before `after_begin` fires; the settings a checkout stamps, which use the DBAPI connection directly |
+| the same listener, put there by the engine's `begin` listener for a connection that carries the option | all of the above and the `BEGIN` | the settings a checkout stamps |
+| `commit` on the session's connection | both kinds of commit | nothing, but it cannot be used: see below |
+
+Two refusals were found unsafe and are not built.
+
+- A refusal raised in the connection's `commit` event leaves the transaction open. SQLAlchemy marks the transaction inactive, sends no rollback, and returns the connection to the pool without a reset. The row of the refused write was then read by the next caller of that connection, whose own commit made it permanent. So the commit is refused at the session's `before_commit`, where a failed commit is followed by a rollback.
+- A refusal of `ROLLBACK TO SAVEPOINT` breaks the close of a session that holds a savepoint. The close raises half way, the transaction is not rolled back and the connection never returns to its pool. That was seen in the build's own tests, at a write cut at its first change. So a rollback is let through.
+
+Executed on 2026-11-21, on the build before decisions 9 and 10 and after them. Each call was cancelled inside the first statement of its transaction. The figure is the number of statements sent after it. A rollback is not counted.
+
+| Call | Built, in memory | Built, in a file | Handed, in memory | Handed, in a file |
+|---|---|---|---|---|
+| `stat`, `read` | 0, then 0 | 0, then 0 | 0, then 0 | 0 and a connection lost, then 0 |
+| `grep` | 3, then 0 | 3, then 0 | 3, then 0 | 0 and a connection lost, then 0 |
+| `write` of two files | 4, then 0 | 4, then 0 | 22 and the write landed, then 0 | 0 and a connection lost, then 0 |
+| `edit` | 2, then 0 | 2, then 0 | 13 and the edit landed, then 0 | 0 and a connection lost, then 0 |
+| `delete` of a directory | 8, then 0 | 7, then 0 | 8 and the delete landed, then 0 | 0, a connection lost and the next write refused, then 0 |
+| `move` | 10, then 0 | 10, then 0 | 21 and the move landed, then 0 | 0 and a connection lost, then 0 |
+
+A `stat` and a `read` send one statement in their transaction, so the cut at the first is the cut at the last. A read that sends several is the `grep`.
+
+What it costs a call that nobody cancels, counted. A session the host takes is one wrapper object and one listener more than a session the application makes, and its connection is one listener more. The view of the engine is made once for each engine. Each statement calls that one listener, which reads one attribute and, while it is false, does nothing else. No statement is added and no lock is taken: a `stat` is 34 driver round trips and a `write` is 81, as before. Outside an attempt, as in the statistics pass, a connection is given no listener.
+
+Reason: a caller that has given up should not go on loading the database, and a write it has given up on should not land later. Before this decision a marked read ran every statement it had left, and a marked write ran every statement up to its next savepoint release or its commit.
+
 ## Left as it is
 
-- **First touch.** First touch runs through `with_retry`, `engine.py:317`, but `in_memory` is not known until first touch reads it, so the first first touch is not shielded. A storage that VFS built is empty until it ends. First touch is shielded only when it runs again after a re-arm, when `in_memory` is already true. A marked first touch is refused like any unit and runs again on the next call.
+- **First touch.** Corrected on 2026-11-21. First touch runs through `with_retry` and is run out of reach from its first run on every SQLite storage, by decision 9. A marked first touch is refused its next statement, is rolled back whole, tables and all, and runs again on the next call.
 - **The rebuild's lease.** The fix also covers the rebuild on an in-memory storage, whose lease heartbeat is cancelled inside a statement today. This is read from the code and was not run.
-- **How soon a cancelled caller is back.** It waits for its unit to end. A marked write stops at its next savepoint release or its commit, and the statements before that still run. Today's caller already waits for the statement in flight.
+- **How soon a cancelled caller is back.** Corrected on 2026-11-21. It waits for its unit to end, which by decision 10 is when the statement in flight has ended and the transaction is rolled back. A unit that waits on a worker thread, as a `grep` does, ends when the thread has. Before decision 10 a marked write ran on to its next savepoint release or its commit, and a marked read to its end.
 - **Interrupting a statement.** Not built. It lost the database when it landed outside the transaction's own statements.
 - **Loop shutdown.** When the event loop shuts down, every task is cancelled, the unit's own included, and an in-memory database goes with its loop, as today.
 - **`close()`.** It does not wait for a unit. Closing the connection queues behind the statement in flight on the worker thread, and the kernel's `close_timeout` bounds that, as today.
@@ -269,9 +331,9 @@ Pages: the docstrings of `InMemoryStorage` and `EngineHost.with_retry`, and the 
 
 - **The server engines.** The third row of the table in decision 1 is read in driver source.
 - **`close()` of a storage while a unit runs**, and loop shutdown. Both are stated from reading and were not run.
-- **First touch under a cancellation.** Every cut was made on a storage that was already provisioned.
+- **First touch under a cancellation.** Corrected on 2026-11-21: it is now run. The first touch of a storage is cancelled at the first round trip of each kind it sends, and at each round trip that makes its connection, on each of the four SQLite hosts.
 - **The sync kernel.** `VirtualFileSystem` runs its own loop. Its path to a cancellation was not read.
-- **A borrowed in-memory database.** A host that hands VFS its own session factory over an in-memory database gets the shield through `in_memory`. It has no `_SerializedSession`, so decision 4's check has no place there. This was not run.
+- **A borrowed in-memory database.** Corrected on 2026-11-21: it is now run, and decisions 9 and 10 cover it. A storage that is handed a session factory over an in-memory database runs every attempt out of reach, first touch included, and its marked attempt is refused as on any SQLite storage. It has no serialized session, so its calls take no turns: a statistics pass that is still running collides with the next call on the one connection, as it did before this spec, and the tests wait for the pass.
 - **The `memdb` form of the kept-alive database beyond its first failure**, and why the collector is needed to end a refusal. The cause in decision 6 is reasoned from the result of `gc.collect()` and was not traced in SQLite.
 - **A unit whose write uses no savepoint and a long plan.** The patch was run on a single-file write.
 - **The line counts.** The 63 lines were counted at `a64dd18c`. The move was not made.
