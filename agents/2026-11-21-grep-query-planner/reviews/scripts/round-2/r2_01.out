@@ -1,0 +1,26 @@
+'\\<i_count'             gate=admitted rust hits on 'x = inode->i_count;': 1; e5 literals=frozenset({'<i_count'}); gram plan any=False; e5 RULES OUT A MATCH: True
+'\\b{start}i_count'      gate=admitted rust hits on 'x = inode->i_count;': 1; e5 literals=frozenset({'{start}i_count'}); gram plan any=False; e5 RULES OUT A MATCH: True
+'i_count\\>'             gate=admitted rust hits on 'x = inode->i_count;': 1; e5 literals=frozenset({'i_count>'}); gram plan any=False; e5 RULES OUT A MATCH: True
+'[[:alpha:]]_count'      gate=admitted rust hits on 'x = inode->i_count;': 1; e5 literals=frozenset({']_count'}); gram plan any=False; e5 RULES OUT A MATCH: True
+'x[a[bc]]y'              gate=admitted rust hits on 'xby': 1; e5 literals=frozenset({']y'}); gram plan any=False; e5 RULES OUT A MATCH: True
+'[a-c&&b]x'              gate=admitted rust hits on 'bx': 1; e5 literals=frozenset({'x'}); gram plan any=True; e5 RULES OUT A MATCH: False
+'\\<(?i)KMALLOC': refused (global flags not at the start of the expression at position 2)
+  VIOLATION pattern='\\b{start}[a[b]][[:alpha:]]' literals=['{start}'] body='ae<-a} >]&[x'
+  VIOLATION pattern='\\b{start}[a[b]][[:alpha:]]' literals=['{start}'] body='e{axd-benb]xb'
+  VIOLATION pattern='\\b{start}[a[b]][[:alpha:]]' literals=['{start}'] body='<a[bt:>t>d]t:]b>'
+  VIOLATION pattern='\\b{start}[a[b]][[:alpha:]]' literals=['{start}'] body='{s [d-<<aa]'
+  VIOLATION pattern='\\b{start}[a[b]][[:alpha:]]' literals=['{start}'] body='art<d{-'
+  VIOLATION pattern='\\b{start}[a[b]][[:alpha:]]' literals=['{start}'] body='[bb:-[x-tx>&tte'
+property test vs the Rust matcher: 15484 admitted patterns, 460530 bodies, 28650 violations
+/fs/ext4 (53 files) 'i_count'              database grep:   0 rows; in hand:   0 rows; rows the database grep misses: 0 []
+/fs/ext4 (53 files) '\\<i_count'           database grep:   0 rows; in hand:   0 rows; rows the database grep misses: 0 []
+/fs/ext4 (53 files) '\\b{start}i_count'    database grep:   0 rows; in hand:   0 rows; rows the database grep misses: 0 []
+/fs/ext4 (53 files) 'i_count\\>'           database grep:   0 rows; in hand:   0 rows; rows the database grep misses: 0 []
+/fs/ext4 (53 files) '[[:alpha:]]_count'    database grep:   0 rows; in hand:  30 rows; rows the database grep misses: 30 []
+/fs/ext4 (53 files) '\\<kmalloc'           database grep:   0 rows; in hand:   9 rows; rows the database grep misses: 9 []
+/fs (2354 files) 'i_count'              database grep:  26 rows; in hand:  26 rows; rows the database grep misses: 0 []
+/fs (2354 files) '\\<i_count'           database grep:   0 rows; in hand:  10 rows; rows the database grep misses: 10 []
+/fs (2354 files) '\\b{start}i_count'    database grep:   0 rows; in hand:  10 rows; rows the database grep misses: 10 []
+/fs (2354 files) 'i_count\\>'           database grep:   0 rows; in hand:  26 rows; rows the database grep misses: 26 []
+/fs (2354 files) '[[:alpha:]]_count'    database grep:   0 rows; in hand: 751 rows; rows the database grep misses: 751 []
+/fs (2354 files) '\\<kmalloc'           database grep:   6 rows; in hand: 421 rows; rows the database grep misses: 415 []

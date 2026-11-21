@@ -1,0 +1,5 @@
+   today rows 15101 subset of planned: True
+DIFF ('/drivers',)                                    '^static int'          17688r plan=allow-listed in full   probe_rows= 25204 resolved= 46363 U=21363 full=39795 stmts=86 today_err=['Truncated: at the candidate bu'] err=[]
+   today rows 3199 subset of planned: True
+DIFF ('/arch', '/fs')                                 '^static int'           3353r plan=allow-listed by range  probe_rows= 22197 resolved=  6062 U=6062 full=- stmts=19 today_err=['Truncated: at the candidate bu'] err=[]
+pairs that differ from today: 2

@@ -1,0 +1,9 @@
+PARITY
+TIMING (median of 7 warm runs, ms; load: (2.89013671875, 7.6826171875, 9.6044921875) )
+/drivers/gpu/drm/amd/display/dc      -EINVAL          today=   79.6ms/19s/U=10  d1=   81.8ms/18s/U=0  range=   89.3ms/16s/U=17427  inhand=  159.1ms/5s/U=None load 4.26025390625
+/drivers/gpu/drm/amd/display/dc      MODULE_LICENSE   today=   34.8ms/20s/U=27  d1=   37.2ms/20s/U=21  range=   67.2ms/17s/U=17330  inhand=  149.9ms/5s/U=None load 4.7998046875
+/drivers/gpu/drm/amd/display/dc      i_count          today=   46.0ms/20s/U=38  d1=   36.1ms/20s/U=29  range=   30.3ms/17s/U=6096  inhand=  136.3ms/5s/U=None load 4.7998046875
+/drivers/md                          -EINVAL          today=  182.6ms/20s/U=12050  d1=   40.2ms/20s/U=102  range=   48.4ms/17s/U=17427  inhand=   28.4ms/5s/U=None load 5.1357421875
+/drivers/md                          i_count          today=  103.5ms/20s/U=4336  d1=   24.2ms/20s/U=3  range=   27.8ms/17s/U=6096  inhand=   28.5ms/5s/U=None load 5.1357421875
+/drivers/atm                         i_count          today=  109.3ms/20s/U=4336  d1=   31.0ms/19s/U=None  range=   34.9ms/17s/U=6096  inhand=   12.9ms/5s/U=None load 5.1357421875
+/drivers/atm                         -EINVAL          today=  170.0ms/20s/U=12050  d1=   29.4ms/19s/U=None  range=   44.7ms/17s/U=17427  inhand=   13.1ms/5s/U=None load 6.88623046875
