@@ -1,11 +1,13 @@
 """What VFS asks of a database driver when it builds an engine from a URL.
 
-``merge_engine_arguments`` gives the arguments for one URL: the ones the
-application gave, and the ones VFS requires. One driver needs something.
-SQLite needs its connections opened as ``ClosingConnection``, whose cursors
-close themselves when a statement fails, and an in-memory SQLite
-database that SQLAlchemy gives one connection needs to keep it. No
-engine may autocommit.
+``url_of_engine`` reads which dialect a URL names, for a storage that
+serves only one. ``merge_engine_arguments`` gives the arguments for one
+URL: the ones the application gave, and the ones VFS requires. One driver
+needs something. SQLite needs its connections opened as
+``ClosingConnection``, whose cursors close themselves when a statement
+fails, and an in-memory SQLite database that SQLAlchemy gives one
+connection needs to keep it. ``load_sqlite_vec`` loads the vector
+extension into each SQLite connection. No engine may autocommit.
 
     create_async_engine(url, **merge_engine_arguments(url, given))
 
@@ -33,6 +35,7 @@ later let go of it without help, and the close changes nothing there.
 
 from __future__ import annotations
 
+import importlib.util
 import sqlite3
 from collections.abc import Mapping
 from contextlib import suppress
@@ -41,19 +44,54 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.util.concurrency import await_only
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from sqlalchemy.engine import URL
+
 _AUTOCOMMIT = "AUTOCOMMIT"
 _ONE_CONNECTION = "an in-memory database lives in its one connection"
 
+# Some system Pythons build sqlite3 without extension loading; the hook
+# then loads nothing and first touch refuses with the reason.
+_EXTENSIONS_LOADABLE = hasattr(sqlite3.Connection, "enable_load_extension")
+
+# The extension's loadable file, located without importing the package
+# (its ``__init__`` pulls numpy in when numpy is installed).
+_SQLITE_VEC_SPEC = importlib.util.find_spec("sqlite_vec")
+SQLITE_VEC_PATH: str | None = (
+    str(next(iter(_SQLITE_VEC_SPEC.submodule_search_locations or ()), "") or "") + "/vec0"
+    if _SQLITE_VEC_SPEC is not None and _SQLITE_VEC_SPEC.submodule_search_locations
+    else None
+)
+
 # ---------------------------------------------------------------------------
-# Engine arguments
+# Engine URLs and arguments
 # ---------------------------------------------------------------------------
 
 
-def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def url_of_engine(url: str | URL, *, engine: str, storage: str) -> URL:
+    """Return ``url`` parsed, when it names the ``engine`` dialect.
+
+    ``storage`` is the name of the class that serves only that engine.
+    A URL of any other dialect raises a ``ValueError`` that names both
+    dialects and never the URL, which can hold a password. The check
+    reads the URL alone, so it runs before any engine is built.
+    """
+    address = make_url(url)
+    given = address.get_backend_name()
+    if given != engine:
+        raise ValueError(
+            f"{storage} serves the {engine!r} dialect and was given a URL of {given!r}. DatabaseStorage serves any "
+            "SQLAlchemy URL, SQLite's and Postgres's on their tuned profiles and any other dialect on the generic "
+            "floor, and SQLiteStorage takes a path."
+        )
+    return address
+
+
+def merge_engine_arguments(url: str | URL, given: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Return the arguments for the engine of ``url``: what the application gave, and what VFS requires.
 
     An argument VFS has no stake in passes through as it was given: the
@@ -169,6 +207,31 @@ class ClosingConnection(sqlite3.Connection):
     def executescript(self, *arguments: Any) -> Any:
         """Run a script of statements on a new cursor and return that cursor."""
         return self.cursor().executescript(*arguments)
+
+
+# ---------------------------------------------------------------------------
+# The vector extension SQLite connections load
+# ---------------------------------------------------------------------------
+
+
+def load_sqlite_vec(dbapi_connection: Any) -> None:
+    """Load the sqlite-vec extension into one DBAPI connection.
+
+    The async adapter wraps an ``aiosqlite`` connection whose worker
+    thread owns the real ``sqlite3`` handle, so the load is issued as
+    that connection's own coroutines, awaited from the pool event's
+    greenlet — the adapter's own pattern for ``create_function``. An
+    interpreter without extension loading is left as it is; first touch
+    probes and refuses with the reason.
+    """
+    inner = getattr(dbapi_connection, "_connection", None)
+    if not _EXTENSIONS_LOADABLE or inner is None or SQLITE_VEC_PATH is None:
+        return
+    await_only(inner.enable_load_extension(True))
+    try:
+        await_only(inner.load_extension(SQLITE_VEC_PATH))
+    finally:
+        await_only(inner.enable_load_extension(False))
 
 
 # ---------------------------------------------------------------------------
