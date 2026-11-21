@@ -474,6 +474,13 @@ async def test_a_closed_storage_reads_as_permission_denied() -> None:
     assert "Permission denied" in result.stderr or "No such file" in result.stderr
 
 
+async def test_a_refused_listing_reads_as_its_unix_error() -> None:
+    fs = AsyncVirtualFileSystem()
+    host = host_module._Host(fs, ADA)
+    assert await host.answer("list", {"path": "/missing"}) == ("error", "not_found")
+    assert [e.severity for e in host.evidence] == [Severity.warning]
+
+
 def test_values_that_are_not_functions_of_the_line() -> None:
     assert host_module._value("time")[0] == "text"
     assert 0 <= int(str(host_module._value("random")[1])) < 32768

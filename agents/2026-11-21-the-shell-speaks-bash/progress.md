@@ -43,6 +43,7 @@ The weighted 100-command sample of the 2026-10-15 study parses 100 of 100, and s
 - `cli` takes no `limits`, `fuel` or `deadline`, so a caller cannot lower a budget; `run_line` takes all three. Adding them to the public method changes its signature.
 - `grep -r` and `find` walk through `list` and `read` instead of the indexed verbs. The program request now lets the vfs host serve them itself, as it serves `search`; doing so means printing what GNU grep and find print from the verbs' rows, which is not built.
 - `traverse`, `grant` and the other verbs with no Unix name are not programs yet; each is one more entry beside `search`.
+- The parse depth of 200 counts each grammar rule a construct passes through, about six for one `$( )`, so 33 nested substitutions parse and 35 do not, where bash runs 40. Counting one level for each construct changes what the budget means. Compound commands carry no span of their own.
 - The fuzzer's grammar covers the language tier only, with no programs, no `set -e` and no job control; widening it is a matter of more productions.
 - The Oils spec-suite rate is not measured. The prior-art memo ran 468 Oils cases against the crate: 363 agree, 39 differ, 66 were skipped; its section 6 lists the differences not in the corpus.
 - The weighted sample's run rate is 72%, below the 85% the spec names. Every line that does not run names a program the roadmap says never runs.
