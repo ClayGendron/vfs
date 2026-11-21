@@ -630,7 +630,7 @@ async def test_a_glob_over_named_roots_does_not_scan_the_mount_table_for_each_ro
 async def test_glob_beneath_roots_that_hold_no_mount_point_judges_no_mount_point(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    judged: list[object] = []
+    judged: list[Any] = []
     original = listing_module.judge_in_hand
 
     async def spied(*args: Any) -> tuple[list[Observation], bool]:
@@ -642,7 +642,8 @@ async def test_glob_beneath_roots_that_hold_no_mount_point_judges_no_mount_point
     ok(await fs.write(path="/src/a.py", content="a", parents=True))
     await fs.add_mount(InMemoryStorage(), "/elsewhere")
     assert ok(await fs.glob("*.py", paths=("/src",))).paths == ("/src/a.py",)
-    assert judged == []
+    # The probe of the root /src is judged in the same module; no mount point is.
+    assert [[row.path for row in rows] for _gates, rows, _deadline in judged] == [["/src"]]
 
 
 async def test_glob_under_a_limit_asks_no_more_mounted_roots_than_the_limit_can_use() -> None:

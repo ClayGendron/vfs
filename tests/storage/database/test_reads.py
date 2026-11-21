@@ -22,6 +22,7 @@ from ulid import ULID
 
 from tests.support.database_helpers import _SqliteError, _url
 from tests.support.loop_ticks import LoopTicker
+from tests.support.plan_store import PATH_INDEXES
 from vfs import deadline as deadline_module
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
@@ -544,7 +545,7 @@ class TestPatternFan:
         assert any("MULTI-INDEX OR" in detail for detail in details), details
         assert not any("SCAN" in detail for detail in details), details
         branches = [detail for detail in details if detail.startswith("SEARCH")]
-        assert branches and all("ix_vfs_entries_path" in detail for detail in branches), details
+        assert branches and all(_on_a_path_index(detail) for detail in branches), details
         await storage.close()
 
     @pytest.mark.parametrize(
@@ -1165,7 +1166,7 @@ class TestScopeChannel:
             if analyzed:
                 branches = [detail for detail in details if detail.startswith("SEARCH")]
                 assert len(branches) == 20, details
-                assert all("ix_vfs_entries_path" in detail for detail in branches), details
+                assert all(_on_a_path_index(detail) for detail in branches), details
         await storage.close()
 
     @pytest.mark.slow
@@ -1319,3 +1320,8 @@ class TestScopeChannel:
         assert admit_scope(None, "pattern") is None
         assert side_scope(None, trashed=False) is None
         assert side_scope(admit_scope(ScopeChannel(roots=(Path("/a"),), arms=("*",)), "pattern"), trashed=True) is None
+
+
+def _on_a_path_index(detail: str) -> bool:
+    """Whether a plan step seeks the path index or the partial one over the live rows."""
+    return any(f"INDEX {name} " in detail for name in PATH_INDEXES)

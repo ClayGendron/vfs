@@ -24,10 +24,10 @@ UPWARD_IMPORT_ALLOWANCE: frozenset[tuple[str, str]] = frozenset(
 )
 
 MODULE_LINE_BASELINE: dict[str, int] = {
-    "src/vfs/base.py": 3092,
-    "src/vfs/storage/backends/database/backend.py": 1537,
+    "src/vfs/base.py": 3098,
+    "src/vfs/storage/backends/database/backend.py": 1509,
     "src/vfs/storage/backends/database/rights.py": 1539,
-    "src/vfs/storage/backends/database/reads.py": 1243,
+    "src/vfs/storage/backends/database/reads.py": 1094,
     "src/vfs/storage/backends/database/writes.py": 1415,
     "src/vfs/storage/backends/database/engine.py": 1008,
 }

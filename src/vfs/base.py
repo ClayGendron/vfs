@@ -1877,7 +1877,13 @@ class AsyncVirtualFileSystem:
         if (problem := cursor.refusal(terminal.mount.path, terminal.rel)) is not None:
             return self._error(ErrorKind.invalid, op=op, detail=problem)
         answer = await self._dispatch_read(
-            terminal.mount, op, ask=cursor.asking(self._call_storage), path=terminal.rel, authority=authority, **kwargs
+            terminal.mount,
+            op,
+            None,
+            cursor.asking(self._call_storage),
+            path=terminal.rel,
+            authority=authority,
+            **kwargs,
         )
         return cursor.page(answer)
 
@@ -2830,7 +2836,7 @@ class AsyncVirtualFileSystem:
         return await self._listing.called(self._call_storage, mount, op, authority=authority, **kwargs)
 
     async def _dispatch_read(
-        self, mount: Mount, op: Op, listing: MountListing | None = None, *, ask: AskStorage | None = None, **kwargs: Any
+        self, mount: Mount, op: Op, listing: MountListing | None = None, ask: AskStorage | None = None, /, **kwargs: Any
     ) -> Result:
         """Send ``op`` to ``mount`` as :meth:`_dispatch_entry` does, and let the listing verbs read the mount table.
 

@@ -95,11 +95,13 @@ PLAN_EXTENSIONS: tuple[str, ...] = ("py", "ts", "md", "txt", "rs")
 PLAN_BODY = "plan body"
 """Every plan file's body: past the gram size, so the rebuild encodes the file and the overlay holds none of them."""
 
-# The path index's name as every engine reports it, case aside.
+# The path index's name as every engine reports it, case aside, and the partial one over the live rows alone.
 PATH_INDEX = "ix_vfs_entries_path"
+LIVE_PATH_INDEX = "ix_vfs_entries_live_path"
+PATH_INDEXES: Final = (PATH_INDEX, LIVE_PATH_INDEX)
 
 # The indexes it may seek on an equality alone: the caller's own rows (the owner floor) and paths.
-EQUALITY_INDEXES = frozenset({"ix_vfs_entries_owner_id", PATH_INDEX})
+EQUALITY_INDEXES = frozenset({"ix_vfs_entries_owner_id", *PATH_INDEXES})
 
 # Each entries index's leading column: a seek bounds it, or it walks the index.
 LEADING_COLUMNS: Final[dict[str, str]] = {
@@ -644,6 +646,11 @@ async def _plan_text(storage: DatabaseStorage, literal: str) -> str:
         return await _PLAN_TEXTS[storage._host.profile.name](session, literal)
 
 
+def _on_a_path_index(line: str) -> bool:
+    """Whether a plan line seeks one of the path indexes, by its whole name."""
+    return any(re.search(rf"\b{name}\b", line) for name in PATH_INDEXES)
+
+
 async def _sqlite_plan_text(session: AsyncSession, literal: str) -> str:
     """``EXPLAIN QUERY PLAN``'s detail column, one line a plan step."""
     rows = (await session.execute(text("EXPLAIN QUERY PLAN " + literal))).all()
@@ -659,7 +666,7 @@ async def _sqlite_plan(session: AsyncSession, literal: str) -> PlanReading:
         any("MULTI-INDEX OR" in detail for detail in details)
         and not any(detail.startswith("SCAN") for detail in details)
         and bool(branches)
-        and all(PATH_INDEX in detail for detail in branches)
+        and all(_on_a_path_index(detail) for detail in branches)
     )
     return PlanReading(served, plan)
 
@@ -673,7 +680,9 @@ async def _postgres_plan(session: AsyncSession, literal: str) -> PlanReading:
     """``EXPLAIN``: a ``BitmapOr`` of ``Bitmap Index Scan`` nodes on the path index, and no sequential scan."""
     plan = await _postgres_plan_text(session, literal)
     scans = [line for line in plan.splitlines() if "Bitmap Index Scan" in line]
-    served = "BitmapOr" in plan and bool(scans) and all(PATH_INDEX in line for line in scans) and "Seq Scan" not in plan
+    served = (
+        "BitmapOr" in plan and bool(scans) and all(_on_a_path_index(line) for line in scans) and "Seq Scan" not in plan
+    )
     return PlanReading(served, plan)
 
 

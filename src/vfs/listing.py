@@ -491,7 +491,7 @@ class MountListing:
         ``None``, no row is returned.
         """
         grouped, unverifiable = self.probed(roots)
-        coros = [
+        coros: list[Coroutine[Any, Any, Result]] = [
             self._root_probe(ask, mount, rels, gates, kind, columns, authority) for mount, rels in grouped.values()
         ]
         return coros, unverifiable

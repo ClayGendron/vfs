@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.ranking.pins import assert_top10_pin
+from tests.support.cursor_contract import CursorContract
 from tests.support.grants_contract import GrantsContract
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.plan_store import PlanBackend
@@ -59,7 +60,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.slow
-class TestMemoryConformance(StorageContract, GrantsContract):
+class TestMemoryConformance(StorageContract, GrantsContract, CursorContract):
     """The contract on the in-memory backend, in the slow tier.
 
     It is the same ``DatabaseStorage`` over ``sqlite+aiosqlite:///:memory:``
@@ -96,7 +97,7 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return path
 
 
-class TestSqliteConformance(StorageContract, GrantsContract):
+class TestSqliteConformance(StorageContract, GrantsContract, CursorContract):
     plan_backend = PlanBackend("sqlite")
 
     @pytest.fixture
@@ -176,7 +177,7 @@ async def _closing(storage: DatabaseStorage) -> AsyncIterator[DatabaseStorage]:
 
 
 @pytest.mark.postgres
-class TestPostgresConformance(StorageContract, GrantsContract):
+class TestPostgresConformance(StorageContract, GrantsContract, CursorContract):
     plan_backend = PlanBackend("postgres", "VFS_TEST_POSTGRES_URL")
 
     @pytest.fixture
