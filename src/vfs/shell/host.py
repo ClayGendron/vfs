@@ -71,11 +71,19 @@ _FAILURE_KIND: Final[dict[str, ErrorKind]] = {
 
 
 class LineResult(Result):
-    """A :class:`Result` with what a line printed and the status it exited with."""
+    """What ``cli`` returns: a :class:`Result` with what the line printed and the status it exited with.
+
+    ``stdout`` and ``stderr`` are the bytes bash would print, decoded as UTF-8 with invalid bytes
+    replaced. ``exit_status`` is the status bash would exit with. The errors are the classified facts:
+    a line that could not run, a budget that ended it, and each verb a program was refused.
+    """
 
     stdout: str = ""
+    """What the line wrote to standard output."""
     stderr: str = ""
+    """What the line wrote to standard error."""
     exit_status: int = 0
+    """The last command's status, or 2, 130 or 137 when the line could not run, was cancelled or hit a budget."""
 
 
 async def run_line(

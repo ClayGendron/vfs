@@ -19,6 +19,7 @@ from vfs.pattern_matching import ScopeChannel
 from vfs.permissions import PermissionMap, PermissionsPayload
 from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.session import AsyncSession
+from vfs.shell import LineResult
 from vfs.storage import ResolvedPair, StorageBackend, ranking
 from vfs.storage.backends.database.backend import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
@@ -44,6 +45,7 @@ __all__ = [
     "GrantLevel",
     "GrepOutputMode",
     "InMemoryStorage",
+    "LineResult",
     "Location",
     "Match",
     "Mount",
