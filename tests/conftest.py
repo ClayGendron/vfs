@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, Final, NamedTuple
 
+import aiosqlite
 import pytest
 from sqlalchemy import Engine, create_engine
 
@@ -72,18 +73,35 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
     instances are fine. A storage a module-scoped fixture built is
     constructed before this fixture patches, so it is not tracked and must
     close in its fixture.
+
+    A connection SQLAlchemy throws away is stopped and never awaited, so its
+    driver thread can still be working when the test ends and then answer a
+    closed loop. Each such stop is awaited here, while the loop is open.
     """
     created: list[DatabaseStorage] = []
+    stopped: list[asyncio.Future[Any]] = []
     original = DatabaseStorage.__init__
+    stop = aiosqlite.Connection.stop
 
     def tracking(self: DatabaseStorage, *args: Any, **kwargs: Any) -> None:
         original(self, *args, **kwargs)
         created.append(self)
 
+    def awaited_stop(self: aiosqlite.Connection) -> asyncio.Future[Any] | None:
+        # Only a running connection's thread is there to answer; a second stop's future would never resolve.
+        running = self._running
+        future = stop(self)
+        if running and future is not None:
+            stopped.append(future)
+        return future
+
     monkeypatch.setattr(DatabaseStorage, "__init__", tracking)
+    monkeypatch.setattr(aiosqlite.Connection, "stop", awaited_stop)
     yield
     for storage in created:
         await storage.close()
+    loop = asyncio.get_running_loop()
+    await asyncio.gather(*(future for future in stopped if future.get_loop() is loop), return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------

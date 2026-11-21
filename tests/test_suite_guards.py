@@ -72,6 +72,27 @@ def test_then_no_loop_is_left_open_but_the_one_in_use():
     stray = [o for o in gc.get_objects() if isinstance(o, asyncio.BaseEventLoop) and not o.is_closed()]
     assert stray == [in_use]
 """
+STOPPED_MID_WORK: Final = """
+import asyncio
+import threading
+
+import aiosqlite
+
+LONG_COUNT = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 3000000) SELECT count(*) FROM c"
+
+
+async def test_a_connection_stopped_with_its_thread_still_busy():
+    connection = await aiosqlite.connect(":memory:")
+    asyncio.ensure_future(connection.execute(LONG_COUNT))
+    await asyncio.sleep(0)
+    connection.stop()
+
+
+def test_the_next_test_inherits_nothing():
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread() and not thread.daemon:
+            thread.join()
+"""
 CHILD_INI: Final = """[pytest]
 asyncio_mode = auto
 timeout = 2
@@ -79,6 +100,7 @@ timeout_method = signal
 filterwarnings =
     error::ResourceWarning
     error::pytest.PytestUnraisableExceptionWarning
+    error::pytest.PytestUnhandledThreadExceptionWarning
 """
 RUN_BACKSTOP_SECONDS: Final = 300
 """Ends the child run should the guard under test fail to: a liveness bound, never a measure."""
@@ -123,6 +145,12 @@ def test_a_run_with_no_hang_leaves_no_file(tmp_path: Path) -> None:
 @pytest.mark.slow
 def test_no_test_leaves_a_loop_that_pytest_asyncio_made_unasked(tmp_path: Path) -> None:
     ran = _run_child(tmp_path, IMPLICIT_LOOP, "-n", "0")
+    assert ran.returncode == 0, ran.stdout
+
+
+@pytest.mark.slow
+def test_a_driver_thread_stopped_unawaited_ends_on_its_tests_loop(tmp_path: Path) -> None:
+    ran = _run_child(tmp_path, STOPPED_MID_WORK, "-n", "0")
     assert ran.returncode == 0, ran.stdout
 
 
