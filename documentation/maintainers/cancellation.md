@@ -73,21 +73,15 @@ The third is not a statement. A `grep` checks its matches on a worker thread, an
 
 ## What was tried and is not built
 
-Each of the designs below was built, as a spike or as an earlier build, and run.
+Each of the designs below was built, as a spike or as an earlier build, and run. None is taken, and each for a reason that was seen and not guessed.
 
-A second connection that keeps an in-memory database alive never lost a row. After some cuts it left the storage refusing every call until the collector ran, so it is not taken.
-
-Running out of reach with no mark kept the database, and a cancelled write then always landed. No other engine does that, and a caller who gave up on a write should not find it landed later.
-
-The first build put the refusal on a session class that the host's own factory makes. A handed storage has no factory of its own, so a cancelled write there always landed. The refusal now sits on each session the host takes, whoever made it.
-
-A `do_orm_execute` listener on the session sees only a statement that is passed to `session.execute`. First touch, the statistics step and the savepoints send theirs through `session.connection()`, and it would have missed them.
-
-A refusal in the connection's `commit` event is unsafe. SQLAlchemy marks the transaction inactive, sends no rollback, and returns the connection to the pool with no reset. The row of the refused write was then made permanent by the next caller's commit.
-
-A refusal of `ROLLBACK TO SAVEPOINT` broke the close of a session that held a savepoint. The close raised half way, the transaction was not rolled back, and the connection never returned to its pool.
-
-A refusal in the pool's checkout listener costs the connection. The listener also belongs to the pool, so it cannot tell a session VFS took from one the application made.
+- **A second connection that keeps an in-memory database alive.** It never lost a row. After some cuts it left the storage refusing every call until the collector ran.
+- **Running out of reach with no mark.** It kept the database, and a cancelled write then always landed. No other engine does that, and a caller who gave up on a write should not find it landed later.
+- **The refusal on a session class that the host's own factory makes.** This was the first build. A handed storage has no factory of its own, so a cancelled write there always landed. The refusal now sits on each session the host takes, whoever made it.
+- **A `do_orm_execute` listener on the session.** It sees only a statement that is passed to `session.execute`. First touch, the statistics step and the savepoints send theirs through `session.connection()`, and it would have missed them.
+- **A refusal in the connection's `commit` event.** SQLAlchemy marks the transaction inactive, sends no rollback, and returns the connection to the pool with no reset. The row of the refused write was then made permanent by the next caller's commit.
+- **A refusal of `ROLLBACK TO SAVEPOINT`.** It broke the close of a session that held a savepoint. The close raised half way, the transaction was not rolled back, and the connection never returned to its pool.
+- **A refusal in the pool's checkout listener.** It costs the connection. The listener also belongs to the pool, so it cannot tell a session VFS took from one the application made.
 
 ## What it costs
 
@@ -109,10 +103,9 @@ The tests are in `tests/storage/test_cancelled_call.py`, and beside the code in 
 
 ## Not covered
 
-Cancellation has not been run on a database server. What a cancelled write has done there is read in the drivers' source, and whether a connection thrown away there can hold a lock is not known.
+Four cases are outside what this page promises.
 
-A session that is bound to a `Connection`, and not to an `Engine`, runs out of reach and is refused at its entry and at its commit. It is not refused at each statement, because there is no engine to make a view of.
-
-A handed session factory over an in-memory database has no turns. A statistics pass that is still running can collide with the next call on the one connection.
-
-A handed engine on Python 3.11 keeps the open cursor of a failed statement until the collector runs. VFS opens its own SQLite connections as `ClosingConnection`, which closes such a cursor at the failure, and the builder of a handed engine can pass `connect_args={"factory": ClosingConnection}` to get the same.
+- **A database server.** Cancellation has not been run on one. What a cancelled write has done there is read in the drivers' source, and whether a connection thrown away there can hold a lock is not known.
+- **A session that is bound to a `Connection`, and not to an `Engine`.** It runs out of reach and is refused at its entry and at its commit. It is not refused at each statement, because there is no engine to make a view of.
+- **A handed session factory over an in-memory database.** It has no turns, so a statistics pass that is still running can collide with the next call on the one connection.
+- **A handed engine on Python 3.11.** It keeps the open cursor of a failed statement until the collector runs. VFS opens its own SQLite connections as `ClosingConnection`, which closes such a cursor at the failure, and the builder of a handed engine can pass `connect_args={"factory": ClosingConnection}` to get the same.
