@@ -258,6 +258,67 @@ def require_judgement_stands(
         raise ValueError(msg)
 
 
+@dataclass(slots=True)
+class Removals:
+    """The mounts whose ``remove_mount`` is still deleting their directory, and a count of removals by path.
+
+    A mount added at a path reads :meth:`seen` before its site is checked and passes :meth:`refusal` when
+    it is committed. A removal of that path that began or ended in between moves the count, and one in
+    flight at the commit is in ``inflight``. Either way the site check may have read a directory that the
+    removal deletes, so the mount is refused with a retry. ``count`` keeps one integer for each path that
+    has lost a mount.
+    """
+
+    inflight: dict[Path, Mount] = field(default_factory=dict)
+    count: dict[Path, int] = field(default_factory=dict)
+
+    def begin(self, mount: Mount) -> None:
+        """Record that the directory of ``mount`` is being deleted."""
+        self.inflight[mount.path] = mount
+        self.count[mount.path] = self.count.get(mount.path, 0) + 1
+
+    def end(self, path: Path) -> None:
+        """Record that the delete of the directory at ``path`` is done, however it ended."""
+        if self.inflight.pop(path, None) is not None:
+            self.count[path] = self.count.get(path, 0) + 1
+
+    def seen(self, path: Path) -> int:
+        """Return the count of removals at ``path``, for :meth:`refusal` to compare at the commit."""
+        return self.count.get(path, 0)
+
+    def refusal(self, mount: Mount, seen: int) -> str | None:
+        """Return why ``mount``, whose attach read ``seen``, cannot be committed, or ``None`` when it can.
+
+        Its storage object must not be one whose removal is in flight, so that ``close()`` never closes it
+        as the storage of the mount being removed.
+        """
+        path = mount.path
+        if path in self.inflight or self.count.get(path, 0) != seen:
+            return f"Cannot mount at {path}: a mount there was being removed while this one was checked, so retry"
+        leaving = next((gone.path for gone in self.inflight.values() if gone.storage is mount.storage), None)
+        if leaving is not None:
+            return f"Cannot mount at {path}: that storage object is still being removed from {leaving}, so retry"
+        return None
+
+    def drain(self) -> list[Mount]:
+        """Return the mounts in flight and forget them, so that a second ``close()`` does not close them again."""
+        drained = list(self.inflight.values())
+        self.inflight.clear()
+        return drained
+
+
+def require_no_deeper_mount(mount_path: Path, deeper: Sequence[Mount]) -> None:
+    """Raise ``ValueError`` when ``deeper``, the mounts beneath ``mount_path``, holds any, and name them.
+
+    A mount is removed only once nothing is mounted beneath it, as ``umount`` asks. The paths are named
+    in reverse path order, so a deeper mount is named before one above it.
+    """
+    if deeper:
+        named = ", ".join(sorted((str(mount.path) for mount in deeper), reverse=True))
+        msg = f"Cannot unmount {mount_path}: deeper mounts exist at {named}"
+        raise ValueError(msg)
+
+
 def require_gate_allows(
     mounts: Mapping[Path, Mount], layers: Sequence[PermissionLayer], change: str, mount_path: Path, *ops: Op
 ) -> None:

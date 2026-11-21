@@ -74,6 +74,7 @@ from vfs.mounts import (
     Location,
     Mount,
     MountJudgement,
+    Removals,
     is_tombstoned_site,
     mount_point_owner,
     mount_table_refusal,
@@ -81,6 +82,7 @@ from vfs.mounts import (
     require_gate_allows,
     require_judgement_stands,
     require_mount_site,
+    require_no_deeper_mount,
     require_posture_kept,
     require_storage,
     rights_refusal,
@@ -334,6 +336,7 @@ class AsyncVirtualFileSystem:
         self._default_authority = default_authority
         self._mount_lock = asyncio.Lock()
         self._posture_writes: set[int] = set()
+        self._removals = Removals()
         self._stranded_disposals: dict[int, StorageBackend] = {}
         root = Mount(
             path=ROOT,
@@ -455,6 +458,9 @@ class AsyncVirtualFileSystem:
         in the storage that holds the path above it. The delete never cascades. The empty directory goes
         to the trash like any deleted row, and retention reclaims it. Removing a mount does not close
         its storage. The returned mount carries the storage, so the caller can close the one it owns.
+        A ``close()`` of the kernel while the directory is being deleted closes an owned storage too, and
+        the mount returned then carries it closed. A mount at the path, or of the same storage object
+        elsewhere, is refused with a retry in that window.
 
         ``authority`` names the caller, as for :meth:`add_mount`. The caller must hold ``read_write``
         at the mount point. Removing a mount is also a write at its mount point, so the gate must allow
@@ -475,7 +481,10 @@ class AsyncVirtualFileSystem:
         self._require_mount(mount_path)
         judged = await self._require_mount_rights("unmount", mount_path, authority)
         mount = await self._detach_mount(str(mount_path), judged=judged)
-        removed = await self.delete(path=str(mount_path), cascade=False, authority=_ADMIN_AUTHORITY)
+        try:
+            removed = await self.delete(path=str(mount_path), cascade=False, authority=_ADMIN_AUTHORITY)
+        finally:
+            self._removals.end(mount_path)
         if not removed.success:
             detail = removed.error_message or "storage refused the delete"
             msg = f"Unmounted {mount_path}, but removing its directory failed: {detail}"
@@ -554,9 +563,10 @@ class AsyncVirtualFileSystem:
 
         The mount table is emptied first, so every later verb is refused as closed. Each storage that a
         :term:`mount` owns and that has a ``close`` is then closed once, however many mounts hold the
-        same object. The storages are closed at the same time, each within ``close_timeout`` seconds.
-        A storage that speaks to a remote kernel may end its own sessions there, which is a message
-        over the wire. Closing never changes the mount table of a remote kernel.
+        same object, and so is one whose ``remove_mount`` is still deleting its directory. The storages
+        are closed at the same time, each within ``close_timeout`` seconds. A storage that speaks to a
+        remote kernel may end its own sessions there, which is a message over the wire. Closing never
+        changes the mount table of a remote kernel.
 
         The call returns nothing. If one storage fails to close, the others are still closed and the
         error is raised at the end. Several errors are raised together as a group. A storage that was
@@ -564,7 +574,7 @@ class AsyncVirtualFileSystem:
         twice is safe. So a second ``close()`` after a cancelled one finishes the job.
         """
         async with self._mount_lock:
-            mounts = list(self._mounts.values())
+            mounts = [*self._mounts.values(), *self._removals.drain()]
             self._mounts = {}
             self._rebuild_sorted_mounts()
 
@@ -723,8 +733,8 @@ class AsyncVirtualFileSystem:
         mount_path = normalize_mount_path(path)
         mask = validate_deny_ops(deny_ops)
         posture = validate_posture(posture)
+        seen = self._removals.seen(mount_path)
         await require_mount_site(self._call_storage, self._match_mount(mount_path), mount_path)
-
         mount = Mount(
             path=mount_path,
             storage=storage,
@@ -737,16 +747,16 @@ class AsyncVirtualFileSystem:
         if posture is not None:
             require_posture_kept(storage, mount.declared_caps, mount_path)
             # Checked and reserved with no await between, so no other call mounts the storage during the write.
-            self._check_mount_table(mount, judged)
+            self._check_mount_table(mount, judged, seen)
             self._posture_writes.add(id(storage))
         try:
             if posture is not None:
-                recheck = partial(self._check_mount_table, mount, judged, reserved_here=True)
+                recheck = partial(self._check_mount_table, mount, judged, seen, reserved_here=True)
                 await set_mount_posture(self._call_storage, mount, posture, authority, recheck)
                 recheck()
                 await require_mount_site(self._call_storage, self._match_mount(mount_path), mount_path)
             async with self._mount_lock:
-                self._check_mount_table(mount, judged, reserved_here=posture is not None)
+                self._check_mount_table(mount, judged, seen, reserved_here=posture is not None)
                 self._mounts[mount_path] = mount
                 self._rebuild_sorted_mounts()
         finally:
@@ -754,32 +764,35 @@ class AsyncVirtualFileSystem:
                 self._posture_writes.discard(id(storage))
 
     async def _detach_mount(self, path: str, *, judged: MountJudgement | None = None) -> Mount:
-        """Drop the :term:`mount` at ``path`` from the table and return it. Its directory stays.
+        """Drop the :term:`mount` at ``path`` from the table, mark the path as being removed, and return it.
 
-        Only the table changes and no storage is asked, so the call succeeds even when a storage is
-        dead or stuck. It raises ``ValueError`` when ``path`` has no mount, while deeper mounts lie
-        beneath it, and when the table no longer holds what ``judged`` saw. It raises :class:`MountError`
-        when the gate would refuse a ``delete`` of the mount-point directory.
+        The directory stays, and the caller ends the mark in ``_removals`` once the directory is dealt
+        with, so no mount is added there meanwhile. Only the table changes and no storage is asked, so
+        the call succeeds even when a storage is dead or stuck. It raises ``ValueError`` when ``path``
+        has no mount, while deeper mounts lie beneath it, and when the table no longer holds what
+        ``judged`` saw. It raises :class:`MountError` when the gate would refuse a ``delete`` of the
+        mount-point directory.
         """
         mount_path = normalize_mount_path(path)
         async with self._mount_lock:
             mount = self._require_mount(mount_path)
             require_judgement_stands(judged, "unmount", mount_path, self._mounts)
-            deeper = [p for p in self._sorted_mount_paths if p.startswith(mount_path + "/")]
-            if deeper:
-                msg = f"Cannot unmount {mount_path}: deeper mounts exist at {', '.join(map(str, deeper))}"
-                raise ValueError(msg)
+            require_no_deeper_mount(mount_path, self._listing.beneath(mount_path))
             require_gate_allows(self._mounts, self._permission_layers(mount_path), "unmount", mount_path, "delete")
             del self._mounts[mount_path]
+            self._removals.begin(mount)
             self._rebuild_sorted_mounts()
             return mount
 
-    def _check_mount_table(self, mount: Mount, judged: MountJudgement | None, *, reserved_here: bool = False) -> None:
+    def _check_mount_table(
+        self, mount: Mount, judged: MountJudgement | None, seen: int, *, reserved_here: bool = False
+    ) -> None:
         """Raise unless the table can take ``mount`` now. No storage is asked.
 
         The call raises ``ValueError`` for a closed kernel, and then for a judgement in ``judged`` that no
         longer stands. It then asks the gate, which raises :class:`MountError`. Last, it raises
-        ``ValueError`` when the table cannot take the mount. A call that breaks two rules meets the first.
+        ``ValueError`` when the table cannot take the mount, or when a removal at the path moved the count
+        ``seen`` read before the site was checked. A call that breaks two rules meets the first.
         ``reserved_here`` says that this call holds the reservation of the storage object, which then
         does not count against it.
         """
@@ -790,7 +803,7 @@ class AsyncVirtualFileSystem:
         require_gate_allows(self._mounts, self._permission_layers(mount.path), "mount at", mount.path, "mkdir")
         held = self._posture_writes - {id(mount.storage)} if reserved_here else self._posture_writes
         refusal = mount_table_refusal(self._mounts, self._sorted_mount_paths, mount, held, self._class_name)
-        if refusal is not None:
+        if (refusal := refusal or self._removals.refusal(mount, seen)) is not None:
             raise ValueError(refusal)
 
     def _rebuild_sorted_mounts(self) -> None:

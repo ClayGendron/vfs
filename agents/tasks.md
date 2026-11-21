@@ -47,10 +47,8 @@ Branch 8 fixes the two defects that were here, for every SQLite storage. These a
 
 ### Changing a mount
 
-- [ ] **`remove_mount` deletes the mount-point directory after the mount lock is released.** An `add_mount` at the same path that runs between the two can end with a live mount on a deleted directory.
-- [ ] **`add_mount` restores a deleted file, or a deleted directory that is not empty, and then refuses the mount.** The restored rows stay.
-- [ ] **When `close()` lands during the cleanup of `remove_mount`, the detached storage is neither returned nor closed.**
-- [ ] **A mount change asks `holds` outside the one place storage calls go through.** A `close()` that lands between the entry check and that call still calls a closed storage. Read.
+- [ ] **`add_mount` restores a deleted file, or a deleted directory that is not empty, and then refuses the mount.** The restored rows stay. A fix that judges the site through its trash view before restoring was tried on 2026-11-21 and withdrawn: the trash view of a deleted directory lists every deleted row beneath it, those an earlier delete removed among them, and `restore` brings back only the rows of the directory's own delete, so the probe refused sites that `restore` would leave empty. An exact check needs the trash view to say which delete a row belongs to, which is a change to what the view exposes and is a decision.
+- [ ] **A mount change asks `holds` outside the one place storage calls go through.** A `close()` that lands between the entry check and that call still calls a closed storage. Read. On 2026-11-21 no `await` was found between the closed check in `_require_mount_rights` and the `holds` call, so on one event loop `close()` cannot land there; routing `holds` through `_call_storage` would make `holds` a dispatched op, which is a design change.
 
 ### Listing at a mount point
 
