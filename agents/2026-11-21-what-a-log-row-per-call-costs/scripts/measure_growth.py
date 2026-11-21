@@ -8,8 +8,9 @@ the chunk). While it runs, eight readers, one one-file writer and one probe that
 every 50 ms measure whether anything waits. Last, one more day is inserted, to see whether the space the
 delete freed is reused.
 
-The fill uses the leaned design's own flush shape for its first day (256 rows to one insert) and a bulk
-``executemany`` after, because the fill is setup, not the thing measured.
+The fill uses the leaned design's own flush shape for its first day (256 rows to one insert) and a bulk load
+after, because the fill is setup, not the thing measured: ``executemany`` on SQLite, and on Postgres the
+driver's ``COPY``, because ``executemany`` took about a minute a day there.
 
     L0_SCRATCH=... uv run python scripts/measure_growth.py --engine sqlite
     VFS_TEST_POSTGRES_URL=... L0_SCRATCH=... uv run python scripts/measure_growth.py --engine postgres
@@ -102,6 +103,14 @@ async def fill_day(bench: Bench, rows: list[dict[str, Any]], *, flush_shape: boo
         if flush_shape:
             for i in range(0, len(rows), LOG_FLUSH_ROWS):
                 await conn.execute(insert(bench.table).values(rows[i : i + LOG_FLUSH_ROWS]))
+        elif bench.engine_kind == "postgres":
+            # asyncpg's COPY: SQLAlchemy's executemany ran about a minute a day here, too slow for 30 days.
+            raw = await conn.get_raw_connection()
+            columns = [c.name for c in bench.table.c]
+            records = [tuple(r[c] for c in columns) for r in rows]
+            await raw.driver_connection.copy_records_to_table(  # ty: ignore[unresolved-attribute]
+                LOG_TABLE, records=records, columns=columns, schema_name=bench.table.schema
+            )
         else:
             for i in range(0, len(rows), BULK_ROWS):
                 await conn.execute(insert(bench.table), rows[i : i + BULK_ROWS])
