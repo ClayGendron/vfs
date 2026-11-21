@@ -50,7 +50,6 @@ Each was shown by a script that ran, unless it says "read". The review records n
 - [ ] **`add_mount` restores a deleted file, or a deleted directory that is not empty, and then refuses the mount.** The restored rows stay.
 - [ ] **When `close()` lands during the cleanup of `remove_mount`, the detached storage is neither returned nor closed.**
 - [ ] **A mount change asks `holds` outside the one place storage calls go through.** A `close()` that lands between the entry check and that call still calls a closed storage. Read.
-- [ ] **Three small ones.** `grants` can be masked with `deny_ops`, though it only reads. `add_mount(storage, path="")` falls back to the storage's name. `require_storage` accepts a storage whose members are not callable.
 
 ### Listing at a mount point
 
@@ -76,20 +75,17 @@ Each was shown by a script that ran, unless it says "read". The review records n
 ## Cost and structure
 
 - [ ] **Two scans of the mount table grow with a batch.** `_permission_layers` scans it once for each row, 2,000,000 visits for 10,000 rows and 200 mounts, and `MountListing.beneath` once for each named root. Before the listing rule.
-- [ ] **`Result.merge` removes repeated errors by searching a growing list.** 200 distinct errors cost 19,900 comparisons, so 10,000 would cost about 50,000,000. Before the listing rule.
 - [ ] **A storage searches 10,000 rows in hand close to its time budget.** 8 to 9 seconds against 10, on SQLite in memory, measured once by the clock.
 - [ ] **A storage builds every `glob` candidate before it applies the limit.** Before the listing rule.
 - [ ] **Every mounted root in a listing is asked at once.** With 200 database mounts, one `ls` opens 200 transactions together. Read.
 - [ ] **The cost of a listing over mounts is measured on a server engine.** It is counted in calls and not measured.
 - [ ] **`gather_settled` and `PathFilters` live in `vfs.listing`.** Three readings said they belong in a module that is not about listings, since writes and searches use them too.
-- [ ] **The tests of `vfs.listing` are in `tests/base/test_mount_listing.py`.** The new module has no test file of its own name.
 
 ## Words and names
 
 - [ ] **The docstrings of 16 source files follow the docstring rules.** About 265 of 311 break a rule in `documentation/maintainers/how-we-write-docstrings.md`, and about 170 public members have none. The largest files are `rights.py`, `paths.py`, `backend.py`, `labels.py`, `ranking.py` and `sync.py`. The words "router", "bind path", "bind point" and "bind site" remain in them, and in `fanout.py` and `pattern_matching/glob.py`.
 - [ ] **Seven words used in docstrings get a glossary entry.** They are gate, capability, permission map, posture, authority, trash view and mount point.
 - [ ] **Two test names overclaim or use an old word.** `test_update_mount_is_refused_where_removing_and_adding_the_mount_would_be` claims more than `update_mount` does. `test_unmount_and_remount_pass_under_a_rule_beneath_the_site` keeps "remount", because documents under `context/` cite it by name.
-- [ ] **A refusal in `update_mount` has an em dash in its message.** "Mount at … changed while it was being updated — retry".
 - [ ] **The docs export follows an alias of a type variable.** It now tells a type variable by what the value is, and it does not follow `T = U` or a renamed constructor.
 
 ## Tests that fail now and then

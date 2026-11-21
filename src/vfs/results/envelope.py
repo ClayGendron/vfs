@@ -575,6 +575,8 @@ class Result(BaseModel):
         rows: list[Observation] = []
         at: dict[str, list[int]] = {}
         errors: list[ResultError] = []
+        # An error's data is a dict, so it cannot hash; equal errors share this key, and only they are compared.
+        alike: dict[tuple[ErrorKind | str, str | None, str], list[ResultError]] = {}
         for r in results:
             merged_ops += tuple(o for o in r.ops if o not in merged_ops)
             fresh = [o for o in r.observations if o.path not in at]
@@ -585,7 +587,9 @@ class Result(BaseModel):
                 at.setdefault(o.path, []).append(len(rows))
                 rows.append(o)
             for e in r.errors:
-                if e not in errors:
+                seen = alike.setdefault((e.kind, e.path, e.message), [])
+                if e not in seen:
+                    seen.append(e)
                     errors.append(e)
         return cls(ops=merged_ops, observations=rows, errors=errors)
 
