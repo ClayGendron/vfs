@@ -20,6 +20,11 @@ install_app() {
     (cd docs-app && bun install --frozen-lockfile)
 }
 
+# A port the system has just handed out, so a server left on the default port cannot stop the browser tests.
+free_port() {
+    uv run --only-group docs python -c "import socket; s = socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])"
+}
+
 case "${1:-}" in
     export)
         export_api
@@ -37,6 +42,8 @@ case "${1:-}" in
     check)
         export_api
         install_app
+        VFS_DOCS_PORT="$(free_port)"
+        export VFS_DOCS_PORT
         cd docs-app && bun run build && bun run check && bun run test
         ;;
     *)

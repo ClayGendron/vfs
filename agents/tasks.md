@@ -89,12 +89,11 @@ Each was shown by a script that ran, unless it says "read". The review records n
 
 - [ ] **The docstrings of 16 source files follow the docstring rules.** About 265 of 311 break a rule in `documentation/maintainers/how-we-write-docstrings.md`, and about 170 public members have none. The largest files are `rights.py`, `paths.py`, `backend.py`, `labels.py`, `ranking.py` and `sync.py`. The words "router", "bind path", "bind point" and "bind site" remain in them, and in `fanout.py` and `pattern_matching/glob.py`.
 - [ ] **Seven words used in docstrings get a glossary entry.** They are gate, capability, permission map, posture, authority, trash view and mount point.
-- [ ] **Two test names overclaim or use an old word.** `test_update_mount_is_refused_where_removing_and_adding_the_mount_would_be` claims more than `update_mount` does. `test_unmount_and_remount_pass_under_a_rule_beneath_the_site` keeps "remount", because documents under `context/` cite it by name.
+- [ ] **A test name uses an old word.** `test_unmount_and_remount_pass_under_a_rule_beneath_the_site` keeps "remount", because documents under `context/` cite it by name.
 - [ ] **A refusal in `update_mount` has an em dash in its message.** "Mount at … changed while it was being updated — retry".
 - [ ] **The docs export follows an alias of a type variable.** It now tells a type variable by what the value is, and it does not follow `T = U` or a renamed constructor.
 
 ## Tests that fail now and then
 
 - [ ] **The Playwright test "a button that returns to the top shows once the reader scrolls back up".** It failed three times on 2026-11-19 while other work loaded the machine, and passed each time it was run again.
-- [ ] **Three database storage tests fail under load and pass alone.** `test_two_writers_crossing_together_analyze_once` in `test_statistics.py`, and `test_every_scope_statement_fits_the_budget` and `test_contract_scale_pattern_batch_chunks_within_budget[10k]` in `test_reads.py`. Seen three times on 2026-11-19, each time while other suites or the engine legs shared the machine. The two in `test_reads.py` returned no row where one was expected, which is what a `glob` gives when its stage reaches its time budget. A test that can fail on a slow machine is a test of the clock, which the working agreement forbids. `scripts/ci.sh` passes when it runs alone.
-- [ ] **`scripts/docs.sh check` fails to start when port 4173 is in use.** Seen once.
+- [ ] **`test_two_writers_crossing_together_analyze_once` in `test_statistics.py` fails under load and passes alone.** Seen on 2026-11-19 while other suites or the engine legs shared the machine. No clock was found in its path on 2026-11-21, and the failure was not reproduced, so its cause is not known. The two `test_reads.py` tests seen failing beside it now run with no glob wall budget, as a counted test must.
