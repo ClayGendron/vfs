@@ -1,0 +1,9 @@
+[package]
+name = "hirdump"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex-syntax = "=0.8.11"
+
+[workspace]

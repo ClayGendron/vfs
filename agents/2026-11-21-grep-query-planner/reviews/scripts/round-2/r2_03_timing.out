@@ -1,0 +1,21 @@
+load (2.0341796875, 4.4189453125, 6.93115234375)
+/kernel/kcsan                      dentry_lru_isolate   in hand=   3.2ms  allow-listed by range=   5.9ms load=2.0
+/kernel/kcsan                      -EINVAL              in hand=   3.3ms  allow-listed by range=   7.2ms load=2.0
+/fs/ext4                           dentry_lru_isolate   in hand=   5.2ms  allow-listed by range=   5.9ms load=2.0
+/fs/ext4                           -EINVAL              in hand=   5.5ms  allow-listed by range=   8.7ms load=2.0
+/kernel/bpf                        dentry_lru_isolate   in hand=   7.0ms  allow-listed by range=   7.1ms load=2.0
+/kernel/bpf                        -EINVAL              in hand=   8.8ms  allow-listed by range=  11.0ms load=2.0
+/drivers/clocksource               dentry_lru_isolate   in hand=   6.8ms  allow-listed by range=   6.1ms load=2.0
+/drivers/clocksource               -EINVAL              in hand=   7.1ms  allow-listed by range=   8.8ms load=2.0
+/drivers/net/wireless/ath/ath9k    dentry_lru_isolate   in hand=  10.0ms  allow-listed by range=   6.0ms load=2.0
+/drivers/net/wireless/ath/ath9k    -EINVAL              in hand=  10.1ms  allow-listed by range=   8.6ms load=2.0
+/net/ipv4                          dentry_lru_isolate   in hand=   9.1ms  allow-listed by range=   6.1ms load=2.0
+/net/ipv4                          -EINVAL              in hand=  10.2ms  allow-listed by range=  10.2ms load=2.0
+/fs/btrfs                          dentry_lru_isolate   in hand=   9.8ms  allow-listed by range=   5.9ms load=2.0
+/fs/btrfs                          -EINVAL              in hand=  10.7ms  allow-listed by range=  10.0ms load=2.0
+/mm                                dentry_lru_isolate   in hand=  11.6ms  allow-listed by range=   7.5ms load=2.0
+/mm                                -EINVAL              in hand=  12.7ms  allow-listed by range=  11.4ms load=2.0
+/drivers/md                        dentry_lru_isolate   in hand=  17.2ms  allow-listed by range=   7.3ms load=2.0
+/drivers/md                        -EINVAL              in hand=  19.0ms  allow-listed by range=  12.2ms load=2.0
+/drivers/gpu/drm/amd/display/dc    dentry_lru_isolate   in hand=  91.8ms  allow-listed by range=   6.8ms load=2.0
+/drivers/gpu/drm/amd/display/dc    -EINVAL              in hand=  91.9ms  allow-listed by range=   7.1ms load=2.0

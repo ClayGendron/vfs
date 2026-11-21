@@ -1,0 +1,11 @@
+('/pub',) system=534 alice=534 bob=534 anon=0!
+('/team',) system=536 alice=536 bob=0! anon=0!
+('/alice',) system=162 alice=162 bob=0! anon=0!
+('/secret',) system=203 alice=0! bob=22 anon=0!
+('/secret/security/selinux',) system=22 alice=0! bob=22 anon=0!
+('/pub/late',) system=28 alice=28 bob=28 anon=28
+('/secret/late',) system=15 alice=0! bob=0! anon=0!
+('/.vfs/ipc',) system=10 alice=0! bob=0! anon=0!
+('/.vfs/trash/pub',) system=36! alice=36! bob=36! anon=0!
+('/.vfs/trash/team', '/.vfs/trash/secret') system=21! alice=5! bob=16! anon=0!
+('/.vfs/trash/alice/mm',) system=13! alice=13! bob=0! anon=0!

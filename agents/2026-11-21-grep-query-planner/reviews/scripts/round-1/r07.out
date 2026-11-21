@@ -1,0 +1,7 @@
+'a': database plan -> 0 rows [<ErrorKind.unindexable_pattern: 'vfs.invalid.unindexable_pattern'>]; in-hand plan -> 1 rows []
+'.': database plan -> 0 rows [<ErrorKind.unindexable_pattern: 'vfs.invalid.unindexable_pattern'>]; in-hand plan -> 1 rows []
+'^$': database plan -> 0 rows [<ErrorKind.unindexable_pattern: 'vfs.invalid.unindexable_pattern'>]; in-hand plan -> 1 rows []
+'x*': database plan -> 0 rows [<ErrorKind.unindexable_pattern: 'vfs.invalid.unindexable_pattern'>]; in-hand plan -> 1 rows []
+/drivers/atm -EINVAL: 20 statements, latency ms min=0.480 median=0.972 max=37.0; max/min=77x
+/drivers/gpu i_count: 36 statements, latency ms min=0.448 median=5.629 max=19.1; max/min=43x
+corpus i_count: 36 statements, latency ms min=0.341 median=5.502 max=38.6; max/min=113x

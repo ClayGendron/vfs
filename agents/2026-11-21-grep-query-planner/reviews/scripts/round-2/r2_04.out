@@ -1,0 +1,4 @@
+a) /drivers/gpu/drm/amd/include/asic_reg/dcn: 38 files, in hand B = 171.3 MB, of it unencoded 143.1 MB; the ladder fetched 143.1 MB for a pattern with 1 match corpus-wide (0 rows)
+a) /drivers/gpu/drm/amd/include/asic_reg/nbio: 24 files, in hand B = 115.3 MB, of it unencoded 103.8 MB; the ladder fetched 103.8 MB for a pattern with 1 match corpus-wide (0 rows)
+a) /drivers/gpu/drm/amd/include/asic_reg/gc: 30 files, in hand B = 63.1 MB, of it unencoded 48.2 MB; the ladder fetched 48.2 MB for a pattern with 1 match corpus-wide (0 rows)
+b) CREATE UNIQUE INDEX ix_vfs_entries_path ON vfs_entries (path)
