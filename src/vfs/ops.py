@@ -180,6 +180,15 @@ developer-plane verbs sit at ``read_write``; ``run`` waits for its own
 axis.
 """
 
+ADDITIVE_WRITE: Final[Needs] = Needs("add", create="add")
+"""The rungs of a write that replaces no stored byte: one that creates a file only where none is.
+
+Such a write never lands on an occupant, so it cannot widen what its
+caller may destroy, and an occupied target is judged at ``add``. The
+caller then hears ``exists``, which is the true answer, where
+``contribute`` would have refused it with ``permission_denied``.
+"""
+
 # Grep option vocabularies — shared by the router, the storage protocols,
 # and the CLI grammar when it lands.
 CaseMode = Literal["sensitive", "insensitive", "smart"]

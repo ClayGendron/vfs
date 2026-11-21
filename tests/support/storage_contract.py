@@ -26,6 +26,7 @@ any required op — partial backends are first-class.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from functools import partial
 from typing import Any, ClassVar, NamedTuple, Protocol, cast
@@ -379,13 +380,52 @@ class StorageContract:
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.wrong_kind
 
-    @needs("write")
-    async def test_write_onto_an_existing_file_without_overwrite_is_exists(self, storage: ConformanceBackend) -> None:
+    @needs("write", "stat", "read")
+    async def test_a_create_only_write_over_a_live_file_is_exists_and_names_what_is_there(
+        self, storage: ConformanceBackend
+    ) -> None:
         # The create leaf table: existence outranks everything else at the leaf.
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="first")])
-        result = await storage.write(entries=[Entry(path=Path("/a.txt"), content="second")], overwrite=False)
-        assert result.success is False
-        assert result.errors[0].kind == ErrorKind.exists
+        await storage.write(entries=[_file("/a.txt", "first")])
+        stored = (await storage.stat(path=Path("/a.txt"))).observations[0]
+        result = await storage.write(entries=[_file("/a.txt", "second")], if_absent=True)
+        assert result.success is False and result.observations == []
+        (error,) = result.errors
+        assert (error.kind, error.path, error.retryable) == (ErrorKind.exists, "/a.txt", False)
+        assert error.data == {"version": 1, "content_hash": stored.content_hash}
+        # The same body is refused too, or two callers that create one lock file would both hold it.
+        same = await storage.write(entries=[_file("/a.txt", "first")], if_absent=True)
+        assert [e.kind for e in same.errors] == [ErrorKind.exists]
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "first"
+        assert await _revision_of(storage, "/a.txt") == 1
+
+    @needs("write", "read")
+    async def test_a_create_only_write_of_an_absent_file_creates_it(self, storage: ConformanceBackend) -> None:
+        result = await storage.write(entries=[_file("/d/a.txt", "body")], if_absent=True, parents=True)
+        assert result.success is True, result.errors
+        assert [(o.path, o.status, o.version) for o in result.observations] == [("/d/a.txt", "created", 1)]
+        assert (await storage.read(path=Path("/d/a.txt"))).observations[0].content == "body"
+
+    @needs("write", "mkdir", "stat")
+    async def test_a_create_only_write_is_exists_over_any_occupant(self, storage: ConformanceBackend) -> None:
+        # Occupied is answered before the occupant's kind is, as O_EXCL answers EEXIST over a directory.
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[_file("/f.txt", "body")])
+        directory = Entry(path=Path("/d"), kind="directory")
+        for entry in (_file("/d", "body"), directory, Entry(path=Path("/f.txt"), kind="directory")):
+            result = await storage.write(entries=[entry], if_absent=True)
+            assert [(e.kind, e.path) for e in result.errors] == [(ErrorKind.exists, entry.path)], entry
+        # Without the flag a directory entry at a directory is forgiven, and a file at one is the wrong kind.
+        assert (await storage.write(entries=[directory])).success is True
+        assert (await storage.write(entries=[_file("/d", "body")])).errors[0].kind == ErrorKind.wrong_kind
+
+    @needs("write", "read")
+    async def test_twenty_create_only_writes_of_one_path_admit_one(self, storage: ConformanceBackend) -> None:
+        claims = [storage.write(entries=[_file("/lock", f"holder {n}")], if_absent=True) for n in range(20)]
+        results = await asyncio.gather(*claims)
+        won = [n for n, result in enumerate(results) if result.success]
+        assert len(won) == 1, [result.errors for result in results]
+        assert {error.kind for result in results for error in result.errors} == {ErrorKind.exists}
+        assert (await storage.read(path=Path("/lock"))).observations[0].content == f"holder {won[0]}"
 
     @needs("write", "mkdir")
     async def test_write_entries_creates_and_forgives_directories(self, storage: ConformanceBackend) -> None:
@@ -910,7 +950,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])
         first = (await storage.stat(path=Path("/a.txt"))).observations[0].version
         assert (await storage.delete(path=Path("/a.txt"))).success is True
-        revived = await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")], overwrite=False)
+        revived = await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")], if_absent=True)
         assert revived.success is True and revived.observations[0].status == "updated"
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
         later = (await storage.stat(path=Path("/a.txt"))).observations[0].version
@@ -1879,7 +1919,7 @@ class StorageContract:
         assert (await rebuilder.rebuild()).success is True
         assert (await rebuilder.rebuild()).success is True
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
-        assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
+        assert (await storage.write(entries=[rewrite])).success is True
         assert (await rebuilder.rebuild()).success is True
         stale = await storage.grep(pattern="magnet")
         assert stale.success is True and stale.observations == []
@@ -2041,7 +2081,7 @@ class StorageContract:
         found = await storage.search(query="magnet")
         assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
-        assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
+        assert (await storage.write(entries=[rewrite])).success is True
         stale = await storage.search(query="magnet")
         assert [str(o.path) for o in stale.observations] == ["/fresh.txt"]
         fresh = await storage.search(query="lodestone")
@@ -3102,7 +3142,7 @@ class StorageContract:
         pair = [Entry(path=Path("/a.txt"), content="alpha"), Entry(path=Path("/b.txt"), content="bravo")]
         await storage.write(entries=pair)
         assert (await rebuilder.rebuild()).success is True
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")], overwrite=True)
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")])
         result = await rebuilder.rebuild()
         assert result.success is True
         assert (result.embedding["embedded"], result.embedding["unembedded"]) == (1, 0)  # ty: ignore[unresolved-attribute]

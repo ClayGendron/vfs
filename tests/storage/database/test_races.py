@@ -158,7 +158,7 @@ class TestForwardOrdering:
             handler, rival_results = _self_clearing("write:before-apply", lambda: storage.delete(path=Path("/d")))
             with seams.installed("write:before-apply", handler):
                 if verb == "write":
-                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")], overwrite=True)
+                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")])
                 else:
                     victim = await storage.edit(edits=[EditOperation(old="old", new="mine")], path=Path("/d/f.txt"))
             assert rival_results and rival_results[0].success is True
@@ -527,7 +527,7 @@ class TestGhostRefusal:
                     )
                 )
                 await session.commit()
-            victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")], overwrite=True)
+            victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")])
             assert victim.success is False
             assert all(e.kind == ErrorKind.conflict and e.retryable for e in victim.errors)
             async with host.session_factory() as session:
@@ -745,7 +745,7 @@ class TestExhaustionClassification:
                     outcomes = []
                     for n in range(per_writer):
                         entries = [Entry(path=Path("/hot.txt"), content=f"{tag}-{n}")]
-                        outcomes.append(await instance.write(entries=entries, overwrite=True))
+                        outcomes.append(await instance.write(entries=entries))
                     return outcomes
 
                 rounds = await asyncio.gather(*(hammer(instance, k) for k, instance in enumerate(instances)))
@@ -802,7 +802,7 @@ class TestGrepEpochConsistency:
 
             async def demote() -> Result:
                 entries = [Entry(path=Path("/b.txt"), content="needle beta v2")]
-                return await storage.write(entries=entries, overwrite=True)
+                return await storage.write(entries=entries)
 
             handler, rival_results = _self_clearing("grep:after-pointer-read", demote)
             with seams.installed("grep:after-pointer-read", handler):
@@ -863,7 +863,7 @@ class TestSearchChunkConsistency:
                 if rival == "sweep":
                     return await storage.sweep(path=Path("/notes.txt"))
                 rewritten = [Entry(path=Path("/notes.txt"), content="A stream of tokens, rewritten.\n")]
-                written = await storage.write(entries=rewritten, overwrite=True)
+                written = await storage.write(entries=rewritten)
                 return written if not written.success else await storage.rebuild()
 
             real = search_module._chunk_texts
@@ -994,7 +994,7 @@ class TestBuildAgreement:
                 seams.clear("rebuild:before-lexical")
                 outcomes.append((await rival.delete(path=Path("/d"))).success)
                 same = Entry(path=Path("/a.txt"), content="alpha body")
-                outcomes.append((await rival.write(entries=[same], overwrite=True)).success)
+                outcomes.append((await rival.write(entries=[same])).success)
                 outcomes.append((await rival.restore(path=Path("/b.txt"))).success)
 
             received: dict[str, int] = {}

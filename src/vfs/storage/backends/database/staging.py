@@ -304,15 +304,16 @@ class WritePlan:
             return None
         occupant = self.kind_of(target)
         tombstone = self.tombstone_of(target) if occupant is None else None
+        # Occupied is answered before the occupant's kind, as O_EXCL answers EEXIST over a directory.
+        if occupant is not None and not overwrite:
+            self.errors.append(self.occupied(target))
+            return None
         if occupant == "directory":
             self.errors.append(wrong_kind("directory", target))
             return None
         if tombstone is not None and tombstone["kind"] == "directory":
             hint = {"kind": "directory", **trashed_hint(tombstone["deleted_at"])}
             self.errors.append(classified(ErrorKind.wrong_kind, target, detail="directory", data=hint))
-            return None
-        if occupant is not None and not overwrite:
-            self.errors.append(already_exists(target))
             return None
         if expected is not None and occupant is None:
             self.errors.append(tombstone_miss(target, None if tombstone is None else tombstone["deleted_at"]))
@@ -336,12 +337,30 @@ class WritePlan:
         self.staged[target].expected_version = expected
         return "created" if occupant is None and tombstone is None else "updated"
 
-    def put_dir(self, target: Path, *, parents: bool) -> Status | None:
-        """Gate and stage one directory; a tombstone at the site is absent, and only ``restore`` brings it back."""
+    def occupied(self, path: Path) -> ResultError:
+        """The ``exists`` of a create-only write at the live row at *path*, naming what the stored row holds.
+
+        A row this batch itself staged is named bare: it is not stored,
+        and the refusal means it never will be.
+        """
+        if path in self.staged:
+            return already_exists(path)
+        row = self.committed[str(path)]
+        return occupant_exists(path, row["version"], row["content_hash"])
+
+    def put_dir(self, target: Path, *, parents: bool, exclusive: bool = False) -> Status | None:
+        """Gate and stage one directory; a tombstone at the site is absent, and only ``restore`` brings it back.
+
+        *exclusive* refuses any live occupant with ``exists``, a
+        directory too, as ``mkdir`` does without ``exist_ok``.
+        """
         if not self.within_namespace(target):
             return None
         occupant = self.kind_of(target)
         if occupant is not None:
+            if exclusive:
+                self.errors.append(self.occupied(target))
+                return None
             if occupant != "directory":
                 self.errors.append(wrong_kind(occupant, target))
                 return None
@@ -528,6 +547,19 @@ def stale_version(path: Path, current: int) -> ResultError:
     """
     detail = "the version expected is not the version stored"
     return classified(ErrorKind.conflict, path, detail=detail, data={"version": current})
+
+
+def occupant_exists(path: Path, version: int, content_hash: str | None) -> ResultError:
+    """The ``exists`` of a create that found a live row at *path*, naming the row's version and its body's hash.
+
+    A caller that lost the reply to its own create can tell from the
+    two that the row there is the one it made. A directory has no
+    body, and names its version alone.
+    """
+    data: dict[str, object] = {"version": version}
+    if content_hash is not None:
+        data["content_hash"] = content_hash
+    return classified(ErrorKind.exists, path, data=data)
 
 
 # ---------------------------------------------------------------------------

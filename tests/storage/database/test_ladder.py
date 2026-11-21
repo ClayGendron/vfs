@@ -203,6 +203,30 @@ async def test_add_creates_and_alters_only_its_own_rows(storage: InMemoryStorage
 
 
 @pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
+async def test_add_hears_exists_from_a_create_only_write_over_anothers_row(
+    storage: InMemoryStorage, who: Authority
+) -> None:
+    await _inbox(storage, "add", "ann", "bob")
+    stored = (await storage.stat(path=Path("/inbox/carol.md"), authority=SYSTEM)).observations[0]
+    refused = await _write(storage, "/inbox/carol.md", who, if_absent=True)
+    # The true answer, and what is there: add reads the row, and a create-only write replaces nothing.
+    (error,) = refused.errors
+    assert (error.kind, error.data) == (ErrorKind.exists, {"version": 1, "content_hash": stored.content_hash})
+    assert _kind(await _write(storage, "/inbox/carol.md", who)) == ErrorKind.permission_denied
+    # Another's tombstone: a write at it is a restore, which add lacks, create-only or not.
+    assert (await storage.delete(path=Path("/inbox/carol.md"), authority=CAROL)).success is True
+    assert _kind(await _write(storage, "/inbox/carol.md", who, if_absent=True)) == ErrorKind.permission_denied
+
+
+async def test_a_create_only_write_over_a_row_tells_a_list_holder_nothing(storage: InMemoryStorage) -> None:
+    await _inbox(storage, "list", "bob")
+    refused = await _write(storage, "/inbox/carol.md", BOB, if_absent=True)
+    (error,) = refused.errors
+    assert error.kind == ErrorKind.permission_denied
+    assert not {"version", "content_hash"} & set(error.data or {})
+
+
+@pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
 async def test_contribute_edits_anyones_row_and_trashes_only_its_own(storage: InMemoryStorage, who: Authority) -> None:
     await _inbox(storage, "contribute", "ann", "bob")
     assert (await _write(storage, "/inbox/carol.md", who, "theirs, overwritten")).success is True
@@ -288,7 +312,7 @@ async def test_mkdir_on_a_list_directory_is_denied_with_or_without_exist_ok(stor
     assert _kind(await storage.mkdir(path=Path("/team"), authority=BOB)) == ErrorKind.permission_denied
     assert _kind(await storage.mkdir(path=Path("/team"), exist_ok=True, authority=BOB)) == ErrorKind.permission_denied
     assert _kind(await storage.mkdir(path=Path("/team/new"), authority=BOB)) == ErrorKind.permission_denied
-    assert _kind(await _write(storage, "/team/plan.md", BOB, overwrite=False)) == ErrorKind.permission_denied
+    assert _kind(await _write(storage, "/team/plan.md", BOB, if_absent=True)) == ErrorKind.permission_denied
 
 
 async def test_mkedge_passes_a_list_target_and_a_road_directory(storage: InMemoryStorage) -> None:

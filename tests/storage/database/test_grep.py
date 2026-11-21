@@ -1181,7 +1181,7 @@ class TestOverlayGate:
 
         async def rival() -> None:
             entries = [Entry(path=Path("/a.txt"), content="needle changed")]
-            assert (await storage.write(entries=entries, overwrite=True)).success is True
+            assert (await storage.write(entries=entries)).success is True
 
         with installed("grep:after-pointer-read", rival):
             result = await storage.grep(pattern="needle")

@@ -174,7 +174,7 @@ class SupportsMutation(Protocol):
         *,
         entries: list[Entry],
         if_versions: Mapping[Path, int] | None = None,
-        overwrite: bool = True,
+        if_absent: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result: ...

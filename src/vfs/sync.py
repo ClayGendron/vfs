@@ -311,7 +311,7 @@ class VirtualFileSystem:
         data: bytes | None = None,
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
-        overwrite: bool = True,
+        if_absent: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -324,7 +324,7 @@ class VirtualFileSystem:
             data=data,
             if_version=if_version,
             if_versions=if_versions,
-            overwrite=overwrite,
+            if_absent=if_absent,
             parents=parents,
             authority=authority,
         )
@@ -805,7 +805,7 @@ class Session:
         data: bytes | None = None,
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
-        overwrite: bool = True,
+        if_absent: bool = False,
         parents: bool = False,
     ) -> Result:
         return self._result(
@@ -817,7 +817,7 @@ class Session:
             data=data,
             if_version=if_version,
             if_versions=if_versions,
-            overwrite=overwrite,
+            if_absent=if_absent,
             parents=parents,
         )
 

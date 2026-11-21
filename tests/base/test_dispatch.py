@@ -49,14 +49,14 @@ async def test_write_localizes_path_and_passes_kwargs() -> None:
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    await root.write(path="/m/f.txt", content="x", overwrite=False)
+    await root.write(path="/m/f.txt", content="x", if_absent=True)
     op, kwargs = child.calls[0]
     assert op == "write"
     [entry] = kwargs["entries"]
     assert entry.path == "/f.txt"
     assert entry.content == "x"
     assert entry.kind == "file"
-    assert kwargs["overwrite"] is False
+    assert kwargs["if_absent"] is True
     assert kwargs["parents"] is False
 
 
@@ -1170,7 +1170,7 @@ async def test_write_entries_batch_groups_and_localizes() -> None:
     assert len(a.calls) == 1 and len(b.calls) == 1
     (a_entry,) = a.calls[0][1]["entries"]
     assert a_entry.path == "/f.txt"
-    assert a.calls[0][1]["overwrite"] is True
+    assert a.calls[0][1]["if_absent"] is False
 
 
 async def test_write_if_version_reaches_the_storage_keyed_by_its_own_path() -> None:

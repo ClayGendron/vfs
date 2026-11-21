@@ -220,16 +220,16 @@ Then continue from Step 3.
 
 ### Load the Same Folder Again
 
-Running the load a second time updates the files that are already there.
+Running the load a second time writes only the files whose contents changed. A file that already holds the same contents is left as it is: it keeps its version, and it is not indexed again.
 
 ```text
-write success: 2032 files (2032 updated)
+write success: 2032 files (3 updated, 2029 unchanged)
 ```
 
-To refuse a load that would replace existing files, pass `overwrite=False`. If any path is already taken, nothing is written, and each taken path is reported as "Already exists".
+To refuse a load that would replace existing files, pass `if_absent=True`. If any path is already taken, nothing is written, and each taken path is reported as "Already exists".
 
 ```python
-result = fs.write(entries, parents=True, overwrite=False)
+result = fs.write(entries, parents=True, if_absent=True)
 ```
 
 ### Load a Very Large Folder

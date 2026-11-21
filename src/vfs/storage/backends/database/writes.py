@@ -86,7 +86,7 @@ from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
-from vfs.storage.backends.database.staging import StagedEntry, WritePlan, stale_version
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists, stale_version
 from vfs.storage.backends.database.versions import mint_versions
 from vfs.storage.editing import edited_entry
 
@@ -94,7 +94,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import Column, ColumnElement, FromClause, Table, Update
+    from sqlalchemy import Column, ColumnElement, FromClause, Select, Table, Update
     from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
     from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
     from sqlalchemy.engine import CursorResult, RowMapping
@@ -211,7 +211,7 @@ async def write_rows(
     expected = if_versions or {}
     for entry in entries:
         if entry.kind == "directory":
-            status = plan.put_dir(entry.path, parents=parents)
+            status = plan.put_dir(entry.path, parents=parents, exclusive=not overwrite)
         else:
             status = plan.put_file(
                 entry.path,
@@ -580,10 +580,7 @@ async def _classify_arbitration_loss(
     the mkdir-p forgiveness the sequential gates grant — and returns no
     error.
     """
-    occupant_query = select(entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version).where(
-        entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
-    )
-    occupant = (await session.execute(occupant_query)).one_or_none()
+    occupant = (await session.execute(_occupant_query(entry, row_values))).one_or_none()
     if occupant is None:
         raise StaleSnapshot(f"the rival that beat {staged.path} is not observable from this snapshot")
     if occupant.path != str(staged.path):
@@ -593,7 +590,13 @@ async def _classify_arbitration_loss(
         return None
     if clobber:
         return wrong_kind("directory", staged.path, target=staged.path)
-    return already_exists(staged.path, target=staged.path)
+    return occupant_exists(staged.path, occupant.version, occupant.content_hash)
+
+
+def _occupant_query(entry: Table, row_values: Mapping[str, object]) -> Select[Any]:
+    """The row that holds the name a create lost: its identity, its address and what an ``exists`` names."""
+    columns = (entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version, entry.c.content_hash)
+    return select(*columns).where(entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"])
 
 
 def _incoherent_row(path: Path) -> ResultError:
@@ -662,10 +665,7 @@ async def _resolve_rows(
             continue
         except IntegrityError:
             pass
-        occupant_query = select(entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version).where(
-            entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
-        )
-        occupant = (await session.execute(occupant_query)).one_or_none()
+        occupant = (await session.execute(_occupant_query(entry, row_values))).one_or_none()
         if occupant is None:
             raise StaleSnapshot(f"the rival that beat {staged.path} is not observable from this snapshot")
         if occupant.path != str(staged.path):
@@ -679,7 +679,7 @@ async def _resolve_rows(
         elif staged.kind != "directory" and overwrite:
             errors.append(wrong_kind("directory", staged.path, target=staged.path))
         else:
-            errors.append(already_exists(staged.path, target=staged.path))
+            errors.append(occupant_exists(staged.path, occupant.version, occupant.content_hash))
     return errors
 
 

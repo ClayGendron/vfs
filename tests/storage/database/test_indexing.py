@@ -924,7 +924,7 @@ class TestFlagAlgebra:
 
         async def rival() -> None:
             fresh = Entry(path=Path("/a.txt"), content="fresh needle")
-            assert (await storage.write(entries=[fresh], overwrite=True)).success is True
+            assert (await storage.write(entries=[fresh])).success is True
 
         with installed("rebuild:before-publish", rival):
             assert (await storage.rebuild()).success is True

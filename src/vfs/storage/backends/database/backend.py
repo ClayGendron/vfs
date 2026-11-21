@@ -38,7 +38,7 @@ from vfs.authority import Authority
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.offload import call_offloaded, offload_pool
-from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
+from vfs.ops import ADDITIVE_WRITE, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
@@ -683,7 +683,7 @@ class DatabaseStorage:
         *,
         entries: list[Entry],
         if_versions: Mapping[Path, int] | None = None,
-        overwrite: bool = True,
+        if_absent: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -691,9 +691,11 @@ class DatabaseStorage:
         entries, refused = await measured_entries(entries, offload_pool())
         if refused:
             return Result(ops=("write",), errors=refused)
+        # A write that only creates replaces nothing, so an occupied target is judged at the rung of a creation.
+        needs = ADDITIVE_WRITE if if_absent else VERB_RUNGS["write"]
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority, VERB_RUNGS["write"])
+            gate = await self._gate(session, authority, needs)
             if isinstance(gate, ResultError):
                 return Result(ops=("write",), errors=[gate])
             if refused := await gate.targets(session, [e.path for e in entries], "upsert", parents=parents):
@@ -705,7 +707,7 @@ class DatabaseStorage:
                 host.parameter_budget,
                 host.membership_budget,
                 entries=entries,
-                overwrite=overwrite,
+                overwrite=not if_absent,
                 parents=parents,
                 authority=self._named(authority),
                 value_cap=host.value_cap,

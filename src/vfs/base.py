@@ -920,7 +920,7 @@ class AsyncVirtualFileSystem:
         data: bytes | None = None,
         if_version: int | None = None,
         if_versions: Mapping[str, int] | None = None,
-        overwrite: bool = True,
+        if_absent: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -948,9 +948,15 @@ class AsyncVirtualFileSystem:
         path of a file in ``entries``, and a file with no key is replaced whatever its version. One
         stale file refuses every entry that goes to the same mount.
 
-        If ``overwrite`` is false, a write to a path that already holds a file is refused. If
-        ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
-        missing parents are made, as ``mkdir -p`` makes them. Both apply to every entry in the call.
+        If ``if_absent`` is true, the write only creates. A path that already holds a file or a
+        directory is refused with ``exists``, and the error carries the ``version`` and the
+        ``content_hash`` of what is there, so a caller that never heard the answer to its own create can
+        tell that it landed. A deleted file counts as absent, and the write brings it back with the new
+        body. ``if_absent`` cannot be given with an expected version, because an absent file has none.
+
+        If ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
+        missing parents are made, as ``mkdir -p`` makes them. ``if_absent`` and ``parents`` apply to
+        every entry in the call.
 
         The call returns a :class:`Result`. Every entry passes the gate before any storage is called,
         so a path that is not valid, or a mount that is read-only there, refuses the whole call. Each
@@ -966,7 +972,7 @@ class AsyncVirtualFileSystem:
             data=data,
             if_version=if_version,
             if_versions=if_versions,
-            overwrite=overwrite,
+            if_absent=if_absent,
             parents=parents,
             authority=authority,
         )
@@ -974,7 +980,7 @@ class AsyncVirtualFileSystem:
             return refusal
         if entries is not None:
             return await self._route_entry_batch(
-                entries, if_versions=if_versions, overwrite=overwrite, parents=parents, authority=authority
+                entries, if_versions=if_versions, if_absent=if_absent, parents=parents, authority=authority
             )
         if path is None or (content is None and data is None):
             return self._error(
@@ -989,7 +995,7 @@ class AsyncVirtualFileSystem:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
         expected = None if if_version is None else {path: if_version}
         return await self._route_entry_batch(
-            [entry], if_versions=expected, overwrite=overwrite, parents=parents, authority=authority
+            [entry], if_versions=expected, if_absent=if_absent, parents=parents, authority=authority
         )
 
     async def edit(
@@ -2424,7 +2430,7 @@ class AsyncVirtualFileSystem:
         entries: Iterable[Entry],
         *,
         if_versions: Mapping[str, int] | None = None,
-        overwrite: bool = True,
+        if_absent: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -2484,7 +2490,7 @@ class AsyncVirtualFileSystem:
                 "write",
                 entries=sorted(group, key=lambda e: e.path.depth),
                 if_versions=expected.get(mount.path),
-                overwrite=overwrite,
+                if_absent=if_absent,
                 parents=parents,
                 authority=authority,
             )

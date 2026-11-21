@@ -101,6 +101,10 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("write", {"entries": [], "if_version": 1}) == (
         "write takes if_version with path, and if_versions with entries"
     )
+    absent = "write if_absent=True takes no if_version or if_versions: an absent file has no version"
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True, "if_version": 1}) == absent
+    assert param_violation("write", {"entries": [], "if_absent": True, "if_versions": {"/f": 1}}) == absent
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": False, "if_version": 1}) is None
 
 
 # ----------------------------------------------------------------------
@@ -133,7 +137,9 @@ GARBAGE = [
     ("write-versions-non-str-key", lambda fs: fs.write(entries=[], if_versions={1: 1})),
     ("write-versions-zero", lambda fs: fs.write(entries=[], if_versions={"/f.txt": 0})),
     ("write-versions-bool", lambda fs: fs.write(entries=[], if_versions={"/f.txt": True})),
-    ("write-truthy-overwrite", lambda fs: fs.write(path="/f.txt", content="x", overwrite="yes")),
+    ("write-truthy-if-absent", lambda fs: fs.write(path="/f.txt", content="x", if_absent="yes")),
+    ("write-absent-with-version", lambda fs: fs.write(path="/f.txt", content="x", if_absent=True, if_version=1)),
+    ("write-absent-with-versions", lambda fs: fs.write(entries=[], if_absent=True, if_versions={"/f.txt": 1})),
     ("write-truthy-parents", lambda fs: fs.write(path="/f.txt", content="x", parents=1)),
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
     ("edit-non-str-old", lambda fs: fs.edit("/f.txt", old=1, new="b")),

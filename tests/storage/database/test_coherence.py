@@ -222,7 +222,7 @@ class TestWriteVsTopologyCoherence:
                 )
             )
             await session.commit()
-        result = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")], overwrite=True)
+        result = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")])
         assert result.success is False
         [error] = result.errors
         assert error.kind == ErrorKind.conflict

@@ -178,7 +178,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             maximum=INT_CEILING,
             doc="batch form: the version expected at each named file's path",
         ),
-        ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an existing file"),
+        ParamSpec("if_absent", "bool", nullable=False, default=False, doc="create only: refuse a path that is held"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
         _AUTHORITY,
     ),
@@ -499,12 +499,19 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     ),
 }
 
+# A write that only creates expects no file, and a file that is not there has no version.
+_ABSENT_HAS_NO_VERSION: Final = "write if_absent=True takes no if_version or if_versions: an absent file has no version"
+
 VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
     "traverse": (
         OnlyWith("minimal", True, "method", "meet", "traverse minimal=True is lawful only with method='meet'"),
         Disjoint("edge_types", "edge_types_not", "traverse edge_types and edge_types_not must not share a type"),
         Segments("edge_types"),
         Segments("edge_types_not"),
+    ),
+    "write": (
+        OnlyWith("if_absent", True, "if_version", None, _ABSENT_HAS_NO_VERSION),
+        OnlyWith("if_absent", True, "if_versions", None, _ABSENT_HAS_NO_VERSION),
     ),
 }
 """Cross-parameter value rules, checked after the shape rules on typed values."""
