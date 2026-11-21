@@ -190,6 +190,130 @@ async def test_attach_mount_step_racing_close_refuses_cleanly(held: str) -> None
         await attach_task
 
 
+class GateDeleteStorage(InMemoryStorage):
+    """An in-memory storage whose ``delete`` waits until the test releases it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def delete(self, **kwargs: Any) -> Result:
+        self.entered.set()
+        await self.release.wait()
+        return await super().delete(**kwargs)
+
+
+async def test_a_mount_added_while_a_removal_deletes_its_directory_is_refused() -> None:
+    # The removal deletes the directory after the table changed; a mount added in between would sit on nothing.
+    backend = GateDeleteStorage()
+    root = AsyncVirtualFileSystem(storage=backend)
+    await root.add_mount(InMemoryStorage(name="old"), "/data")
+    removal = asyncio.create_task(root.remove_mount("/data"))
+    await backend.entered.wait()
+    with pytest.raises(ValueError, match="was being removed while this one was checked, so retry"):
+        await root.add_mount(InMemoryStorage(name="new"), "/data")
+    backend.release.set()
+    await removal
+    assert Path("/data") not in root._mounts
+    await root.add_mount(InMemoryStorage(name="new"), "/data")
+    assert (await root.stat("/data")).success is True
+
+
+class GateListStorage(GateDeleteStorage):
+    """A gated-delete storage whose next ``ls``, once armed, reads and then waits."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.armed = False
+        self.listed = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def ls(self, **kwargs: Any) -> Result:
+        answer = await super().ls(**kwargs)
+        if self.armed:
+            self.armed = False
+            self.listed.set()
+            await self.resume.wait()
+        return answer
+
+
+async def test_a_mount_whose_site_was_read_before_a_removal_deleted_it_is_refused() -> None:
+    # The site check reads the live directory, the removal then deletes it and ends, and only then the mount commits.
+    backend = GateListStorage()
+    root = AsyncVirtualFileSystem(storage=backend)
+    await root.add_mount(InMemoryStorage(name="old"), "/data")
+    removal = asyncio.create_task(root.remove_mount("/data"))
+    await backend.entered.wait()
+    backend.armed = True
+    adding = asyncio.create_task(root.add_mount(InMemoryStorage(name="new"), "/data"))
+    await backend.listed.wait()
+    backend.release.set()
+    await removal
+    backend.resume.set()
+    with pytest.raises(ValueError, match="was being removed while this one was checked, so retry"):
+        await adding
+    assert Path("/data") not in root._mounts
+
+
+async def test_a_second_close_during_a_removal_closes_its_storage_once() -> None:
+    backend = GateDeleteStorage()
+    root = AsyncVirtualFileSystem(storage=backend)
+    child = ClosingStorage("child")
+    await root.add_mount(child, "/data")
+    removal = asyncio.create_task(root.remove_mount("/data"))
+    await backend.entered.wait()
+    await root.close()
+    await root.close()
+    backend.release.set()
+    with pytest.raises(MountError):
+        await removal
+    assert child.closes == 1
+
+
+class ClosingStorage(InMemoryStorage):
+    """An in-memory storage that counts its closes."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name)
+        self.closes = 0
+
+    async def close(self) -> None:
+        self.closes += 1
+        await super().close()
+
+
+@pytest.mark.parametrize("owned", [True, False])
+async def test_close_during_a_removal_closes_the_owned_storage_being_removed(owned: bool) -> None:
+    backend = GateDeleteStorage()
+    root = AsyncVirtualFileSystem(storage=backend)
+    child = ClosingStorage("child")
+    await root.add_mount(child, "/data", owned=owned)
+    removal = asyncio.create_task(root.remove_mount("/data"))
+    await backend.entered.wait()
+    await root.close()
+    backend.release.set()
+    with pytest.raises(MountError, match="removing its directory failed"):
+        await removal
+    assert child.closes == (1 if owned else 0)
+
+
+async def test_a_removal_that_fails_to_delete_its_directory_leaves_the_path_free() -> None:
+    backend = GateDeleteStorage()
+    root = AsyncVirtualFileSystem(storage=backend)
+    await root.add_mount(InMemoryStorage(name="old"), "/data")
+    backend.release.set()
+
+    async def refuse(**kwargs: Any) -> Result:
+        raise RuntimeError("the storage failed")
+
+    backend.delete = refuse  # ty: ignore[invalid-assignment]
+    with pytest.raises(RuntimeError):
+        await root.remove_mount("/data")
+    await root.add_mount(InMemoryStorage(name="new"), "/data")
+    assert Path("/data") in root._mounts
+
+
 async def test_attach_mount_step_rejects_missing_site() -> None:
     # add_mount would make the directory; only the private attach step refuses it.
     root = AsyncVirtualFileSystem()
@@ -360,6 +484,14 @@ async def test_add_mount_after_restart_mounts_again_onto_existing_empty_dir() ->
     second = AsyncVirtualFileSystem(storage=backend)
     await second.add_mount(InMemoryStorage(name="child2"), "/data")
     assert Path("/data") in second._mounts
+
+
+async def test_add_mount_restores_a_deleted_empty_mount_point_and_mounts_there() -> None:
+    root = AsyncVirtualFileSystem()
+    await root.mkdir("/data")
+    assert (await root.delete("/data")).success is True
+    await root.add_mount(RecorderStorage(), "/data")
+    assert Path("/data") in root._mounts
 
 
 async def test_add_mount_failed_attach_leaves_the_directory() -> None:
