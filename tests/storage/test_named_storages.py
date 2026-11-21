@@ -155,20 +155,13 @@ class TestSQLiteStorage:
         assert await _round_trip(SQLiteStorage(path=path)) == "a"
         assert sorted(child.name for child in tmp_path.iterdir()) == ["notes?v2.db"]
 
-    async def test_a_storage_at_a_url_keeps_its_files_where_the_url_says(self, tmp_path: pathlib.Path) -> None:
-        """A SQLite URL names the database as a path does, with the options its query carries."""
-        path = tmp_path / "knowledge.db"
-        assert await _round_trip(SQLiteStorage(url=f"sqlite+aiosqlite:///{path}")) == "a"
-        assert path.is_file()
-
     @pytest.mark.parametrize(
         "where",
-        [pytest.param({}, id="neither"), pytest.param({"path": "a.db", "url": "sqlite+aiosqlite:///a.db"}, id="both")],
+        [pytest.param({}, id="neither"), pytest.param({"url": "sqlite+aiosqlite:///a.db"}, id="a-url")],
     )
-    def test_a_storage_names_where_its_data_lives_once(
-        self, where: dict[str, Any], engines_built: list[object]
-    ) -> None:
-        with pytest.raises(ValueError, match=r"exactly one of path= or url="):
+    def test_a_storage_is_named_by_its_path_alone(self, where: dict[str, Any], engines_built: list[object]) -> None:
+        """A URL with its options is ``DatabaseStorage``'s, which serves a SQLite URL on the same tuned profile."""
+        with pytest.raises(TypeError, match=r"path|url"):
             SQLiteStorage(**where)
         assert engines_built == []
 
@@ -182,24 +175,6 @@ class TestSQLiteStorage:
         """Guards: an unset setting read as ``""``, which SQLite serves as a database in memory that keeps nothing."""
         with pytest.raises(ValueError, match=r"path= must name a file.*InMemoryStorage"):
             SQLiteStorage(path=where)
-        assert engines_built == []
-
-    @pytest.mark.parametrize(
-        "url",
-        [
-            pytest.param(POSTGRES_URL, id="postgres"),
-            pytest.param(f"postgresql+asyncpg://app:{SECRET}@db/vfs", id="postgres-with-a-password"),
-            pytest.param(FLOOR_URL, id="floor"),
-        ],
-    )
-    def test_a_url_of_another_engine_is_refused_naming_both_and_builds_no_engine(
-        self, url: str, engines_built: list[object]
-    ) -> None:
-        with pytest.raises(ValueError, match=r"SQLiteStorage") as refused:
-            SQLiteStorage(url=url)
-        message = str(refused.value)
-        assert ("'sqlite'" in message, repr(url.partition("+")[0]) in message) == (True, True)
-        assert (SECRET in message, url in message) == (False, False)
         assert engines_built == []
 
     async def test_an_in_memory_storage_is_a_sqlite_storage_over_memory(self) -> None:
@@ -243,7 +218,7 @@ class TestPostgresStorage:
 @pytest.mark.parametrize(
     ("named", "dropped", "added"),
     [
-        pytest.param(SQLiteStorage, {"url"}, {"path", "url"}, id="sqlite"),
+        pytest.param(SQLiteStorage, {"url"}, {"path"}, id="sqlite"),
         pytest.param(PostgresStorage, set(), set(), id="postgres"),
     ],
 )

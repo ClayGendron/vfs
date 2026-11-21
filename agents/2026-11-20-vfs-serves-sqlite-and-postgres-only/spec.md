@@ -207,15 +207,14 @@ A class for each engine was left open when the goal was set, to be taken if it m
 from vfs import DatabaseStorage, InMemoryStorage, PostgresStorage, SQLiteStorage
 
 SQLiteStorage(path="knowledge.db")                                     # demos and local apps
-SQLiteStorage(url="sqlite+aiosqlite:///knowledge.db")                  # a managed or remote SQLite, or URL options
 InMemoryStorage()                                                      # an SQLiteStorage over :memory:
 PostgresStorage(url="postgresql+asyncpg://app@db/vfs", schema="vfs")   # production
 DatabaseStorage(url="duckdb:///x.db")                                  # the generic floor; logs one warning
 ```
 
 - Each is a subclass of `DatabaseStorage` that only constructs, as `InMemoryStorage` is today. It carries no verb, no override and no behaviour. Every difference between the engines stays where it is chosen: in the profile, read by the builder functions.
-- `SQLiteStorage` takes `path=` or `url=`, exactly one, because a managed SQLite is reached by a URL. Neither, or both, raises a `ValueError`. `path=` is built as `sqlalchemy.engine.URL.create("sqlite+aiosqlite", database=os.fspath(path))`, and `EngineHost` accepts a `URL` without turning it into a string. A formatted string would misread a path that holds `?`: `make_url("sqlite+aiosqlite:///notes?v2.db").database` is `'notes'`. `PostgresStorage` takes `url=` and `schema=`. The common arguments of `DatabaseStorage` pass through.
-- A `url=` of another dialect is refused at construction with a `ValueError` that names both dialects and never the URL, which can hold a password. `drivers.url_of_engine` reads the dialect from the URL alone, so the refusal comes before any engine is built: no engine, no listener and no statement exist. The first draft refused at first touch as `unavailable`, because a borrowed engine's dialect could not be read earlier. Borrowed engines are gone, and a misconfigured construction is a `ValueError` everywhere else in `DatabaseStorage`.
+- `SQLiteStorage` takes `path=` alone, and it is required. An empty path, as `""` or `pathlib.Path()`, raises a `ValueError`, because SQLite would serve it as a database in memory that keeps nothing. A SQLite URL with options in its query is served on the same tuned profile by `DatabaseStorage(url=...)`, so a `url=` here would add no reach. It was taken for a managed SQLite and dropped on 2026-11-21, because every SQLite arm assumes the aiosqlite driver; `agents/2026-11-21-a-managed-sqlite-is-studied-before-it-is-served/spec.md` holds that question. `path=` is built as `sqlalchemy.engine.URL.create("sqlite+aiosqlite", database=os.fspath(path))`, and `EngineHost` accepts a `URL` without turning it into a string. A formatted string would misread a path that holds `?`: `make_url("sqlite+aiosqlite:///notes?v2.db").database` is `'notes'`. `PostgresStorage` takes `url=` and `schema=`. The common arguments of `DatabaseStorage` pass through.
+- A `PostgresStorage` `url=` of another dialect is refused at construction with a `ValueError` that names both dialects and never the URL, which can hold a password. `drivers.url_of_engine` reads the dialect from the URL alone, so the refusal comes before any engine is built: no engine, no listener and no statement exist. The first draft refused at first touch as `unavailable`, because a borrowed engine's dialect could not be read earlier. Borrowed engines are gone, and a misconfigured construction is a `ValueError` everywhere else in `DatabaseStorage`.
 - `InMemoryStorage` becomes a subclass of `SQLiteStorage`, with its path fixed at `:memory:`. Its arguments are unchanged.
 - `DatabaseStorage` stays public. It is the shared type that signatures name, and the way into the floor. `DatabaseStorage(url="sqlite...")` and `DatabaseStorage(url="postgresql...")` keep working with no warning, so the 505 constructions in `tests/` need not change.
 - The docs teach the named classes. The tutorial gains a Postgres construction, which no page teaches today.
@@ -302,12 +301,11 @@ Each new test is written and seen failing before the code that passes it. The co
 - A SQLite storage and a Postgres storage log no record from this logger. The Postgres check is a row of the engine leg.
 
 **Landing 3: the named constructors.**
-- `SQLiteStorage(path=tmp)` round-trips a write and a read, as text and as a `pathlib.Path`, and so does a path that holds `?`, which leaves no other file beside it. `SQLiteStorage(url=...)` round-trips too. `InMemoryStorage()` is an instance of `SQLiteStorage` over `:memory:`.
-- `SQLiteStorage()` with neither `path=` nor `url=`, or with both, raises a `ValueError` and builds no engine. So does an empty `path=`, as text or as `pathlib.Path()`, which SQLite would otherwise serve as a database in memory that keeps nothing.
-- The refusal of another engine's URL never holds the URL or its password.
-- Each named class takes every argument of `DatabaseStorage` with the same default.
+- `SQLiteStorage(path=tmp)` round-trips a write and a read, as text and as a `pathlib.Path`, and so does a path that holds `?`, which leaves no other file beside it. `InMemoryStorage()` is an instance of `SQLiteStorage` over `:memory:`.
+- `SQLiteStorage()` with no `path=`, or with a `url=`, raises a `TypeError` and builds no engine. An empty `path=`, as text or as `pathlib.Path()`, raises a `ValueError` and builds no engine, because SQLite would otherwise serve it as a database in memory that keeps nothing.
+- Each named class takes every argument of `DatabaseStorage` with the same default, less `url=` and plus `path=` for `SQLiteStorage`.
 - `PostgresStorage(url=...)` passes the storage contract. The conformance fixtures construct the named classes.
-- `SQLiteStorage(url=<postgres or floor URL>)` and `PostgresStorage(url=<sqlite or floor URL>)` raise a `ValueError` that names both dialects, and no engine is built.
+- `PostgresStorage(url=<sqlite, mysql or floor URL>)` raises a `ValueError` that names both dialects, and no engine is built. The refusal never holds the URL or its password.
 - Neither class logs the warning. The Postgres row runs on the engine leg.
 
 ## Scope
@@ -379,7 +377,7 @@ The Postgres server was a container started again, not created fresh, for both r
 
 Confirmed on 2026-11-21: all four choices stand as written. Choice 3's tested versions are amended to every version the PostgreSQL project supports, 15 to 19 today, stated and not enforced, as decision 7 says.
 
-Since this spec was written, `DatabaseStorage(session_factory=...)` was removed by the branch `a-cancelled-call-leaves-its-storage-intact`, and a storage always builds its own engine from `url=` and `engine_arguments=`. Decisions 2 and 10 and their tests were recut on 2026-11-21, before landings 2 and 3 were built, and two choices were confirmed then. A URL of the other engine is refused at construction with a `ValueError`, not at first touch. `SQLiteStorage` takes `path=` or `url=`, because a managed SQLite is reached by a URL. Landings 2 and 3 land as one pull request. The answers to H1, N1 and N2 below describe the first-touch refusal that this recut replaces, and "What the code does today" is the code of 2026-11-20.
+Since this spec was written, `DatabaseStorage(session_factory=...)` was removed by the branch `a-cancelled-call-leaves-its-storage-intact`, and a storage always builds its own engine from `url=` and `engine_arguments=`. Decisions 2 and 10 and their tests were recut on 2026-11-21, before landings 2 and 3 were built, and two choices were confirmed then. A URL of another engine given to `PostgresStorage` is refused at construction with a `ValueError`, not at first touch. `SQLiteStorage` was first given `path=` or `url=`, for a managed SQLite, and `url=` was dropped the same day once the code review showed that every SQLite arm assumes the aiosqlite driver; it takes `path=` alone. Landings 2 and 3 land as one pull request. The answers to H1, N1 and N2 below describe the first-touch refusal that this recut replaces, and "What the code does today" is the code of 2026-11-20.
 
 1. **The warning is a `logging` record, not a Python warning.** D17 and X7 give the reason. The other choice is `warnings.warn` with a public `UnsupportedDialectWarning`, which a caller filters by category, at the price of a second channel and a new public type.
 2. **The dropped engines resolve to the floor with the warning**, and are not refused by name. Decision 3 gives the reason.

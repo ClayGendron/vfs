@@ -62,7 +62,7 @@ In code a storage is any object with the members of `StorageBackend`. It has a n
 
 | Class | Where the entries are kept |
 |---|---|
-| `SQLiteStorage` | A SQLite database, named by a path or a URL |
+| `SQLiteStorage` | A SQLite database, in the file its path names |
 | `PostgresStorage` | A Postgres database, named by a URL |
 | `InMemoryStorage` | A SQLite database in memory, which is gone when the storage is closed |
 | `DatabaseStorage` | Any SQL database SQLAlchemy reaches. The three above are built on it, and a database other than SQLite and Postgres is fit for testing only |
