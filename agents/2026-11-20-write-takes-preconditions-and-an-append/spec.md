@@ -144,7 +144,7 @@ The first step that fails gives the answer. No step issues SQL. The rights gate 
 A staged update of a live row whose final material equals the committed material is dropped from the plan. Its entry reports `status="unchanged"` with the committed version. Material is four columns: `kind`, `source`, `content_hash` and `mime_type`.
 
 - The snapshot gains `content_hash`. It is one more column on a read that already runs.
-- `WritePlan.settle()` is new. It runs at the top of `_finish`, before the errors are looked at.
+- `WritePlan.settle()` is new. It runs in `_finish`, after the staged rows are admitted against the caller's rights and before the errors are looked at. The order matters: `unchanged` tells a caller that its body equals the stored one, so only a caller who may change the row hears it.
 - Settle sees the final staged state. A batch that writes `/a` as B and then back to its stored A is `unchanged`.
 - A revive is never `unchanged`, since it clears a tombstone. A create is never `unchanged`.
 - `edit` runs through `_finish` too. An edit whose steps cancel out is `unchanged`.
@@ -324,7 +324,9 @@ Each is written and seen failing before the code. Counts are of statements recor
 - An append with `if_version=N` on a row at another version is `conflict`.
 - While an append holds its row lock, a read of that row, a search, and an edit of another file each return, as the system actor, a named caller and anonymous. On every server engine.
 
-Tests that exist and pin the old behaviour, to be found and rewritten at each landing: every test that rewrites a body with itself and expects `updated` or a higher version, and the 66 uses of `overwrite=` in 15 files under `tests/`.
+Five tests used a rewrite of the same body to make a row pending again without changing its hash, and were rewritten at the first landing to write the body away and back: `test_a_refresh_of_kept_entries_flips_and_bumps_only`, `test_a_write_during_a_publish_keeps_one_posting`, `test_a_missed_flip_is_stamped_all_the_same`, and `test_same_body_overwrite_skips_the_resplit`, which is now `test_a_body_written_away_and_back_skips_the_resplit`. The fifth, `test_a_same_bytes_overwrite_renders_once_more_and_settles`, is now two: the same bytes keep their rendering, and bytes written away and back render once more. The index's paths for a pending row whose body did not change stay reachable that way, and by a delete and a restore.
+
+Still to be rewritten, at the third landing: the 66 uses of `overwrite=` in 15 files under `tests/`.
 
 ## Scope
 

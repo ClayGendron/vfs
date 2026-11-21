@@ -447,6 +447,28 @@ class WritePlan:
             version=row["version"] + 1,
         )
 
+    def settle(self) -> None:
+        """Drop each staged update that would leave its row as it is, and report it ``unchanged``.
+
+        It runs once, after every entry is staged, so a path written twice
+        is judged on its last body. A revive is a change whatever its
+        body, since it clears a tombstone, and a create has no row to
+        equal. A dropped row writes nothing: its version, its stamps and
+        its index marks stay as they were.
+        """
+        same = frozenset(
+            path
+            for path, staged in self.staged.items()
+            if staged.persistence == "update"
+            and not staged.revive
+            and _same_material(staged, self.committed[str(path)])
+        )
+        if not same:
+            return
+        for path in same:
+            del self.staged[path]
+        self.pending = [(path, "unchanged" if path in same else status) for path, status in self.pending]
+
     def derive_bumps(self) -> dict[str, str]:
         """The directories whose membership this batch changes: path → entry_id.
 
@@ -471,3 +493,25 @@ class WritePlan:
             elif parent.persistence != "insert":
                 bumps[str(parent.path)] = parent.entry_id
         return bumps
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _same_material(staged: StagedEntry, row: RowMapping) -> bool:
+    """Whether *staged* would store what *row* already holds: the same kind, source, body hash and type.
+
+    Every other column a write sets is worked out from these four, or is
+    a stamp that stays true while the body does. Text and bytes of the
+    same body hash alike, which is why the source is compared. A body
+    with no hash equals nothing.
+    """
+    return (
+        staged.content_hash is not None
+        and staged.content_hash == row["content_hash"]
+        and staged.kind == row["kind"]
+        and staged.source == row["source"]
+        and staged.mime_type == row["mime_type"]
+    )

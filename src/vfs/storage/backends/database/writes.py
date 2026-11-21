@@ -195,7 +195,8 @@ async def write_rows(
     (an existing directory is "unchanged", a file at the site is
     ``wrong_kind``); files route through ``put_file`` (a directory at
     the site is ``wrong_kind``; an occupied site needs ``overwrite``).
-    Any error fails the whole batch before a statement runs. Its
+    A file that already holds its entry's body is "unchanged" and is
+    not written. Any error fails the whole batch before a statement runs. Its
     entries are already measured by :func:`measured_entries`; it stores
     the metrics it is handed.
     """
@@ -334,6 +335,7 @@ async def _fetch_committed(
         entry.c.everyone_level,
         entry.c.source,
         entry.c.size_bytes,
+        entry.c.content_hash,
         entry.c.deleted_at,
     ]
     source: FromClause | None = None
@@ -357,6 +359,9 @@ async def _finish(
 ) -> Result:
     """Execute an error-free plan and assemble the batch's observations."""
     admit_staged(session, op, plan)
+    # After the rights check on purpose: "unchanged" tells a caller its body
+    # equals the stored one, so only a caller who may change the row hears it.
+    plan.settle()
     if plan.errors:
         return Result(ops=(op,), errors=plan.errors)
     # The guard's window: snapshot read and staging behind us, no

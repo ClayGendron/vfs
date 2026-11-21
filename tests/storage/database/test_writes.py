@@ -166,6 +166,69 @@ class TestWriteMechanics:
         assert len(mutations()) == 8, mutations()
         await storage.close()
 
+    async def test_an_identical_rewrite_runs_the_snapshot_and_nothing_else(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        await storage._host.settle_statistics()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        again = await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])
+        assert [(o.status, o.version) for o in again.observations] == [("unchanged", 1)]
+        control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK")
+        own = [s for s in statements if not s.startswith(control) and not is_statistics_statement(s)]
+        # The snapshot is the whole call: no guarded update, no mint, no body read, no body replaced.
+        assert len(own) == 1 and own[0].startswith("SELECT"), own
+        versions = storage._host.tables.versions
+        async with storage._host.session_factory() as peek:
+            assert (await peek.execute(select(versions.c.entry_id))).all() == []
+        await storage.close()
+
+    async def test_an_unchanged_row_keeps_its_index_marks(self, tmp_path) -> None:
+        # A rewrite clears the marks the index passes set, which sends the
+        # file through the index again. An unchanged row must not.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        entry = storage._host.tables.entry
+        marks = select(entry.c.chunked, entry.c.encoded, entry.c.indexable).where(entry.c.path == "/a.txt")
+        async with storage._host.session_factory() as session:
+            await session.execute(update(entry).where(entry.c.path == "/a.txt").values(chunked=True, encoded=True))
+            await session.commit()
+            indexed = (await session.execute(marks)).one()
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        async with storage._host.session_factory() as peek:
+            assert (await peek.execute(marks)).one() == indexed
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")])).success is True
+        async with storage._host.session_factory() as peek:
+            assert (await peek.execute(marks)).one() != indexed
+        await storage.close()
+
+    @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
+    async def test_an_identical_batch_rewrite_writes_no_row(self, files: int, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        entries = [Entry(path=Path(f"/f{i:05}.txt"), content=f"body {i}") for i in range(files)]
+        assert (await storage.write(entries=entries)).success is True
+        await storage._host.settle_statistics()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        again = await storage.write(entries=entries)
+        assert again.success is True
+        assert {(o.status, o.version) for o in again.observations} == {("unchanged", 1)}
+        assert len(again.observations) == files
+        written = [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))]
+        assert written == [], written[:3]
+        await storage.close()
+
     async def test_edit_statement_count_is_pinned_and_probes_no_misses(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()

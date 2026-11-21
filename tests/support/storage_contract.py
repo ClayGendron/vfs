@@ -123,6 +123,11 @@ def _rebuilder_of(storage: ConformanceBackend) -> SupportsRebuild:
     return storage
 
 
+def _file(path: str, body: str | bytes) -> Entry:
+    """A file entry at *path* that holds *body*, as text or as bytes."""
+    return Entry(path=Path(path), data=body) if isinstance(body, bytes) else Entry(path=Path(path), content=body)
+
+
 async def _revision_of(storage: ConformanceBackend, path: str) -> int:
     result = await storage.stat(path=Path(path))
     version = result.observations[0].version
@@ -2599,6 +2604,74 @@ class StorageContract:
         assert result.success is False
         assert await _revision_of(storage, "/docs") == parent
         assert await _revision_of(storage, "/docs/a.md") == target
+
+    # ------------------------------------------------------------------
+    # A write of the body a row already holds is unchanged
+    # ------------------------------------------------------------------
+
+    @needs("write", "stat", "read")
+    @pytest.mark.parametrize("body", ["one\n", b"\x00one"], ids=["text", "bytes"])
+    async def test_an_identical_write_is_unchanged_and_keeps_its_version(
+        self, storage: ConformanceBackend, body: str | bytes
+    ) -> None:
+        entry = _file("/a.dat", body)
+        assert (await storage.write(entries=[entry])).success is True
+        before = (await storage.stat(path=Path("/a.dat"))).observations[0]
+        again = await storage.write(entries=[_file("/a.dat", body)])
+        assert again.success is True
+        assert [(str(o.path), o.status, o.version) for o in again.observations] == [("/a.dat", "unchanged", 1)]
+        after = (await storage.stat(path=Path("/a.dat"))).observations[0]
+        assert (after.version, after.content_hash, after.updated_at) == (1, before.content_hash, before.updated_at)
+
+    @needs("write", "stat", "read")
+    async def test_a_mixed_batch_writes_only_what_changed(self, storage: ConformanceBackend) -> None:
+        paths = [f"/f{i}.txt" for i in range(6)]
+        assert (await storage.write(entries=[_file(path, "old") for path in paths])).success is True
+        bodies = ["new", "old", "new", "old", "new", "old"]
+        result = await storage.write(entries=[_file(path, body) for path, body in zip(paths, bodies, strict=True)])
+        assert result.success is True
+        assert [o.status for o in result.observations] == ["updated", "unchanged"] * 3
+        assert [o.version for o in result.observations] == [2, 1] * 3
+        for path, body in zip(paths, bodies, strict=True):
+            assert (await storage.read(path=Path(path))).observations[0].content == body
+            assert await _revision_of(storage, path) == (2 if body == "new" else 1)
+
+    @needs("write", "stat", "read")
+    async def test_a_batch_that_writes_a_path_back_to_its_body_is_unchanged(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "stored")])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "other"), _file("/a.txt", "stored")])
+        assert result.success is True
+        assert [(o.status, o.version) for o in result.observations] == [("unchanged", 1)] * 2
+        assert await _revision_of(storage, "/a.txt") == 1
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "stored"
+
+    @needs("write", "stat")
+    async def test_the_same_body_under_a_new_type_or_source_is_an_update(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "body")])).success is True
+        typed = await storage.write(entries=[Entry(path=Path("/a.txt"), content="body", mime_type="text/x-log")])
+        assert [(o.status, o.version) for o in typed.observations] == [("updated", 2)]
+        as_bytes = await storage.write(entries=[Entry(path=Path("/a.txt"), data=b"body", mime_type="text/x-log")])
+        assert [(o.status, o.version) for o in as_bytes.observations] == [("updated", 3)]
+        assert (await storage.stat(path=Path("/a.txt"))).observations[0].source == "bytes"
+
+    @needs("write", "edit", "stat", "read")
+    async def test_an_edit_whose_steps_cancel_out_is_unchanged(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one two")])).success is True
+        there_and_back = [EditOperation(old="two", new="2"), EditOperation(old="2", new="two")]
+        result = await storage.edit(path=Path("/a.txt"), edits=there_and_back)
+        assert result.success is True
+        assert [(o.status, o.version) for o in result.observations] == [("unchanged", 1)]
+        assert await _revision_of(storage, "/a.txt") == 1
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "one two"
+
+    @needs("write", "delete", "stat", "read")
+    async def test_a_revive_with_the_body_the_deleted_row_held_is_updated(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "body")])).success is True
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        revived = await storage.write(entries=[_file("/a.txt", "body")])
+        assert revived.success is True
+        assert [o.status for o in revived.observations] == ["updated"]
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "body"
 
     # ------------------------------------------------------------------
     # Batch observations reflect committed state, never a mid-batch one

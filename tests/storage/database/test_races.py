@@ -1404,7 +1404,9 @@ class TestGenerationConsistency:
         for verb, path in (("refresh", "/p.txt"), ("rebuild", "/q.txt")):
             entries = [Entry(path=Path(path), content=f"{path} body words")]
             assert (await storage.write(entries=entries)).success
-            with seams.installed(f"{verb}:before-publish", _written_once(storage, f"{verb}:before-publish", entries)):
+            away = [Entry(path=Path(path), content="other words")]
+            rewrite = _written_once(storage, f"{verb}:before-publish", away, entries)
+            with seams.installed(f"{verb}:before-publish", rewrite):
                 assert (await getattr(storage, verb)()).success is True
             row = await _row(storage, path)
             assert row.encoded is False and row.indexed_epoch == max(await _live_epochs(storage))
@@ -1648,12 +1650,13 @@ def _refreshing_once(rival: DatabaseStorage) -> tuple[list[int], Any]:
     return seen, refreshed_once
 
 
-def _written_once(storage: DatabaseStorage, name: str, entries: list[Entry]) -> Any:
-    """A seam handler that uninstalls itself and writes *entries* through *storage*."""
+def _written_once(storage: DatabaseStorage, name: str, *batches: list[Entry]) -> Any:
+    """A seam handler that uninstalls itself and writes each of *batches* through *storage*, in order."""
 
     async def written() -> None:
         seams.clear(name)
-        assert (await storage.write(entries=entries)).success
+        for entries in batches:
+            assert (await storage.write(entries=entries)).success
 
     return written
 

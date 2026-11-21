@@ -927,6 +927,9 @@ class AsyncVirtualFileSystem:
         directory in the batch serves the entries beneath it whatever order the caller gave. When two
         entries name one path, the later one wins.
 
+        A write of the body a file already holds changes nothing. Its row comes back with the status
+        ``unchanged``, and the file keeps its version.
+
         If ``overwrite`` is false, a write to a path that already holds a file is refused. If
         ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
         missing parents are made, as ``mkdir -p`` makes them. Both apply to every entry in the call.
