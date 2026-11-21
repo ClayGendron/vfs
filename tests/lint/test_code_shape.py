@@ -551,25 +551,29 @@ def test_the_clock_the_deadline_and_the_cadence_have_one_home() -> None:
 
 
 def test_vfs_prints_nothing_and_each_logger_is_its_modules_own() -> None:
-    """No module calls ``print``, and every ``getLogger`` takes ``__name__``, so each record is under ``vfs``."""
+    """No module prints, every ``getLogger`` takes ``__name__``, and no record goes to the root logger."""
     errors: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
             if not isinstance(node, ast.Call):
                 continue
             where = f"src/vfs/{path.relative_to(SRC)}:{node.lineno}"
-            if isinstance(node.func, ast.Name) and node.func.id == "print":
+            callee = ast.unparse(node.func)
+            if callee.rpartition(".")[2] == "print":
                 errors.append(f"{where} calls print")
-            logger = isinstance(node.func, ast.Attribute) and node.func.attr == "getLogger"
-            if logger and ([ast.unparse(arg) for arg in node.args] != ["__name__"] or node.keywords):
+            if callee.rpartition(".")[2] == "getLogger" and (
+                [ast.unparse(arg) for arg in node.args] != ["__name__"] or node.keywords
+            ):
                 errors.append(f"{where} names a logger other than its module's")
+            if callee.partition(".")[0] == "logging" and callee != "logging.getLogger":
+                errors.append(f"{where} logs to the root logger")
     assert not errors, "\n".join(errors)
 
 
 def test_get_started_names_the_three_engine_extras_and_no_other() -> None:
     """The install lines stay few: the base package and one extra per server engine, each one pyproject declares."""
     page = (REPO / "documentation" / "get-started.md").read_text()
-    named = set(re.findall(r"vfs-py\[([a-z-]+)\]", page))
+    named = {name.strip() for group in re.findall(r"vfs-py\[([^\]]*)\]", page) for name in group.split(",")}
     declared = set(tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"])
     assert named == {"postgres", "mssql", "oracle"}
     assert named <= declared, f"the page names extras pyproject.toml does not declare: {sorted(named - declared)}"

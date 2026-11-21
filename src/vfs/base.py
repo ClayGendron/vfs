@@ -273,9 +273,8 @@ class AsyncVirtualFileSystem:
     ``hop_budget`` is how many kernels one call may pass through before it is refused with
     ``budget_exhausted``. ``close_timeout`` is how many seconds ``close()`` waits for each storage.
     ``rerankers`` are the stages that ``search`` runs, in order, over the results of several mounts.
-    ``default_authority`` is the caller for a call that names none. Without it, such a call runs as the
-    anonymous caller. If it is the system actor, the kernel logs one warning as it is made, because such
-    a call then passes every rights check. vfs logs through the standard ``logging`` module, under ``vfs``.
+    ``default_authority`` is the caller for a call that names none. Without it, the caller is anonymous. If it is
+    the system actor, such a call passes every rights check, so the kernel logs one warning on ``vfs.authority``.
 
     A ``storage`` that cannot be read, or a reranker with no ``rerank`` method, raises ``TypeError``. A
     ``deny_ops`` that masks a read operation raises ``ValueError``.
@@ -326,7 +325,6 @@ class AsyncVirtualFileSystem:
         self._hop_budget_default = hop_budget
         self._close_timeout = close_timeout
         self._default_authority = default_authority
-        warn_if_system_default(default_authority)
         self._mount_lock = asyncio.Lock()
         self._posture_writes: set[int] = set()
         self._stranded_disposals: dict[int, StorageBackend] = {}
@@ -342,6 +340,7 @@ class AsyncVirtualFileSystem:
         self._mounts: dict[Path, Mount] = {ROOT: root}
         self._rebuild_sorted_mounts()
         self._class_name = self.__class__.__name__
+        warn_if_system_default(default_authority)
 
     # -------------------------------------------------------------------
     # mount administration
@@ -626,8 +625,9 @@ class AsyncVirtualFileSystem:
             storage_type=type(mount.storage).__name__,
             storage_path=str(terminal.rel),
         )
-        who = caller_for(authority, self._default_authority, op="locate")
-        return await self._probe_location(terminal, row, who) if exists else row
+        if not exists:
+            return row
+        return await self._probe_location(terminal, row, caller_for(authority, self._default_authority, op="locate"))
 
     async def locate_edge(
         self, source: str, target: str, *, exists: bool = False, authority: Authority | None = None
@@ -931,8 +931,8 @@ class AsyncVirtualFileSystem:
         missing parents are made, as ``mkdir -p`` makes them. Both apply to every entry in the call.
 
         The call returns a :class:`Result`. Every entry passes the gate before any storage is called,
-        so a path that is not valid, an ``owner_id`` that names no one, such as ``*``, ``anon``,
-        ``system`` or a ``group:`` name, or a mount that is read-only there, refuses the whole call. Each
+        so a path that is not valid, or a mount that is read-only there, refuses the whole call. So does
+        an ``owner_id`` that names no one: ``*``, ``anon``, ``system`` or a ``group:`` name. Each
         mount then writes its own entries, so one mount can succeed where another fails. An exception
         that the ``entries`` iterable raises while it is read reaches the caller unchanged, and nothing
         has been written at that point.

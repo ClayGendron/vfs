@@ -228,14 +228,18 @@ def caller_for(authority: Authority | None, default: Authority | None, *, op: st
     """Return the authority that the call ``op`` runs as.
 
     It is ``authority`` when the call names one. Otherwise it is ``default``, the kernel's
-    ``default_authority``, and one record at ``DEBUG`` on the ``vfs.authority`` logger names ``op``.
-    Otherwise it is the anonymous caller, who holds only what the posture of each mount gives
-    everyone. A call therefore always has a named caller, so a storage and its audit always see one.
+    ``default_authority``, and one record at ``DEBUG`` on the ``vfs.authority`` logger names ``op``
+    and the kind of the default's actor, never its name. Otherwise it is the anonymous caller, who
+    holds only what the posture of each mount gives everyone. A call therefore always has a named
+    caller, so a storage and its audit always see one.
+
+    The kernel asks once for each storage it calls. A verb that reaches three mounts therefore logs
+    three records.
     """
     if authority is not None:
         return authority
     if default is not None:
-        _log.debug("%s names no authority and runs as default_authority, whose actor is %s", op, default.actor.sub)
+        _log.debug("%s names no authority and runs as default_authority, a %s actor", op, default.actor.kind)
         return default
     return _ANONYMOUS_AUTHORITY
 

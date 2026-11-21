@@ -100,6 +100,8 @@ A call made with no authority holds only what everyone holds. When that level do
 
 The `default_authority` argument of `VirtualFileSystem` names the caller for every call that passes no authority.
 
+When that caller is the system actor, every call that passes no authority passes every check. So VFS logs one warning, on the `vfs.authority` logger, when such a file system is made. To silence it where you mean it, such as a bulk load, raise that logger's level with Python's `logging` module.
+
 ## Errors
 
 | Error | Meaning |

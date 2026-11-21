@@ -20,7 +20,7 @@ To keep files in a database server, add the driver for it instead.
 | SQL Server | `pip install "vfs-py[mssql]"` |
 | Oracle | `pip install "vfs-py[oracle]"` |
 
-SQL Server also needs Microsoft's ODBC Driver 18 installed on the machine.
+SQL Server also needs Microsoft's ODBC Driver 18 installed on the machine, and the database URL names it with `?driver=ODBC+Driver+18+for+SQL+Server`.
 
 ## Create a File System and Use It
 

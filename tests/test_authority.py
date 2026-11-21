@@ -222,6 +222,13 @@ def test_a_call_that_names_no_one_falls_back_to_the_default_at_debug(caplog: pyt
     assert "write" in record.getMessage() and "system" in record.getMessage()
 
 
+def test_the_fallback_record_names_the_actors_kind_and_never_its_name(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        caller_for(None, Authority.of(Principal("alice@example.com")), op="read")
+    [record] = caplog.records
+    assert "user" in record.getMessage() and "alice" not in record.getMessage()
+
+
 def test_with_no_default_the_caller_is_anonymous_and_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.DEBUG, logger="vfs"):
         assert caller_for(None, None, op="read") == Authority.anonymous()

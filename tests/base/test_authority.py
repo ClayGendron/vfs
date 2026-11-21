@@ -152,6 +152,20 @@ def test_a_system_default_is_warned_of_once_when_the_file_system_is_made(caplog:
     assert [record.name for record in warnings] == ["vfs.authority", "vfs.authority"]
 
 
+def test_a_kernel_that_cannot_be_made_warns_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"), pytest.raises(ValueError):
+        AsyncVirtualFileSystem(storage=RecorderStorage(), default_authority=SYSTEM, deny_ops={"read"})
+    assert caplog.records == []
+
+
+async def test_locate_that_asks_no_storage_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    fs = RecorderFS(default_authority=SYSTEM)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        await fs.locate("/f.txt")
+    assert caplog.records == []
+
+
 @pytest.mark.parametrize("default", [None, ALICE, ANON], ids=["none", "alice", "anon"])
 def test_no_other_default_warns(default: Authority | None, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.DEBUG, logger="vfs"):
