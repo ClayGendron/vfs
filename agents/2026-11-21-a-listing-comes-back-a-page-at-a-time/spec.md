@@ -1,6 +1,6 @@
 # A listing comes back a page at a time
 
-A draft, written on 2026-11-21 from story K4 of `context/standards/roadmap.md` and from `context/specifications/active/176-the-listing-cursor/spec.md`, read against `dev` at `ffaede80`. It is not reviewed, and nothing is built.
+A draft, written on 2026-11-21 from story K4 of `context/standards/roadmap.md` and from `context/specifications/active/176-the-listing-cursor/spec.md`, read against `dev` at `ffaede80`. It is not reviewed. Slices A and B are built; the landing notes at the end say what was built and how each choice was taken.
 
 ## The outcome wanted
 
@@ -74,3 +74,46 @@ Out: the fronts, by decision 5; a cursor on `grep`, `search` or `traverse`; one 
 ## One line
 
 `ls`, `tree` and `glob` take `after=` and `limit=` and return the last row's path as `Result.next_after`, built on spec 176's design, trued to two engines and to the tree as it stands.
+
+## Landing notes
+
+Built on 2026-11-21 in an autonomous pass, on the branch `a-listing-comes-back-a-page-at-a-time`, in two commits: `702d961` (slice A) and `f36595f` (slice B).
+
+### How the three choices were taken
+
+The three choices had no answer from the developer, so the recommended answer was taken for each, and each is open to reversal in review.
+
+1. **No kernel default page.** `limit=None` lists every row, as before. The fronts pass their own page size.
+2. **Partial indexes, by measurement.** `research.md` in this directory has the numbers. On Postgres 16 the planner never picks spec 176's composites, and a page of 10 behind 900 tombstones visits 911 rows. `ix_vfs_entries_live_children (parent_id, name)` and `ix_vfs_entries_live_path (path)`, both `WHERE deleted_at IS NULL`, are picked on both engines and hold a page at `limit + 1` rows visited. The tombstone index `ix_vfs_entries_deleted_at` became partial on `deleted_at IS NOT NULL`, because on a table that is mostly tombstones Postgres planned live pages onto its `IS NULL` seek. `SCHEMA_FORMAT_VERSION` is 28.
+3. **Slice C is a spec of its own:** `agents/2026-11-21-a-shallow-tree-page-reads-only-its-depth/spec.md`. A `tree` page under `max_depth` still reads the rows deeper than the bound in its range, and its docstring says so.
+
+### What was built
+
+- `Result.next_after`, with its algebra, its rebase and overflow rule, its wire shape, and the `more: after=<key>` line (`src/vfs/results/envelope.py`, `render.py`).
+- The frontier rule (`src/vfs/results/paging.py`) and `local_after` (`src/vfs/paths.py`).
+- The arguments on the kernel, `AsyncSession`, both synchronous faces and `PARAMS`, with three shape rules. `ls` refuses a page beside `observations`, and `glob` refuses one beside `max_count` or `observations`. The third rule goes past spec 176: a glob over rows in hand keeps the caller's order, so it takes no page.
+- The kernel's cursor (`src/vfs/cursor.py`). It wraps every storage call of the paged verb, so a listing's internals (`MountListing.listed`, `tree`, the glob fan-out) needed no key threaded through them. Per mount it rebases the key, skips a mount that lies wholly before the key, and derives the page for a storage without the `listing_cursor` trait. It then merges the mounts' pages by the frontier rule. A row the kernel adds itself (a mount point's head, a road, a probed root) obeys the key and the frontier like any other row.
+- The native pages in `DatabaseStorage` (`listings.py`, `keyset.py`, the paged branch of `glob_rows`), and the `listing_cursor: keyset` trait. A tree page under a view shows each road directory on the page whose range holds its path. A hidden directory whose first child sorts after the key, such as `/d/a` with the key `/d/a.txt`, is found by one point fetch of the key's prefixes, and only those stored as directories are asked of the view. The storage refuses a bad page (limit, key, batch, `max_count`) before it touches its database.
+- Two moves to keep the size baseline: the glob and grep root probes to `MountListing.root_probes`, and the synchronous `Session` twin to `src/vfs/sync_session.py`. Also `ls_rows` and `tree_rows` to `listings.py`, and the anonymous scoped posture gate to `scoped_gate.py`. `sync.py` dropped under the size ceiling, so it left the allowlist.
+
+### Measured
+
+These counts were taken on an in-memory storage, 10,000 files, after one warm call (EXECUTED). Each figure is the statements of one call, statistics left out.
+
+| Verb | Whole listing | One page |
+|---|---|---|
+| `ls`, system actor | 3 | 3 |
+| `tree`, system actor | 3 | 3 |
+| `glob`, system actor | 2 | 2 |
+| `ls`, named caller | 5 | 5 |
+| `tree`, named caller | 5 | 6 |
+| `glob`, named caller | 4 | 4 |
+
+A named caller's `tree` page pays one more statement: the point fetch of the key's prefixes. The cursor contract (`tests/support/cursor_contract.py`) passes on SQLite in memory, on SQLite file and on Postgres 16.15 with pgvector 0.6.0. Postgres 15, 17, 18 and 19 and pgvector 0.8 were not run.
+
+### Not built, and why
+
+- The fronts, by decision 5.
+- The docs pages outside the docstrings. They are written under a person's guidance, so they are a spec of their own: `agents/2026-11-21-the-docs-say-how-a-listing-pages/spec.md`.
+- The corrections of `agents/2026-11-21-a-listing-at-a-mount-point-is-read-again/spec.md` have not landed. Paging is built on the rule as it stands. Each drain test checks the pages against the same listing asked whole, so paging adds no new defect at a mount point, and it fixes none of the draft's.
+

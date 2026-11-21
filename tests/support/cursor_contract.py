@@ -21,7 +21,9 @@ from vfs.authority import Authority, Principal
 from vfs.models import Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION
 from vfs.paths import Path
+from vfs.pattern_matching import ScopeChannel
 from vfs.results import ErrorKind, Result
+from vfs.storage.backends.database import reads as reads_module
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -254,6 +256,20 @@ class CursorContract:
             assert rows == sorted(whole), limit
             assert all(p.result.next_after is None or p.result.next_after in p.result.paths for p in pages)
 
+    @pytest.mark.parametrize("limit", [1, 2, 3])
+    async def test_a_road_whose_first_child_sorts_after_the_key_shows_on_its_own_page(
+        self, storage: DatabaseStorage, limit: int
+    ) -> None:
+        names = ["/w/a.1", "/w/a.2", "/w/a.3", "/w/a.4", "/w/a/x.txt", "/w/b.txt"]
+        ok(await storage.write(entries=[Entry(path=Path(p), content="x") for p in names], parents=True))
+        ok(await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM))
+        for path in names:
+            ok(await storage.grant(path=Path(path), principal="ada", level="read", authority=SYSTEM))
+        whole = list(ok(await storage.tree(path=Path("/w"), authority=ADA)).paths)
+        assert whole[:2] == ["/w/a", "/w/a.1"]
+        rows, _pages = await drain(storage, storage.tree, limit, path=Path("/w"), authority=ADA)
+        assert rows == whole
+
     # ------------------------------------------------------------------
     # glob
     # ------------------------------------------------------------------
@@ -291,6 +307,62 @@ class CursorContract:
     async def test_glob_refuses_a_page_beside_max_count(self, storage: DatabaseStorage) -> None:
         refused = await storage.glob(patterns=("*",), max_count=3, limit=3, authority=SYSTEM)
         assert [error.kind for error in refused.errors] == [ErrorKind.invalid]
+
+    async def test_a_glob_page_over_scope_root_clauses_drains_whole(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ok(await storage.write(entries=[*files("/g", 20), *files("/h", 5)], parents=True, authority=SYSTEM))
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
+        scope = ScopeChannel(roots=(Path("/g"), Path("/h")), arms=("*.txt",))
+        whole = list(ok(await storage.glob(patterns=(), scope=scope, authority=SYSTEM)).paths)
+        assert len(whole) == 25
+        rows, pages = await drain(storage, storage.glob, 4, patterns=(), scope=scope, authority=SYSTEM)
+        assert rows == sorted(whole)
+        assert all(len(paged_selects(page)) == 1 for page in pages)
+
+    # ------------------------------------------------------------------
+    # A page the storage refuses before it reads a row
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        ("op", "kwargs"),
+        [
+            ("ls", {"path": Path("/d"), "limit": 0}),
+            ("ls", {"observations": [Observation(path=Path("/d")), Observation(path=Path("/e"))], "limit": 2}),
+            ("ls", {"path": Path("/d"), "after": Path("/e/x")}),
+            ("ls", {"path": Path("/d"), "after": Path("/d/sub/x")}),
+            ("ls", {"path": Path("/d"), "after": Path("/d")}),
+            ("tree", {"path": Path("/d"), "after": Path("/d")}),
+            ("tree", {"path": Path("/d"), "after": Path("/dx/y")}),
+            ("tree", {"path": Path("/d"), "max_depth": 0, "limit": 2}),
+            ("glob", {"patterns": ("*",), "limit": 0}),
+        ],
+    )
+    async def test_a_bad_page_is_refused_before_any_read(
+        self, storage: DatabaseStorage, op: str, kwargs: dict[str, Any]
+    ) -> None:
+        ok(await storage.write(entries=files("/d", 3), parents=True, authority=SYSTEM))
+        with recorded(storage) as seen:
+            refused = await getattr(storage, op)(authority=SYSTEM, **kwargs)
+        assert [error.kind for error in refused.errors] == [ErrorKind.invalid], refused.errors
+        assert seen == []
+
+    async def test_the_trash_head_takes_any_key(self, storage: DatabaseStorage) -> None:
+        ok(await storage.write(entries=files("/t", 4), parents=True, authority=SYSTEM))
+        ok(await storage.delete(path=Path("/t/f00001.txt"), authority=SYSTEM))
+        ok(await storage.delete(path=Path("/t/f00003.txt"), authority=SYSTEM))
+        page = ok(await storage.ls(path=Path("/.vfs/trash"), after=Path("/t/f00002.txt"), authority=SYSTEM))
+        assert page.paths == ("/t/f00003.txt",)
+
+    async def test_an_ls_page_of_a_file_is_the_file_and_of_a_missing_path_is_not_found(
+        self, storage: DatabaseStorage
+    ) -> None:
+        ok(await storage.write(entries=files("/d", 2), parents=True, authority=SYSTEM))
+        file = ok(await storage.ls(path=Path("/d/f00000.txt"), limit=5, authority=SYSTEM))
+        assert file.paths == ("/d/f00000.txt",)
+        assert file.next_after is None
+        missing = await storage.ls(path=Path("/nowhere"), limit=5, authority=SYSTEM)
+        assert [error.kind for error in missing.errors] == [ErrorKind.not_found]
 
     # ------------------------------------------------------------------
     # Ten thousand children

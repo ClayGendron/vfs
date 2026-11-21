@@ -133,6 +133,16 @@ async def test_a_bad_cursor_is_invalid_before_any_storage_call(label: str, call:
     assert root.listings == mounted.listings == []
 
 
+@pytest.mark.parametrize("after", ["/a/x", "/z/x", "/d"])
+async def test_a_key_outside_a_mount_point_target_is_invalid(after: str) -> None:
+    fs, mounted = await layout()
+    mounted.listings.clear()
+    for call in (fs.ls, fs.tree):
+        refused = await call("/d/m", after=after)
+        assert [error.kind for error in refused.errors] == [ErrorKind.invalid]
+    assert mounted.listings == []
+
+
 async def test_a_key_in_a_mount_beneath_an_ls_target_is_a_child_there() -> None:
     fs, _mounted = await layout()
     assert ok(await fs.ls("/d/m", after="/d/m/f00003.txt", limit=2)).paths == ("/d/m/f00004.txt", "/d/m/f00005.txt")
