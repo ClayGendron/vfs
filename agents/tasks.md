@@ -68,7 +68,6 @@ Each was shown by a script that ran, unless it says "read". The review records n
 
 ### Search over rows in hand
 
-- [ ] **A row at a storage's own root makes the call fail.** A row at a mount point, the row of `/`, and the row of the trash view's head each reach the storage as a path it turns into a glob, and the call fails with `invalid`. `glob("/*")` on any kernel with a mount returns such a row. `grep` given the same row succeeds.
 - [ ] **`search` without `observations` does not expand a brace pattern in the kernel, as `grep` does.** `*.{md,rst}` matches nothing there, and a glob that cannot be parsed is refused once by each mount.
 - [ ] **`grep` over a held row in the trash view matches nothing and reports nothing.**
 
