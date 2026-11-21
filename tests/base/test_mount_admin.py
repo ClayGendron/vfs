@@ -349,7 +349,7 @@ async def test_update_mount_refuses_when_the_probed_mount_is_replaced_mid_flight
         return real()
 
     monkeypatch.setattr(child, "capabilities", swap_mount)
-    with pytest.raises(ValueError, match="changed while it was being updated"):
+    with pytest.raises(ValueError, match=r"changed while it was being updated\. Retry the update\.$"):
         await fs.update_mount("/m", refresh_caps=True)
 
 
@@ -438,7 +438,7 @@ def test_a_storage_whose_read_verbs_are_not_callable_cannot_be_mounted() -> None
     class Broken(RecorderStorage):
         read = 5
 
-    with pytest.raises(TypeError, match="read"):
+    with pytest.raises(TypeError, match=r"must be callable, and these are not: read$"):
         AsyncVirtualFileSystem(storage=Broken())  # ty: ignore[invalid-argument-type]
 
 

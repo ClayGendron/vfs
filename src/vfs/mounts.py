@@ -173,10 +173,10 @@ def validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
     """Return ``deny_ops`` as a frozen set, after checking that it masks no read operation.
 
     A mask applies to every caller alike. Refusing a read is the job of the storage's rights, which
-    know who the caller is. Only the known read operations are refused here, and ``grants``, which only
-    lists, is one of them. So a name the kernel does not know can still be masked. The call raises
-    ``ValueError`` that names the read operations. It raises ``TypeError`` for a bare string, which
-    would be read as a set of letters.
+    know who the caller is. Only the operations the kernel knows to be reads are refused here: the
+    read verbs, and ``grants``, which only lists. So a name the kernel does not know can still be
+    masked. The call raises ``ValueError`` that names the refused operations. It raises ``TypeError``
+    for a bare string, which would be read as a set of letters.
     """
     if isinstance(deny_ops, (str, bytes)):
         msg = f"deny_ops must be an iterable of op names, not a bare string: {deny_ops!r}"

@@ -402,11 +402,11 @@ class AsyncVirtualFileSystem:
           Nothing has been made.
         - The storage refuses the posture, or cannot be reached. The directory stays and the mount is not added.
 
-        It raises ``ValueError`` when ``posture`` is not a level, when the directory is not empty, when
-        the path already has a mount, when it lies beneath a ``no_overlay`` mount, when it would lie above
-        a deeper mount, when ``storage`` is already mounted somewhere else in this table, and when another
-        call is mounting the same storage object. One storage object has one path. It also raises
-        ``ValueError`` when a mount above was added or removed while the caller's rights were checked,
+        It raises ``ValueError`` when the path is empty, the root or uses ``.vfs``, when ``posture`` is not a
+        level, when the directory is not empty, when the path already has a mount, when it lies beneath a
+        ``no_overlay`` mount, when it would lie above a deeper mount, when ``storage`` is already mounted
+        somewhere else, and when another call is mounting the same storage object. One storage object has
+        one path. It also raises ``ValueError`` when a mount above was added or removed while rights were checked,
         because they were judged for a place that has changed. Retry in that case. It raises
         ``TypeError`` when ``storage`` cannot be read, before anything is made. If the call fails after
         the directory was made, the directory stays. A plain empty directory is a valid mount point for
