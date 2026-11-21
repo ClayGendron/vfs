@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never,
 
 from pydantic import ValidationError
 
-from vfs.authority import Authority
+from vfs.authority import Authority, caller_for, owner_refusal, warn_if_system_default
 from vfs.chain import admit_rows_in_hand, glob_rows_in_hand, grep_rows_in_hand, judge_in_hand
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
@@ -161,10 +161,6 @@ _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patter
 # The grant verbs that change membership rows: mount-wide, so they carry no path.
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 
-# A call that names nobody runs as the named nobody: it holds only what a
-# mount's posture gives everyone, and the audit still has an actor.
-_ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
-
 
 class ResolvedTerminal(NamedTuple):
     """Where a path landed, as the :term:`mount` that holds it and the path inside that mount.
@@ -230,6 +226,13 @@ class _Dispatches(NamedTuple):
     settle: Callable[[list[Result], list[tuple[Path, Result]]], Coroutine[Any, Any, list[Result]]] | None = None
 
 
+class _FileSite(NamedTuple):
+    """Where one file of a write batch goes: the path of its mount, and its own path as that mount's storage sees it."""
+
+    mount: Path
+    local: Path
+
+
 async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
     """Build the :term:`entry` that a write to one path makes.
 
@@ -277,8 +280,8 @@ class AsyncVirtualFileSystem:
     ``hop_budget`` is how many kernels one call may pass through before it is refused with
     ``budget_exhausted``. ``close_timeout`` is how many seconds ``close()`` waits for each storage.
     ``rerankers`` are the stages that ``search`` runs, in order, over the results of several mounts.
-    ``default_authority`` is the caller for a call that names none. Without it, such a call runs as the
-    anonymous caller.
+    ``default_authority`` is the caller for a call that names none. Without it, the caller is anonymous. If it is
+    the system actor, such a call passes every rights check, so the kernel logs one warning on ``vfs.authority``.
 
     A ``storage`` that cannot be read, or a reranker with no ``rerank`` method, raises ``TypeError``. A
     ``deny_ops`` that masks a read operation raises ``ValueError``.
@@ -344,6 +347,7 @@ class AsyncVirtualFileSystem:
         self._mounts: dict[Path, Mount] = {ROOT: root}
         self._rebuild_sorted_mounts()
         self._class_name = self.__class__.__name__
+        warn_if_system_default(default_authority)
 
     # -------------------------------------------------------------------
     # mount administration
@@ -402,19 +406,19 @@ class AsyncVirtualFileSystem:
           Nothing has been made.
         - The storage refuses the posture, or cannot be reached. The directory stays and the mount is not added.
 
-        It raises ``ValueError`` when ``posture`` is not a level, when the directory is not empty, when
-        the path already has a mount, when it lies beneath a ``no_overlay`` mount, when it would lie above
-        a deeper mount, when ``storage`` is already mounted somewhere else in this table, and when another
-        call is mounting the same storage object. One storage object has one path. It also raises
-        ``ValueError`` when a mount above was added or removed while the caller's rights were checked,
+        It raises ``ValueError`` when the path is empty, the root or uses ``.vfs``, when ``posture`` is not a
+        level, when the directory is not empty, when the path already has a mount, when it lies beneath a
+        ``no_overlay`` mount, when it would lie above a deeper mount, when ``storage`` is already mounted
+        somewhere else, and when another call is mounting the same storage object. One storage object has
+        one path. It also raises ``ValueError`` when a mount above was added or removed while rights were checked,
         because they were judged for a place that has changed. Retry in that case. It raises
         ``TypeError`` when ``storage`` cannot be read, before anything is made. If the call fails after
         the directory was made, the directory stays. A plain empty directory is a valid mount point for
         later. If the call fails after the posture was set, the posture stays.
         """
         require_storage(storage)
-        mount_name = path or storage.name
-        if not mount_name:
+        mount_name = storage.name if path is None else path
+        if path is None and not mount_name:
             msg = "add_mount needs a path or a named storage"
             raise ValueError(msg)
         mount_path = normalize_mount_path(mount_name)
@@ -529,7 +533,7 @@ class AsyncVirtualFileSystem:
         async with self._mount_lock:
             mount = self._require_mount(mount_path)
             if refresh_caps and mount.storage is not current.storage:
-                msg = f"Mount at {mount_path} changed while it was being updated — retry"
+                msg = f"Mount at {mount_path} changed while it was being updated. Retry the update."
                 raise ValueError(msg)
             require_judgement_stands(judged, "update the mount at", mount_path, self._mounts)
             # The root has no mount above it, so nothing above can refuse a change to it.
@@ -628,7 +632,9 @@ class AsyncVirtualFileSystem:
             storage_type=type(mount.storage).__name__,
             storage_path=str(terminal.rel),
         )
-        return await self._probe_location(terminal, row, self._admitted(authority)) if exists else row
+        if not exists:
+            return row
+        return await self._probe_location(terminal, row, caller_for(authority, self._default_authority, op="locate"))
 
     async def locate_edge(
         self, source: str, target: str, *, exists: bool = False, authority: Authority | None = None
@@ -911,7 +917,10 @@ class AsyncVirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        overwrite: bool = True,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -925,14 +934,43 @@ class AsyncVirtualFileSystem:
         ``entries`` is any iterable of :class:`Entry`, and it is read once. Each entry goes to the
         :term:`mount` that holds its path. Within a mount a parent is written before its child, so a
         directory in the batch serves the entries beneath it whatever order the caller gave. When two
-        entries name one path, the later one wins.
+        entries name one path, the later one wins. Under ``if_absent`` the second meets the first, and
+        the call is refused with ``exists``.
 
-        If ``overwrite`` is false, a write to a path that already holds a file is refused. If
-        ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
-        missing parents are made, as ``mkdir -p`` makes them. Both apply to every entry in the call.
+        A write of the body a file already holds changes nothing. Its row comes back with the status
+        ``unchanged``, and the file keeps its version.
+
+        ``if_version`` is the version the caller expects to replace, as a read of the file returned
+        it. If the file is at another version, the write is refused with ``conflict``, nothing is
+        written, and the error carries the version the file is at now in ``data["version"]``. Use it
+        to read a file, change it and write it back without erasing a change made in between. A
+        file that is missing or deleted is refused with ``not_found``, and is not made. ``if_versions``
+        is the same for a batch: it maps a path to the version expected there. Each key must be the
+        path of a file in ``entries``, no two keys may name one file, and a file with no key is replaced
+        whatever its version. One stale file refuses every entry that goes to the same mount.
+
+        If ``if_absent`` is true, the write only creates. A path that already holds a file or a
+        directory is refused with ``exists``. The error carries the ``version`` of what is there and,
+        for a file, the ``content_hash`` of its body, so a caller that never heard the answer to its own
+        create can tell that it landed. An entry that meets another entry of the same call is refused
+        with no ``data``. A deleted file counts as absent, and the write brings it back with the new
+        body. ``if_absent`` cannot be given with an expected version, because an absent file has none.
+
+        If ``append`` is true, the body is added to the end of the file and nothing already in it is
+        changed. It takes ``path`` with ``content`` or ``data``, and never ``entries``. The file is read
+        and written inside the storage in one step, so callers that append to one file at the same time
+        each keep what they added. A path that holds no file is created with the body as its whole
+        contents. A text file stays text while what is added is text, and becomes a bytes file when it
+        is not. An append sent twice adds its body twice. Give ``if_version`` with it to add at most
+        once: the second call then finds a later version and is refused with ``conflict``.
+
+        If ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
+        missing parents are made, as ``mkdir -p`` makes them. ``if_absent`` and ``parents`` apply to
+        every entry in the call.
 
         The call returns a :class:`Result`. Every entry passes the gate before any storage is called,
-        so a path that is not valid, or a mount that is read-only there, refuses the whole call. Each
+        so a path that is not valid, or a mount that is read-only there, refuses the whole call. So does
+        an ``owner_id`` that names no one: ``*``, ``anon``, ``system``, a ``group:`` name or a blank. Each
         mount then writes its own entries, so one mount can succeed where another fails. An exception
         that the ``entries`` iterable raises while it is read reaches the caller unchanged, and nothing
         has been written at that point.
@@ -943,14 +981,19 @@ class AsyncVirtualFileSystem:
             path=path,
             content=content,
             data=data,
-            overwrite=overwrite,
+            if_version=if_version,
+            if_versions=if_versions,
+            if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=authority,
         )
         if refusal is not None:
             return refusal
         if entries is not None:
-            return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, authority=authority)
+            return await self._route_entry_batch(
+                entries, if_versions=if_versions, if_absent=if_absent, parents=parents, authority=authority
+            )
         if path is None or (content is None and data is None):
             return self._error(
                 ErrorKind.invalid, op="write", detail="write requires path and content or data, or entries"
@@ -962,7 +1005,10 @@ class AsyncVirtualFileSystem:
             entry = await _authored_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
-        return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, authority=authority)
+        expected = None if if_version is None else {path: if_version}
+        return await self._route_entry_batch(
+            [entry], if_versions=expected, if_absent=if_absent, append=append, parents=parents, authority=authority
+        )
 
     async def edit(
         self,
@@ -1488,7 +1534,7 @@ class AsyncVirtualFileSystem:
         to the mount that holds it, and a mount that holds none of them is not asked. The call then answers as it would
         if only those rows had been given. A row that a filter drops is never ranked, never checked and never reported.
         A row that passes is ranked only if its storage can rank it. An ordinary directory or a path that is not there
-        is left out without an error. The row of a mount point or of the root makes the call fail with ``invalid``.
+        is left out without an error, and so is the row of a mount point, of the root or of the trash view's head.
         A row that passes in a mount that cannot search refuses the call with ``unsupported``.
 
         The call returns a :class:`Result`. After a merge, its ``legs`` extra says how the merge was
@@ -2395,7 +2441,9 @@ class AsyncVirtualFileSystem:
         self,
         entries: Iterable[Entry],
         *,
-        overwrite: bool = True,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -2404,10 +2452,15 @@ class AsyncVirtualFileSystem:
         Every :term:`entry` has its path checked and passes the gate before any storage is called. Each
         entry is then rewritten as its mount's storage sees it, through :meth:`Entry.without_mount`.
 
+        Each key of ``if_versions`` is checked as an entry's path is, and must be the path of a file in
+        the batch, and no two keys may name one path. A mount receives the keys of its own files, as its
+        storage sees them.
+
         Each :term:`mount` receives its entries sorted so that a parent comes before its child. A
         storage can then judge the batch as a set, and the caller does not have to order it. A
         directory in the batch serves as the parent of deeper entries in the same batch, whatever
         order the caller gave. Two entries for one path keep the caller's order, and the later one wins.
+        Under ``if_absent`` the second meets the first, and the call is refused with ``exists``.
         """
         if not self._mounts:
             return self._closed_error("write")
@@ -2415,10 +2468,11 @@ class AsyncVirtualFileSystem:
         if rows is None:
             detail = f"write entries must be an iterable of Entry, got {type(entries).__name__}"
             return self._error(ErrorKind.invalid, op="write", detail=detail)
-        if not rows:
+        if not rows and not if_versions:
             return Result(ops=("write",))
 
         groups: dict[Path, tuple[Mount, list[Entry]]] = {}
+        files: dict[Path, _FileSite] = {}
         for entry in rows:
             if not isinstance(entry, Entry):
                 detail = f"write entries must be Entry instances, got {type(entry).__name__}"
@@ -2426,19 +2480,38 @@ class AsyncVirtualFileSystem:
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
                 return self._invalid_path(resolved, entry.path, "write")
+            if (refused := owner_refusal(entry.owner_id)) is not None:
+                return self._error(ErrorKind.invalid, op="write", path=resolved.path, detail=refused)
             terminal = self._resolve_terminal(resolved.path)
             err = self._gate_entry(terminal.mount, "write", write_rels=(terminal.rel,))
             if err is not None:
                 return err
             _b, entry_group = groups.setdefault(terminal.mount.path, (terminal.mount, []))
-            entry_group.append(entry.without_mount(terminal.mount.path))
+            local = entry.without_mount(terminal.mount.path)
+            entry_group.append(local)
+            if entry.kind != "directory":
+                files[resolved.path] = _FileSite(terminal.mount.path, local.path)
+
+        expected: dict[Path, dict[Path, int]] = {}
+        for key, version in (if_versions or {}).items():
+            resolved = resolve_path(key, mutation=True)
+            site = files.get(resolved.path) if resolved.path is not None else None
+            if site is None:
+                detail = "each key of if_versions must be the path of a file in entries"
+                return self._error(ErrorKind.invalid, op="write", detail=detail, data={"raw": str(key)})
+            if site.local in expected.get(site.mount, {}):
+                detail = "if_versions names one path twice"
+                return self._error(ErrorKind.invalid, op="write", detail=detail, data={"raw": str(key)})
+            expected.setdefault(site.mount, {})[site.local] = version
 
         results = await gather_settled(
             self._dispatch_entry(
                 mount,
                 "write",
                 entries=sorted(group, key=lambda e: e.path.depth),
-                overwrite=overwrite,
+                if_versions=expected.get(mount.path),
+                if_absent=if_absent,
+                append=append,
                 parents=parents,
                 authority=authority,
             )
@@ -2625,7 +2698,7 @@ class AsyncVirtualFileSystem:
         ``invalid``, and the refusal names the argument. This check runs first in every public verb,
         so a wrong argument is reported as ``invalid`` even on a closed kernel or a path that is
         ``busy``. Who is calling is not checked here. A call that names no authority runs as the
-        default authority or as the anonymous caller, as :meth:`_admitted` says, and a mount whose
+        default authority or as the anonymous caller, as ``caller_for`` says, and a mount whose
         posture wants a name is what refuses it.
         """
         problem = param_violation(op, params)
@@ -2691,21 +2764,13 @@ class AsyncVirtualFileSystem:
         Every :term:`mount` at or above ``full`` that has a map contributes it, with the path as that
         mount's storage sees it. Each map can only tighten what the maps above it allow.
         """
-        layers: list[PermissionLayer] = []
-        for mount_path in reversed(self._sorted_mount_paths):
-            if mount_path != ROOT and full != mount_path and not full.startswith(mount_path + "/"):
-                continue
-            permission_map = self._mounts[mount_path].permissions
-            if permission_map is None:
-                continue
-            layers.append(
-                PermissionLayer(
-                    permission_map=permission_map,
-                    rel=full.without_mount(mount_path),
-                    mount_prefix=mount_path,
-                )
+        return [
+            PermissionLayer(
+                permission_map=mount.permissions, rel=full.without_mount(mount.path), mount_prefix=mount.path
             )
-        return layers
+            for mount in self._listing.governing(full)
+            if mount.permissions is not None
+        ]
 
     def _require_mount(self, mount_path: Path) -> Mount:
         """Return the :term:`mount` at ``mount_path``. Raise ``ValueError`` when there is none."""
@@ -2727,7 +2792,7 @@ class AsyncVirtualFileSystem:
         before anything changes. The call returns what was judged, taken before the storage was asked,
         or ``None`` for the system actor and for a closed kernel.
         """
-        who = self._admitted(authority)
+        who = caller_for(authority, self._default_authority, op="a mount change")
         if who.is_system or not self._mounts:
             return None
         judged = MountJudgement.of(self._mounts, mount_path)
@@ -2797,7 +2862,7 @@ class AsyncVirtualFileSystem:
         The code above carries ``op`` as a value, and this is where it meets a typed method. There is
         one branch for each operation and the last is ``assert_never``, so a verb added to ``ops.py``
         fails the type check until it has a branch here. A storage always receives an authority, which
-        is the one :meth:`_admitted` gives. A storage opens and commits its own transaction inside
+        is the one ``caller_for`` gives. A storage opens and commits its own transaction inside
         each method, and the kernel never sees one.
 
         If the storage lacks the family of methods that ``op`` belongs to, the result is
@@ -2813,7 +2878,7 @@ class AsyncVirtualFileSystem:
         if not self._mounts:
             return self._closed_error(op)
         storage = mount.storage
-        authority = self._admitted(authority)
+        authority = caller_for(authority, self._default_authority, op=op)
         try:
             match op:
                 case "read":
@@ -2912,20 +2977,6 @@ class AsyncVirtualFileSystem:
                     assert_never(op)
         except TransportError as exc:
             return self._error(ErrorKind.backend_unavailable, op=op, path=ROOT, detail=f"the transport failed: {exc}")
-
-    def _admitted(self, authority: Authority | None) -> Authority:
-        """Return the authority that a storage is handed for a call.
-
-        It is the call's own authority when it names one. Otherwise it is the kernel's
-        ``default_authority``, which a bulk load sets to ``Authority.system()``. Otherwise it is the
-        anonymous caller, who holds only what the posture of each :term:`mount` gives everyone. A
-        call always has a named caller, so a storage and its audit always see one.
-        """
-        if authority is not None:
-            return authority
-        if self._default_authority is not None:
-            return self._default_authority
-        return _ANONYMOUS_AUTHORITY
 
     def _backend_unsupported(self, op: Op) -> Result:
         """Return the ``unsupported`` refusal for a storage that lacks the methods ``op`` needs.

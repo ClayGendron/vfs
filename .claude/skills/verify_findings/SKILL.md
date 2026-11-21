@@ -1,6 +1,6 @@
 ---
 name: verify_findings
-description: Adversarially verify one code-review finding by trying to refute it — reproduce the claimed failure, check declared intent, and check reachability — before it is allowed to reach the user. Use when a review agent hands you a single finding to verify, when the user asks "is this a real bug", "verify this finding", or "check this claim", or as the per-finding quality gate in a multi-agent review.
+description: Adversarially verify one code-review finding by trying to refute it — reproduce the claimed failure, check declared intent, and check reachability — before it is allowed to reach the user. Use when a review agent hands you a single finding to verify, when the user asks "is this a real bug", "verify this finding", or "check this claim", or as the check a code review's one reviewer puts each of its own findings through before ranking it.
 ---
 
 # Verify findings — kill it or confirm it

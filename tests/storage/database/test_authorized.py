@@ -329,7 +329,7 @@ def _agreement_calls(storage: DatabaseStorage, case: str) -> tuple[list[Any], Ca
         "write-overwrite": ([], lambda: s.write(entries=[Entry(path=f, content="e2")], authority=EVE)),
         "write-new-no-overwrite": (
             [],
-            lambda: s.write(entries=[Entry(path=Path("/drop/e/n.txt"), content="n")], overwrite=False, authority=EVE),
+            lambda: s.write(entries=[Entry(path=Path("/drop/e/n.txt"), content="n")], if_absent=True, authority=EVE),
         ),
         "write-parents": (
             [],

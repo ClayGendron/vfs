@@ -18,7 +18,6 @@ Pull requests 10 to 18 landed on `dev` on 2026-11-20, and their branches are del
 - [ ] **The four choices of the time limit.** The spec is `spec.md` in `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/`. It was read three times and found fit to build, and it is not built. Its first landing, the cancellation fix, is built on branch 8. The choices, each with its recommendation: a default of 30 seconds, yes; a late call cancelled at its timeout, yes; the addressed storage timed too, no; a late mount marked and probed once in each timeout, yes, as a later landing.
 - [ ] **Whether a fault in a mounted storage should raise out of a listing of its parent.** A storage that raises an ordinary exception, and not a transport error, now raises out of `ls`, `tree` and `glob` of the directory its mount is in. That is the kernel's rule for a fault. Before the listing rule, `ls` of the parent did not ask the mounted storage. The other choice is a bare row and a warning, as for a storage that cannot be reached.
 - [ ] **Whether `glob` may ask the mounted roots after the storages have answered.** It does since the third round of fixes, which costs one more round trip when a pattern matches a mount point. It is what lets a limit be spent only on rows that are shown, and what keeps a storage from being called after `close()`.
-- [ ] **Which feature is next.** Write preconditions, spec 174, is the recommendation. The ranged read and the listing cursor are the others considered.
 
 ## Defects found and not fixed
 
@@ -52,7 +51,6 @@ Branch 8 fixes the two defects that were here, for every SQLite storage. These a
 - [ ] **`add_mount` restores a deleted file, or a deleted directory that is not empty, and then refuses the mount.** The restored rows stay.
 - [ ] **When `close()` lands during the cleanup of `remove_mount`, the detached storage is neither returned nor closed.**
 - [ ] **A mount change asks `holds` outside the one place storage calls go through.** A `close()` that lands between the entry check and that call still calls a closed storage. Read.
-- [ ] **Three small ones.** `grants` can be masked with `deny_ops`, though it only reads. `add_mount(storage, path="")` falls back to the storage's name. `require_storage` accepts a storage whose members are not callable.
 
 ### Listing at a mount point
 
@@ -71,14 +69,11 @@ Branch 8 fixes the two defects that were here, for every SQLite storage. These a
 
 ### Search over rows in hand
 
-- [ ] **A row at a storage's own root makes the call fail.** A row at a mount point, the row of `/`, and the row of the trash view's head each reach the storage as a path it turns into a glob, and the call fails with `invalid`. `glob("/*")` on any kernel with a mount returns such a row. `grep` given the same row succeeds.
 - [ ] **`search` without `observations` does not expand a brace pattern in the kernel, as `grep` does.** `*.{md,rst}` matches nothing there, and a glob that cannot be parsed is refused once by each mount.
 - [ ] **`grep` over a held row in the trash view matches nothing and reports nothing.**
 
 ## Cost and structure
 
-- [ ] **Two scans of the mount table grow with a batch.** `_permission_layers` scans it once for each row, 2,000,000 visits for 10,000 rows and 200 mounts, and `MountListing.beneath` once for each named root. Before the listing rule.
-- [ ] **`Result.merge` removes repeated errors by searching a growing list.** 200 distinct errors cost 19,900 comparisons, so 10,000 would cost about 50,000,000. Before the listing rule.
 - [ ] **A storage searches 10,000 rows in hand close to its time budget.** 8 to 9 seconds against 10, on SQLite in memory, measured once by the clock.
 - [ ] **A storage builds every `glob` candidate before it applies the limit.** Before the listing rule.
 - [ ] **Every mounted root in a listing is asked at once.** With 200 database mounts, one `ls` opens 200 transactions together. Read.
@@ -99,7 +94,6 @@ Branch 8 fixes the two defects that were here, for every SQLite storage. These a
 - [ ] **"Attempt" may be a glossary term.** It has a specific meaning in VFS, one try of one call's transaction, and `documentation/maintainers/cancellation.md` and the docstrings of `attempts.py` use it in that sense.
 - [ ] **Comment blocks in `dialects.py` and `engine.py` run to more than two lines.** The working agreement allows two. Before branch 8.
 - [ ] **Two test names overclaim or use an old word.** `test_update_mount_is_refused_where_removing_and_adding_the_mount_would_be` claims more than `update_mount` does. `test_unmount_and_remount_pass_under_a_rule_beneath_the_site` keeps "remount", because documents under `context/` cite it by name.
-- [ ] **A refusal in `update_mount` has an em dash in its message.** "Mount at … changed while it was being updated — retry".
 - [ ] **The docs export follows an alias of a type variable.** It now tells a type variable by what the value is, and it does not follow `T = U` or a renamed constructor.
 
 ## Tests that fail now and then
@@ -113,3 +107,13 @@ Branch 8 fixes the two defects that were here, for every SQLite storage. These a
 - [ ] **The ranking pin failed once on Postgres in CI.** `TestPostgresRankingPin::test_ordered_top10_matches_the_pin` failed on pull request 18 on 2026-11-20 with a bare `AssertionError`, and passed when that one job was run again. It passed on the Postgres leg of pull requests 11 to 17 the same day and on a laptop. The assertion compares two lists and prints neither, so the difference was not seen. The cause is not known.
 - [ ] **Other tests of the docs site may act before the page's scripts have started.** The back-to-top test did, and now waits for the theme toggle to say it is ready. The drawer test on a phone and the test that the menu for scripts off is gone both need scripts and do not wait. Neither has been seen to fail.
 - [ ] **`scripts/docs.sh check` fails to start when port 4173 is in use.** Seen once.
+
+## Write preconditions and the append
+
+Built on the branch `write-takes-preconditions-and-an-append` on 2026-11-20, in a guided session, and finished by an autonomous pass the same day. The spec is `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, and its code review is `context/reviews/2026-11-20-write-takes-preconditions-and-an-append-code-review.md`. The branch reaches `dev` through its pull request. `write` now reports `unchanged` for a body a file already holds, takes `if_version`, `if_versions` and `append`, and takes `if_absent` where it took `overwrite`.
+
+- [ ] **Decide whether a caller who holds `add` keeps a full version of another's file with each append.** Each append keeps the whole old body as a version, so N appends keep N copies, and only the trash sweep removes a live row's versions. The spec's "Cost" has the measurement. The direction is a version that keeps only what an append added.
+- [ ] **Decide whether a caller who holds `add` may turn another's text file into a bytes file by appending bytes that are not text.** It may today, and `documentation/reference/access-levels.md` says so. The alternative is to refuse a non-owner's append that would change the row's source.
+- [ ] **Decide whether `edit` takes the row lock an append takes.** `edit` keeps 20 of 20 concurrent edits on SQLite only, where every writer holds the one writer lock. It takes no row lock. On Postgres and MariaDB a losing edit runs again up to four times and is then refused, and on SQL Server and Oracle it is refused `conflict` at once. No edit is lost in silence. Read, and not run on a server engine.
+- [ ] **The example in `documentation/maintainers/how-we-write-docstrings.md` names `overwrite`.** It shows the `write` docstring before and after a rewrite, and `write` no longer takes that argument.
+- [ ] **Move the draft spec out of `context/`.** `context/specifications/active/174-write-preconditions-and-the-guarded-append/` is replaced and points at the new spec. Its notes for the shell, the WASI host and the adapter specs were not carried over.

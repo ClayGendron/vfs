@@ -31,7 +31,7 @@ from vfs.authority import Authority
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.offload import call_offloaded, offload_pool
-from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
+from vfs.ops import ADDITIVE_WRITE, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
@@ -85,7 +85,7 @@ from vfs.storage.backends.database.search import VectorLeg, search_rows
 from vfs.storage.backends.database.topology import transfer_rows
 from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
 from vfs.storage.backends.database.traverse import GraphRequest, Site, traverse_rows
-from vfs.storage.backends.database.writes import edit_rows, measured_entries, mkdir_rows, write_rows
+from vfs.storage.backends.database.writes import append_rows, edit_rows, measured_entries, mkdir_rows, write_rows
 from vfs.storage.protocol import HOLDS, storage_ops, targets_of
 from vfs.storage.ranking import Ranker
 
@@ -683,7 +683,9 @@ class DatabaseStorage:
         self,
         *,
         entries: list[Entry],
-        overwrite: bool = True,
+        if_versions: Mapping[Path, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -691,13 +693,35 @@ class DatabaseStorage:
         entries, refused = await measured_entries(entries, offload_pool())
         if refused:
             return Result(ops=("write",), errors=refused)
+        if append and (len(entries) != 1 or entries[0].kind == "directory"):
+            refusal = classified(ErrorKind.invalid, detail="an append takes one file")
+            return Result(ops=("write",), errors=[refusal])
+        # A write that only creates or only appends replaces no stored byte, so
+        # an occupied target is judged at the rung of a creation.
+        needs = ADDITIVE_WRITE if if_absent or append else VERB_RUNGS["write"]
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority, VERB_RUNGS["write"])
+            gate = await self._gate(session, authority, needs)
             if isinstance(gate, ResultError):
                 return Result(ops=("write",), errors=[gate])
             if refused := await gate.targets(session, [e.path for e in entries], "upsert", parents=parents):
                 return Result(ops=("write",), errors=refused)
+            if append:
+                (tail,) = entries
+                return await append_rows(
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    entry=tail,
+                    expected=(if_versions or {}).get(tail.path),
+                    parents=parents,
+                    authority=self._named(authority),
+                    executor=offload_pool(),
+                    primary=needs.primary,
+                    value_cap=host.value_cap,
+                )
             return await write_rows(
                 session,
                 host.tables,
@@ -705,13 +729,14 @@ class DatabaseStorage:
                 host.parameter_budget,
                 host.membership_budget,
                 entries=entries,
-                overwrite=overwrite,
+                overwrite=not if_absent,
                 parents=parents,
                 authority=self._named(authority),
                 value_cap=host.value_cap,
+                if_versions=if_versions,
             )
 
-        return await self._execute_write("write", run)
+        return await (self._execute_append("write", run) if append else self._execute_write("write", run))
 
     async def edit(
         self,
@@ -1446,6 +1471,15 @@ class DatabaseStorage:
                 gate=gate,
             ),
         )
+
+    async def _execute_append(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
+        """An append = one writer transaction under the topology verbs' isolation, with no serialization point.
+
+        An append locks its row and then reads its body. That read must
+        see what a rival committed while the lock was waited for, which
+        the op snapshot, taken before the wait, would hide.
+        """
+        return await self._execute_topology(op, fn)
 
     async def _execute_topology(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
         """One batch = one serialized transaction; the point is its first statement.

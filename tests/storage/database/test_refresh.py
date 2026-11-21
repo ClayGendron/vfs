@@ -285,6 +285,8 @@ class TestDeltaBuild:
     async def test_a_refresh_of_kept_entries_flips_and_bumps_only(self, tmp_path) -> None:
         storage = await _store(tmp_path, {"/a.txt": "alpha body words", "/b.txt": "bravo body words"})
         assert (await storage.rebuild()).success is True
+        # Written away and back: the row is pending again over the body its grams were built from.
+        await _written(storage, {"/a.txt": "other words"})
         await _written(storage, {"/a.txt": "alpha body words"})
         assert (await storage.delete(path=Path("/b.txt"))).success is True
         assert (await storage.restore(path=Path("/b.txt"))).success is True

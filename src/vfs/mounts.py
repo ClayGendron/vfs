@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypedDict
 
 from vfs.authority import EVERYONE_NAME, Authority
 from vfs.exceptions import MountError
-from vfs.ops import GRANT_OPS, READ_OPS, RUNGS
+from vfs.ops import GRANT_OPS, GRANT_WRITE_OPS, READ_OPS, RUNGS
 from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.permissions import check_writable_composed
 from vfs.results import ErrorKind, Result, classified
 from vfs.results.kinds import TRASHED_KEY, kind_family
-from vfs.storage import HOLDS, StorageBackend, SupportsGrants, SupportsHolds, TransportError
+from vfs.storage import HOLDS, StorageBackend, SupportsGrants, SupportsHolds, SupportsRead, TransportError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence, Set
@@ -37,6 +37,17 @@ if TYPE_CHECKING:
 
 # The check of a mount point runs as the system actor, not as any caller.
 _SYSTEM_AUTHORITY: Final = Authority.system()
+
+# The ops a mask never refuses: the reads, and grants, which only lists the grant rows.
+_UNMASKABLE_OPS: Final[frozenset[Op]] = READ_OPS | (GRANT_OPS - GRANT_WRITE_OPS)
+
+# The methods every mounted storage is called through: the read verbs and capabilities().
+_CALLED_MEMBERS: Final = tuple(
+    name
+    for protocol in (SupportsRead, StorageBackend)
+    for name, member in vars(protocol).items()
+    if callable(member) and not name.startswith("_")
+)
 
 # ---------------------------------------------------------------------------
 # The mount and its payload
@@ -127,9 +138,13 @@ class Mount:
 
 
 def require_storage(storage: object) -> None:
-    """Raise ``TypeError`` unless ``storage`` can be mounted, which needs the read verbs and a name."""
+    """Raise ``TypeError`` unless ``storage`` can be mounted, which needs callable read verbs and a name."""
     if not isinstance(storage, StorageBackend):
         msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
+        raise TypeError(msg)
+    flat = [name for name in _CALLED_MEMBERS if not callable(getattr(storage, name))]
+    if flat:
+        msg = f"storage members must be callable, and these are not: {', '.join(flat)}"
         raise TypeError(msg)
 
 
@@ -158,15 +173,16 @@ def validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
     """Return ``deny_ops`` as a frozen set, after checking that it masks no read operation.
 
     A mask applies to every caller alike. Refusing a read is the job of the storage's rights, which
-    know who the caller is. Only the known read operations are refused here, so a name the kernel does
-    not know can still be masked. The call raises ``ValueError`` that names the read operations. It
-    raises ``TypeError`` for a bare string, which would be read as a set of letters.
+    know who the caller is. Only the operations the kernel knows to be reads are refused here: the
+    read verbs, and ``grants``, which only lists. So a name the kernel does not know can still be
+    masked. The call raises ``ValueError`` that names the refused operations. It raises ``TypeError``
+    for a bare string, which would be read as a set of letters.
     """
     if isinstance(deny_ops, (str, bytes)):
         msg = f"deny_ops must be an iterable of op names, not a bare string: {deny_ops!r}"
         raise TypeError(msg)
     mask = frozenset(deny_ops)
-    blocked = mask & READ_OPS
+    blocked = mask & _UNMASKABLE_OPS
     if blocked:
         msg = f"deny_ops may not mask read-family ops: {', '.join(sorted(blocked))}"
         raise ValueError(msg)

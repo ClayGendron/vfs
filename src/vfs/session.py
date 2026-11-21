@@ -21,7 +21,7 @@ from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from types import TracebackType
 
     from vfs.authority import Authority
@@ -148,7 +148,10 @@ class AsyncSession:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        overwrite: bool = True,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
     ) -> Result:
         if (refusal := self._refuse_closed("write")) is not None:
@@ -158,7 +161,10 @@ class AsyncSession:
             path=path,
             content=content,
             data=data,
-            overwrite=overwrite,
+            if_version=if_version,
+            if_versions=if_versions,
+            if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=self._authority,
         )
