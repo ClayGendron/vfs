@@ -87,9 +87,11 @@ Each of the designs below was built, as a spike or as an earlier build, and run.
 
 A call that nobody cancels pays one wrapper object and one listener for its session, and one listener for its connection. Each statement calls that listener, which reads one attribute. No statement is added and no lock is taken.
 
-A cancelled caller waits for the statement in flight. On a file it did so before as well. In memory it waited for nothing, and lost the database.
+A cancelled caller waits for its attempt to end, and for most calls that is the statement in flight. On a file it waited for that statement before as well. In memory it waited for nothing, and lost the database.
 
-One cost falls on the event loop. A cancel scope of anyio cancels its task again on every turn of the loop until the task leaves the scope. The wait takes each cancellation and goes on, so the loop keeps turning for as long as the statement in flight runs.
+An attempt that has not yet got a connection is the exception. It may be waiting for its turn on a database that lives in one connection, or for a connection from a pool that has none free. Its caller is back when the attempt gets what it waits for and is refused, and not before. On a pool that wait is at most the pool's timeout, which is 30 seconds unless the engine was built with another. Before this work, a caller that was cancelled in the pool's queue was back at once. A wait in a queue touches no connection, so it could be made to end at the cancellation, and that is not built.
+
+One cost falls on the event loop. A cancel scope of anyio cancels its task again on every turn of the loop until the task leaves the scope. The wait takes each cancellation and goes on, so the loop keeps turning for as long as the attempt takes to end. One statement held for a second took 135,379 such cancellations, where a plain asyncio caller sent two.
 
 ## How it is tested
 
@@ -103,9 +105,10 @@ The tests are in `tests/storage/test_cancelled_call.py`, and beside the code in 
 
 ## Not covered
 
-Four cases are outside what this page promises.
+Five cases are outside what this page promises. The last four exist only for a storage that was handed its sessions.
 
 - **A database server.** Cancellation has not been run on one. What a cancelled write has done there is read in the drivers' source, and whether a connection thrown away there can hold a lock is not known.
-- **A session that is bound to a `Connection`, and not to an `Engine`.** It runs out of reach and is refused at its entry and at its commit. It is not refused at each statement, because there is no engine to make a view of.
-- **A handed session factory over an in-memory database.** It has no turns, so a statistics pass that is still running can collide with the next call on the one connection.
+- **A session factory that is bound to a `Connection`, and not to an `Engine`.** It is not served on SQLite. Such a storage refuses its first write, and it did so before this work as well.
+- **A handed session factory over an in-memory database.** Its calls take no turns, because the turns belong to a pool VFS built. A statistics pass that is still running can then collide with the next call on the one connection. In a rebuild that is cancelled, the collision ends a phase's transaction early, the phase's rows are committed alone, and every later rebuild is refused as the rival of the first.
+- **A handed factory that keeps one session for each task.** Each attempt runs in a task of its own. A registry made with `async_scoped_session` and `asyncio.current_task` therefore gains a session for every attempt, and the application has no task left from which to remove it.
 - **A handed engine on Python 3.11.** It keeps the open cursor of a failed statement until the collector runs. VFS opens its own SQLite connections as `ClosingConnection`, which closes such a cursor at the failure, and the builder of a handed engine can pass `connect_args={"factory": ClosingConnection}` to get the same.
