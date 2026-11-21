@@ -24,6 +24,7 @@ from vfs's own code, never from a caller.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Final, Literal
@@ -31,6 +32,8 @@ from typing import Final, Literal
 # ---------------------------------------------------------------------------
 # Module constants and shared types
 # ---------------------------------------------------------------------------
+
+_log: Final = logging.getLogger(__name__)
 
 PrincipalKind = Literal["user", "service", "system", "anonymous"]
 """``user`` is a person; ``service`` an agent deployed as its own identity;
@@ -213,15 +216,80 @@ class Authority:
         return only.sub
 
 
+_ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
+
+
+# ---------------------------------------------------------------------------
+# The caller a call runs as
+# ---------------------------------------------------------------------------
+
+
+def caller_for(authority: Authority | None, default: Authority | None, *, op: str) -> Authority:
+    """Return the authority that the call ``op`` runs as.
+
+    It is ``authority`` when the call names one. Otherwise it is ``default``, the kernel's
+    ``default_authority``, and one record at ``DEBUG`` on the ``vfs.authority`` logger names ``op``
+    and the kind of the default's actor, never its name. Otherwise it is the anonymous caller, who
+    holds only what the posture of each mount gives everyone. A call therefore always has a named
+    caller, so a storage and its audit always see one.
+
+    The kernel asks once for each storage it calls. A verb that reaches three mounts therefore logs
+    three records.
+    """
+    if authority is not None:
+        return authority
+    if default is not None:
+        _log.debug("%s names no authority and runs as default_authority, a %s actor", op, default.actor.kind)
+        return default
+    return _ANONYMOUS_AUTHORITY
+
+
+def warn_if_system_default(default: Authority | None) -> None:
+    """Log one ``WARNING`` on the ``vfs.authority`` logger when ``default`` is the system actor.
+
+    A kernel made with the system actor as its ``default_authority`` runs every call that names no
+    authority as the system actor, and the system actor passes every rights check. A host means that
+    for a bulk load. Anywhere else, a call that forgot its ``authority`` passes the checks unseen. A
+    host that means it silences the warning through the standard ``logging`` configuration.
+    """
+    if default is not None and default.is_system:
+        _log.warning(
+            "default_authority is the system actor, so every call that names no authority passes every rights check"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Ownership
+# ---------------------------------------------------------------------------
+
+
+def owner_refusal(declared: str | None) -> str | None:
+    """Return why ``declared`` can own no row, or ``None`` when it can.
+
+    ``*`` names everyone and a ``group:`` name names a group. Both name grant rows and never a
+    principal. ``anon`` and ``system`` name the two principals who own nothing. A row owned by any
+    of them would be owned by no one real. A blank name is refused for the same reason, because no
+    :class:`Principal` carries one. ``None`` declares no owner, and it is admitted.
+    """
+    if declared is None:
+        return None
+    if not declared.strip():
+        return f"owner_id {declared!r} is blank and can own no row"
+    if declared == EVERYONE_NAME or declared.startswith(GROUP_NAME_PREFIX) or declared in _RESERVED_NAMES:
+        return f"owner_id {declared!r} is reserved and can own no row"
+    return None
+
+
 def owner_for(authority: Authority | None, declared: str | None = None) -> str | None:
     """The ``owner_id`` a new row takes under *authority*.
 
     Caller identity is not row ownership: an app-path authority derives
     the owner from its subjects, while the system actor stamps whatever
-    the write payload *declared*. No authority stamps nothing.
+    the write payload *declared*, unless :func:`owner_refusal` refuses it,
+    when it stamps nothing. No authority stamps nothing.
     """
     if authority is None:
         return None
     if authority.is_system:
-        return declared
+        return None if owner_refusal(declared) is not None else declared
     return authority.owner_subject
