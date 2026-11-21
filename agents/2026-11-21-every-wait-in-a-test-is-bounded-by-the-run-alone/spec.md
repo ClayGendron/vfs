@@ -91,9 +91,9 @@ Each site below was read, changed and run; "read" marks a site changed by readin
 - **`test_a_cancelled_caller_still_lands_the_statistics`**: the `asyncio.sleep(0.005)` is gone; the cancel lands as the first `ANALYZE` is handed to the driver.
 - **`test_a_cancel_before_the_worker_starts_never_runs_the_matcher`**: the worker is held by a `thread_gate` and the test waits until the hold has started; the cancel comes once the batch is in the queue; after the release, a job submitted behind the batch is awaited, so the worker has passed the cancelled batch when the assertion runs.
 - **`test_overlapping_calls_are_refused`**: its `asyncio.sleep(0.05)` became a wait for the matcher to start.
-- **`_serialization_point_blocks_a_rival_topology_verb`** in `tests/storage/test_conformance.py`: the `asyncio.sleep(0.5)` became a wait on the move's `vfs_writer` option, set just before its first statement, the point; the 60-second `wait_for` is a plain await. Postgres only: not run on Postgres. The helper was run once against a SQLite file through a scratch script that stood in for `_server_storage`, and passed.
+- **`_serialization_point_blocks_a_rival_topology_verb`** in `tests/storage/test_conformance.py`: the `asyncio.sleep(0.5)` became `_waits_on_a_lock_or_ends`, which keeps the delete's window open until the rival move has ended or its server backend waits on a lock, read from `pg_stat_activity` for that backend alone. The 60-second `wait_for` is a plain await. A first form waited only for the move's `vfs_writer` option; on Postgres 16 it passed five runs of five with `serialize` made a no-op, so it pinned nothing. The lock-or-end form fails five of five with the point removed and passes with it (run).
 - **`test_a_rival_delete_serializes_behind_the_locked_resolve`** in `test_races.py`: the 60-second `wait_for` is a plain await (read; Postgres only).
-- **`test_a_timed_out_close_leaves_no_pass_running`** was left alone, as another change edits it.
+- **`test_a_timed_out_close_leaves_no_pass_running`** keeps its `asyncio.sleep(0.02)`. The timed-out-close change edits its assertions only, and the pass's wait in the busy handler sets no event a test can await. A slow machine weakens the test and cannot fail it.
 
 ### Runs
 
@@ -104,9 +104,9 @@ Each site below was read, changed and run; "read" marks a site changed by readin
 ### Not done, and defects found
 
 - **A close during a glob's or grep's planning hop can answer `unavailable`, a `src/` defect.** On an `InMemoryStorage`, the call reaches the storage after the close has dropped the in-memory database, and answers `vfs.unavailable` "glob failed: no such table: vfs_principal_revisions" beside `backend_unavailable` "Cannot operate on a closed database", where the test accepts success or `backend_unavailable` alone. Reproduced by a scratch script that repeats the race under load. `test_a_close_during_the_planning_hop_answers_a_result` failed 1 of 800 under load on the base commit and 4 of 800 after this change; the wait removed from it was `asyncio.wait_for`, which on Python 3.12 and later awaits the gather in the same task, so the difference is read as noise.
-- **`test_a_listed_module_never_grows_and_an_unlisted_one_stays_under_the_ceiling` fails on the base commit.** `bcb3f2b` grew `backend.py` from 1,537 to 1,542 lines and `engine.py` from 1,008 to 1,023; this change touches no `src/` file.
+- **The size lint failed between commits.** `bcb3f2b` grew `backend.py` from 1,537 to 1,542 lines and `engine.py` from 1,008 to 1,023. `24241c2` brought both back to their allowlisted counts, and the lint passes at the tip.
 - **The one-second probe of `test_a_rival_delete_serializes_behind_the_locked_resolve` stays.** It waits a second and asserts the rival delete has not finished; a slow machine weakens it and cannot fail it. Its event-based form needs a Postgres lock observation, such as a `FOR UPDATE NOWAIT` read of the endpoint row from another connection inside the window, and no Postgres was available to run it.
-- **The Postgres legs were not run**: the conformance serialization-point test and the two sites of `test_races.py`.
+- **The Postgres legs** of every changed test file, `test_races.py` and the conformance serialization-point test among them, passed on a local Postgres 16 with pgvector 0.6: 503 tests (run).
 
 ## One line
 
