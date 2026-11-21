@@ -18,7 +18,7 @@ An attempt is one try of one call's transaction. `EngineHost.with_retry` runs a 
 
 An attempt is marked when its caller is cancelled. The mark is the one thing the attempt is told, and the attempt is not interrupted. An attempt runs out of reach when it runs in a task of its own, which a cancellation of the caller does not enter.
 
-A storage either built its engine or was handed its sessions. `DatabaseStorage(url=...)` builds an engine and owns it. `DatabaseStorage(session_factory=...)` is handed the application's session factory. Either way the storage opens and closes each session itself. What a handed storage does not own is the engine, the pool and the factory, and that difference decides where the code on this page may put a listener.
+A storage builds its engine and owns it. `DatabaseStorage(url=..., engine_arguments={...})` passes the URL and the arguments to SQLAlchemy, and nothing but the storage makes a session, a connection or a transaction on the engine that comes back. That ownership is what lets the code on this page put a listener on the engine and on the class of its sessions. An application reaches the engine at `storage.engine`, to attach a `do_connect` hook or tracing.
 
 ## Why SQLite needs it
 
@@ -28,7 +28,7 @@ In memory, the connection is the database. After one cancelled `stat`, the next 
 
 In a file, a connection that is thrown away with a cursor still open keeps its write lock until Python's collector frees the cursor. The next write was refused until then, in 3 of 81 cuts.
 
-A database server has neither problem, because its database does not live inside a connection. Nothing on this page changes what VFS does on Postgres, SQL Server, Oracle or MariaDB. An attempt there runs in its caller's task, as it always did.
+A database server has neither problem, because its database does not live inside a connection. Nothing on this page changes what VFS does on Postgres, SQL Server, Oracle or MariaDB. An attempt there runs in its caller's task, as it always did, and no listener of this page is put in place.
 
 ## How an attempt runs out of reach
 
@@ -40,7 +40,7 @@ Before it raises, the function reads what the dropped attempt raised. A refused 
 
 The mark travels in a context variable, which is set inside the attempt's own task. A task copies the context it is started in. A task that is started inside an attempt and is to outlive it would therefore carry the attempt's mark, so it must be started outside the attempt or clear the mark first. VFS starts no such task today: the statistics pass is started after `with_retry` returns.
 
-Every SQLite storage runs each attempt out of reach, whether it built its engine or was handed its sessions, and whether its database is in memory or in a file. `with_retry` and `install_extensions` do it when the dialect is SQLite. The dialect is read in `EngineHost._policy()` with no I/O, before the first attempt, so first touch is covered as well. The wait between two attempts stays in the caller's task, and a cancellation there is raised at once and touches no connection.
+Which storages do this is declared and not tested for by name. `DialectProfile.attempts_out_of_reach` is true for SQLite alone, and `with_retry` and `install_extensions` read it. The profile is known when the storage is constructed, with no I/O, so the first call of a storage is covered as well. The wait between two attempts stays in the caller's task, and a cancellation there is raised at once and touches no connection.
 
 ## Where a marked attempt is refused
 
@@ -48,24 +48,24 @@ A marked attempt is refused with `InvalidRequestError` at three places, and it i
 
 | Place | What happens | Built as |
 |---|---|---|
-| The entry of a session | Refused before a connection is checked out | `AttemptSession.__aenter__` |
-| Each statement, the `BEGIN` among them | Refused before it reaches the database | A `before_cursor_execute` listener on the session's own connection |
-| The commit | Refused | A `before_commit` listener on the session |
+| The first use of a session | Refused before a connection is checked out | An `after_transaction_create` listener on the class `AttemptSession` |
+| Each statement, the `BEGIN` among them | Refused before it reaches the database | A `before_cursor_execute` listener on the storage's engine |
+| The commit | Refused | A `before_commit` listener on the class `AttemptSession` |
 | A rollback | Let through, to a savepoint or of the whole transaction | The statement listener passes a statement that begins `ROLLBACK` |
 
-The refusal at the entry is what keeps a promise about a database that lives in one connection, where calls take turns. An attempt that was marked while it waited for its turn sends nothing and gives its turn up.
+The refusal at the first use is what keeps a promise about a database that lives in one connection, where calls take turns. An attempt that was marked while it waited for its turn sends nothing and gives its turn up.
 
 The commit has a refusal of its own because a commit is a call of the driver and not a statement, so the statement listener never sees it. The rollbacks are let through because they are what unwind a refused attempt and leave its connection clean.
 
-The listeners get there in three steps. The host wraps the session factory it built or was handed, once, when its dialect is known to be SQLite, so that each session it takes is an `AttemptSession`. Entering an `AttemptSession` binds the session to a view of its engine. The view is made by `Engine.execution_options`, shares the engine's pool and carries the option `vfs_attempt`, and one view is made for each engine and kept. Last, the listener that VFS already has on the `begin` event of a SQLite engine calls `attempt_begins` before it sends the `BEGIN`. For a connection that carries the option, inside an attempt, `attempt_begins` puts the statement listener on that connection. The connection ends with its transaction, and the listener ends with it.
+The three listeners are each put in place once. The statement listener is put on the engine when a SQLite storage is constructed. The other two belong to `AttemptSession`, an empty subclass of SQLAlchemy's `Session` that a SQLite storage's session factory is told to make. Nothing is made for a session, a transaction or a connection, and nothing is taken away when one ends.
 
-Nothing is put on what outlives a session. The engine, its pool, a DBAPI connection, the session class and the application's factory are given no listener. A session that the application makes for itself on the same engine carries no option, so it is refused nothing, even inside a marked attempt. A test counts the listeners on a handed engine after a cancelled call.
+Each listener reads the mark of the task it runs in. Outside an attempt there is no mark, so the statistics pass, which runs in a task of the storage, is refused nothing. The same holds for anything an application does on `storage.engine` from a task of its own.
 
 ## What is still sent after a mark
 
 Three things are still sent once an attempt is marked.
 
-The first is the settings of a checkout that has begun. The pool's checkout listener sends a probe for the vector function and six `PRAGMA` statements, and on a file engine that VFS built it also reads the planner statistics. A refusal raised in that listener makes SQLAlchemy throw the connection away, which is the defect this page is about. So a checkout that has begun sends all its statements, and the attempt is refused at its `BEGIN`.
+The first is the settings of a checkout that has begun. The pool's checkout listener sends a probe for the vector function and six `PRAGMA` statements, and on a database in a file it also reads the planner statistics. These go straight to the driver's connection, so the statement listener does not see them, and that is wanted. A refusal raised in the checkout listener makes SQLAlchemy throw the connection away, which is the defect this page is about. So a checkout that has begun sends all its statements, and the attempt is refused at its `BEGIN`.
 
 The second is every rollback, for the reason given above.
 
@@ -77,19 +77,19 @@ Each of the designs below was built, as a spike or as an earlier build, and run.
 
 - **A second connection that keeps an in-memory database alive.** It never lost a row. After some cuts it left the storage refusing every call until the collector ran.
 - **Running out of reach with no mark.** It kept the database, and a cancelled write then always landed. No other engine does that, and a caller who gave up on a write should not find it landed later.
-- **The refusal on a session class that the host's own factory makes.** This was the first build. A handed storage has no factory of its own, so a cancelled write there always landed. The refusal now sits on each session the host takes, whoever made it.
+- **A storage that is handed the application's session factory.** `DatabaseStorage(session_factory=...)` existed until this work. A handed storage owned no engine, so the refusals had to be a wrapper around each session and a listener on each connection, made and dropped for every transaction. A factory that returned the same session twice then recursed without end, and a handed in-memory database took no turns. A storage now always builds its engine, and three listeners that are put in place once do the same work.
 - **A `do_orm_execute` listener on the session.** It sees only a statement that is passed to `session.execute`. First touch, the statistics step and the savepoints send theirs through `session.connection()`, and it would have missed them.
 - **A refusal in the connection's `commit` event.** SQLAlchemy marks the transaction inactive, sends no rollback, and returns the connection to the pool with no reset. The row of the refused write was then made permanent by the next caller's commit.
 - **A refusal of `ROLLBACK TO SAVEPOINT`.** It broke the close of a session that held a savepoint. The close raised half way, the transaction was not rolled back, and the connection never returned to its pool.
-- **A refusal in the pool's checkout listener.** It costs the connection. The listener also belongs to the pool, so it cannot tell a session VFS took from one the application made.
+- **A refusal in the pool's checkout listener.** It costs the connection, as said above.
 
 ## What it costs
 
-A call that nobody cancels pays one wrapper object and one listener for its session, and one listener for its connection. Each statement calls that listener, which reads one attribute. No statement is added and no lock is taken.
+A call that nobody cancels pays for calls of the three listeners, and each call reads one context variable. A `stat` calls the statement listener twice and the first-use listener once. The first `write` to a storage calls the statement listener 16 times, the first-use listener 3 times and the commit listener twice. No statement is added, no lock is taken, and no object is made for a session or a connection.
 
 A cancelled caller waits for its attempt to end, and for most calls that is the statement in flight. On a file it waited for that statement before as well. In memory it waited for nothing, and lost the database.
 
-An attempt that has not yet got a connection is the exception. It may be waiting for its turn on a database that lives in one connection, or for a connection from a pool that has none free. Its caller is back when the attempt gets what it waits for and is refused, and not before. On a pool that wait is at most the pool's timeout, which is 30 seconds unless the engine was built with another. Before this work, a caller that was cancelled in the pool's queue was back at once. A wait in a queue touches no connection, so it could be made to end at the cancellation, and that is not built.
+An attempt that has not yet got a connection is the exception. It may be waiting for its turn on a database that lives in one connection, or for a connection from a pool that has none free. Its caller is back when the attempt gets what it waits for and is refused, and not before. On a pool that wait is at most the pool's timeout, which is 30 seconds unless the application sets `pool_timeout` in `engine_arguments`. Before this work, a caller that was cancelled in the pool's queue was back at once. Making that wait end at the cancellation is not built.
 
 One cost falls on the event loop. A cancel scope of anyio cancels its task again on every turn of the loop until the task leaves the scope. The wait takes each cancellation and goes on, so the loop keeps turning for as long as the attempt takes to end. One statement held for a second took 135,379 such cancellations, where a plain asyncio caller sent two.
 
@@ -99,16 +99,10 @@ Every driver round trip of a call can be held. The helpers in `tests/support/can
 
 A sweep cuts a call at each of its round trips. After each cut it asserts that the storage is whole, that a write changed nothing or landed whole, that the next write works, that no connection was opened or thrown away, and that no statement was sent after the one in flight.
 
-The four SQLite hosts are all run: built and handed, in memory and in a file. Every round trip is cut on the built in-memory host, and the first round trip of each kind on the other three, which keeps the sweeps inside the budget of the heavy tests.
+Both SQLite hosts are run, a database in memory and a database in a file. Every round trip is cut on the one in memory, and the first round trip of each kind on the one in a file, which keeps the sweeps inside the budget of the heavy tests.
 
 The tests are in `tests/storage/test_cancelled_call.py`, and beside the code in `tests/storage/database/test_attempts.py` and `test_oneconnection.py`. The mutants that each test was seen to kill are rows of the mutant ledger.
 
 ## Not covered
 
-Five cases are outside what this page promises. The last four exist only for a storage that was handed its sessions.
-
-- **A database server.** Cancellation has not been run on one. What a cancelled write has done there is read in the drivers' source, and whether a connection thrown away there can hold a lock is not known.
-- **A session factory that is bound to a `Connection`, and not to an `Engine`.** It is not served on SQLite. Such a storage refuses its first write, and it did so before this work as well.
-- **A handed session factory over an in-memory database.** Its calls take no turns, because the turns belong to a pool VFS built. A statistics pass that is still running can then collide with the next call on the one connection. In a rebuild that is cancelled, the collision ends a phase's transaction early, the phase's rows are committed alone, and every later rebuild is refused as the rival of the first.
-- **A handed factory that keeps one session for each task.** Each attempt runs in a task of its own. A registry made with `async_scoped_session` and `asyncio.current_task` therefore gains a session for every attempt, and the application has no task left from which to remove it.
-- **A handed engine on Python 3.11.** It keeps the open cursor of a failed statement until the collector runs. VFS opens its own SQLite connections as `ClosingConnection`, which closes such a cursor at the failure, and the builder of a handed engine can pass `connect_args={"factory": ClosingConnection}` to get the same.
+A database server is outside what this page promises. Cancellation has not been run on one. What a cancelled write has done there is read in the drivers' source, and whether a connection thrown away there can hold a lock is not known.
