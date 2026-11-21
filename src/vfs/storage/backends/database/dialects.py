@@ -335,6 +335,9 @@ class DialectProfile:
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
 """Proves sqlite-vec is loaded in the connection; its answer is the extension's version."""
 
+PGVECTOR_ITERATIVE_SCAN: Final = "SET LOCAL hnsw.iterative_scan = relaxed_order"
+"""pgvector 0.8+: keep scanning the HNSW index until a scoped query's window fills."""
+
 PGVECTOR_PROBE: Final = "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
 """Proves pgvector is installed in the database; no row means it is not, and the answer is its version."""
 

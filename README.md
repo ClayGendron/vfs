@@ -27,10 +27,10 @@ A `VirtualFileSystem` node routes a namespace. Give it a storage backend and it 
 Synchronous, for scripts and notebooks:
 
 ```python
-from vfs import DatabaseStorage, VirtualFileSystem
+from vfs import SQLiteStorage, VirtualFileSystem
 
 with VirtualFileSystem() as root:
-    root.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge")
+    root.add_mount(SQLiteStorage(path="knowledge.db"), "/knowledge")
     written = root.write(path="/knowledge/policies/mfa.md", content="All logins require MFA.", parents=True)
     found = root.grep("MFA", paths=("/knowledge",))
 assert written.success and found.success
@@ -41,15 +41,15 @@ Asynchronous, for servers and agents:
 ```python
 from vfs import AsyncVirtualFileSystem
 
-# Any SQLAlchemy URL works. Engine arguments size the pool the storage builds.
-enterprise = DatabaseStorage(
-    url="sqlite+aiosqlite:///enterprise.db",
+# PostgresStorage(url=...) takes the same arguments. Engine arguments size the pool the storage builds.
+enterprise = SQLiteStorage(
+    path="enterprise.db",
     engine_arguments={"pool_size": 5, "pool_pre_ping": True},
 )
 
 kernel = AsyncVirtualFileSystem()
 await kernel.add_mount(enterprise, "/enterprise")
-await kernel.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge", permissions="read")
+await kernel.add_mount(SQLiteStorage(path="knowledge.db"), "/knowledge", permissions="read")
 
 written = await kernel.write(path="/enterprise/policies/mfa.md", content="All logins require MFA.", parents=True)
 result = await kernel.grep("MFA", paths=("/enterprise",))
@@ -57,7 +57,7 @@ ranked = await kernel.search("do logins need a second factor?", limit=10)
 assert written.success and result.success and ranked.success
 ```
 
-A `VirtualFileSystem()` built with no `storage` gets an `InMemoryStorage` at `/`: a `DatabaseStorage` over a private in-process SQLite database. Writes outside every mount land there and live as long as the process; pass `storage=` to put something durable at the root.
+A `VirtualFileSystem()` built with no `storage` gets an `InMemoryStorage` at `/`: an `SQLiteStorage` over a private in-process database. Writes outside every mount land there and live as long as the process; pass `storage=` to put something durable at the root.
 
 Mounts can be bound at any depth, and every path an agent sees stays in its own coordinates: results are rebased on the way back up, so `/enterprise/policies/mfa.md` is the same name no matter which store answered it.
 
@@ -117,7 +117,7 @@ A node *holds* its storage rather than *being* it. Backends implement small prot
 ```python
 from vfs import InMemoryStorage, VirtualFileSystem
 
-node = VirtualFileSystem(storage=InMemoryStorage())  # a DatabaseStorage on a private in-process SQLite
+node = VirtualFileSystem(storage=InMemoryStorage())  # an SQLiteStorage over a private in-process database
 assert {"read", "glob", "grep", "search", "write"} <= node.capabilities()
 node.close()
 ```

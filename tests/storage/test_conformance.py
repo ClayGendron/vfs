@@ -48,6 +48,7 @@ from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database.dialects import bulk_insert
 from vfs.storage.backends.database.segments import path_segments
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.sqlite import SQLiteStorage
 
 if TYPE_CHECKING:
     import pathlib
@@ -87,7 +88,7 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     path = tmp_path_factory.mktemp("template") / "vfs.sqlite"
 
     async def build() -> None:
-        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{path}", embedder=HashEmbeddingProvider())
+        storage = SQLiteStorage(path=path, embedder=HashEmbeddingProvider())
         assert (await storage.first_touch()).success, "the template must provision cleanly"
         await storage.close()
 
@@ -102,7 +103,7 @@ class TestSqliteConformance(StorageContract, GrantsContract):
     async def storage(self, tmp_path: pathlib.Path, sqlite_template: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
         db = tmp_path / "vfs.sqlite"
         shutil.copy(sqlite_template, db)
-        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{db}", embedder=HashEmbeddingProvider())
+        storage = SQLiteStorage(path=db, embedder=HashEmbeddingProvider())
         yield storage
         await storage.close()
 
@@ -129,7 +130,7 @@ class TestStatisticsStatements:
         if leg == "sqlite":
             db = tmp_path / "vfs.sqlite"
             shutil.copy(sqlite_template, db)
-            storage_cm = _closing(DatabaseStorage(url=f"sqlite+aiosqlite:///{db}", embedder=HashEmbeddingProvider()))
+            storage_cm = _closing(SQLiteStorage(path=db, embedder=HashEmbeddingProvider()))
         else:
             storage_cm = _server_storage(leg)
         async with storage_cm as storage:
@@ -459,7 +460,7 @@ async def test_a_directory_is_never_awaiting_the_index_on_sqlite(
 ) -> None:
     db = tmp_path / "vfs.sqlite"
     shutil.copy(sqlite_template, db)
-    async with _closing(DatabaseStorage(url=f"sqlite+aiosqlite:///{db}", embedder=HashEmbeddingProvider())) as storage:
+    async with _closing(SQLiteStorage(path=db, embedder=HashEmbeddingProvider())) as storage:
         await _a_directory_is_never_awaiting_the_index(storage)
 
 

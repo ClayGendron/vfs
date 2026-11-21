@@ -1,7 +1,6 @@
 """``DatabaseStorage`` — the portable SQL backend (reads, glob, mutation core).
 
-Runs on any SQLAlchemy-compatible database: known dialects carry tuned
-policy, everything else serves on the generic floor (``dialects.py``).
+Runs on any SQLAlchemy URL: SQLite and Postgres carry tuned policy, any other dialect the generic floor.
 Point reads with projection push-down, ``parent_id`` listings and glob's
 batched pattern fan are in ``reads.py``, on the descent ladder of
 ``descent.py``; grep's indexed pipeline in ``grep.py``; write, edit and
@@ -41,6 +40,7 @@ from vfs.storage.backends.database.addressing import addressed_by, scope_judged
 from vfs.storage.backends.database.authorized import admit_destinations, fenced, opening, remember
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
+    PGVECTOR_ITERATIVE_SCAN,
     PROFILES,
     StaleSnapshot,
     op_execution_options,
@@ -92,6 +92,7 @@ from vfs.storage.ranking import Ranker
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping
 
+    from sqlalchemy.engine import URL
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from vfs.embedding import EmbeddingProvider
@@ -111,9 +112,6 @@ _SYSTEM = Authority.system()
 QUERY_VECTOR_CACHE = 256
 """Embedded queries remembered per mount — a re-asked question costs no provider call."""
 
-PGVECTOR_ITERATIVE_SCAN = "SET LOCAL hnsw.iterative_scan = relaxed_order"
-"""pgvector 0.8+: keep scanning the HNSW index until a scoped query's window fills."""
-
 
 class _ScopedGate(NamedTuple):
     """An anonymous scoped call's posture gate: what composition would have judged, and the verb's wall.
@@ -132,9 +130,11 @@ class _ScopedGate(NamedTuple):
 class DatabaseStorage:
     """One mount's portable database backend over SQLAlchemy Core.
 
-    *posture* is what everyone holds at the root of a freshly provisioned
-    mount — ``open``, ``shared`` or ``private``. It is planted once, at
-    first touch: a mount that already exists keeps its stored posture,
+    ``url`` is a string or a SQLAlchemy ``URL``. Any dialect but SQLite and Postgres is served the generic floor,
+    is withheld ``search``, and logs one ``WARNING`` on the ``vfs.storage.backends.database.engine`` logger.
+
+    *posture* is what everyone holds at the root of a freshly provisioned mount — ``open``, ``shared`` or
+    ``private``. It is planted once, at first touch: a mount that already exists keeps its stored posture,
     and only the ``set_posture`` verb changes it.
 
     *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside
@@ -149,7 +149,7 @@ class DatabaseStorage:
     def __init__(
         self,
         *,
-        url: str,
+        url: str | URL,
         engine_arguments: Mapping[str, Any] | None = None,
         schema: str | None = None,
         name: str = "database",

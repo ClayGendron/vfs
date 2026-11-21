@@ -58,11 +58,13 @@ A storage knows only its own paths, which start at its own root. The mount gives
 
 A storage also decides what each caller may see or change. The kernel passes it the name of the caller with every call.
 
-In code a storage is any object with the members of `StorageBackend`. It has a name and a description, it can be read, and it declares the other calls it answers. Two classes come with VFS.
+In code a storage is any object with the members of `StorageBackend`. It has a name and a description, it can be read, and it declares the other calls it answers. Four classes come with VFS.
 
 | Class | Where the entries are kept |
 |---|---|
-| `DatabaseStorage` | A SQL database, reached through SQLAlchemy |
+| `SQLiteStorage` | A SQLite database, named by a path or a URL |
+| `PostgresStorage` | A Postgres database, named by a URL |
 | `InMemoryStorage` | A SQLite database in memory, which is gone when the storage is closed |
+| `DatabaseStorage` | Any SQL database SQLAlchemy reaches. The three above are built on it, and a database other than SQLite and Postgres is fit for testing only |
 
 A kernel that is given no storage makes an `InMemoryStorage` for its root. A storage can also wrap another kernel, and that is the only way two file trees are joined.
