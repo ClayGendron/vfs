@@ -85,6 +85,8 @@ dev = [
     "pytest-timeout>=2.3",
     # scripts/bump_version.py parses and orders versions with it
     "packaging>=24",
+    # the cancelled-call tests cancel a call from a cancel scope, which knows its own cancellation by its message
+    "anyio>=4.0",
     # tests/scripts/test_docs_export.py runs the docs export
     { include-group = "docs" },
 ]

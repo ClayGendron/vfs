@@ -451,6 +451,13 @@ _HOLDS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
 ]
 
 
+def test_sqlite_alone_declares_that_its_attempts_run_out_of_reach() -> None:
+    """Guards the declaration: on any other engine an attempt runs in its caller's task, the generic floor's too."""
+    declared = {name for name, profile in PROFILES.items() if profile.attempts_out_of_reach}
+    assert declared == {"sqlite"}
+    assert (GENERIC.attempts_out_of_reach, profile_for("duckdb").attempts_out_of_reach) == (False, False)
+
+
 def test_each_profile_declares_how_a_mint_shares_the_stamp_lock() -> None:
     """The shared form is one profile fact: a row lock by default, and what each other engine needs spelled."""
     assert SQLITE.share_lock == MARIADB.share_lock == ShareLock()

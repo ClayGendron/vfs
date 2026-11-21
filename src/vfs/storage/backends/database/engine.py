@@ -1,21 +1,15 @@
-"""Engine lifecycle — construction XOR, first touch, retry, close.
+"""Engine lifecycle — construction, first touch, retry, close.
 
-:class:`EngineHost` owns one mount's database connectivity in exactly
-one of two ways, loudly: **built** (a URL in — the host creates the
-engine, wraps it in its own sessionmaker, and disposes it at
-``close()``) or **borrowed** (an injected session factory yielding
-fresh, independent sessions — the host never creates an engine and
-``close()`` never touches the pool). You own what you build; a host
-never holds an engine it did not make. A caller holding a live engine
-wraps it in ``async_sessionmaker(engine)`` — one line that states the
-ownership it means. The borrowed path is single-loop by intent; in
-notebooks and sync-client pipelines, use the built path, which binds
-nothing to a loop until first touch.
+:class:`EngineHost` owns one mount's database connectivity: it builds
+the engine from a URL and the engine arguments it is given, makes every
+session that runs on it, and disposes it at ``close()``. An application
+may put listeners on the engine, and must open no connection or session
+on it: beside a call on an in-memory database, one costs the database.
+Construction binds nothing to a loop, so first touch may be on another.
 
-Dialect-dependent work stays out of construction: policy resolves from
-the session bind at first use, so no dialect decision is made before
-the first session exists. First touch is idempotent and lazy, on the
-caller's loop: database-file settings, the profile's vector probe (the
+The dialect is known once the engine is built, so its declared policy
+is resolved at construction, with no IO. First touch is idempotent and
+lazy, on the caller's loop: database-file settings, the profile's vector probe (the
 cosine distance function is a precondition vfs proves and never
 installs — sqlite-vec, pgvector), then — under the topology
 serialization point (``BEGIN IMMEDIATE`` on SQLite via the installed
@@ -28,13 +22,11 @@ never PRAGMA/catalog sniffing.
 
 Facts SQLAlchemy models are read from the dialect, never redeclared:
 the parameter budget is ``dialect.insertmanyvalues_max_parameters`` and
-transport-down classification uses ``dialect.is_disconnect()``. On a
-borrowed SQLite bind the transaction-control listeners are installed
-once (marker-guarded); session settings stamp every pool checkout — so
-connections pooled before the borrow are covered too — and other users
-of that engine see explicit ``BEGIN`` at transaction start instead of
-the driver's deferred implicit one — same semantics, earlier lock
-acquisition for writers only.
+transport-down classification uses ``dialect.is_disconnect()``. On
+SQLite the host takes over the start of a transaction: session settings
+stamp every pool checkout, and an explicit ``BEGIN`` is sent at
+transaction start instead of the driver's deferred implicit one — same
+semantics, earlier lock acquisition for writers only.
 
 The host also owns SQLite's planner statistics, because without them the
 planner assumes a million rows and ten per index key, and seeks the
@@ -43,13 +35,12 @@ inside the write lock it already holds, whether SQLite's own growth
 listing names one of the mount's indexed tables; a crossing commit then
 returns at once, and one host-tracked task takes the lock once more and
 lands the statistics, uncapped, whatever happens to the caller. Pooled
-connections of a file engine vfs built replace themselves when the
-statistics move; in-memory and borrowed connections reload at their
-next write instead, because replacing the only connection to an
-in-memory database would drop it and a host application's pool is not
-ours to touch. ``close()`` interrupts a running pass rather than waiting
-on it. Below SQLite 3.46 the listing depends on the connection's own
-query history, so the step issues nothing there.
+connections of a database in a file replace themselves when the
+statistics move; a connection to an in-memory database reloads at its
+next write instead, because replacing the only connection to one would
+drop it. ``close()`` interrupts a running pass rather than waiting on
+it. Below SQLite 3.46 the listing depends on the connection's own query
+history, so the step issues nothing there.
 """
 
 from __future__ import annotations
@@ -61,9 +52,9 @@ import random
 import sqlite3
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from sqlalchemy import Engine, event, func, insert, inspect, select
+from sqlalchemy import event, func, insert, inspect, select
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -75,6 +66,11 @@ from vfs.models import encoded_at_creation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
+from vfs.storage.backends.database.attempts import (
+    AttemptSession,
+    refuse_statements_of_marked_attempts,
+    run_out_of_reach,
+)
 from vfs.storage.backends.database.dialects import (
     SQLITE_VEC_PROBE,
     DialectProfile,
@@ -90,13 +86,15 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.drivers import engine_arguments
+from vfs.storage.backends.database.drivers import merge_engine_arguments
+from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
+    from sqlalchemy import Engine
     from sqlalchemy.engine import Connection, Dialect
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
     from sqlalchemy.pool import PoolProxiedConnection
@@ -150,13 +148,6 @@ def advisory_key(text: str) -> int:
     return int.from_bytes(digest, "big", signed=True)
 
 
-class _ResolvedPolicy(NamedTuple):
-    """Declared dialect policy and the live dialect it was read from."""
-
-    profile: DialectProfile
-    dialect: Dialect
-
-
 class _AnalysisPass:
     """One analysis pass's handles for the task that owns it: the driver connection to interrupt, and whether it did."""
 
@@ -173,8 +164,8 @@ class EngineHost:
     def __init__(
         self,
         *,
-        url: str | None = None,
-        session_factory: Callable[[], AsyncSession] | None = None,
+        url: str,
+        engine_arguments: Mapping[str, Any] | None = None,
         schema: str | None = None,
         embedder: EmbeddingProvider | None = None,
         native_embedding: NativeEmbeddingConfig | None = None,
@@ -182,11 +173,6 @@ class EngineHost:
         retry_attempts: int = 4,
         retry_base_delay: float = 0.05,
     ) -> None:
-        if (url is None) == (session_factory is None):
-            raise ValueError(
-                "DatabaseStorage takes exactly one of url= (built: the backend owns the engine) "
-                "or session_factory= (borrowed: injected sessions; close() never touches the pool)"
-            )
         if embedder is not None and native_embedding is not None and embedder.dimension != native_embedding.dimension:
             raise ValueError(
                 f"native_embedding declares a {native_embedding.dimension}-wide column but the embedder "
@@ -211,26 +197,27 @@ class EngineHost:
         # The engine's single-value cap where it is a server setting (the
         # MySQL family's packet); read at first touch, ``None`` elsewhere.
         self.value_cap: ValueCap | None = None
-        self._engine: AsyncEngine | None
-        self.session_factory: Callable[[], AsyncSession]
-        if session_factory is not None:
-            self._engine = None
-            self.session_factory = session_factory
+        # The engine is the host's own: an application puts listeners on it, and opens no connection or session.
+        self.engine: AsyncEngine = create_async_engine(url, **merge_engine_arguments(url, engine_arguments))
+        bind = self.engine.sync_engine
+        # The declared policy and the live dialect it is read beside, both known with no IO.
+        self._profile: DialectProfile = profile_for(bind.dialect.name)
+        self._dialect: Dialect = bind.dialect
+        sessions: Callable[[], AsyncSession]
+        if self._profile.attempts_out_of_reach:
+            # An attempt whose caller was cancelled is refused its next statement, its sessions and its commit.
+            refuse_statements_of_marked_attempts(bind)
+            sessions = async_sessionmaker(self.engine, expire_on_commit=False, sync_session_class=AttemptSession)
         else:
-            engine = create_async_engine(str(url), **engine_arguments(str(url)))
-            self._engine = engine
-            factory = async_sessionmaker(engine, expire_on_commit=False)
-            # One shared DBAPI connection cannot overlap transactions: ops
-            # serialize, and a re-minted connection re-arms first touch.
-            if isinstance(engine.sync_engine.pool, StaticPool):
-                self.session_factory = _SerializedSessions(factory)
-                _rearm_on_fresh_connection(engine.sync_engine, self)
-            else:
-                self.session_factory = factory
-        # Dialect policy defers to first use: a borrowed host cannot
-        # know its dialect before its first session exists.
-        self._profile: DialectProfile | None = None
-        self._dialect: Dialect | None = None
+            sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        # One shared DBAPI connection cannot overlap transactions: ops
+        # take turns, and a re-minted connection re-arms first touch.
+        if isinstance(bind.pool, StaticPool):
+            sessions = SerializedSessions(sessions)
+            rearm_on_fresh_connection(bind, self._rearm)
+        self.session_factory = sessions
+        if self._profile.name == "sqlite":
+            _install_sqlite_transaction_control(bind, self._profile)
         # Before first touch the schema-qualified table name is the handle,
         # so mounts in two schemas never share the provisioning lock.
         self._table_key = advisory_key(self.tables.entry.fullname)
@@ -254,24 +241,19 @@ class EngineHost:
         # Which own tables carry an index, read once per table per host; and
         # whether this host's checkout listener replaces stale connections.
         self._indexed: dict[str, bool] = {}
-        self._replaces = False
-
-    @property
-    def engine(self) -> AsyncEngine:
-        """The built engine; a borrowed host never holds one."""
-        if self._engine is None:
-            raise RuntimeError("borrowed host: connectivity belongs to the injected session factory")
-        return self._engine
+        self._replaces = self._profile.statistics_listing is not None
+        if self._replaces:
+            event.listen(bind, "checkout", self._replace_stale)
 
     @property
     def profile(self) -> DialectProfile:
-        """Declared dialect policy, resolved from the session bind at first use."""
-        return self._policy().profile
+        """Declared dialect policy, resolved from the engine's dialect at construction."""
+        return self._profile
 
     @property
     def parameter_budget(self) -> int:
         """Bind params per statement — SQLAlchemy's own declared datum."""
-        return self._policy().dialect.insertmanyvalues_max_parameters
+        return self._dialect.insertmanyvalues_max_parameters
 
     @property
     def membership_budget(self) -> int:
@@ -300,9 +282,9 @@ class EngineHost:
         connection's planner used, at 25x, so the step would depend on
         which pooled connection served it; there vfs issues nothing.
         """
-        profile, dialect = self._policy()
-        version = dialect.server_version_info
-        return profile.statistics_listing is not None and version is not None and tuple(version) >= STATISTICS_VERSION
+        version = self._dialect.server_version_info
+        listed = self._profile.statistics_listing is not None
+        return listed and version is not None and tuple(version) >= STATISTICS_VERSION
 
     async def ensure_ready(self) -> ResultError | None:
         """Idempotent first touch; ``None`` when the mount is serving."""
@@ -335,14 +317,19 @@ class EngineHost:
         savepoint; a role that may not install is answered
         ``permission_denied`` naming the fix, and any other failure,
         from the install or the probe, classifies as first touch's would.
+        A caller that is cancelled waits as ``with_retry`` says it does.
         """
-        function = self._policy().profile.vector_function
+        function = self._profile.vector_function
         if function is None:
             return None
-        try:
+
+        async def install() -> ResultError | None:
             if function.install is not None:
                 await self._install_vector_function(function.install)
             return await self._probe_vector_function(function)
+
+        try:
+            return await (run_out_of_reach(install) if self.profile.attempts_out_of_reach else install())
         except DBAPIError as exc:
             origin = driver_origin(exc)
             if is_insufficient_privilege(origin):
@@ -365,11 +352,17 @@ class EngineHost:
         step, the step doubling per attempt, so two rivals that collided
         do not retry in lockstep and collide again; the base delay bounds
         the longest wait the same as an unjittered schedule would.
+
+        On SQLite each attempt runs in a task of its own. A caller that is
+        cancelled waits for the attempt in hand, which ends the statement
+        in flight or its wait for a connection, sends no other and is
+        rolled back, and its own cancellation is raised then; ``attempts.py``
+        has the reasons. Elsewhere an attempt runs in its caller's task.
         """
         step = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):
             try:
-                return await fn()
+                return await (run_out_of_reach(fn) if self.profile.attempts_out_of_reach else fn())
             except (DBAPIError, StaleSnapshot) as exc:
                 if not isinstance(exc, StaleSnapshot) and not is_retryable(self.profile, exc):
                     raise
@@ -392,7 +385,7 @@ class EngineHost:
         try:
             # The runtime contract takes any driver exception; the stub's
             # `Error` type is the DBAPI module protocol, not a real class.
-            disconnected = isinstance(origin, Exception) and self._policy().dialect.is_disconnect(
+            disconnected = isinstance(origin, Exception) and self._dialect.is_disconnect(
                 origin,  # ty: ignore[invalid-argument-type]
                 None,
                 None,
@@ -421,9 +414,9 @@ class EngineHost:
         holds the write lock, and the listing, which takes the lock,
         is free there. It sees the transaction's own rows, so the sizes
         it judges are the sizes the commit leaves. On a connection the
-        replacement listener does not cover (an in-memory store, a
-        borrowed engine) it first reloads the statistics from the file
-        when they moved, which is free under the lock too. Only the
+        replacement listener does not cover, an in-memory store's, it
+        first reloads the statistics from the file when they moved,
+        which is free under the lock too. Only the
         tables with an index are due: an index-less table gives the
         planner nothing to choose between, and the three such tables
         are named on every commit. Nothing is analyzed here. A driver
@@ -517,7 +510,7 @@ class EngineHost:
         return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *held], **extras)
 
     async def close(self) -> None:
-        """Dispose iff built; every close releases; borrowed connectivity is never touched.
+        """Dispose the engine; every close releases.
 
         No close is one-shot: verbs revive after close and re-mint
         pools and connections, so each close releases whatever the
@@ -554,37 +547,18 @@ class EngineHost:
             # The ready latch falls with its connectivity: the next op re-runs
             # the idempotent first touch instead of serving off a stale latch.
             self._ready = False
-            if self._engine is not None:
-                await self._engine.dispose()
+            await self.engine.dispose()
 
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
 
-    def _policy(self) -> _ResolvedPolicy:
-        profile, dialect = self._profile, self._dialect
-        if profile is None or dialect is None:
-            # Loop-free and IO-free: a fresh session is asked only for
-            # its bind, then closed without ever touching a connection.
-            session = self.session_factory()
-            try:
-                bind = session.get_bind()
-            finally:
-                session.sync_session.close()
-            dialect = bind.dialect
-            profile = profile_for(dialect.name)
-            if profile.name == "sqlite" and isinstance(bind, Engine):
-                _install_sqlite_transaction_control(bind, profile)
-            # Only an engine vfs built replaces its stale connections: a
-            # host application's pool and its connections are never touched.
-            if self._engine is not None and profile.statistics_listing is not None:
-                event.listen(self._engine.sync_engine, "checkout", self._replace_stale)
-                self._replaces = True
-            self._profile, self._dialect = profile, dialect
-        return _ResolvedPolicy(profile=profile, dialect=dialect)
+    def _rearm(self) -> None:
+        """Make the next call provision the schema again."""
+        self._ready = False
 
     async def _first_touch(self) -> ResultError | None:
-        profile = self._policy().profile
+        profile = self._profile
         if profile.file_settings:
             await self._apply_file_settings(profile)
         if profile.statistics_listing is not None:
@@ -759,7 +733,7 @@ class EngineHost:
 
     def _statistics_schema(self) -> str:
         """The quoted schema the mount's tables live in, as SQLite's own listing spells it."""
-        quote = self._policy().dialect.identifier_preparer.quote_identifier
+        quote = self._dialect.identifier_preparer.quote_identifier
         return quote(self.tables.entry.schema or "main")
 
     def _listing(self) -> str:
@@ -770,19 +744,19 @@ class EngineHost:
     def _own_statements(self) -> dict[str, str]:
         """Each own table's ``ANALYZE`` statement as SQLite prints it, so a listed statement compares whole.
 
-        A borrowed engine's file can hold the host application's
-        tables, and the listing names every due table in the schema;
+        The database can hold tables that are not the mount's, and
+        the listing names every due table in the schema;
         comparing whole statements built with the dialect's own quoting
         acts on the mount's tables and nothing else, with no parsing.
         """
-        quote = self._policy().dialect.identifier_preparer.quote_identifier
+        quote = self._dialect.identifier_preparer.quote_identifier
         schema = self._statistics_schema()
         return {f"ANALYZE {schema}.{quote(table.name)}": table.name for table in self.tables.metadata.tables.values()}
 
     async def _has_index(self, conn: AsyncConnection, table: str) -> bool:
         cached = self._indexed.get(table)
         if cached is None:
-            quote = self._policy().dialect.identifier_preparer.quote_identifier
+            quote = self._dialect.identifier_preparer.quote_identifier
             rows = (await conn.exec_driver_sql(f"PRAGMA {self._statistics_schema()}.index_list({quote(table)})")).all()
             cached = self._indexed[table] = bool(rows)
         return cached
@@ -807,7 +781,7 @@ class EngineHost:
         never reloads the statistics on its own; ``ANALYZE`` of the
         schema table does, and is free under a write lock already held.
         A record with no fingerprint yet reloads too when the file holds
-        statistics, since a borrowed pool's connection may predate them.
+        statistics, since the connection may have been opened before them.
         """
         info = _record_of(conn).info
         fingerprint = await self._fingerprint(conn)
@@ -818,7 +792,7 @@ class EngineHost:
         info[STATISTICS_NAME] = fingerprint
 
     def _replace_stale(self, dbapi_connection: Any, record: Any, _proxy: Any) -> None:
-        """The checkout listener of an engine vfs built over a file: replace a connection whose statistics moved.
+        """The checkout listener of a database in a file: replace a connection whose statistics moved.
 
         A lock-free read of the fingerprint, compared with the one the
         record recorded when the connection last loaded statistics;
@@ -989,21 +963,14 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
     BEGIN is disabled so the begin event controls transaction start —
     writers (``vfs_writer`` execution option) get ``BEGIN IMMEDIATE``.
     Session settings are connection state applied at every pool checkout
-    (op-session start) — the checkout event, unlike connect, also covers
-    connections a borrowed pool held before this host existed, and
-    re-stamps state another borrower may have changed. Marker-guarded so
-    two hosts borrowing one bind do not double-install.
+    (op-session start).
     """
-    if getattr(sync_engine, "_vfs_sqlite_control", False):
-        return
-    sync_engine._vfs_sqlite_control = True  # ty: ignore[unresolved-attribute]
 
     @event.listens_for(sync_engine, "checkout")
     def _on_checkout(dbapi_connection, _record, _proxy) -> None:  # noqa: ANN001
         dbapi_connection.isolation_level = None
         cursor = dbapi_connection.cursor()
-        # Checkout, not connect: a borrowed pool's pre-existing connections
-        # never fire connect. A connection already carrying the function skips the load.
+        # A connection already carrying the function skips the load.
         if not _has_sqlite_vec(cursor):
             _load_sqlite_vec(dbapi_connection)
         for statement in profile.session_settings:
@@ -1073,68 +1040,3 @@ def _load_sqlite_vec(dbapi_connection: Any) -> None:
         await_only(inner.load_extension(SQLITE_VEC_PATH))
     finally:
         await_only(inner.enable_load_extension(False))
-
-
-class _SerializedSession:
-    """One serialized session: the host lock spans enter to exit.
-
-    Attribute access proxies to the real session, so an un-entered
-    session (the loop-free policy probe) works lock-free.
-    """
-
-    def __init__(self, session: AsyncSession, lock: asyncio.Lock) -> None:
-        self._session = session
-        self._lock = lock
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._session, name)
-
-    async def __aenter__(self) -> AsyncSession:
-        await self._lock.acquire()
-        try:
-            return await self._session.__aenter__()
-        except BaseException:
-            self._lock.release()
-            raise
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        try:
-            await self._session.__aexit__(*exc_info)
-        finally:
-            self._lock.release()
-
-
-class _SerializedSessions:
-    """Session factory for a single-connection pool — one op at a time.
-
-    A ``StaticPool`` engine shares one DBAPI connection, and overlapping
-    asyncio tasks collide mid-transaction ("cannot start a transaction
-    within a transaction") or park the loop in the driver. Holding the
-    host lock for each session's whole context makes the declared
-    serialized posture true by construction.
-    """
-
-    def __init__(self, factory: async_sessionmaker[AsyncSession]) -> None:
-        self._factory = factory
-        self._lock = asyncio.Lock()
-
-    def __call__(self) -> AsyncSession:
-        return cast("AsyncSession", _SerializedSession(self._factory(), self._lock))
-
-
-def _rearm_on_fresh_connection(sync_engine: Engine, host: EngineHost) -> None:
-    """Drop the ready latch when a single-connection pool re-mints.
-
-    A ``:memory:`` database lives inside its one connection — a
-    replacement connection is a fresh, empty database. Re-arming first
-    touch makes the next op re-provision instead of serving misses off
-    a stale latch forever.
-    """
-    fresh = False
-
-    @event.listens_for(sync_engine, "connect")
-    def _on_connect(_dbapi_connection, _record) -> None:  # noqa: ANN001
-        nonlocal fresh
-        if fresh:
-            host._ready = False
-        fresh = True

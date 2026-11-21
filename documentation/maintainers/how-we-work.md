@@ -41,6 +41,7 @@ Autonomous mode is the agent working alone, before or after a guided session. Be
 - More research.
 - Code, security and structural reviews of the code and of the feature. It may question whether the feature is the right thing to build.
 - End-to-end tests and deeper spikes.
+- A check of the documentation: whether the change needs a docstring, a page for users, a Maintainers page or a glossary term. The answer and its reason go in the review record and in the pull request, also when the answer is no.
 - The full gate: `scripts/ci.sh`, `scripts/docs.sh check` and the database engine legs.
 
 What it may do alone: fix anything that keeps the behaviour of the feature and the project. What it reports instead of doing: a big finding, and any fix that would change behaviour significantly.
