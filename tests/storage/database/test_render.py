@@ -36,7 +36,6 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import render as render_module
 from vfs.storage.backends.database import topology as topology_module
-from vfs.storage.backends.database.dialects import ValueCap
 from vfs.storage.backends.database.maintenance import lease_lost
 from vfs.storage.backends.database.render import RenderReport, RenderRow, land_renderings, render_rows
 from vfs.storage.backends.database.seams import installed
@@ -810,27 +809,6 @@ class TestBounds:
         monkeypatch.setattr(maintenance_module, "select_render_dirty", recording)
         assert _report(await storage.rebuild()) == _counts(rendered=5)
         assert pages == [2, 2, 1, 0]
-        await storage.close()
-
-    async def test_a_body_past_the_engine_cap_is_refused_naming_the_setting(self, tmp_path) -> None:
-        storage = _mount(tmp_path)
-        await storage.first_touch()
-        storage._host.value_cap = ValueCap(8, "max_allowed_packet")
-        result = await storage.write(entries=[Entry(path=Path("/big.bin"), data=b"abcdefghi")])
-        assert result.success is False
-        [error] = result.errors
-        assert (error.kind, error.retryable) == (ErrorKind.unsupported, False)
-        assert (
-            error.message
-            == "Unsupported: a body of 9 bytes on the wire exceeds this engine's max_allowed_packet of 8 bytes"
-        )
-        assert error.path == "/big.bin"
-        assert (await storage.write(entries=[Entry(path=Path("/ok.bin"), data=b"abcdefgh")])).success is True
-        # Measured as the driver sends it: five NULs are ten bytes on the wire.
-        nul = await storage.write(entries=[Entry(path=Path("/nul.bin"), data=bytes(5))])
-        assert nul.success is False and "a body of 10 bytes on the wire" in nul.errors[0].message
-        text = await storage.write(entries=[Entry(path=Path("/t.md"), content="x" * 9)])
-        assert text.success is False and "a body of 9 bytes on the wire" in text.errors[0].message
         await storage.close()
 
     async def test_copy_moves_bodies_in_bounded_pages(self, tmp_path, monkeypatch) -> None:

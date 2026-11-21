@@ -1,10 +1,10 @@
 name: Dialect tests
 
-# Real-engine conformance legs. Servers come from docker/compose.test.yml —
-# the same file used locally — so images, credentials, and health probes
-# have one source of truth. Every engine runs on a push to main and on
-# PRs that touch storage; there is no schedule, so a run always traces
-# back to a commit. Manual dispatch covers everything else.
+# The real-engine conformance leg, on every Postgres version upstream supports. The servers
+# come from docker/compose.test.yml — the same file used locally — so images,
+# credentials, and health probes have one source of truth. It runs on a push
+# to main and on PRs that touch storage; there is no schedule, so a run
+# always traces back to a commit. Manual dispatch covers everything else.
 
 on:
   push:
@@ -28,25 +28,30 @@ on:
 
 jobs:
   conformance:
-    # The ODBC step installs from Microsoft's Ubuntu 24.04 feed; the runner
-    # is pinned to the same release so the two never drift apart.
+    name: conformance (postgres ${{ matrix.version }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
+        # Each tested version is a compose service of its own, on its own port.
         include:
-          - dialect: postgres
-            env_var: VFS_TEST_POSTGRES_URL
-            url: "postgresql+asyncpg://vfs:vfs@localhost:54320/vfs"
-          - dialect: mariadb
-            env_var: VFS_TEST_MARIADB_URL
-            url: "mariadb+aiomysql://vfs:vfs@localhost:33062/vfs?charset=utf8mb4"
-          - dialect: mssql
-            env_var: VFS_TEST_MSSQL_URL
-            url: "mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
-          - dialect: oracle
-            env_var: VFS_TEST_ORACLE_URL
-            url: "oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1"
+          - version: "15"
+            service: postgres15
+            port: "54315"
+          - version: "16"
+            service: postgres16
+            port: "54316"
+          - version: "17"
+            service: postgres17
+            port: "54317"
+          - version: "18"
+            service: postgres18
+            port: "54318"
+          - version: "19"
+            service: postgres
+            port: "54320"
+    env:
+      VFS_TEST_POSTGRES_URL: "postgresql+asyncpg://vfs:vfs@localhost:${{ matrix.port }}/vfs"
     steps:
       - uses: actions/checkout@v6
 
@@ -54,34 +59,20 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Naming the service activates its compose profile; --wait blocks
-      # on the healthcheck, which probes query-readiness, not liveness.
-      - name: Start ${{ matrix.dialect }}
-        run: >-
-          docker compose -f docker/compose.test.yml
-          up -d --wait --wait-timeout 300 ${{ matrix.dialect }}
+      # Naming the service activates its profile; --wait blocks on the healthcheck, which probes query-readiness.
+      - name: Start Postgres ${{ matrix.version }}
+        run: docker compose -f docker/compose.test.yml up -d --wait --wait-timeout 300 ${{ matrix.service }}
 
-      # The feed's list verifies against this one keyring (its signed-by), so
-      # both of Microsoft's signing keys go there, whichever signs the feed.
-      - name: Install ODBC driver
-        if: matrix.dialect == 'mssql'
-        run: |
-          { curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor; curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc | gpg --dearmor; } | sudo tee /usr/share/keyrings/microsoft-prod.gpg >/dev/null
-          curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list >/dev/null
-          sudo apt-get update
-          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
-
-      # The conformance contract renders real documents on every engine,
-      # so the document libraries install beside the engine's driver.
+      # The conformance contract renders real documents, so the document
+      # libraries install beside the driver.
       - name: Install dependencies
-        run: uv sync --extra ${{ matrix.dialect }} --extra documents --group dev
+        run: uv sync --extra postgres --extra documents --group dev
 
-      # Container-healthy can precede login-ready (app-user creation lags
-      # on Oracle); probe with the real driver before handing pytest a
-      # server that refuses its first connection.
+      # Container-healthy can precede login-ready; probe with the real driver
+      # before handing pytest a server that refuses its first connection.
       - name: Probe SQL readiness
         run: |
-          uv run python - "${{ matrix.url }}" <<'EOF'
+          uv run python - "$VFS_TEST_POSTGRES_URL" <<'EOF'
           import asyncio, sys
           from sqlalchemy import text
           from sqlalchemy.ext.asyncio import create_async_engine
@@ -105,6 +96,4 @@ jobs:
           EOF
 
       - name: Conformance suite
-        run: |
-          export ${{ matrix.env_var }}="${{ matrix.url }}"
-          uv run pytest -m ${{ matrix.dialect }} --tb=short -n 0
+        run: uv run pytest -m postgres --tb=short -n 0

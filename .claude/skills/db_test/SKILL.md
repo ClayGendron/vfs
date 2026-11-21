@@ -1,21 +1,22 @@
 ---
 name: db_test
-description: Run the storage conformance suite against real database engines (Postgres, MariaDB, MSSQL, Oracle) in local Docker containers, end to end — start Docker Desktop, build the containers up, run the engine legs, tear everything down, quit Docker Desktop. Use when the user asks to "test against real databases", "run the postgres/mysql/mssql/oracle leg", "db test", or before landing a change that touches the database backend, the schema (models/rows.py), or a dialect profile.
+description: Run the storage conformance suite against a real Postgres server in a local Docker container, end to end — start Docker Desktop, build the container up, run the engine leg on Postgres 19 (CI runs every supported version), tear everything down, quit Docker Desktop. Use when the user asks to "test against a real database", "run the postgres leg", "db test", or before landing a change that touches the database backend, the schema (models/rows.py), or a dialect profile.
 ---
 
 # Local real-engine database testing
 
-The full cycle is: **start Docker Desktop → build up → test → tear
-down → quit Docker Desktop**. Leave the machine as you found it — no
-containers running, no Docker Desktop in the dock, no venv missing
+vfs supports two engines, SQLite and Postgres. The SQLite legs run in
+every `uv run pytest`; Postgres is the one engine leg that needs a
+server. The full cycle is: **start Docker Desktop → build up → test →
+tear down → quit Docker Desktop**. Leave the machine as you found it —
+no containers running, no Docker Desktop in the dock, no venv missing
 drivers the sqlite suite needs.
 
-The single source of truth for images, credentials, ports, and health
-checks is `docker/compose.test.yml` (CI uses the same file; details and
-per-engine notes in `docker/README.md`). Engine legs live in
-`tests/test_storage_conformance.py`, gated on `VFS_TEST_<ENGINE>_URL`
-env vars — unset means the leg skips, so nothing here is needed for a
-plain `uv run pytest`.
+The single source of truth for the image, credentials, port, and
+health check is `docker/compose.test.yml` (CI uses the same file;
+details in `docker/README.md`). The engine leg is gated on
+`VFS_TEST_POSTGRES_URL` — unset means the leg skips, so nothing here is
+needed for a plain `uv run pytest`.
 
 ## 1. Start Docker Desktop
 
@@ -37,159 +38,95 @@ stop and report — do not retry the suite against a dead daemon.
 
 ## 2. Build up
 
-**Every run starts from fresh containers** (Clay, 2026-10-03): take
+**Every run starts from a fresh container** (Clay, 2026-10-03): take
 down whatever is left, volumes included, so the `docker/initdb/` init
 scripts always apply and no container carries hand-applied state:
 
 ```sh
-docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down -v -t 60
+docker compose -f docker/compose.test.yml --profile every-version down -v
 ```
 
-Postgres has no compose profile and starts by default; the heavier
-engines start when named (naming a service activates its profile):
+Then start Postgres. A laptop runs one version, the newest: the
+`postgres` service, Postgres 19 on 54320, which starts by default. CI
+runs every version the PostgreSQL project supports, 15 to 19 today, one
+matrix row each; the older ones are services of their own behind the
+`every-version` profile (`docker/README.md` has the table), started
+here only to reproduce a failure CI found on one of them:
 
 ```sh
-docker compose -f docker/compose.test.yml up -d --wait                 # postgres only
-docker compose -f docker/compose.test.yml up -d --wait mariadb        # + mariadb
-docker compose -f docker/compose.test.yml up -d --wait mssql oracle   # heavyweights
+docker compose -f docker/compose.test.yml up -d --wait                  # Postgres 19
+docker compose -f docker/compose.test.yml up -d --wait postgres16       # one older version, on its own port
 ```
 
-`--wait` blocks on query-level healthchecks, not container liveness.
-Oracle's first start takes 30–60 s; MSSQL runs amd64-under-Rosetta and
-needs the host ODBC driver (`brew install msodbcsql18`, one-time).
+`--wait` blocks on a query-level health check, not container liveness.
 
-Install the drivers for **every** engine you will test in one sync —
-`uv sync` makes the venv match exactly, so syncing one extra evicts the
-others' drivers. Always include `documents`: the conformance contract
-renders real PDFs and Office files on every engine, and the test
+Install the Postgres driver and `documents` in one sync — `uv sync`
+makes the venv match exactly. `documents` is needed because the
+conformance contract renders real PDFs and Office files, and the test
 modules import those libraries at the top (the CI dialect job installs
 the same set):
 
 ```sh
-uv sync --extra postgres --extra mariadb --extra documents --group dev   # add --extra mssql / oracle as needed
+uv sync --extra postgres --extra documents --group dev
 ```
 
 ## 3. Test
 
-One env var + one marker per engine (URLs use offset host ports so
-local installs never shadow the containers — a host Postgres on 5432
-silently swallowing connections is a known failure mode):
+One env var and one marker. The URL uses an offset host port so a
+local install never shadows the container — a host Postgres on 5432
+silently swallowing connections is a known failure mode:
 
 ```sh
 VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
   uv run pytest -m postgres --tb=short
-
-VFS_TEST_MARIADB_URL="mariadb+aiomysql://vfs:vfs@localhost:33062/vfs?charset=utf8mb4" \
-  uv run pytest -m mariadb --tb=short
-
-VFS_TEST_MSSQL_URL="mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes" \
-  uv run pytest -m mssql --tb=short
-
-VFS_TEST_ORACLE_URL="oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1" \
-  uv run pytest -m oracle --tb=short
 ```
 
 A healthy leg matches the sqlite leg's pass count, with the same
-capability skips (mkedge is the last classified stub).
-Keep `?charset=utf8mb4` on the MariaDB URL — text bodies depend on it.
-Engine legs are reentrant: vfs's table names are fixed, so each test
-gets a schema of its own (`vfs_t_<hex>`; a database on MariaDB, a
-user on Oracle — `tests/support/server_schemas.py`), and concurrent
-runs against one engine — two terminals, parallel review agents on a
-shared stack — never tear each other down. The app users can create
-and drop schemas because the compose init scripts
-(`docker/initdb/`) grant it at first start. A crashed run's leftover
-`vfs_t_*` schemas are residue on an ephemeral-data stack;
-`compose down` clears them.
+capability skips. The leg is reentrant: vfs's table names are fixed,
+so each test gets a schema of its own (`vfs_t_<hex>`,
+`tests/support/server_schemas.py`), and concurrent runs against one
+server — two terminals, parallel review agents on a shared stack —
+never tear each other down. The app user can create and drop schemas
+because the compose init scripts (`docker/initdb/`) grant it at first
+start. A crashed run's leftover `vfs_t_*` schemas are residue on an
+ephemeral-data stack; `compose down` clears them.
+
 Report failures as findings against the code, not the harness: a leg
-that fails on a real engine while sqlite passes is exactly the signal
-this setup exists to produce (that is how the InnoDB index-cap defect
-was caught).
+that fails on Postgres while sqlite passes is exactly the signal this
+setup exists to produce.
 
-### Run the legs concurrently, and the sqlite CI leg beside them
-
-Each test runs in its own schema, so the four legs never
-collide, and each container is its own server — run them **at the
-same time**, not one after another (Clay, 2026-08-26): wall time is
-the slowest leg (~2.5 min, Oracle) instead of the sum (~7 min). The
-sqlite CI leg (`scripts/ci.sh`) is CPU-bound in one process while
-the legs mostly wait on their databases, so it runs alongside them.
+The sqlite CI leg (`scripts/ci.sh`) is CPU-bound in one process while
+the Postgres leg mostly waits on its server, so run them at the same
+time:
 
 ```sh
-( VFS_TEST_POSTGRES_URL=... uv run pytest -m postgres -q > leg_postgres.log 2>&1 ) &
-( VFS_TEST_MARIADB_URL=...  uv run pytest -m mariadb  -q > leg_mariadb.log  2>&1 ) &
-( VFS_TEST_MSSQL_URL=...    uv run pytest -m mssql    -q > leg_mssql.log    2>&1 ) &
-( VFS_TEST_ORACLE_URL=...   uv run pytest -m oracle   -q > leg_oracle.log   2>&1 ) &
+( VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
+    uv run pytest -m postgres -q > leg_postgres.log 2>&1 ) &
 ( scripts/ci.sh > leg_ci.log 2>&1 ) &
 wait; tail -n 1 leg_*.log
 ```
 
+The other versions are CI's: the pull request runs the leg on each.
+
 While iterating on a fix, run only the slice that touches it
-(`-k "<names>"`) on the engine that failed — seconds, not minutes —
-and run the whole legs once, at the gate. **Benchmarks are the
-exception:** a timing run wants a quiet machine, so it runs alone,
-after the legs, and uses a smaller sample on the server engines
-(1,000 linux files; 4,000 on sqlite — the bulk-insert benchmark's
-defaults) because its job is the ratio between shapes, not the seconds.
+(`-k "<names>"`) — seconds, not minutes — and run the whole leg once,
+at the gate. **Benchmarks are the exception:** a timing run wants a
+quiet machine, so it runs alone, after the legs, and uses a smaller
+sample on Postgres (1,000 linux files; 4,000 on sqlite — the
+bulk-insert benchmark's defaults) because its job is the ratio between
+shapes, not the seconds.
 
 ## 4. Tear down
 
-Plain `down` skips services behind profiles — name the profiles — and
-**always pass `-t 60`**: MSSQL runs amd64-under-Rosetta and routinely
-outlives compose's default 10 s grace, so a bare `down` SIGKILLs it
-(exit 137), which is what has corrupted the daemon's container store
-in the past (see the phantom-record note below):
-
 ```sh
-docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down -v -t 60
+docker compose -f docker/compose.test.yml --profile every-version down -v
 ```
 
-Always pass `-v`: volumes go with the containers, so the next run
-starts clean.
-
-**If this session used a fresh `-p vfs-test-<letter>` project** (the
-phantom-record workaround below), tear that project down too, with
-the same profile flags and grace — it is a separate compose project
-and the default `down` never touches it:
-
-```sh
-docker compose -p vfs-test-<letter> -f docker/compose.test.yml --profile mssql down -v -t 60
-```
-
-Data is tmpfs/ephemeral; nothing persists. Verify with
+Name the profile, or `down` leaves any older version you started running. Always pass
+`-v`: volumes go with the containers, so the next run
+starts clean. Data is on tmpfs; nothing persists. Verify with
 `docker ps -a --format '{{.Names}} {{.Status}}'` — expect **zero**
-rows, not just zero running: an `Exited (137)` remnant is the
-phantom-record precursor and must not be left behind. One exception:
-a *known, already-diagnosed* phantom record (below) will still be
-listed until its removal step actually runs — surface it in the
-report every session it survives; never silently ignore it.
-
-### Phantom container records (seen 2026-07-24; workaround re-needed 2026-07-25)
-
-Symptom: `docker ps -a` lists an exited `vfs-test` container that
-`docker rm -f`, `docker system prune`, and daemon restarts all bounce
-off ("No such container" / "no such object") — and `docker compose up`
-for that service fails trying to start the dead record. Recovery, in
-order:
-
-1. **Unblock the run now**: start the affected service under a fresh
-   project name — same image, same host port, tests unaffected:
-   `docker compose -p vfs-test-<letter> -f docker/compose.test.yml up -d --wait mssql`
-   (tear it down later with the same `-p`).
-2. **Actually remove the records — in the same session, not later.**
-   The record survives daemon restarts and sessions: until this step
-   runs, step 1's `-p` workaround recurs *every* session (proven
-   2026-07-25 — the 2026-07-24 phantom was still there 36 hours
-   later). It reaches inside the Docker Desktop VM with a privileged
-   container, which the agent's permission mode may refuse — in that
-   case hand the user the exact commands to run themselves (the `!`
-   prefix runs them in-session). List the records via
-   `docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c 'ls /var/lib/docker/containers'`
-   (the phantom's full id is also printed by the failing
-   `compose up`), then `rm -rf` exactly the phantom-id directories
-   (never the helper's own fresh id):
-   `docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c 'rm -rf /var/lib/docker/containers/<phantom-id>'`,
-   then restart Docker Desktop and confirm `docker ps -a` is empty.
+rows, not just zero running.
 
 ## 5. Quit Docker Desktop
 

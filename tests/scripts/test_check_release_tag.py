@@ -89,16 +89,20 @@ def test_the_publish_matrix_builds_the_five_wheels_a_host_can_install() -> None:
     assert [platform["manylinux"] for platform in linux] == ["2_28", "2_28"]
 
 
-def test_the_dialect_workflow_pins_its_runner_and_its_keyring() -> None:
-    """The ODBC step names the 24.04 feed, so the runner is that release and the keys go where its signed-by looks."""
+def test_the_dialect_workflow_runs_every_tested_postgres_version_on_its_own_compose_service() -> None:
+    """Guards: a dropped engine's leg or its driver step coming back, a tested Postgres version lost, or a matrix
+    row naming a service whose image or host port is another version's."""
     workflow = _workflow("test-dialects.yml")
     jobs = workflow["jobs"]
     assert isinstance(jobs, dict)
-    assert [job["runs-on"] for job in jobs.values()] == ["ubuntu-24.04"]
     (job,) = jobs.values()
-    (odbc,) = [step for step in job["steps"] if step.get("name") == "Install ODBC driver"]
-    run = odbc["run"]
-    assert "/usr/share/keyrings/microsoft-prod.gpg" in run
-    assert "keys/microsoft.asc" in run
-    assert "keys/microsoft-2025.asc" in run
-    assert "trusted.gpg.d" not in run
+    assert job["runs-on"] == "ubuntu-24.04"
+    rows = job["strategy"]["matrix"]["include"]
+    assert [row["version"] for row in rows] == ["15", "16", "17", "18", "19"]
+    services = yaml.safe_load((REPO / "docker" / "compose.test.yml").read_text())["services"]
+    assert set(services) == {row["service"] for row in rows}
+    for row in rows:
+        service = services[row["service"]]
+        assert service["image"] == f"pgvector/pgvector:pg{row['version']}", row
+        assert service["ports"] == [f"{row['port']}:5432"], row
+    assert not [step for step in job["steps"] if "ODBC" in str(step.get("name"))]

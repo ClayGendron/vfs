@@ -52,7 +52,8 @@ def connection() -> Iterator[ClosingConnection]:
         yield opened
 
 
-MSSQL = "mssql+aioodbc://sa:pw@host/db"
+UNSUPPORTED = "mssql+aioodbc://sa:pw@host/db"
+"""A URL of an engine vfs no longer supports, which the generic floor serves."""
 SQLITE = "sqlite+aiosqlite:////tmp/vfs.sqlite"
 POSTGRES = "postgresql+asyncpg://vfs:vfs@host/vfs"
 IN_MEMORY = ["sqlite+aiosqlite://", "sqlite+aiosqlite:///:memory:", "sqlite+aiosqlite:///file:one?mode=memory&uri=true"]
@@ -62,10 +63,6 @@ SHARED_CACHE = ["sqlite+aiosqlite:///file::memory:?cache=shared&uri=true", "sqli
 
 
 class TestTheEngineArguments:
-    def test_a_sql_server_url_leaves_text_binds_as_unicode(self) -> None:
-        # pyodbc's ANSI setinputsizes mangles non-Latin1 bytes, so only this URL carries the override.
-        assert merge_engine_arguments(MSSQL) == {"use_setinputsizes": False}
-
     def test_a_sqlite_url_opens_closing_connections(self) -> None:
         assert merge_engine_arguments(SQLITE) == {"connect_args": {"factory": ClosingConnection}}
 
@@ -77,13 +74,13 @@ class TestTheEngineArguments:
             "pool_recycle": -1,
         }
 
-    def test_any_other_url_needs_nothing(self) -> None:
-        assert merge_engine_arguments(POSTGRES) == {}
+    @pytest.mark.parametrize("url", [POSTGRES, UNSUPPORTED], ids=["postgres", "unsupported"])
+    def test_any_other_url_needs_nothing(self, url) -> None:
+        assert merge_engine_arguments(url) == {}
 
     def test_an_argument_vfs_has_no_stake_in_passes_through(self) -> None:
         given = {"pool_size": 3, "max_overflow": 0, "pool_pre_ping": True, "connect_args": {"timeout": 9}}
         assert merge_engine_arguments(POSTGRES, given) == given
-        assert merge_engine_arguments(MSSQL, given) == {**given, "use_setinputsizes": False}
 
     def test_connect_arguments_are_merged_key_by_key(self) -> None:
         """Guards the merge: the application's ``connect_args`` put in whole would drop the connection class."""
@@ -94,15 +91,8 @@ class TestTheEngineArguments:
         assert given == {"pool_size": 1, "connect_args": {"timeout": 9}}
 
     def test_the_value_vfs_requires_is_accepted_when_the_application_gives_it_too(self) -> None:
-        assert merge_engine_arguments(MSSQL, {"use_setinputsizes": False}) == {"use_setinputsizes": False}
         given = {"connect_args": {"factory": ClosingConnection}}
         assert merge_engine_arguments(SQLITE, given) == given
-
-    def test_the_mapping_of_the_application_is_left_as_given_on_sql_server(self) -> None:
-        """Guards the copy: a required argument written into the mapping it was given changes the application's own."""
-        given = {"pool_size": 3}
-        assert merge_engine_arguments(MSSQL, given) == {"pool_size": 3, "use_setinputsizes": False}
-        assert given == {"pool_size": 3}
 
     @pytest.mark.parametrize("url", IN_MEMORY)
     @pytest.mark.parametrize(
@@ -155,7 +145,7 @@ class TestTheEngineArguments:
         assert merge_engine_arguments(SQLITE, given) == {**given, "connect_args": {"factory": ClosingConnection}}
 
     @pytest.mark.parametrize(
-        "url", [SQLITE, IN_MEMORY[0], POSTGRES, MSSQL], ids=["file", "memory", "postgres", "mssql"]
+        "url", [SQLITE, IN_MEMORY[0], POSTGRES, UNSUPPORTED], ids=["file", "memory", "postgres", "unsupported"]
     )
     @pytest.mark.parametrize(
         ("given", "named"),
@@ -175,7 +165,7 @@ class TestTheEngineArguments:
             merge_engine_arguments(url, given)
         assert "must not be 'AUTOCOMMIT', because a write is one transaction" in str(refused.value)
 
-    @pytest.mark.parametrize("url", [SQLITE, POSTGRES, MSSQL], ids=["file", "postgres", "mssql"])
+    @pytest.mark.parametrize("url", [SQLITE, POSTGRES, UNSUPPORTED], ids=["file", "postgres", "unsupported"])
     def test_any_other_isolation_level_passes_through(self, url) -> None:
         given = {"isolation_level": "SERIALIZABLE", "execution_options": {"isolation_level": "REPEATABLE READ"}}
         merged = merge_engine_arguments(url, given)
@@ -184,14 +174,13 @@ class TestTheEngineArguments:
     @pytest.mark.parametrize(
         ("url", "given", "named"),
         [
-            (MSSQL, {"use_setinputsizes": True}, r"engine_arguments\['use_setinputsizes'\]"),
             (
                 SQLITE,
                 {"connect_args": {"factory": sqlite3.Connection}},
                 r"engine_arguments\['connect_args'\]\['factory'\]",
             ),
         ],
-        ids=["sql server", "sqlite"],
+        ids=["sqlite"],
     )
     def test_another_value_for_an_argument_vfs_requires_is_refused_by_name(self, url, given, named) -> None:
         """Guards the refusal: a required argument dropped in silence is a storage that corrupts text or leaks files."""

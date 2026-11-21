@@ -255,9 +255,8 @@ async def pass_unembedded(
     order whatever its statistics say, and no read reaches past the pass.
 
     The refusal probe's keys are a list of casts to the column's type, a
-    key-list spelling outside :mod:`membership`, because SQL Server plans
-    ``membership``'s derived table as a merge join over a scan of the
-    refusal table's key; each list is chunked by *membership_budget*.
+    key-list spelling outside :mod:`membership` that binds each key as
+    the column does; each list is chunked by *membership_budget*.
 
     It holds an id and a 64-character hash for every chunk row the pass
     left without a vector, about 0.3 KB a row, so about 120 MB for a
@@ -269,8 +268,7 @@ async def pass_unembedded(
     refused: set[ContentHash] = set()
     texts = sorted({row.content_hash for row in rows if row.content_hash is not None})
     for hashes in chunked(texts, membership_budget):
-        # Each key cast to the column's type, so it binds as the key does: SQL Server merge-joins the
-        # derived-table form against a scan of the clustered key, and converts the column for a plain list.
+        # Each key cast to the column's type, so it binds as the key does and the column is never converted.
         keyed = refusals.c.content_hash.in_([cast(literal(text), refusals.c.content_hash.type) for text in hashes])
         stmt = select(refusals.c.content_hash).where(
             keyed,
@@ -341,8 +339,8 @@ async def write_vectors(
     each, so a text refused again under a new key takes the new key and
     the insert never meets the primary key.
 
-    One executemany: the driver sends a row at a time on the engines
-    without a multi-row UPDATE (the MySQL family), which at 10⁵ chunks
+    One executemany: the driver sends a row at a time on an engine
+    without a multi-row UPDATE, which at 10⁵ chunks
     is seconds against the minutes the provider took — a recorded
     suboptimality, never a cap.
     """

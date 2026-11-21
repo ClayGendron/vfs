@@ -324,7 +324,7 @@ async def repair_edge_drift(
     current: dict[str, str | None] = {}
     guarded = {delta.entry_id for delta in state.deltas}
     for chunk in chunked(sorted(guarded), membership_budget):
-        guard = locked_lookup(entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.parent_id], profile)
+        guard = locked_lookup(entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.parent_id], profile)
         current.update({row.entry_id: row.parent_id for row in await session.execute(guard)})
     confirmed = [
         delta for delta in state.deltas if delta.entry_id in current and current[delta.entry_id] == delta.parent_id
@@ -373,7 +373,7 @@ async def _endpoint_rows(
         if lock:
             # Sorted paths order the locks; a deadlock against a rival's
             # claim order classifies retryable and rides the retry channel.
-            stmt = locked_lookup(entry, entry.c.path, chunk, columns, profile)
+            stmt = locked_lookup(entry.c.path, chunk, columns, profile)
         else:
             stmt = select(*columns).where(membership(entry.c.path, chunk, profile))
         result = await session.execute(stmt)

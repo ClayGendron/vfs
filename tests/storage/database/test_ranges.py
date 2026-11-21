@@ -12,15 +12,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
-from sqlalchemy.dialects.mysql import mariadb
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.sql.elements import True_
 
-from vfs.models.rows import MSSQL_UTF8_COLLATION, build_vfs_tables
-from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE
+from vfs.models.rows import build_vfs_tables
+from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL, SQLITE
 from vfs.storage.backends.database.ranges import (
     VISIBLE_ALIAS,
-    derived_hint,
     hole_free,
     range_counts,
     visible_entries,
@@ -45,39 +43,6 @@ SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
         ("json_each(", "json_extract(", "AS pts CROSS JOIN vfs_entries ON", "AS rng CROSS JOIN vfs_entries ON"),
     ),
     (POSTGRESQL, postgresql.dialect(), ("unnest(", "::TEXT[]", 'COLLATE "C"', "(lo, hi) JOIN vfs_entries ON")),
-    (
-        MSSQL,
-        mssql.dialect(),
-        (
-            "openjson(",
-            "OPENJSON(",
-            "WITH (lo nvarchar(max)",
-            MSSQL_UTF8_COLLATION,
-            "AS rng INNER LOOP JOIN vfs_entries ON",
-        ),
-    ),
-    (
-        MARIADB,
-        mariadb.MariaDBDialect(),
-        (
-            "JSON_TABLE(",
-            "COLUMNS (value VARCHAR",
-            "AS BINARY",
-            "AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON",
-        ),
-    ),
-    (
-        ORACLE,
-        oracle.dialect(),
-        (
-            "JSON_TABLE(",
-            "VARCHAR2(1024)",
-            "/*+ INDEX(vfs_entries ix_vfs_entries_everyone_path) */",
-            "/*+ CARDINALITY(pts 1) */",
-            "/*+ CARDINALITY(rng 1) */",
-            ") rng JOIN vfs_entries ON",
-        ),
-    ),
 ]
 
 
@@ -127,18 +92,6 @@ def test_a_scope_narrows_every_branch_to_the_subtree() -> None:
     for scope in ("/", "/.vfs", "/.vfs/trash"):
         scoped = _render(Ranges(BOTH, ()), SQLITE, sqlite.dialect(), scope=scope)
         assert scoped.count("UNION ALL") == 2 and "origin_path" not in scoped, scope
-
-
-def test_the_derived_hint_is_oracles_alone() -> None:
-    hint = derived_hint(ORACLE, TABLES.lex_docs, "epoch", "entry_id")
-    expected = (
-        "/*+ NO_MERGE(visible) LEADING(visible) USE_NL(vfs_lex_docs) INDEX(vfs_lex_docs ix_vfs_lex_docs_entry) */"
-    )
-    assert hint == expected
-    assert all(
-        derived_hint(p, TABLES.lex_docs, "epoch", "entry_id") is None
-        for p in (SQLITE, POSTGRESQL, MSSQL, MARIADB, GENERIC)
-    )
 
 
 # ---------------------------------------------------------------------------

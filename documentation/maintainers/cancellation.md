@@ -28,7 +28,7 @@ In memory, the connection is the database. After one cancelled `stat`, the next 
 
 In a file, a connection that is thrown away with a cursor still open keeps its write lock until Python's collector frees the cursor. The next write was refused until then, in 3 of 81 cuts.
 
-A database server has neither problem, because its database does not live inside a connection. Nothing on this page changes what VFS does on Postgres, SQL Server, Oracle or MariaDB. An attempt there runs in its caller's task, as it always did, and no listener of this page is put in place.
+A database server has neither problem, because its database does not live inside a connection. Nothing on this page changes what VFS does on Postgres. An attempt there runs in its caller's task, as it always did, and no listener of this page is put in place.
 
 ## How an attempt runs out of reach
 

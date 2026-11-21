@@ -130,8 +130,8 @@ _SPLIT_BATCH_BYTES: Final = 32 * 1024 * 1024
 # write's wait behind the pass and the slice's locks, never the dirty set.
 CHUNK_SLICE_ENTRIES: Final = 256
 
-# The most stored body one slice splits: exact bytes on SQL Server, encoding bytes on Postgres and MariaDB (exact where
-# UTF-8), characters on Oracle and SQLite, within a factor of four everywhere; past it an entry is a slice of one.
+# The most stored body one slice splits: encoding bytes on Postgres (exact where UTF-8), characters on SQLite,
+# within a factor of four on both; past it an entry is a slice of one.
 CHUNK_SLICE_BYTES: Final = 1 << 20
 
 _SCAN_YIELD_ROWS: Final = 256
@@ -521,8 +521,8 @@ async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> Inde
     and doubles as the generation recheck. The predicate stays ORM-built — the
     negation renders as an inline literal on every dialect, which keeps
     the seek on the composite (encoded, kind) index reachable; the CASE
-    wrapper is what lets engines without boolean select-list expressions
-    (SQL Server) carry the EXISTS.
+    wrapper is what lets an engine without boolean select-list
+    expressions carry the EXISTS.
     """
     entry, state = tables.entry, tables.index_state
     pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
@@ -880,8 +880,8 @@ async def _flip_flags(
 
     Set-based on every declared engine — a VALUES join where the profile
     proves it, a row-constructor IN where tuples are accepted — because
-    the per-pair executemany degrades to one round trip per row on the
-    MySQL family and MSSQL. The executemany stays as the generic floor.
+    the per-pair executemany degrades to one round trip per row on some
+    drivers. The executemany stays as the generic floor.
     A flip lands only on a live row, since a delete's descendants and a
     restore's members change ``deleted_at`` with no version bump. With a
     *stamp*, its columns land on every row whose ``entry_id`` matches and
@@ -947,8 +947,8 @@ def _guarded(entry: Table, matched: ColumnElement[bool], assignments: dict[str, 
 def _pending_probe(entry: Table) -> Select[tuple[int]]:
     """Row-presence probe for entries awaiting encoding, legal on every dialect.
 
-    Kept as row presence — a bare ``SELECT EXISTS (...)`` is invalid
-    T-SQL, where an EXISTS predicate may only sit inside a WHERE.
+    Kept as row presence — a bare ``SELECT EXISTS (...)`` is invalid on
+    engines where an EXISTS predicate may only sit inside a WHERE.
     """
     return (
         select(literal(1))

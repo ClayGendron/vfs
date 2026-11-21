@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import event, select, text, update
-from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
-from sqlalchemy.dialects.mysql import mariadb
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import DBAPIError
 
 from tests.support.commit_worlds import ANONYMOUS, BOB, CAROL, attempts, clearing, label_world, row_at, stamp
@@ -28,7 +27,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import authorized as authorized_module
-from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE, StaleSnapshot
+from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL, SQLITE, StaleSnapshot
 from vfs.storage.backends.database.labels import (
     POSTURE_MOVED,
     Mark,
@@ -70,13 +69,6 @@ OPENS = (("/a/", "/a0"), ("/b/", "/b0"))
 SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
     (SQLITE, sqlite.dialect(), ("UPDATE vfs_entries SET everyone_level", "FROM json_each(", "json_extract(")),
     (POSTGRESQL, postgresql.dialect(), ("UPDATE vfs_entries SET everyone_level", "FROM unnest(", 'COLLATE "C"')),
-    (MSSQL, mssql.dialect(), ("UPDATE e SET everyone_level", "OPENJSON(", "INNER LOOP JOIN vfs_entries AS e")),
-    (
-        MARIADB,
-        mariadb.MariaDBDialect(),
-        ("UPDATE vfs_entries AS e JOIN JSON_TABLE(", "AS BINARY", "SET e.everyone_level"),
-    ),
-    (ORACLE, oracle.dialect(), ("UPDATE /*+ USE_CONCAT */ vfs_entries", "vfs_entries.path > ", " OR ")),
     (GENERIC, sqlite.dialect(), ("UPDATE vfs_entries SET everyone_level", " OR ", "vfs_entries.path < ")),
 ]
 
@@ -93,13 +85,10 @@ async def storage() -> AsyncIterator[InMemoryStorage]:
 def test_the_relabel_renders_each_dialects_measured_form(
     profile: DialectProfile, dialect: Dialect, fragments: tuple[str, ...]
 ) -> None:
-    stmt, params = _relabel_opens(ENTRY, profile, 1, OPENS)
-    sql = str(stmt.compile(dialect=dialect))
+    sql = str(_relabel_opens(ENTRY, profile, 1, OPENS).compile(dialect=dialect))
     for fragment in fragments:
         assert fragment in sql, sql
     assert "LIKE" not in sql
-    # The text spellings carry the ranges as one bound value; the rest bind through Core.
-    assert set(params) == ({"rank", "pairs"} if profile.name in ("mssql", "mariadb") else set())
     # One form: a deleted row is relabelled where it sits.
     assert "origin_path" not in sql and "deleted_at" not in sql
 
@@ -332,11 +321,7 @@ async def test_a_mount_with_no_root_posture_rebuilds_to_none(storage: InMemorySt
 # ---------------------------------------------------------------------------
 
 # What a mint that arrives behind a waiting posture write sets before its hold, so the engine refuses it at once.
-_NO_WAIT = {
-    "postgresql": "SET LOCAL lock_timeout = '300ms'",
-    "mariadb": "SET SESSION innodb_lock_wait_timeout = 1",
-    "mssql": "SET LOCK_TIMEOUT 300",
-}
+_NO_WAIT = {"postgresql": "SET LOCAL lock_timeout = '300ms'"}
 
 
 def _statements(storage: InMemoryStorage) -> list[str]:
@@ -523,12 +508,8 @@ class TestProof:
                     for _ in range(200):
                         async with factory() as fourth:
                             try:
-                                if profile.name == "oracle":
-                                    name = fourth.get_bind().dialect.identifier_preparer.format_table(revisions)
-                                    await fourth.execute(text(f"LOCK TABLE {name} IN SHARE MODE NOWAIT"))
-                                else:
-                                    await fourth.execute(text(_NO_WAIT[profile.name]))
-                                    await hold(fourth)
+                                await fourth.execute(text(_NO_WAIT[profile.name]))
+                                await hold(fourth)
                             except DBAPIError:
                                 refused = True
                                 break
@@ -536,8 +517,7 @@ class TestProof:
                     assert refused, f"{profile.name}: a later hold was granted 200 times beside a waiting posture write"
                     assert not posture_write.done()
                     # The posture write has committed nothing, so a plain read still returns the standing stamp.
-                    if profile.name != "mssql":
-                        assert (await fifth.execute(stamp_of_everyone)).scalar_one() == standing
+                    assert (await fifth.execute(stamp_of_everyone)).scalar_one() == standing
                     await first.commit()
                     await posture_write
                     await third.commit()

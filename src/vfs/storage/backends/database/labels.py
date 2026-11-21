@@ -42,7 +42,7 @@ as its last statement, under a shared lock held to the commit
 (:func:`hold_postures`): a stamp that moved redrives the attempt, and a
 posture write that arrives later waits for the mint's commit, so its
 relabel finds the mint's rows. That is two statements for a call that
-creates a row, three on Oracle, at any batch size; a call that reads a
+creates a row, at any batch size; a call that reads a
 label and is then refused pays the first alone, and a call that reads
 no label pays neither. Mints share the lock and never wait for each
 other. A posture write waits for the holds in flight when it arrives
@@ -57,13 +57,8 @@ The stamp is one for the mount, so every posture write redrives every
 mint in flight, at the posture writer's own rate: a batch that meets one
 in each of its attempts lands nothing and answers a retryable conflict,
 so a host that sets many postures does it outside its ingest window.
-On Oracle the shared lock is on the stamps table, so a grant or
-membership write and a mint's hold wait for each other's commit. On
-Postgres two mints holding the row at once make a multixact, as every
-foreign-key check does. On SQL Server the driver runs each call on the
-event loop's executor, and the hold is one more call a mint needs a
-thread for while it holds its row locks: a host there gives the loop a
-thread for every pooled connection.
+On Postgres two mints holding the row at once make a multixact, as every
+foreign-key check does.
 
 A deleted row stays at its path with a tombstone and keeps its label,
 so a posture change after the delete reaches it exactly as it reaches
@@ -75,14 +70,12 @@ its live neighbours: every relabel statement runs once, over ``path``.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from sqlalchemy import and_, delete, func, insert, or_, select, text, update
 
 from vfs.authority import EVERYONE_NAME
-from vfs.models.rows import MSSQL_UTF8_COLLATION
-from vfs.paths import MAX_PATH_LENGTH, ROOT
+from vfs.paths import ROOT
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like
 from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, lock_rows
 from vfs.storage.backends.database.membership import membership
@@ -119,9 +112,6 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.grants import GrantLevel, Open, PostureRows, Span
-
-# Bound range rows are typed this wide in the text spellings: no lawful path is longer.
-_BOUND: Final = f"({MAX_PATH_LENGTH})"
 
 
 class Relabel(NamedTuple):
@@ -424,7 +414,7 @@ class Relabeller:
             return counts
         for chunk in chunked(opens, profile.in_list_budget):
             for lo, hi, count in await session.execute(range_counts(entry, chunk, profile)):
-                counts[_text(lo), _text(hi)] = count
+                counts[lo, hi] = count
         return counts
 
     async def _advance(self, session: AsyncSession, plan: _Plan) -> tuple[Relabel, str]:
@@ -482,8 +472,7 @@ async def relabel_spans(
         rows += await _run(session, stmt, {})
         statements += 1
     for chunk in chunked(found.opens, profile.in_list_budget):
-        stmt, params = _relabel_opens(entry, profile, rank, chunk)
-        rows += await _run(session, stmt, params)
+        rows += await _run(session, _relabel_opens(entry, profile, rank, chunk), {})
         statements += 1
     return Relabel(rows, statements)
 
@@ -525,15 +514,7 @@ async def _stamp_under_share(session: AsyncSession, tables: VFSTables, profile: 
     """The everyone stamp read under the profile's shared lock, ``None`` where the row is missing."""
     revisions = tables.principal_revisions
     stamp = select(revisions.c.revision).where(revisions.c.principal_id == EVERYONE_NAME)
-    share = profile.share_lock
-    if share.form == "table":
-        await session.execute(_lock_stamps(session, tables, "SHARE"))
-    elif share.form == "exclusive":
-        stamp = lock_rows(stamp, revisions, profile)
-    elif share.hint is not None:
-        stamp = stamp.with_hint(revisions, f"WITH ({share.hint})", dialect_name=profile.name)
-    else:
-        stamp = stamp.with_for_update(read=True)
+    stamp = lock_rows(stamp) if profile.share_lock.form == "exclusive" else stamp.with_for_update(read=True)
     return (await session.execute(stamp)).scalar_one_or_none()
 
 
@@ -591,11 +572,6 @@ def _batched(spans: RangeSet, counts: Mapping[Open, int], piece_cap: int, row_ca
     return batches
 
 
-def _text(value: object) -> str:
-    """A bound path as the range source returned it — bytes on the mysql family — as text."""
-    return value.decode() if isinstance(value, bytes) else str(value)
-
-
 async def _deeper_postures(
     session: AsyncSession, tables: VFSTables, profile: DialectProfile, root: str
 ) -> dict[str, GrantLevel]:
@@ -615,46 +591,16 @@ async def _run(session: AsyncSession, stmt: Executable, params: dict[str, Any]) 
     return max(0, result.rowcount)
 
 
-def _relabel_opens(
-    entry: Table, profile: DialectProfile, rank: int, opens: Sequence[Open]
-) -> tuple[Update | TextClause, dict[str, Any]]:
+def _relabel_opens(entry: Table, profile: DialectProfile, rank: int, opens: Sequence[Open]) -> Update:
     """One ``UPDATE`` setting *rank* inside every open range of *opens*, in the dialect's measured form.
 
     SQLite and Postgres join the unpacked ranges as ``UPDATE … FROM``;
-    MariaDB joins ``JSON_TABLE`` in the multi-table form, where its
-    planner reads the ranges first and range-checks the path index per
-    row; SQL Server is told to: ``OPENJSON … INNER LOOP JOIN`` with the
-    ranges outer, because its plain join scanned the table per range.
-    Oracle and the generic floor take the literal ``OR`` of ranges —
-    under ``USE_CONCAT`` Oracle runs it as one concatenation of index
-    range scans, where its ``MERGE … USING JSON_TABLE`` merge-joined a
-    full scan at five hundred ranges. The ranges bound ``path``.
+    the generic floor takes the literal ``OR`` of ranges. The ranges
+    bound ``path``.
     """
     source = profile.range_source
     column = entry.c.path
-    if source in ("json_each", "unnest"):
+    if source is not None:
         _rows, lo, hi = open_rows(opens, source)
-        return update(entry).values(everyone_level=rank).where(column > lo, column < hi), {}
-    params: dict[str, Any] = {"rank": rank, "pairs": json.dumps([list(pair) for pair in opens])}
-    name = column.name
-    if source == "openjson":
-        utf8 = f"COLLATE {MSSQL_UTF8_COLLATION} AS varchar{_BOUND})"
-        sql = (
-            f"UPDATE e SET everyone_level = :rank FROM OPENJSON(:pairs) "
-            f"WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS r INNER LOOP JOIN {entry.fullname} AS e "
-            f"ON e.{name} > CAST(r.lo {utf8} AND e.{name} < CAST(r.hi {utf8}"
-        )
-        return text(sql), params
-    if source == "json_table":
-        columns = f"COLUMNS (lo VARCHAR{_BOUND} PATH '$[0]', hi VARCHAR{_BOUND} PATH '$[1]')"
-        sql = (
-            f"UPDATE {entry.fullname} AS e JOIN JSON_TABLE(:pairs, '$[*]' {columns}) AS r "
-            f"ON e.{name} > CAST(r.lo AS BINARY) AND e.{name} < CAST(r.hi AS BINARY) "
-            f"SET e.everyone_level = :rank"
-        )
-        return text(sql), params
-    terms = [and_(column > lo, column < hi) for lo, hi in opens]
-    stmt = update(entry).values(everyone_level=rank).where(or_(*terms))
-    if profile.range_hints.relabel:
-        stmt = stmt.prefix_with(profile.range_hints.relabel, dialect=profile.name)
-    return stmt, {}
+        return update(entry).values(everyone_level=rank).where(column > lo, column < hi)
+    return update(entry).values(everyone_level=rank).where(or_(*(and_(column > lo, column < hi) for lo, hi in opens)))

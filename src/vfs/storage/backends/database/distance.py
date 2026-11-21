@@ -1,10 +1,9 @@
 """The cosine distance expression per dialect — the one thing the vector leg's statement varies.
 
-Every supported dialect has cosine in the engine; only its spelling
+Both supported engines have cosine in the engine; only its spelling
 differs. The query binds through the column's own ``VectorType``, so
 the type does the per-dialect conversion (a float list for pgvector,
-``array('f')`` for Oracle, JSON text for SQL Server, packed float32
-bytes for MariaDB and SQLite) and this module names the function:
+packed float32 bytes for SQLite) and this module names the function:
 
     order = cosine_distance("sqlite", chunks.c.embedding, query)
     select(chunks.c.id).order_by(order).limit(k)
@@ -16,16 +15,14 @@ before a statement is ever built.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Float, bindparam, cast, func, literal, literal_column
+from sqlalchemy import Float, bindparam, func
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy import Column, ColumnElement
-
-_COSINE: Final = "cosine"
 
 
 def cosine_distance(dialect_name: str, column: Column[object], query: Sequence[float]) -> ColumnElement[float]:
@@ -33,11 +30,7 @@ def cosine_distance(dialect_name: str, column: Column[object], query: Sequence[f
     bound = bindparam("query_vector", list(query), type_=column.type, unique=True)
     if dialect_name == "postgresql":
         return column.op("<=>", return_type=Float)(bound)
-    if dialect_name == "oracle":
-        return func.vector_distance(column, bound, literal_column("COSINE"), type_=Float)
-    if dialect_name == "mssql":
-        return func.vector_distance(literal(_COSINE), column, cast(bound, column.type), type_=Float)
-    if dialect_name in ("mariadb", "sqlite"):
+    if dialect_name == "sqlite":
         return func.vec_distance_cosine(column, bound, type_=Float)
     msg = f"{dialect_name!r} has no cosine distance function; the capability gate withholds search from it"
     raise ValueError(msg)
@@ -45,4 +38,4 @@ def cosine_distance(dialect_name: str, column: Column[object], query: Sequence[f
 
 def has_cosine_distance(dialect_name: str) -> bool:
     """Whether :func:`cosine_distance` can spell the function for *dialect_name*."""
-    return dialect_name in ("postgresql", "oracle", "mssql", "mariadb", "sqlite")
+    return dialect_name in ("postgresql", "sqlite")

@@ -108,8 +108,8 @@ the first paragraph, then label each line.
    loop or in-memory structure the Design adds: what grows with input,
    and what bounds it. The bound is a declared budget
    (`membership_budget`, `chunked()`), never a hardcoded size. The
-   floor is the least generous supported engine (Oracle's 1,000-element
-   `IN` list, SQL Server's ~2,100 binds), never SQLite. A 10,000-file
+   caps are the real ones of the two engines (SQLite's 32,766 variables
+   and expression depth of 1,000, SQLAlchemy's 32,700 parameters). A 10,000-file
    batch is a supported call. Anything unbounded is a High. A
    suboptimal profile named honestly, with its future direction, is
    not a finding; a designed scale cap is. Read `AGENTS.md`'s

@@ -536,7 +536,7 @@ class TestArbitration:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         storage._host._profile = replace(storage._host.profile, arbitration="catch_retry")
-        # Oracle's posture: no multirow VALUES — the insert must take
+        # An engine with no multirow VALUES: the insert must take
         # driver executemany; identity is minted at staging, nothing read back.
         monkeypatch.setattr(storage._host.engine.sync_engine.dialect, "supports_multivalues_insert", False)
         statements: list[str] = []
@@ -1144,7 +1144,7 @@ class TestGuardedAttribution:
     column-aliased VALUES join, which is why ``values_join`` is a
     declared profile bit — plus the forced per-row floor and the
     classified refusal. The VALUES arm itself is proven live by the
-    postgres and mssql conformance legs.
+    postgres conformance leg.
     """
 
     async def test_returning_arm_attributes_guarded_success_by_membership(self) -> None:

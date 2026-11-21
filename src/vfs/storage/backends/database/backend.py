@@ -720,7 +720,6 @@ class DatabaseStorage:
                     authority=self._named(authority),
                     executor=offload_pool(),
                     primary=needs.primary,
-                    value_cap=host.value_cap,
                 )
             return await write_rows(
                 session,
@@ -732,7 +731,6 @@ class DatabaseStorage:
                 overwrite=not if_absent,
                 parents=parents,
                 authority=self._named(authority),
-                value_cap=host.value_cap,
                 if_versions=if_versions,
             )
 

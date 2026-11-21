@@ -46,7 +46,6 @@ from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database.dialects import bulk_insert
-from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.segments import path_segments
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -114,16 +113,13 @@ def _server_storage(env_var: str) -> AbstractAsyncContextManager[DatabaseStorage
 
 
 class TestStatisticsStatements:
-    """The planner-statistics step is SQLite's alone: the four server engines maintain their own."""
+    """The planner-statistics step is SQLite's alone: Postgres maintains its own."""
 
     @pytest.mark.parametrize(
         "leg",
         [
             pytest.param("sqlite", id="sqlite"),
             pytest.param("VFS_TEST_POSTGRES_URL", id="postgres", marks=pytest.mark.postgres),
-            pytest.param("VFS_TEST_MARIADB_URL", id="mariadb", marks=pytest.mark.mariadb),
-            pytest.param("VFS_TEST_MSSQL_URL", id="mssql", marks=pytest.mark.mssql),
-            pytest.param("VFS_TEST_ORACLE_URL", id="oracle", marks=pytest.mark.oracle),
         ],
     )
     async def test_a_write_issues_only_its_profiles_statistics_statements(
@@ -239,36 +235,6 @@ class TestPostgresBulkInsertTransaction:
             assert count == 3
 
 
-@pytest.mark.mariadb
-class TestMariaDBConformance(StorageContract, GrantsContract):
-    plan_backend = PlanBackend("mariadb", "VFS_TEST_MARIADB_URL")
-
-    @pytest.fixture
-    async def storage(self) -> AsyncIterator[DatabaseStorage]:
-        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
-            yield storage
-
-
-@pytest.mark.mssql
-class TestMSSQLConformance(StorageContract, GrantsContract):
-    plan_backend = PlanBackend("mssql", "VFS_TEST_MSSQL_URL")
-
-    @pytest.fixture
-    async def storage(self) -> AsyncIterator[DatabaseStorage]:
-        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            yield storage
-
-
-@pytest.mark.oracle
-class TestOracleConformance(StorageContract, GrantsContract):
-    plan_backend = PlanBackend("oracle", "VFS_TEST_ORACLE_URL")
-
-    @pytest.fixture
-    async def storage(self) -> AsyncIterator[DatabaseStorage]:
-        async with _server_storage("VFS_TEST_ORACLE_URL") as storage:
-            yield storage
-
-
 async def _one_increment_race(storage: DatabaseStorage) -> Result:
     """Stage a rival one increment ahead inside the guard's window.
 
@@ -292,92 +258,14 @@ async def _one_increment_race(storage: DatabaseStorage) -> Result:
         return await storage.write(entries=[Entry(path=target, content="mine")])
 
 
-@pytest.mark.mssql
-class TestMSSQLBindBudget:
-    async def test_bumping_over_a_thousand_parents_stays_under_the_cap(self) -> None:
-        """The steady-state ingest shape: one batch of files under more
-        pre-existing parents than a single bump statement may carry —
-        chunked under the measured bind budget, never the raw cap."""
-        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            n = 1_100
-            dirs = [Entry(path=Path(f"/p{i:04d}"), kind="directory") for i in range(n)]
-            assert (await storage.write(entries=dirs)).success is True
-            files = [Entry(path=Path(f"/p{i:04d}/f.txt"), content="x") for i in range(n)]
-            result = await storage.write(entries=files)
-            assert result.success is True, result.errors[:3]
-
-
-@pytest.mark.mssql
-class TestMSSQLMembershipForm:
-    _LOCKS = text(
-        "SELECT resource_type, request_mode, COUNT(*) AS n FROM sys.dm_tran_locks "
-        "WHERE request_session_id = @@SPID GROUP BY resource_type, request_mode"
-    )
-
-    async def test_a_locked_lookup_at_the_chunk_seeks_and_never_takes_a_table_lock(self) -> None:
-        """The VALUES join under UPDLOCK, FORCESEEK: two key locks per row,
-        no table-level exclusive lock — the plan shape the lock budget
-        is sized for, pinned on the engine that flips to scans."""
-        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            canaries = ["/k/café.txt", "/k/日本語.txt", "/k/🚀.txt"]
-            paths = sorted([f"/k/k{i:05d}.txt" for i in range(1_997)] + canaries)
-            assert (
-                await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)
-            ).success
-            host = storage._host
-            entry = host.tables.entry
-            assert host.membership_budget >= len(paths)
-            async with host.session_factory() as session:
-                await session.connection(execution_options={"vfs_writer": True})
-                guard = locked_lookup(entry, entry.c.path, paths, [entry.c.path, entry.c.entry_id], host.profile)
-                locked = {row.path for row in await session.execute(guard)}
-                assert locked == set(paths)
-                locks = {(row.resource_type, row.request_mode): row.n for row in await session.execute(self._LOCKS)}
-                assert ("OBJECT", "X") not in locks, locks
-                assert locks.get(("KEY", "U"), 0) >= len(paths), locks
-                await session.rollback()
-
-    async def test_the_values_predicate_finds_non_latin_keys(self) -> None:
-        """The nvarchar bind cast through the UTF-8 collation loses nothing —
-        the reason the keys are cast server-side instead of typed by the driver."""
-        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            canaries = ["/k/café.txt", "/k/日本語.txt", "/k/🚀.txt", "/k/Ünïcødé ß.txt"]
-            assert (
-                await storage.write(entries=[Entry(path=Path(p), content="x") for p in canaries], parents=True)
-            ).success
-            entry = storage._host.tables.entry
-            async with storage._host.session_factory() as session:
-                stmt = select(entry.c.path).where(membership(entry.c.path, canaries, storage._host.profile))
-                assert {row.path for row in await session.execute(stmt)} == set(canaries)
-
-
-@pytest.mark.mssql
-class TestMSSQLTornRowRegression:
-    async def test_one_increment_rival_classifies_conflict(self) -> None:
-        """READ COMMITTED cannot redrive: the guard must classify, never tear.
-
-        A false success is a torn row — the rival's entry columns over
-        our content rows — which is exactly what the pre-079 read-back
-        produced on this engine.
-        """
-        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            result = await _one_increment_race(storage)
-            assert result.success is False
-            assert [e.kind for e in result.errors] == [ErrorKind.conflict]
-            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash"}))
-            after = read.observations[0]
-            assert after.content == "rival"
-            assert after.content_hash == Entry(path=Path("/race.txt"), content=after.content).content_hash
-
-
 @pytest.mark.postgres
 class TestPostgresRivalRedrive:
     async def test_one_increment_rival_redrives_to_success(self) -> None:
         """REPEATABLE READ surfaces the rival as 40001 and the method redrives.
 
-        The same staged race that must classify ``conflict`` on MSSQL
-        resolves to a clean success here: the whole method restarts from
-        a fresh snapshot and lands on top of the rival's version.
+        The staged race resolves to a clean success: the whole method
+        restarts from a fresh snapshot and lands on top of the rival's
+        version, never a torn row.
         """
         async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
             result = await _one_increment_race(storage)
@@ -456,105 +344,6 @@ class TestPostgresTopologyRivals:
         await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mariadb
-class TestMariaDBTopologyRivals:
-    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
-        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_MYSQL_URL")
-
-    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
-        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_MYSQL_URL")
-
-
-@pytest.mark.mssql
-class TestMSSQLTopologyRivals:
-    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
-        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_MSSQL_URL")
-
-    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
-        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_MSSQL_URL")
-
-
-@pytest.mark.oracle
-class TestOracleTopologyRivals:
-    async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
-        await _purge_sweeps_a_mid_purge_rival("VFS_TEST_ORACLE_URL")
-
-    async def test_the_serialization_point_blocks_a_rival_topology_verb(self) -> None:
-        await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_ORACLE_URL")
-
-
-@pytest.mark.mariadb
-class TestMariaDBFlagFlipRoundTrips:
-    async def test_flag_flips_are_one_statement_per_chunk_not_per_row(self) -> None:
-        """No UPDATE…RETURNING on this family: the flips must ride
-        row-constructor IN chunks — the per-row executemany fallback is
-        one driver round trip per entry, 20k of them at a 10k batch."""
-        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
-            entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
-            assert (await storage.write(entries=entries)).success is True
-            updates: list[tuple[str, bool]] = []
-
-            def record(conn, cursor, statement, parameters, context, executemany) -> None:
-                if statement.startswith("UPDATE") and ("chunked" in statement or "encoded" in statement):
-                    updates.append((statement, executemany))
-
-            event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
-            assert (await storage.rebuild()).success is True
-            assert all(many is False for _, many in updates)
-            flips = [(s, many) for s, many in updates if "version" in s]
-            assert len(flips) == 2  # ten pairs fit one statement per flag
-            assert len(updates) == len(flips)  # no stale generations: the probe skips the re-dirty
-
-
-@pytest.mark.mssql
-class TestMSSQLChunkGuardRegression:
-    async def test_a_write_racing_the_chunk_window_keeps_the_entry_dirty(self) -> None:
-        """READ COMMITTED lets the flip current-read past the dirty scan.
-
-        Only the version guard keeps a raced entry pending: without it
-        the flip stamps ``chunked`` over the rival's fresh body, the
-        stale chunks encode at the next build, and the fresh content is
-        never searchable again — silently.
-        """
-        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-            assert (await storage.write(entries=[Entry(path=Path("/r.txt"), content="stale needle")])).success
-
-            async def rival() -> None:
-                seams.clear("rebuild:before-chunk-flip")
-                fresh = Entry(path=Path("/r.txt"), content="fresh needle")
-                assert (await storage.write(entries=[fresh])).success is True
-
-            with seams.installed("rebuild:before-chunk-flip", rival):
-                assert (await storage.rebuild()).success is True
-            found = await storage.grep(pattern="fresh")
-            assert [o.path for o in found.observations] == ["/r.txt"]
-            assert (await storage.rebuild()).success is True
-            found = await storage.grep(pattern="fresh")
-            assert [o.path for o in found.observations] == ["/r.txt"]
-
-
-@pytest.mark.mariadb
-class TestMariaDBTornRowRegression:
-    async def test_one_increment_rival_redrives_to_success(self) -> None:
-        """InnoDB's REPEATABLE READ current-reads past the rival — no 40001.
-
-        The guarded UPDATE matches nothing, and at this isolation a
-        re-probe would report the stale snapshot rather than the rival —
-        so the declared ``guard_miss`` mode redrives the whole method
-        from fresh state instead of classifying off a lying probe. The
-        outcome converges with the Postgres redrive: a clean success on
-        top of the rival's version, never a torn row.
-        """
-        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
-            result = await _one_increment_race(storage)
-            assert result.success is True
-            read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash", "version"}))
-            after = read.observations[0]
-            assert after.content == "mine"
-            assert after.version == 3
-            assert after.content_hash == Entry(path=Path("/race.txt"), content=after.content).content_hash
-
-
 async def _segment_postings_mirror(storage: DatabaseStorage) -> None:
     """Postings == recomputed segments of every stored path, every kind."""
     tables = storage._host.tables
@@ -607,24 +396,6 @@ class TestPostgresSegmentCascades:
         await _segment_cascades_hold_the_mirror("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mariadb
-class TestMySQLSegmentCascades:
-    async def test_cascades_hold_the_mirror(self) -> None:
-        await _segment_cascades_hold_the_mirror("VFS_TEST_MYSQL_URL")
-
-
-@pytest.mark.mssql
-class TestMSSQLSegmentCascades:
-    async def test_cascades_hold_the_mirror(self) -> None:
-        await _segment_cascades_hold_the_mirror("VFS_TEST_MSSQL_URL")
-
-
-@pytest.mark.oracle
-class TestOracleSegmentCascades:
-    async def test_cascades_hold_the_mirror(self) -> None:
-        await _segment_cascades_hold_the_mirror("VFS_TEST_ORACLE_URL")
-
-
 async def _encoded_kind_index_serves_the_overlay(env_var: str) -> None:
     """The composite (encoded, kind) index on a real engine, both flag states.
 
@@ -658,24 +429,6 @@ async def _encoded_kind_index_serves_the_overlay(env_var: str) -> None:
 class TestPostgresEncodedKindIndex:
     async def test_index_serves_the_overlay(self) -> None:
         await _encoded_kind_index_serves_the_overlay("VFS_TEST_POSTGRES_URL")
-
-
-@pytest.mark.mariadb
-class TestMySQLEncodedKindIndex:
-    async def test_index_serves_the_overlay(self) -> None:
-        await _encoded_kind_index_serves_the_overlay("VFS_TEST_MYSQL_URL")
-
-
-@pytest.mark.mssql
-class TestMSSQLEncodedKindIndex:
-    async def test_index_serves_the_overlay(self) -> None:
-        await _encoded_kind_index_serves_the_overlay("VFS_TEST_MSSQL_URL")
-
-
-@pytest.mark.oracle
-class TestOracleEncodedKindIndex:
-    async def test_index_serves_the_overlay(self) -> None:
-        await _encoded_kind_index_serves_the_overlay("VFS_TEST_ORACLE_URL")
 
 
 async def _a_directory_is_never_awaiting_the_index(storage: DatabaseStorage) -> None:
@@ -716,24 +469,6 @@ async def test_a_directory_is_never_awaiting_the_index_on_postgres() -> None:
         await _a_directory_is_never_awaiting_the_index(storage)
 
 
-@pytest.mark.mariadb
-async def test_a_directory_is_never_awaiting_the_index_on_mariadb() -> None:
-    async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
-        await _a_directory_is_never_awaiting_the_index(storage)
-
-
-@pytest.mark.mssql
-async def test_a_directory_is_never_awaiting_the_index_on_mssql() -> None:
-    async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
-        await _a_directory_is_never_awaiting_the_index(storage)
-
-
-@pytest.mark.oracle
-async def test_a_directory_is_never_awaiting_the_index_on_oracle() -> None:
-    async with _server_storage("VFS_TEST_ORACLE_URL") as storage:
-        await _a_directory_is_never_awaiting_the_index(storage)
-
-
 async def _lexical_fidelity(env_var: str) -> None:
     """The lexical build lands and the stored BM25 weights rank as pure BM25 does."""
     async with _server_storage(env_var) as storage:
@@ -744,24 +479,6 @@ async def _lexical_fidelity(env_var: str) -> None:
 class TestPostgresLexicalFidelity:
     async def test_stored_weights_rank_as_pure_bm25(self) -> None:
         await _lexical_fidelity("VFS_TEST_POSTGRES_URL")
-
-
-@pytest.mark.mariadb
-class TestMySQLLexicalFidelity:
-    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
-        await _lexical_fidelity("VFS_TEST_MYSQL_URL")
-
-
-@pytest.mark.mssql
-class TestMSSQLLexicalFidelity:
-    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
-        await _lexical_fidelity("VFS_TEST_MSSQL_URL")
-
-
-@pytest.mark.oracle
-class TestOracleLexicalFidelity:
-    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
-        await _lexical_fidelity("VFS_TEST_ORACLE_URL")
 
 
 async def _ranking_pin(env_var: str) -> None:
@@ -776,30 +493,12 @@ class TestPostgresRankingPin:
         await _ranking_pin("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mariadb
-class TestMySQLRankingPin:
-    async def test_ordered_top10_matches_the_pin(self) -> None:
-        await _ranking_pin("VFS_TEST_MYSQL_URL")
-
-
-@pytest.mark.mssql
-class TestMSSQLRankingPin:
-    async def test_ordered_top10_matches_the_pin(self) -> None:
-        await _ranking_pin("VFS_TEST_MSSQL_URL")
-
-
-@pytest.mark.oracle
-class TestOracleRankingPin:
-    async def test_ordered_top10_matches_the_pin(self) -> None:
-        await _ranking_pin("VFS_TEST_ORACLE_URL")
-
-
 async def _lexical_build_beyond_a_page(env_var: str) -> None:
     """A corpus larger than one scan page builds: the build writes between
     pages on the same connection, which a driver without multiple active
-    result sets refuses while a cursor is still open (caught on SQL Server
-    at 2,000 files; invisible below one page). The same corpus spans
-    blocks, so the two-round fetch is refereed here on every engine."""
+    result sets refuses while a cursor is still open (invisible below one
+    page). The same corpus spans blocks, so the two-round fetch is
+    refereed here on every engine."""
     async with _server_storage(env_var) as storage:
         await assert_two_round_fidelity(storage, count=600)
         tables = storage._host.tables
@@ -812,24 +511,6 @@ async def _lexical_build_beyond_a_page(env_var: str) -> None:
 class TestPostgresLexicalBuildBeyondAPage:
     async def test_a_corpus_larger_than_one_page_builds(self) -> None:
         await _lexical_build_beyond_a_page("VFS_TEST_POSTGRES_URL")
-
-
-@pytest.mark.mariadb
-class TestMySQLLexicalBuildBeyondAPage:
-    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
-        await _lexical_build_beyond_a_page("VFS_TEST_MYSQL_URL")
-
-
-@pytest.mark.mssql
-class TestMSSQLLexicalBuildBeyondAPage:
-    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
-        await _lexical_build_beyond_a_page("VFS_TEST_MSSQL_URL")
-
-
-@pytest.mark.oracle
-class TestOracleLexicalBuildBeyondAPage:
-    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
-        await _lexical_build_beyond_a_page("VFS_TEST_ORACLE_URL")
 
 
 async def _content_bytes_audit(env_var: str, cast_sql: str | None) -> None:
@@ -863,29 +544,6 @@ class TestPostgresContentBytesAudit:
         await _content_bytes_audit("VFS_TEST_POSTGRES_URL", "SELECT convert_to(content, 'UTF8') FROM {content}")
 
 
-@pytest.mark.mariadb
-class TestMySQLContentBytesAudit:
-    async def test_cast_yields_utf8_bytes(self) -> None:
-        # BINARY yields column-charset bytes: UTF-8 iff the table is utf8mb4.
-        await _content_bytes_audit("VFS_TEST_MYSQL_URL", "SELECT CAST(content AS BINARY) FROM {content}")
-
-
-@pytest.mark.mssql
-class TestMSSQLContentBytesAudit:
-    async def test_cast_yields_utf8_bytes(self) -> None:
-        # The column is VARCHAR(max) under the pinned UTF-8 collation, so
-        # VARBINARY reinterprets — NVARCHAR would transcode UTF-16 here.
-        await _content_bytes_audit("VFS_TEST_MSSQL_URL", "SELECT CAST(content AS VARBINARY(MAX)) FROM {content}")
-
-
-@pytest.mark.oracle
-class TestOracleContentBytesAudit:
-    async def test_no_cheap_cast_form_stays_declined(self) -> None:
-        # CLOB reaches bytes only through DBMS_LOB conversion in the
-        # database charset — a copy, not a reinterpretation; str arm only.
-        await _content_bytes_audit("VFS_TEST_ORACLE_URL", None)
-
-
 # ---------------------------------------------------------------------------
 # The bytes body's column, as each engine's catalog reports it
 # ---------------------------------------------------------------------------
@@ -913,37 +571,3 @@ class TestPostgresBlobColumn:
             "WHERE n.nspname = :schema AND c.relname = 'vfs_blobs' AND a.attname = 'data'",
         )
         assert (kind, storage) == ("bytea", "e")
-
-
-@pytest.mark.mariadb
-class TestMariaDBBlobColumn:
-    async def test_the_body_is_longblob_not_the_64k_blob(self) -> None:
-        (column_type,) = await _blob_column(
-            "VFS_TEST_MARIADB_URL",
-            "SELECT column_type FROM information_schema.columns "
-            "WHERE table_schema = :schema AND table_name = 'vfs_blobs' AND column_name = 'data'",
-        )
-        assert column_type == "longblob"
-
-
-@pytest.mark.mssql
-class TestMSSQLBlobColumn:
-    async def test_the_body_is_varbinary_max_not_image(self) -> None:
-        data_type, length = await _blob_column(
-            "VFS_TEST_MSSQL_URL",
-            "SELECT data_type, character_maximum_length FROM information_schema.columns "
-            "WHERE table_schema = :schema AND table_name = 'vfs_blobs' AND column_name = 'data'",
-        )
-        assert (data_type, length) == ("varbinary", -1)
-
-
-@pytest.mark.oracle
-class TestOracleBlobColumn:
-    async def test_the_body_is_a_blob(self) -> None:
-        (data_type,) = await _blob_column(
-            "VFS_TEST_ORACLE_URL",
-            # Unquoted identifiers fold to uppercase on Oracle, the schema name included.
-            "SELECT data_type FROM all_tab_columns "
-            "WHERE owner = UPPER(:schema) AND table_name = 'VFS_BLOBS' AND column_name = 'DATA'",
-        )
-        assert data_type == "BLOB"

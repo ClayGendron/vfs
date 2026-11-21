@@ -1,1 +1,0 @@
-{'id': 1, 'select_type': 'SIMPLE', 'table': 'vfs_entries', 'type': 'index', 'possible_keys': 'ix_vfs_entries_path,ix_vfs_entries_kind,ix_vfs_entries_deleted_at,ix_vfs_entries_encoded_kind', 'key': 'ix_vfs_entries_path', 'key_len': '1026', 'ref': None, 'rows': '25001', 'Extra': 'Using where'}

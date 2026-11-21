@@ -13,7 +13,7 @@ paths are exactly what triggers the CI Tests job.
 | --- | --- | --- | --- |
 | 1 Inner loop | `uv run pytest --tb=short` (+ ruff/ty below) | one Python, sqlite, parallel workers, the whole suite | while iterating |
 | 2 CI parity | `scripts/ci.sh` | Python 3.13: lint, format, types, 100% coverage, docs fences, wheel budget (~65 s) | before commit/push |
-| 3 Real engines | `db_test` skill | Postgres/MariaDB/MSSQL/Oracle in Docker | database-touching changes |
+| 3 Real engines | `db_test` skill | Postgres in Docker | database-touching changes |
 
 ## Tier 1 — inner loop (one Python, seconds to start)
 

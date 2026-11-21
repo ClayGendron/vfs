@@ -1,9 +1,8 @@
 """What VFS asks of a database driver when it builds an engine from a URL.
 
 ``merge_engine_arguments`` gives the arguments for one URL: the ones the
-application gave, and the ones VFS requires. Two drivers need something.
-SQL Server through pyodbc needs its text binds left as Unicode. SQLite
-needs its connections opened as ``ClosingConnection``, whose cursors
+application gave, and the ones VFS requires. One driver needs something.
+SQLite needs its connections opened as ``ClosingConnection``, whose cursors
 close themselves when a statement fails, and an in-memory SQLite
 database that SQLAlchemy gives one connection needs to keep it. No
 engine may autocommit.
@@ -70,18 +69,6 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
     dialect: a write is one transaction, and under autocommit each of
     its statements would commit alone.
 
-    SQL Server needs ``use_setinputsizes`` false. SQLAlchemy's pyodbc
-    dialect declares ``String`` binds as ANSI ``SQL_VARCHAR`` via
-    setinputsizes, and the server squeezes those through the database
-    codepage before they reach a UTF-8 column — mangling non-Latin1 to
-    ``?``. Disabling setinputsizes restores pyodbc's Unicode default
-    (``SQL_WVARCHAR``), whose conversion into the UTF-8 collation is
-    lossless. pyodbc's ``fast_executemany`` is deliberately *not* set:
-    engine-wide it rewrites UPDATE executemany, whose rowcount the
-    guarded bumps verify, and as a bulk-insert mode it is still one RPC
-    per row, slower than Core's pages on wide rows — SQL Server's bulk
-    inserts take Core's pages.
-
     SQLite needs ``connect_args["factory"]`` to be ``ClosingConnection``.
     SQLAlchemy passes ``connect_args`` to its own connect call only, so
     an application that gives ``creator`` or ``async_creator`` opens the
@@ -108,10 +95,7 @@ def merge_engine_arguments(url: str, given: Mapping[str, Any] | None = None) -> 
                 "transaction, and under autocommit each statement commits alone and a failed write is left half done"
             )
     address = make_url(url)
-    backend = address.get_backend_name()
-    if backend == "mssql":
-        _require(merged, "use_setinputsizes", False, "pyodbc then binds text as Unicode, and as ANSI it stores '?'")
-    if backend == "sqlite":
+    if address.get_backend_name() == "sqlite":
         merged["connect_args"] = connect = dict(merged.get("connect_args") or {})
         _require(
             connect, "factory", ClosingConnection, "a cursor whose statement failed is closed at once", "connect_args"

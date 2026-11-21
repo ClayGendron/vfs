@@ -533,7 +533,7 @@ class Pieces(NamedTuple):
     Sorted and disjoint, in bytewise order — which is code point order,
     the order UTF-8 preserves. Every bound is ``/``, ``0``, or a stored
     prefix ``p``, ``p/`` or ``p0``: never a path plus a low byte, which
-    SQL Server would pad past and Postgres refuse.
+    Postgres refuses.
     """
 
     points: tuple[str, ...]
