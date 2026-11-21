@@ -113,10 +113,28 @@ async def kernel_holding_a_file(storage: DatabaseStorage) -> AsyncVirtualFileSys
     return kernel
 
 
+class FreshWrites:
+    """Writes ``/a.txt`` with a body no earlier call sent, so no write of a sweep is ``unchanged``."""
+
+    def __init__(self) -> None:
+        self.sent = 0
+
+    @property
+    def body(self) -> str:
+        """The body of the latest call."""
+        return f"new {self.sent}"
+
+    def __call__(self, kernel: AsyncVirtualFileSystem) -> Awaitable[Any]:
+        self.sent += 1
+        return kernel.write(path="/a.txt", content=self.body)
+
+
+WRITE = FreshWrites()
+
 CALLS: dict[str, Callable[[AsyncVirtualFileSystem], Awaitable[Any]]] = {
     "stat": lambda kernel: kernel.stat("/"),
     "read": lambda kernel: kernel.read("/a.txt"),
-    "write": lambda kernel: kernel.write(path="/a.txt", content="new"),
+    "write": WRITE,
 }
 
 # One call of each shape a verb's transaction takes, over the files of ``a_directory``.
@@ -348,7 +366,7 @@ class TestACallCancelledAtOneRoundTripAfterAnother:
                 # A write sends fewer round trips once the host knows which of its tables have an index,
                 # so a cut of the traced write may not come: the write then ran to its end, and landed.
                 assert call == "write"
-                expected = ("new", (expected[1] or 0) + 1)
+                expected = (WRITE.body, (expected[1] or 0) + 1)
                 continue
             seen, held_at = list(round_trip.seen), round_trip.held_at
             assert held_at is not None
@@ -358,7 +376,7 @@ class TestACallCancelledAtOneRoundTripAfterAnother:
             # Nothing before the commit and all of it from the commit on, on every host alike.
             if "commit" in seen[: held_at + 1]:
                 landed += 1
-                expected = ("new", (expected[1] or 0) + 1)
+                expected = (WRITE.body, (expected[1] or 0) + 1)
             else:
                 assert "commit" not in seen, where
             assert await content_and_version(fs) == expected, where
