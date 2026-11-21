@@ -15,7 +15,7 @@ host is told, so that its next call provisions the schema again.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import event
 
@@ -34,17 +34,14 @@ if TYPE_CHECKING:
 class SerializedSession:
     """One session that holds the host lock from the moment it is entered until it is left.
 
-    A session that is never entered takes no lock. Every other attribute is
-    the attribute of the session it wraps. The lock is given back if that
-    session fails to enter, and when it has been left, whatever it raised.
+    It is a context manager and nothing else, so the session it wraps is
+    reached by entering it. The lock is given back if that session fails
+    to enter, and when it has been left, whatever it raised.
     """
 
     def __init__(self, session: AsyncSession, lock: asyncio.Lock) -> None:
         self._session = session
         self._lock = lock
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._session, name)
 
     async def __aenter__(self) -> AsyncSession:
         await self._lock.acquire()

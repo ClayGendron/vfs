@@ -63,13 +63,6 @@ class TestCallsTakeTurns:
                 pass
         assert lock.locked() is False
 
-    async def test_a_session_that_is_never_entered_takes_no_lock(self, one_connection: AsyncEngine) -> None:
-        lock = asyncio.Lock()
-        session = SerializedSession(AsyncSession(one_connection), lock)
-        # Every other attribute is the wrapped session's: the bind is read with no lock taken.
-        assert session.get_bind() is one_connection.sync_engine
-        assert lock.locked() is False
-
     async def test_the_lock_is_held_until_the_session_has_been_left(self, one_connection: AsyncEngine) -> None:
         """Guards ``__aexit__``: a lock given back before the session's own exit lets the next call in too soon."""
         lock = asyncio.Lock()
@@ -163,6 +156,30 @@ class TestASecondConnectionIsANewDatabase:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         assert (first, calls) == ([], ["re-armed"])
+
+    async def test_a_second_connection_of_a_pool_in_a_file_runs_no_second_first_touch(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Guards where the re-arm is put: a database in a file is there for every connection that opens it."""
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path / 'vfs.sqlite'}")
+        host = storage._host
+        opened: list[object] = []
+        touched: list[str] = []
+        first_touch = host._first_touch
+
+        async def counted() -> Any:
+            touched.append("first touch")
+            return await first_touch()
+
+        monkeypatch.setattr(host, "_first_touch", counted)
+        event.listen(host.engine.sync_engine, "connect", lambda *connection: opened.append(connection))
+        assert (await storage.stat(path=Path("/"))).success is True
+        async with host.engine.connect() as one, host.engine.connect() as two:
+            await one.execute(text("SELECT 1"))
+            await two.execute(text("SELECT 1"))
+        assert (await storage.stat(path=Path("/"))).success is True
+        assert (len(opened), touched) == (2, ["first touch"])
+        await storage.close()
 
     async def test_replacement_connection_re_arms_first_touch(self) -> None:
         # A :memory: database lives inside its one connection: a re-minted
