@@ -18,7 +18,7 @@ An attempt is one try of one call's transaction. `EngineHost.with_retry` runs a 
 
 An attempt is marked when its caller is cancelled. The mark is the one thing the attempt is told, and the attempt is not interrupted. An attempt runs out of reach when it runs in a task of its own, which a cancellation of the caller does not enter.
 
-A storage builds its engine and owns it. `DatabaseStorage(url=..., engine_arguments={...})` passes the URL and the arguments to SQLAlchemy, and nothing but the storage makes a session, a connection or a transaction on the engine that comes back. That ownership is what lets the code on this page put a listener on the engine and on the class of its sessions. An application reaches the engine at `storage.engine`, to attach a `do_connect` hook or tracing.
+A storage builds its engine and owns it. `DatabaseStorage(url=..., engine_arguments={...})` passes the URL and the arguments to SQLAlchemy, and nothing but the storage makes a session, a connection or a transaction on the engine that comes back. That ownership is what lets the code on this page put a listener on the engine and on the class of its sessions. An application reaches the engine at `storage.engine`, and it is there for listeners alone: a `do_connect` hook or tracing, put on `storage.engine.sync_engine`. An application opens no connection and no session on it.
 
 ## Why SQLite needs it
 
@@ -35,6 +35,8 @@ A database server has neither problem, because its database does not live inside
 `run_out_of_reach`, in `storage/backends/database/attempts.py`, is the whole of it. It starts the attempt in a task and waits for the task. Each cancellation that arrives during the wait is caught, the attempt is marked, and the wait goes on. A second cancellation does not cut the wait short.
 
 When the attempt has ended, the function raises the first cancellation it caught, and not a new one. The reason is anyio, which knows its own cancellation by the message on the exception. An earlier build raised a new and empty `CancelledError`, and `anyio.move_on_after` and `anyio.fail_after` then let the error escape their blocks. Starlette, FastAPI, httpx and the MCP SDK are built on anyio, so a server that cancels a request when its client goes away would have been broken by it.
+
+A caller can have two cancellers, such as an `asyncio.timeout` inside a cancel scope of anyio. The timeout's cancellation carries no message, so when it comes first the scope does not find its own message on the error that is raised. The function therefore keeps one cancellation for each message it has seen. It raises the first, and each later one is the `__context__` of the one before it, which is where anyio looks next. A scope cancels its task again on every turn of the loop, always with the same message, so the chain holds one error for each canceller and not one for each turn.
 
 Before it raises, the function reads what the dropped attempt raised. A refused attempt ends with an exception that nobody wants, and an exception that is never read is reported by the event loop as never retrieved.
 
@@ -59,7 +61,9 @@ The commit has a refusal of its own because a commit is a call of the driver and
 
 The three listeners are each put in place once. The statement listener is put on the engine when a SQLite storage is constructed. The other two belong to `AttemptSession`, an empty subclass of SQLAlchemy's `Session` that a SQLite storage's session factory is told to make. Nothing is made for a session, a transaction or a connection, and nothing is taken away when one ends.
 
-Each listener reads the mark of the task it runs in. Outside an attempt there is no mark, so the statistics pass, which runs in a task of the storage, is refused nothing. The same holds for anything an application does on `storage.engine` from a task of its own.
+Each listener reads the mark of the task it runs in. Outside an attempt there is no mark, so the statistics pass, which runs in a task of the storage, is refused nothing.
+
+The rule that an application opens no connection on `storage.engine` is not a matter of taste. On an in-memory storage every checkout hands out the one connection. A checkout beside a running call stamps its settings on that connection inside the call's transaction, the stamp fails, and SQLAlchemy throws the connection away, and the database with it. Nothing prevents an application from doing this. The docstring of the property says not to.
 
 ## What is still sent after a mark
 
