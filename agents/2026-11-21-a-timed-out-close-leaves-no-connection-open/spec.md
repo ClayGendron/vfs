@@ -37,6 +37,7 @@ In: `EngineHost.close`, `EngineHost.stop_analysis` and the analysis pass in `src
 - **The test asserts the old pool is empty.** `test_a_timed_out_close_leaves_no_pass_running` asserts `disposed_pool.checkedin() == 0` and has no `greenlet_spawn` of its own. It failed with `assert 1 == 0` before the fix and passed after, three runs of three (run).
 - **The size ratchet.** `engine.py` is held at 1,008 lines by `tests/lint/allowlist.py`; the probe for a loaded sqlite-vec, `has_sqlite_vec`, moved beside `load_sqlite_vec` in `drivers.py` to keep it there.
 - **Not changed.** `test_each_candidate_is_metered_once_a_pass` still settles the statistics before its own `engine.dispose()`; that wait states what the test counts and is kept.
+- **Reviewed** with the three other follow-ups in [the code review](../../context/reviews/2026-11-21-a-timed-out-close-leaves-no-connection-open-code-review.md), whose standing verdict is Lands. Its fixes made a retried close cancel the pass once, with a test of its own.
 
 ## One line
 
