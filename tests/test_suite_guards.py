@@ -47,6 +47,10 @@ def test_a_loop_that_waits_forever():
     asyncio.run(asyncio.Event().wait())
 
 
+async def test_an_async_test_that_waits_forever():
+    await asyncio.Event().wait()
+
+
 def test_a_thread_that_waits_forever():
     threading.Event().wait()
 
@@ -56,6 +60,21 @@ def test_a_failure_whose_teardown_waits_forever(teardown_that_waits_forever):
 
 
 def test_the_worker_runs_on():
+    pass
+"""
+SWALLOWING: Final = """
+import threading
+
+
+def test_a_test_that_swallows_its_deadline():
+    while True:
+        try:
+            threading.Event().wait()
+        except BaseException:
+            pass
+
+
+def test_the_run_goes_on():
     pass
 """
 IMPLICIT_LOOP: Final = """
@@ -95,13 +114,17 @@ def test_the_next_test_inherits_nothing():
 """
 CHILD_INI: Final = """[pytest]
 asyncio_mode = auto
-timeout = 2
+timeout = {deadline}
 timeout_method = signal
 filterwarnings =
     error::ResourceWarning
     error::pytest.PytestUnraisableExceptionWarning
     error::pytest.PytestUnhandledThreadExceptionWarning
 """
+HANG_DEADLINE_SECONDS: Final = 2
+"""The deadline of a child test that hangs on purpose; its backstop fires at half that again, three seconds."""
+QUIET_DEADLINE_SECONDS: Final = 120
+"""The deadline of a child test that hangs on nothing: a liveness bound past any machine's load."""
 RUN_BACKSTOP_SECONDS: Final = 300
 """Ends the child run should the guard under test fail to: a liveness bound, never a measure."""
 
@@ -122,17 +145,31 @@ def test_a_leak_is_an_error(pytestconfig: pytest.Config) -> None:
 def test_a_hung_test_fails_alone_and_leaves_every_stack_in_a_file(tmp_path: Path) -> None:
     hangs = _run_child(tmp_path, HANGING, "-n", "1")
     assert hangs.returncode == 1, hangs.stdout
-    assert "3 failed, 1 passed, 1 error" in hangs.stdout, hangs.stdout
+    assert "4 failed, 1 passed, 1 error" in hangs.stdout, hangs.stdout
     [log] = sorted((tmp_path / "hangs").iterdir())
     dumped = log.read_text(encoding="utf-8")
     for test, frame in (
         ("test_a_loop_that_waits_forever", "test_a_loop_that_waits_forever"),
         ("test_a_thread_that_waits_forever", "test_a_thread_that_waits_forever"),
+        ("test_an_async_test_that_waits_forever", "test_an_async_test_that_waits_forever"),
         ("test_a_failure_whose_teardown_waits_forever", "teardown_that_waits_forever"),
     ):
         assert f"test_hanging.py::{test}" in dumped, dumped
         assert f" in {frame}" in dumped, dumped
     assert "test_the_worker_runs_on" not in dumped, dumped
+
+
+@pytest.mark.slow
+def test_a_test_that_swallows_its_deadline_is_ended_with_its_worker(tmp_path: Path) -> None:
+    ended = _run_child(tmp_path, SWALLOWING, "-n", "1")
+    assert ended.returncode == 1, ended.stdout
+    assert "crashed while running 'test_hanging.py::test_a_test_that_swallows_its_deadline'" in ended.stdout, (
+        ended.stdout
+    )
+    assert "1 failed, 1 passed" in ended.stdout, ended.stdout
+    dumped = "".join(log.read_text(encoding="utf-8") for log in sorted((tmp_path / "hangs").iterdir()))
+    assert "Timeout (0:00:03)!" in dumped, dumped
+    assert " in test_a_test_that_swallows_its_deadline" in dumped, dumped
 
 
 @pytest.mark.slow
@@ -144,13 +181,13 @@ def test_a_run_with_no_hang_leaves_no_file(tmp_path: Path) -> None:
 
 @pytest.mark.slow
 def test_no_test_leaves_a_loop_that_pytest_asyncio_made_unasked(tmp_path: Path) -> None:
-    ran = _run_child(tmp_path, IMPLICIT_LOOP, "-n", "0")
+    ran = _run_child(tmp_path, IMPLICIT_LOOP, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
     assert ran.returncode == 0, ran.stdout
 
 
 @pytest.mark.slow
 def test_a_driver_thread_stopped_unawaited_ends_on_its_tests_loop(tmp_path: Path) -> None:
-    ran = _run_child(tmp_path, STOPPED_MID_WORK, "-n", "0")
+    ran = _run_child(tmp_path, STOPPED_MID_WORK, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
     assert ran.returncode == 0, ran.stdout
 
 
@@ -175,10 +212,16 @@ def _asserts(name: str) -> bool:
     return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
 
 
-def _run_child(tmp_path: Path, source: str, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Run *source* as a test file in a child pytest under this suite's hooks, with a two-second deadline."""
+def _run_child(
+    tmp_path: Path, source: str, *arguments: str, deadline: int = HANG_DEADLINE_SECONDS
+) -> subprocess.CompletedProcess[str]:
+    """Run *source* as a test file in a child pytest under this suite's hooks, each test under *deadline*.
+
+    A child that tests a hang takes the short deadline; one that hangs on nothing takes the run's own bound,
+    so no machine is slow enough to fire it.
+    """
     (tmp_path / "test_hanging.py").write_text(source, encoding="utf-8")
-    (tmp_path / "pytest.ini").write_text(CHILD_INI, encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text(CHILD_INI.format(deadline=deadline), encoding="utf-8")
     command = [sys.executable, "-m", "pytest", "-c", str(tmp_path / "pytest.ini"), "--rootdir", str(tmp_path)]
     command += ["-p", "tests.conftest", "-p", "no:cacheprovider", "-q", *arguments, str(tmp_path / "test_hanging.py")]
     environment = dict(os.environ)

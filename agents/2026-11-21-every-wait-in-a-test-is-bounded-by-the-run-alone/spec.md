@@ -29,9 +29,13 @@ Read, unless it says run. None of these has been seen to fail.
 
 - **Every storage a test builds carries the shipped budgets:** ten wall seconds for `grep`, `glob` and `search`, and ten seconds of `close_timeout` on a router. A test that does not test a budget can run out of one on a machine slow enough. A fixture default of `math.inf` for each, with the budget tests setting theirs, would end that.
 
+A run of the clock-and-luck work's touched test files with vfs's own clock jumping 1,000 seconds on every read failed 116 of 678, each read a shipped budget firing in a test that sets none: the glob, grep and search wall budgets, and the render budget behind twelve tests of `tests/rendering/test_markdown.py` and the PDF tests of `tests/storage/database/test_render.py` (run).
+
 ### Sleeps that set up a race
 
 - **`asyncio.sleep(0.02)` "lets the pass reach the lock"** in `test_a_timed_out_close_leaves_no_pass_running`, and `asyncio.sleep(0.005)` before a cancel in `test_a_cancelled_caller_still_lands_the_statistics`, both in `tests/storage/database/test_statistics.py`. Either outcome passes today, so a slow machine weakens them rather than fails them.
+- **`pool.submit(blocker.wait, 5.0)` with two `asyncio.sleep(0.05)`** in `test_a_cancel_before_the_worker_starts_never_runs_the_matcher` in `tests/test_offload.py`: a stall past five seconds frees the worker and the matcher runs; the sleeps can only make it pass falsely.
+- **`asyncio.sleep(0.5)` "Give the rival time to reach — and block on — the point"** in `tests/storage/test_conformance.py`, with `wait_for(..., timeout=60)` after it there and in `tests/storage/database/test_races.py`, on Postgres only.
 
 ### Causes not found
 

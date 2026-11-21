@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import faulthandler
+import io
 import os
 import signal
 import threading
@@ -210,7 +211,10 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 class _HangLog:
-    """One process's file of hung tests: a header per armed test, kept only when a stack follows it."""
+    """One process's file of hung tests: a header per armed test, taken back when no stack follows it.
+
+    A process ended from outside while a test runs leaves that test's header, with no stack after it.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -233,7 +237,19 @@ class _HangLog:
         return _Header(start, self._size())
 
     def dump(self) -> None:
+        """Every thread's stack, then the stack of each task on the loop this thread runs, if any.
+
+        An async test's own frames are on no thread's stack while it awaits: its task holds them.
+        """
         faulthandler.dump_traceback(self.file, all_threads=True)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        tasks = io.StringIO()
+        for task in asyncio.all_tasks(loop):
+            task.print_stack(file=tasks)
+        self.file.write(f"\nTasks of the running loop:\n{tasks.getvalue()}".encode())
 
     def end(self, header: _Header) -> None:
         """Take back *header* unless a stack followed it."""
