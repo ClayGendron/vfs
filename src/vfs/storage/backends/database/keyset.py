@@ -25,9 +25,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
-from vfs.paths import TRASH_ROOT, Path, address_of
+from vfs.paths import Path
 from vfs.results import ErrorKind, Result, classified
-from vfs.results.paging import frontier_page
+from vfs.results.paging import FOREIGN_KEY, PAGE_BESIDE_MAX_COUNT, frontier_page, resumes
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -62,6 +62,7 @@ async def filled(
     *,
     after: str | None,
     limit: int | None,
+    stopped: Callable[[], bool] = lambda: False,
 ) -> Filled:
     """Fetch from ``streams`` until ``limit + 1`` shown rows lie at or before the frontier, or none has more.
 
@@ -70,7 +71,9 @@ async def filled(
     ``limit=None`` each stream is read whole in one statement. The
     frontier is the last path the slowest unfinished stream fetched;
     every row at or before it is in hand. A fill after the first batch
-    asks only the streams at the frontier.
+    asks only the streams at the frontier. Once ``stopped`` says so after a
+    batch, as when its judge ran out of time, the fill ends at the last
+    row it showed, so the next page reads again what it did not judge.
     """
     positions: list[str | None] = [after] * len(streams)
     unfinished = list(range(len(streams)))
@@ -88,6 +91,8 @@ async def filled(
                 unfinished.remove(index)
             else:
                 positions[index] = rows[-1]["path"]
+            if stopped():
+                return Filled([shown[path] for path in sorted(shown)], max(shown, default=None))
         frontier = min((position for index in unfinished if (position := positions[index]) is not None), default=None)
         if wanted is None or batch is None or frontier is None or sum(path <= frontier for path in shown) >= wanted:
             break
@@ -137,26 +142,17 @@ def page_refused(
     elif limit is not None and limit < 1:
         detail = f"limit must be >= 1, got {limit}"
     elif max_count is not None:
-        detail = "glob takes a page (after and limit) or max_count, not both"
+        detail = PAGE_BESIDE_MAX_COUNT
     elif op != "glob" and len(targets) != 1:
         detail = "a page lists one directory"
-    elif after is not None and op != "glob" and not _resumes(op, str(targets[0]), after):
-        detail = "the key is not in this listing"
+    elif after is not None and op != "glob" and not resumes(op, str(targets[0]), after):
+        detail = FOREIGN_KEY
     return None if detail is None else Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=detail)])
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _resumes(op: Literal["ls", "tree"], target: str, after: Path) -> bool:
-    """Whether ``after`` is a key of this listing of ``target``: a child for ``ls``, beneath it for ``tree``."""
-    if op == "ls" and target == TRASH_ROOT:
-        return True
-    stored = address_of(target).stored
-    inside = after.parent_dir == stored if op == "ls" else stored == "/" or after.startswith(stored + "/")
-    return inside and after != stored
 
 
 def _path(row: Observation) -> str:

@@ -4,8 +4,9 @@ One :class:`ParamSpec` row per public-verb parameter and one
 :class:`ShapeRule` set per op. Three consumers read the table: the router's
 ingress gate (``AsyncVirtualFileSystem._gate_params``), the signature drift test,
 and the wire dialect's schema projection. The module is a leaf — stdlib plus
-the ``vfs.ops``, ``vfs.authority``, and ``vfs.storage.grants`` value
-modules — so schema consumers never import the router.
+the ``vfs.ops``, ``vfs.authority``, ``vfs.paths`` and ``vfs.storage.grants``
+value modules, and the one refusal text ``vfs.results.paging`` shares with
+the storage — so schema consumers never import the router.
 
     param_violation("tree", {"max_depth": "2"})
     # → "tree max_depth must be an integer >= 1 and <= 2147483647, got '2'"
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 from vfs.authority import Authority
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, TRAVERSE_METHODS, CaseMode, GrepOutputMode
 from vfs.paths import ObjectKind, validate_segment
+from vfs.results.paging import PAGE_BESIDE_MAX_COUNT
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
 if TYPE_CHECKING:
@@ -495,7 +497,7 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
         ShapeRule(
             (("after", "limit"), ("max_count",)),
             exactly_one=False,
-            msg_both="glob takes a page (after and limit) or max_count, not both",
+            msg_both=PAGE_BESIDE_MAX_COUNT,
         ),
     ),
     "grep": (

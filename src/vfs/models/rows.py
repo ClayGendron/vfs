@@ -134,6 +134,10 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
 SCHEMA_FORMAT_VERSION: Final = 28
 
+# The partial indexes over the live rows alone that a listing page seeks: a directory's children, and a subtree.
+LIVE_CHILDREN_INDEX: Final = "ix_vfs_entries_live_children"
+LIVE_PATH_INDEX: Final = "ix_vfs_entries_live_path"
+
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
 
@@ -436,8 +440,8 @@ def build_vfs_tables(
         # so no live listing is planned onto its seek of the live rows on a table that is mostly tombstones.
         Index("ix_vfs_entries_deleted_at", "deleted_at", **_on_side(trashed=True)),
         # A listing page seeks the live rows alone, so a tombstone in its range costs no read.
-        Index("ix_vfs_entries_live_children", "parent_id", "name", **_on_side(trashed=False)),
-        Index("ix_vfs_entries_live_path", "path", **_on_side(trashed=False)),
+        Index(LIVE_CHILDREN_INDEX, "parent_id", "name", **_on_side(trashed=False)),
+        Index(LIVE_PATH_INDEX, "path", **_on_side(trashed=False)),
         Index("ix_vfs_entries_trash_root", "trash_root_id"),
         # The twin lookups: a body hash shared by many rows is found by index, never a scan.
         Index("ix_vfs_entries_content_hash", "content_hash"),

@@ -24,8 +24,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from sqlalchemy import func, select
+from sqlalchemy import Table, func, select
+from sqlalchemy.ext.compiler import compiles
 
+from vfs.models.rows import LIVE_CHILDREN_INDEX, LIVE_PATH_INDEX
 from vfs.paths import METADATA_ROOT, TRASH_ROOT, Path, address_of
 from vfs.results import Result
 from vfs.storage.backends.database.descent import (
@@ -51,9 +53,10 @@ from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy import ColumnElement, Select, Table
+    from sqlalchemy import ColumnElement, Select
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.compiler import SQLCompiler
 
     from vfs.models import Observation
     from vfs.models.rows import EntryId, VFSTables
@@ -96,9 +99,10 @@ async def ls_rows(
     ``next_after`` set while more follow. The storage has refused,
     before any read, a key that names no child of the target and no row
     of the trash view's head, whose listing holds the tombstoned roots
-    at every depth (:func:`~vfs.storage.backends.database.keyset.page_refused`). That one page visits every
-    tombstone in its path range, roots and their descendants alike, a
-    set ``sweep`` bounds.
+    at every depth (:func:`~vfs.storage.backends.database.keyset.page_refused`).
+    A page of that head is not bounded by its limit: it reads every
+    tombstone of the mount, roots and their descendants alike, and sorts
+    the roots among them by path, a set ``sweep`` bounds.
     """
     if after is not None or limit is not None:
         return await _ls_page(session, tables, profile, membership_budget, targets[0], columns, view, after, limit)
@@ -162,7 +166,9 @@ async def tree_rows(
     strictly after the key, which lies beneath *path*, and ``next_after``
     set while more follow. Each clause of a view's pushdown pages as a
     stream of its own, and a page shows a road directory exactly once,
-    on the page whose path range holds it. Under ``max_depth`` a page
+    on the page whose path range holds it. A road directory is a row of
+    the page like any other: it counts toward ``limit`` and can be the
+    key, which names only what the caller was shown. Under ``max_depth`` a page
     still reads the rows deeper than the bound in its range and drops
     them, so a shallow listing of a deep tree reads more rows than it
     returns.
@@ -184,7 +190,11 @@ async def tree_rows(
 
     def subtree(position: str | None, batch: int | None) -> Select[Any]:
         stmt = _subtree(tables.entry, profile, address, wanted, max_depth)
-        return stmt if position is None and batch is None else _ranged(stmt, tables.entry, address, position, batch)
+        if position is None and batch is None:
+            return stmt
+        return _pinned(
+            _ranged(stmt, tables.entry, address, position, batch), tables.entry, profile, address, LIVE_PATH_INDEX
+        )
 
     if after is not None or limit is not None:
         page = _TreePage(session, tables.entry, profile, membership_budget, fetched, view, address)
@@ -273,7 +283,7 @@ def _children_page(
         )
         if position is not None:
             stmt = stmt.where(entry.c.name > position.rsplit("/", 1)[1])
-        stmt = stmt.order_by(entry.c.name)
+        stmt = _pinned(stmt.order_by(entry.c.name), entry, profile, address, LIVE_CHILDREN_INDEX)
         return (await session.execute(stmt if batch is None else stmt.limit(batch))).mappings().all()
 
     return fetch
@@ -343,19 +353,36 @@ class _TreePage(NamedTuple):
             if not candidates:
                 return Result(ops=("tree",), observations=rows, next_after=key)
             asked |= set(candidates)
-            doors = await self._directories(candidates)
-            if doors:
-                roads |= await view.road(self.session, doors, trashed=self.address.trashed)
+            roads |= await self._roads_among(subtree, candidates)
 
-    async def _directories(self, candidates: list[str]) -> list[str]:
-        """The candidates stored as directories on the root's side of the tombstone, in one bounded fetch."""
-        entry = self.entry
+    async def _roads_among(self, subtree: Build, candidates: list[str]) -> set[str]:
+        """The candidates the whole ``tree`` shows as road directories: each holds a row of the subtree shown here.
+
+        One bounded fetch finds the candidates stored as directories on the
+        root's side of the tombstone. Each of those then reads the subtree's
+        own statement within its range, through the view, until one row is
+        shown or none is left: the rule the whole listing applies, an
+        ancestor of a row it returns, and no wider one.
+        """
+        entry, view = self.entry, self.view
+        assert view is not None
         columns = [entry.c.path, entry.c.kind, entry.c.deleted_at]
         found = await rows_by_path(self.session, entry, candidates, columns, self.profile, self.membership_budget)
         trashed = self.address.trashed
-        return [
+        doors = [
             p for p, row in found.items() if row["kind"] == "directory" and (row["deleted_at"] is not None) == trashed
         ]
+        roads: set[str] = set()
+        for door in doors:
+
+            def beneath(position: str | None, batch: int | None, door: str = door) -> Select[Any]:
+                stmt = subtree(None, None).where(entry.c.path > (position or door + "/"), entry.c.path < door + "0")
+                return stmt if batch is None else stmt.limit(batch)
+
+            streams = _narrowed(self.session, beneath, view, door)
+            if (await filled(streams, _shown_by(view, self.fetched), after=None, limit=1)).rows:
+                roads.add(door)
+        return roads
 
 
 def _doors_before(key: str | None, root: str) -> list[str]:
@@ -397,6 +424,29 @@ def _ranged(stmt: Select[Any], entry: Table, address: Address, position: str | N
     if address.stored != "/":
         stmt = stmt.where(entry.c.path < address.stored + "0")
     return stmt if batch is None else stmt.limit(batch)
+
+
+def _pinned(stmt: Select[Any], entry: Table, profile: DialectProfile, address: Address, index: str) -> Select[Any]:
+    """``stmt`` held to ``index``, a partial index over the live rows, where the profile declares a hint for it.
+
+    Only a live page carries the pin: the index holds no tombstone, so a
+    trash-view page could not be served by it.
+    """
+    if profile.live_index_hint is None or address.trashed:
+        return stmt
+    return stmt.with_hint(entry, profile.live_index_hint.format(index=index), profile.name)
+
+
+@compiles(Table, "sqlite")
+def _hinted_table(element: Table, compiler: SQLCompiler, **kw: Any) -> str:
+    """A table in a FROM clause with the hint a statement declares for it on SQLite, which SQLAlchemy drops there.
+
+    SQLAlchemy hands each table its hint and the SQLite compiler renders
+    none, so a table with no hint renders exactly as before.
+    """
+    text = compiler.visit_table(element, **kw)
+    hint = (kw.get("fromhints") or {}).get(element)
+    return f"{text} {hint}" if hint and kw.get("asfrom") else text
 
 
 def _after(stmt: Select[Any], entry: Table, position: str | None, batch: int | None) -> Select[Any]:

@@ -22,7 +22,9 @@ a storage derives from a whole listing: sort, cut after the key, keep
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Final, Literal, TypeVar
+
+from vfs.paths import TRASH_ROOT, address_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -32,6 +34,12 @@ if TYPE_CHECKING:
     from vfs.results.envelope import Result
 
 T = TypeVar("T")
+
+# The words of the refusal of a key that cannot resume the listing it was given to.
+FOREIGN_KEY: Final = "the key is not in this listing"
+
+# The words of the refusal of a glob that asks for a page and a max_count at once.
+PAGE_BESIDE_MAX_COUNT: Final = "glob takes a page (after and limit) or max_count, not both"
 
 # ---------------------------------------------------------------------------
 # The frontier rule
@@ -70,6 +78,23 @@ def frontier_page(
         kept = kept[:limit]
         return kept, path_of(kept[-1])
     return kept, frontier
+
+
+def resumes(op: Literal["ls", "tree"], target: str, key: Path) -> bool:
+    """Return whether ``key`` can resume this listing of ``target``, both in one storage's coordinates.
+
+    The key of ``ls`` names a child of the directory, and the key of
+    ``tree`` a path strictly beneath its root, both at the stored address,
+    so a target under the trash view's head is read as the row it names.
+    The head itself lists rows at every depth and takes any key. A
+    ``glob`` takes any key, because its rows are in one global order, so
+    it never asks.
+    """
+    if op == "ls" and target == TRASH_ROOT:
+        return True
+    stored = address_of(target).stored
+    inside = key.parent_dir == stored if op == "ls" else stored == "/" or key.startswith(stored + "/")
+    return inside and key != stored
 
 
 def paged(result: Result, stream_keys: Iterable[Path | None], *, after: Path | None, limit: int | None) -> Result:

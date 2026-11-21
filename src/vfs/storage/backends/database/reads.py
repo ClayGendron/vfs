@@ -32,6 +32,7 @@ stored row.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import LargeBinary, and_, cast, or_, select
@@ -425,35 +426,31 @@ async def glob_rows(
     keyed_binds = PAGE_KEY_BINDS if paged else 0
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + keyed_binds)
 
-    def wheres(position: str | None) -> list[ColumnElement[bool]]:
-        arms: list[ColumnElement[bool]] = []
-        clauses: list[ColumnElement[bool]] = []
-        for trashed, gates in sides.items():
-            prefilter = list(gates.admissions)
-            composed = None if scope is None else scope.composed(trashed=trashed)
-            if composed is not None:
-                prefilter += [compile_filter(pattern) for pattern in composed]
-            elif scope is not None:
-                roots = scope.roots(trashed=trashed)
-                clauses += scope_fan(
-                    entry,
-                    profile,
-                    parameter_budget,
-                    membership_budget,
-                    roots,
-                    facts,
-                    wanted,
-                    kind=kind,
-                    trashed=trashed,
-                    after=position,
-                    keyed=paged,
-                )
-            built = (
-                pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed, after=position)
-                for glob in prefilter
-            )
-            arms += [arm for arm in built if arm is not None]
-        return [*(or_(*part) for part in chunked(arms, chunk)), *clauses]
+    # One builder per statement of the fan, so a stream rebuilds its own arms alone at each position it reads from.
+    builders: list[Callable[[str | None], ColumnElement[bool]]] = []
+    live_arms: list[tuple[GlobFilter, bool, ColumnElement[bool]]] = []
+    for trashed, gates in sides.items():
+        prefilter = list(gates.admissions)
+        composed = None if scope is None else scope.composed(trashed=trashed)
+        if composed is not None:
+            prefilter += [compile_filter(pattern) for pattern in composed]
+        elif scope is not None:
+            roots = scope.roots(trashed=trashed)
+            per_statement = scope_chunk(entry, profile, parameter_budget, membership_budget, facts, wanted, keyed=paged)
+            budgets = (parameter_budget, membership_budget)
+            builders += [
+                partial(_scope_where, entry, profile, budgets, part, facts, wanted, kind, trashed, paged)
+                for part in chunked(list(roots), per_statement)
+            ]
+        for glob in prefilter:
+            arm = pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed)
+            if arm is not None:
+                live_arms.append((glob, trashed, arm))
+    arm_builders = [
+        partial(_arms_where, entry, part, wanted, profile, membership_budget, kind)
+        for part in chunked(live_arms, chunk)
+    ]
+    builders = [*arm_builders, *builders]
 
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
@@ -486,11 +483,11 @@ async def glob_rows(
 
     key: Path | None = None
     if paged:
-        streams = _candidate_streams(session, entry, queried, wheres)
-        found = await filled(streams, judged, after=after, limit=limit)
+        streams = _candidate_streams(session, entry, queried, builders)
+        found = await filled(streams, judged, after=after, limit=limit, stopped=lambda: not finished[0])
         served, key = keyed(found.rows, found.frontier, after=after, limit=limit)
     else:
-        served = await judged(await _pattern_candidates(session, entry, queried, wheres(None)))
+        served = await judged(await _pattern_candidates(session, entry, queried, [build(None) for build in builders]))
         served = served if max_count is None else served[:max_count]
     errors = [] if finished[0] else [wall_truncation(GLOB_REFINE_GUIDANCE)]
     return Result(ops=("glob",), observations=served, errors=errors, next_after=key)
@@ -669,9 +666,9 @@ def scope_fan(
     """
     if not roots:
         return []
-    ride = ext_membership(entry, wanted, membership_budget)
-    per_root = ROOT_ARM_BINDS + ride.binds + (PAGE_KEY_BINDS if keyed else 0)
-    chunk = arm_budget(profile, parameter_budget - facts.binds - reserved, per_root)
+    chunk = scope_chunk(
+        entry, profile, parameter_budget, membership_budget, facts, wanted, reserved=reserved, keyed=keyed
+    )
     built = [
         scope_root_arm(entry, root, wanted, profile, membership_budget, kind=kind, trashed=trashed, after=after)
         for root in roots
@@ -680,6 +677,23 @@ def scope_fan(
     if facts.predicate is None:
         return fans
     return [and_(fan, facts.predicate) for fan in fans]
+
+
+def scope_chunk(
+    entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    facts: ScopeFacts,
+    wanted: frozenset[str],
+    *,
+    reserved: int = 0,
+    keyed: bool = False,
+) -> int:
+    """The most root clauses one statement of :func:`scope_fan` holds, on what the facts and *reserved* leave."""
+    ride = ext_membership(entry, wanted, membership_budget)
+    per_root = ROOT_ARM_BINDS + ride.binds + (PAGE_KEY_BINDS if keyed else 0)
+    return arm_budget(profile, parameter_budget - facts.binds - reserved, per_root)
 
 
 # ---------------------------------------------------------------------------
@@ -1023,25 +1037,77 @@ async def _pattern_candidates(
 
 
 def _candidate_streams(
-    session: AsyncSession, entry: Table, fetched: frozenset[str], wheres: Callable[[str | None], list[Any]]
+    session: AsyncSession,
+    entry: Table,
+    fetched: frozenset[str],
+    builders: Sequence[Callable[[str | None], ColumnElement[bool]]],
 ) -> list[Fetch]:
-    """One stream for each statement of the fan, in path order, its key inside every arm.
-
-    The fan is built once for each position a fill asks from, and the
-    statements keep their order, so a stream is its statement's place.
-    """
-    built: dict[str | None, list[Any]] = {}
+    """One stream for each statement of the fan, in path order, its key inside every arm of that statement alone."""
     columns = entry_columns(entry, fetched)
 
-    def stream(index: int) -> Fetch:
+    def stream(build: Callable[[str | None], ColumnElement[bool]]) -> Fetch:
         async def fetch(position: str | None, batch: int | None) -> Sequence[RowMapping]:
-            where = built.setdefault(position, wheres(position))[index]
-            stmt = select(*columns).where(where).order_by(entry.c.path)
+            stmt = select(*columns).where(build(position)).order_by(entry.c.path)
             return (await session.execute(stmt if batch is None else stmt.limit(batch))).mappings().all()
 
         return fetch
 
-    return [stream(index) for index in range(len(wheres(None)))]
+    return [stream(build) for build in builders]
+
+
+def _arms_where(
+    entry: Table,
+    arms: Sequence[tuple[GlobFilter, bool, ColumnElement[bool]]],
+    wanted: frozenset[str],
+    profile: DialectProfile,
+    membership_budget: int,
+    kind: str | None,
+    position: str | None,
+) -> ColumnElement[bool]:
+    """One statement's OR of pattern arms, each on its side of the tombstone, the key inside each; none is dead.
+
+    Each arm comes built with no key, which serves a read from the start; a read from a key builds them again.
+    """
+    if position is None:
+        return or_(*(arm for _glob, _trashed, arm in arms))
+    built = [
+        pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed, after=position)
+        for glob, trashed, _arm in arms
+    ]
+    return or_(*(arm for arm in built if arm is not None))
+
+
+def _scope_where(
+    entry: Table,
+    profile: DialectProfile,
+    budgets: tuple[int, int],
+    roots: Sequence[str],
+    facts: ScopeFacts,
+    wanted: frozenset[str],
+    kind: str | None,
+    trashed: bool,
+    keyed: bool,
+    position: str | None,
+) -> ColumnElement[bool]:
+    """One statement's root clauses: ``roots`` fit one statement of the scope fan, so it builds exactly one.
+
+    ``budgets`` is the parameter budget and the membership budget, in that order.
+    """
+    parameter_budget, membership_budget = budgets
+    [where] = scope_fan(
+        entry,
+        profile,
+        parameter_budget,
+        membership_budget,
+        roots,
+        facts,
+        wanted,
+        kind=kind,
+        trashed=trashed,
+        after=position,
+        keyed=keyed,
+    )
+    return where
 
 
 def _entry_projection(

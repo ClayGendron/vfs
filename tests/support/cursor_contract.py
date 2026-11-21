@@ -153,6 +153,35 @@ class CursorContract:
         counts = {len(page.statements) for page in pages}
         assert len(counts) == 1, counts
 
+    async def test_a_page_costs_the_statements_of_a_whole_call(self, storage: DatabaseStorage) -> None:
+        ok(await storage.write(entries=files("/d", 60), parents=True, authority=SYSTEM))
+        ok(await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM))
+        ok(await storage.grant(path=Path("/d"), principal="ada", level="read", authority=SYSTEM))
+        sqlite = storage._host.engine.dialect.name == "sqlite"
+        expected = {("system", "ls"): 3, ("system", "tree"): 3, ("system", "glob"): 2, ("ada", "ls"): 5}
+        for name, who in (("system", SYSTEM), ("ada", ADA)):
+            for op, kwargs in (("ls", {"path": Path("/d")}), ("tree", {"path": Path("/d")})):
+                await self._counted(storage, op, who, kwargs)
+            for op, kwargs in (
+                ("ls", {"path": Path("/d")}),
+                ("tree", {"path": Path("/d")}),
+                ("glob", {"patterns": ("/d/*.txt",)}),
+            ):
+                whole = await self._counted(storage, op, who, kwargs)
+                page = await self._counted(storage, op, who, {**kwargs, "after": Path("/d/f00009.txt"), "limit": 10})
+                # A named caller's tree page asks once whether a directory hides at the key's own prefix.
+                extra = 1 if (name, op) == ("ada", "tree") else 0
+                assert page == whole + extra, (name, op, whole, page)
+                if sqlite and (name, op) in expected:
+                    assert page == expected[name, op], (name, op, page)
+
+    @staticmethod
+    async def _counted(storage: DatabaseStorage, op: str, who: Authority, kwargs: dict[str, Any]) -> int:
+        """The statements one call issues, statistics left out."""
+        with recorded(storage) as seen:
+            ok(await getattr(storage, op)(authority=who, **kwargs))
+        return len(seen)
+
     async def test_a_listing_of_exactly_n_pages_ends_on_its_last_page(self, storage: DatabaseStorage) -> None:
         ok(await storage.write(entries=files("/d", 30), parents=True, authority=SYSTEM))
         _rows, pages = await drain(storage, storage.ls, 10, path=Path("/d"), authority=SYSTEM)
@@ -170,6 +199,21 @@ class CursorContract:
             [(sql, parameters)] = paged_selects(page)
             indexes, visited = await plan_of(storage, sql, parameters)
             assert LIVE_CHILDREN in indexes, indexes
+            assert visited is None or visited <= 11
+
+    async def test_a_live_page_keeps_its_index_on_statistics_that_predate_a_mass_delete(
+        self, storage: DatabaseStorage
+    ) -> None:
+        ok(await storage.write(entries=files("/d", 1_000), parents=True, authority=SYSTEM))
+        await storage._host.settle_statistics()
+        ok(await storage.delete(observations=[Observation(path=Path(f"/d/f{i:05d}.txt")) for i in range(900)]))
+        await storage._host.settle_statistics()
+        for call, index in ((storage.ls, LIVE_CHILDREN), (storage.tree, LIVE_PATHS)):
+            _rows, pages = await drain(storage, call, 10, path=Path("/d"), authority=SYSTEM)
+            assert len(pages) == 10
+            [(sql, parameters)] = paged_selects(pages[0])
+            indexes, visited = await plan_of(storage, sql, parameters)
+            assert index in indexes, indexes
             assert visited is None or visited <= 11
 
     async def test_the_trash_head_and_the_meta_root_page_too(self, storage: DatabaseStorage) -> None:
@@ -270,6 +314,22 @@ class CursorContract:
         rows, _pages = await drain(storage, storage.tree, limit, path=Path("/w"), authority=ADA)
         assert rows == whole
 
+    @pytest.mark.parametrize("limit", [1, 2])
+    async def test_a_paged_tree_shows_no_road_the_whole_tree_does_not(
+        self, storage: DatabaseStorage, limit: int
+    ) -> None:
+        # A grant on a file since deleted puts its directory on the view's road; no row the tree returns lies beneath.
+        names = ["/r/a/x.txt", "/r/a-b/y.txt"]
+        ok(await storage.write(entries=[Entry(path=Path(p), content="x") for p in names], parents=True))
+        ok(await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM))
+        for path in names:
+            ok(await storage.grant(path=Path(path), principal="ada", level="read", authority=SYSTEM))
+        ok(await storage.delete(path=Path("/r/a/x.txt"), authority=SYSTEM))
+        whole = list(ok(await storage.tree(path=Path("/r"), authority=ADA)).paths)
+        assert whole == ["/r/a-b", "/r/a-b/y.txt"]
+        rows, _pages = await drain(storage, storage.tree, limit, path=Path("/r"), authority=ADA)
+        assert rows == whole
+
     # ------------------------------------------------------------------
     # glob
     # ------------------------------------------------------------------
@@ -304,6 +364,24 @@ class CursorContract:
             rows, _pages = await drain(storage, storage.glob, 3, patterns=("**",), authority=who)
             assert rows == sorted(whole)
 
+    async def test_a_glob_page_that_reaches_its_wall_stops_and_keeps_its_key(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ok(await storage.write(entries=files("/g", 60), parents=True, authority=SYSTEM))
+        real = reads_module.judge_rows
+
+        async def short(*args: Any, **kwargs: Any) -> Any:
+            verdicts, _completed = await real(*args, **kwargs)
+            return verdicts, False
+
+        monkeypatch.setattr(reads_module, "judge_rows", short)
+        with recorded(storage) as seen:
+            page = ok(await storage.glob(patterns=("/g/*.txt",), limit=10, authority=SYSTEM))
+        assert page.paths == tuple(f"/g/f{index:05d}.txt" for index in range(10))
+        assert page.next_after == "/g/f00009.txt"
+        assert [error.kind for error in page.warnings] == [ErrorKind.truncated]
+        assert len([sql for sql, _parameters in seen if "LIMIT" in sql.upper()]) == 1
+
     async def test_glob_refuses_a_page_beside_max_count(self, storage: DatabaseStorage) -> None:
         refused = await storage.glob(patterns=("*",), max_count=3, limit=3, authority=SYSTEM)
         assert [error.kind for error in refused.errors] == [ErrorKind.invalid]
@@ -319,6 +397,33 @@ class CursorContract:
         rows, pages = await drain(storage, storage.glob, 4, patterns=(), scope=scope, authority=SYSTEM)
         assert rows == sorted(whole)
         assert all(len(paged_selects(page)) == 1 for page in pages)
+
+    @pytest.mark.slow
+    async def test_a_page_of_ten_thousand_patterns_builds_each_chunk_once_a_fetch(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ok(await storage.write(entries=files("/g", 300), parents=True, authority=SYSTEM))
+        patterns = tuple(f"/g/f{index:05d}.txt" for index in range(10_000))
+        real = reads_module.pattern_arm
+        built: list[object] = []
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            built.append(kwargs.get("after"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(reads_module, "pattern_arm", counted)
+        first = ok(await storage.glob(patterns=patterns, limit=100, authority=SYSTEM))
+        assert len(first) == 100 and first.next_after is not None
+        built.clear()
+        with recorded(storage) as seen:
+            second = ok(await storage.glob(patterns=patterns, after=first.next_after, limit=100, authority=SYSTEM))
+        assert second.paths == tuple(f"/g/f{index:05d}.txt" for index in range(100, 200))
+        selects = [parameters for sql, parameters in seen if "LIMIT" in sql.upper()]
+        budget = storage._host.parameter_budget
+        assert all(len(parameters) <= budget for parameters in selects)
+        # One build of every arm with no key, and one of each fetched statement's own arms from the key.
+        assert built.count(None) == len(patterns)
+        assert len(built) - len(patterns) <= len(patterns)
 
     # ------------------------------------------------------------------
     # A page the storage refuses before it reads a row

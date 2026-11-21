@@ -292,6 +292,16 @@ class DialectProfile:
     regression. A SQLite planner that took the ``LIMIT`` into its filter
     estimate would let the join come back.
 
+    ``live_index_hint`` is the table hint, ``{index}`` in it the index's
+    name, that holds a live listing page to the partial index over the
+    live rows — a plan pin SQLAlchemy takes no position on. SQLite's
+    planner costs that index by its statistics, and a delete changes no
+    row count, so the statistics vfs keeps are not refreshed by one: after
+    a mass delete they still count the tombstones in the live index, and
+    the planner then reads the full path index with every tombstone in
+    the page's range. Postgres takes no hint and keeps its own statistics,
+    through autovacuum, which counts a tombstone as a change.
+
     ``attempts_out_of_reach`` declares that a try of a call's transaction
     runs out of its caller's reach, because SQLAlchemy throws away a
     connection a cancellation reached: on SQLite, the database or its lock.
@@ -326,6 +336,7 @@ class DialectProfile:
     statistics_listing: str | None = None
     rarity_hint: str | None = None
     probe_entry_filter: bool = False
+    live_index_hint: str | None = None
     # The ``sqlalchemy.func`` name that sizes a stored body without reading it, which SQLAlchemy does not model:
     # encoding bytes on Postgres, characters elsewhere (the floor's ``length``).
     stored_length: str = "length"
@@ -390,6 +401,8 @@ SQLITE: Final = DialectProfile(
     rarity_hint="unlikely",
     # Plan-pinned: the chunk pages' entry probe plans no per-page Bloom filter where the join builds one.
     probe_entry_filter=True,
+    # Plan-pinned: a live listing page reads its partial index on statistics that predate a mass delete.
+    live_index_hint="INDEXED BY {index}",
     attempts_out_of_reach=True,
 )
 

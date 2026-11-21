@@ -111,6 +111,12 @@ These counts were taken on an in-memory storage, 10,000 files, after one warm ca
 
 A named caller's `tree` page pays one more statement: the point fetch of the key's prefixes. The cursor contract (`tests/support/cursor_contract.py`) passes on SQLite in memory, on SQLite file and on Postgres 16.15 with pgvector 0.6.0. Postgres 15, 17, 18 and 19 and pgvector 0.8 were not run.
 
+### Read against spec 176
+
+- **A relative key is rooted, like every path argument,** so `after="d/x"` resumes after `/d/x`. Criterion 4's relative case is read that way: a key outside the listing is refused, and a relative key names the path beneath the root.
+- **A road directory counts toward `limit` and can be the key,** where spec 176 section 2.4 says it does neither. The key still names only a row the caller was shown, and a page never exceeds its limit.
+- **A SQLite live page is pinned to its partial index** by `INDEXED BY`, declared as `live_index_hint` on the dialect profile. A mass delete leaves SQLite's statistics counting the tombstones in the live index, and the planner then took the full path index. Postgres takes no hint and keeps its own statistics.
+
 ### Not built, and why
 
 - The fronts, by decision 5.

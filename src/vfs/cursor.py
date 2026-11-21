@@ -25,9 +25,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from vfs.paths import TRASH_ROOT, Path, address_of, local_after, rebase_overflows, resolve_path
+from vfs.paths import Path, local_after, rebase_overflows, resolve_path
 from vfs.results import Result
-from vfs.results.paging import paged
+from vfs.results.paging import FOREIGN_KEY, paged, resumes
 from vfs.storage import SupportsTraits
 
 if TYPE_CHECKING:
@@ -36,9 +36,6 @@ if TYPE_CHECKING:
     from vfs.ops import Op
 
 ListingOp = Literal["ls", "tree", "glob"]
-
-# The words of the refusal of a key that cannot resume the listing it was given to.
-FOREIGN_KEY = "the key is not in this listing"
 
 # ---------------------------------------------------------------------------
 # The cursor of one call
@@ -87,12 +84,7 @@ class Cursor:
         if self.after is None or mount is None or rel is None:
             return None
         local = local_after(self.after, mount)
-        if local.key is None:
-            return FOREIGN_KEY
-        stored = address_of(str(rel)).stored
-        if self.op == "ls" and (rel == TRASH_ROOT or (local.key != stored and local.key.parent_dir == stored)):
-            return None
-        if self.op == "tree" and local.key != stored and (stored == "/" or local.key.startswith(stored + "/")):
+        if self.op == "glob" or (local.key is not None and resumes(self.op, str(rel), local.key)):
             return None
         return FOREIGN_KEY
 
