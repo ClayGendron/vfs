@@ -43,9 +43,9 @@ Nothing of the shell is built. The earlier spec designed a bash subset with a Py
 
 12. **The referee is bash.** The corpus is scripts written here, one construct to a file, walking the bash manual and the POSIX shell chapter section by section. A container image of bash 5.3 and GNU coreutils, pinned by digest, runs each script once in a fresh copy of a small seed tree, with a fixed environment, and its standard output, standard error and exit status are committed beside the script. Tests never run bash. Standard output and status are compared exactly; standard error is compared as empty or not, unless a case asks for its text.
 
-13. **One suite may be copied, once, apart.** A published conformance suite is copied one time when its licence permits, under the exception this change adds to `AGENTS.md`. The files stay unmodified in `tests/shell/vendored/<suite>/`, beside the licence text and an `ATTRIBUTION.md` naming the source, the commit, the date and the licence. An adapter reads the suite's own format. A suite under a copyleft licence is not copied. The Oils spec suite is the first candidate; its licence is checked at the commit copied, and the check is recorded in the attribution file.
+13. **The whole suite is written here; no suite is copied.** Every case is a script written for this corpus, and bash's record is its answer, so no other project's expected outputs are needed. The Oils spec suite was measured as the candidate for a copy and not taken: 223 files, 72,692 lines and 3,966 cases, about 2,800 of them shell cases, under Apache 2.0. A copy would carry its files, its licence text and its attribution into any package the shell becomes, and its format marks each shell's differences inline, which an adapter would have to read. Two things stand in for what a copy would give. A differential fuzzer, run outside the gate, generates scripts from the grammar, runs each through the shell and through the pinned bash, and every disagreement is written up as a new case of the corpus. And for a number other projects also publish, the Oils suite is run from a pinned commit of the sibling clone when the score is measured; it is never committed and never in the gate.
 
-14. **A red suite lives in a green tree.** `tests/shell/known_failures.txt` lists every case that does not yet pass. The gate fails when an unlisted case fails, and also when a listed case passes, so the list can only shrink and is always exact. One command prints the score: cases passing over cases total, by area and in all, for the own corpus and the vendored suite apart. That number is the measure of the work.
+14. **A red suite lives in a green tree.** `tests/shell/known_failures.txt` lists every case that does not yet pass. The gate fails when an unlisted case fails, and also when a listed case passes, so the list can only shrink and is always exact. One command prints the score: cases passing over cases total, by area and in all. That number is the measure of the work.
 
 15. **The crate builds for WebAssembly as well as natively.** Because the machine does no IO and has one entry, it compiles to `wasm32-unknown-unknown` with no change, and the gate builds that target from the first crate commit. Run natively, the walls of decisions 6 to 9 are held by the crate's own counting and lints. Run inside a WebAssembly runtime, the runtime adds a second wall from outside: its own instruction count, a hard memory limit, a deadline it can enforce mid-step, and a trap in place of a process abort on a stack overflow or a failed allocation. The machine's own fuel and byte counts stay in both, because they give the classified error and do not change with the compiler. Which of the two the vfs host runs is a choice to confirm, after step 0 measures it.
 
@@ -60,7 +60,7 @@ Nothing of the shell is built. The earlier spec designed a bash subset with a Py
 The suite is built before the interpreter. It has five layers.
 
 - **Conformance, own corpus.** `tests/shell/cases/<area>/<name>.sh` with its record `<name>.json`. A case that uses only builtins is the language tier and runs against `MemoryHost` under `cargo test` and against the vfs host under `pytest`. A case that uses programs is the program tier. The areas follow the manual: quoting, parameters, each expansion, word splitting, filename expansion, redirections, here-documents, pipelines, lists, each compound command, functions, arrays, arithmetic, conditional expressions, each builtin, `set -e`, exit statuses, syntax errors, refusals, budgets. The target is at least 2,000 cases before any interpreter code.
-- **Conformance, vendored.** The copied suite through its adapter, scored apart.
+- **What the fuzzer found.** Each disagreement the differential fuzzer finds between the shell and bash becomes a recorded case under `tests/shell/cases/found/`, and stays.
 - **The measured corpus.** The weighted 100-command sample from the earlier study parses 100 of 100, and its run rate is published.
 - **Laws.** Equal key lists and equal fuel across two runs. Output unchanged whatever the chunk boundaries. Each budget ends a counted input at exactly its count. The two fuzz targets. The source greps of decisions 1, 4 and 9.
 - **The vfs host.** Every request reaches a public verb with the admitted authority (spied, N calls and N matches). Two authorities see different `ls /`. The system actor is refused.
@@ -70,7 +70,7 @@ The suite is built before the interpreter. It has five layers.
 The order of work. Each step ends with the gate green and the score printed.
 
 0. Research and spec review. The prior art above is studied for five questions: how fuel and interruption are counted, how an interpreter pauses at a host call and resumes, how memory is bounded without measuring the process, what each bash-in-Rust project's suite covers, and what running the machine inside a WebAssembly runtime costs (the size it adds to an install, the first load, and each call across the boundary, counted against about 20 calls a second at peak). The spec is reviewed before anything is built.
-1. The harness: the recorder script, the seed tree, the case format, the runner with the known-failures list, the score command, the vendored suite with its licence record, and the corpus recorded. Every case is listed as failing. No interpreter code exists yet.
+1. The harness: the recorder script, the seed tree, the case format, the runner with the known-failures list, the score command, and the corpus written and recorded. Every case is listed as failing. No interpreter code exists yet. The differential fuzzer joins in step 3, when there is a machine to compare.
 2. The crate, its lints and greps, `MemoryHost`, the lexer and the parser, and the parser fuzz target. Every corpus script parses; every malformed case classifies.
 3. The machine: simple commands, variables, quoting, the expansions, the first builtins, fuel, memory and the slice.
 4. Pipelines, redirections, here-documents, lists, exit statuses, bounded queues, request keys.
@@ -82,7 +82,7 @@ Out of scope here: the durable run itself, tools and guests, `awk` and `jq`, and
 
 How the work is run, so that it can run unattended from the first step to the last.
 
-- **Each step is one pull request to `dev`.** It is opened when the step's gate is green and its code review says it lands. The next step starts from that tip and does not wait for the merge; `dev` is merged in when it moves.
+- **Work is committed and pushed to this branch as it goes, and one pull request is opened when the last step is done.** This is ruled: the push to this branch needs no asking, and no pull request is opened before the end. Each step is still closed by `scripts/ci.sh` green and by a code review from a fresh reviewer, whose file is committed with the step, so the final pull request is a set of steps already reviewed. `dev` is merged into the branch when it moves, so the branch does not drift.
 - **The gate grows with the work.** Step 1 adds the corpus runner and the score to `scripts/ci.sh` and the workflows. Step 2 adds `cargo test -p vfs-shell`, the clippy denials and the `wasm32-unknown-unknown` build. Step 6 brings the Python under the 100% coverage gate and runs the Postgres leg. The wheel budget and a line ratchet are raised only by a named entry with its reason.
 - **`progress.md` in this work directory is rewritten at every commit.** It holds the step in hand, the score, what was decided inside the laws, what was reported and not taken, and what is next. A session that starts cold reads this spec and that file, and needs nothing else.
 - **Inside the laws, the design is free.** The request types, the shape of the AST, the module layout and the order of cases within a step are decided as the work goes. A change to a decision above, to what a budget means, to a public name of vfs, or to a rule of `AGENTS.md` is reported and not taken.
@@ -90,14 +90,14 @@ How the work is run, so that it can run unattended from the first step to the la
 
 Done when, step by step.
 
-- Step 1: at least 2,000 own cases recorded, the vendored suite in place with its licence record, every case listed as failing, and the score printed by one command.
+- Step 1: at least 2,000 cases written and recorded, every case listed as failing, and the score printed by one command.
 - Steps 2 to 5: no language-tier case of the own corpus is left in the known-failures list, the laws hold, and both fuzz targets pass their declared iterations.
-- Steps 6 and 7: no own case is left in the known-failures list, the measured sample runs at 85% or more, every failing vendored case is named with its reason, and the acceptance of the roadmap's stories F1 to F4 and F7 is met or reported as not met with the reason.
+- Steps 6 and 7: no case is left in the known-failures list, the measured sample runs at 85% or more, the fuzzer's last declared run finds no new disagreement, the Oils rate is measured and published with its commit, and the acceptance of the roadmap's stories F1 to F4 and F7 is met or reported as not met with the reason.
 
 ## Not checked
 
 - No prior-art clone's source was read for this spec; the five research questions are open work, not findings. Of `../wasi_python`, only the README's account of its limits was read: instructions, time, memory, output and open files each have a cap, and the result says which one ended a call. The host's limits here follow that vocabulary.
-- The licence of the Oils spec suite was not checked at a refreshed commit.
+- The Oils suite was counted in the sibling clone at commit `bdc8364` of 2026-10-15, not refreshed; its files were counted and not read.
 - The recorder was not written or run; Docker was not running when this was written.
 - The seed cases under `tests/shell/cases/` have no record yet.
 - Whether the request-and-reply shape serves a streaming program stage without copying each chunk twice across the binding is not measured.
@@ -108,8 +108,6 @@ Done when, step by step.
 - The crate's name, should it be published apart.
 - The bash version pinned as referee: 5.3 is taken here.
 - Whether the dependency list of the crate is empty or a short declared list (a regular-expression engine for `=~` is the first candidate). It is taken as empty until a case needs one, and each addition is reported.
-- Whether an unattended run may push this branch and open its pull requests without asking each time. `AGENTS.md` asks before every push, so the grant is stated in the run's starting prompt or the run stops at its first push.
-
 None of these stops steps 0 to 5: the native build under `cargo test` serves them all.
 
 ## One line
