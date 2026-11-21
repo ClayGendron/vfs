@@ -59,10 +59,10 @@ check_wheel_size() {
 # The shell crate: its lints, its tests (the corpus against the known-failures
 # list, the laws and the source rules) and its WebAssembly build.
 check_shell() {
-    cargo clippy -q -p vfs-shell --all-targets -- -D warnings || return 1
-    cargo fmt -p vfs-shell --check || return 1
-    cargo test -q --release -p vfs-shell || return 1
-    cargo build -q --release -p vfs-shell --target wasm32-unknown-unknown || return 1
+    cargo clippy -q -p vfs-shell -p vfs-shell-wasm --all-targets -- -D warnings || return 1
+    cargo fmt -p vfs-shell -p vfs-shell-wasm --check || return 1
+    cargo test -q --release -p vfs-shell -p vfs-shell-wasm || return 1
+    cargo build -q --release -p vfs-shell -p vfs-shell-wasm --target wasm32-unknown-unknown || return 1
     scripts/shell_score.sh | tail -1
 }
 

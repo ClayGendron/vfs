@@ -32,13 +32,13 @@ jobs:
         run: rustup target add wasm32-unknown-unknown && rustup component add clippy rustfmt
 
       - name: Lint the shell crate
-        run: cargo clippy -p vfs-shell --all-targets -- -D warnings && cargo fmt -p vfs-shell --check
+        run: cargo clippy -p vfs-shell -p vfs-shell-wasm --all-targets -- -D warnings && cargo fmt -p vfs-shell -p vfs-shell-wasm --check
 
       - name: Test the shell crate
-        run: cargo test --release -p vfs-shell
+        run: cargo test --release -p vfs-shell -p vfs-shell-wasm
 
       - name: Build the machine for WebAssembly
-        run: cargo build --release -p vfs-shell --target wasm32-unknown-unknown
+        run: cargo build --release -p vfs-shell -p vfs-shell-wasm --target wasm32-unknown-unknown
 
       - name: Print the corpus score
         run: scripts/shell_score.sh

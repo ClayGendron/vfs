@@ -33,6 +33,10 @@ pub struct Outcome {
 pub struct MemoryHost {
     nodes: BTreeMap<String, Node>,
     random: u64,
+    /// The most bytes one read answers with, to move chunk boundaries.
+    pub read_chunk: Option<u64>,
+    /// Answer each step's requests last first, to move arrival order.
+    pub reverse_replies: bool,
 }
 
 impl Default for MemoryHost {
@@ -48,6 +52,8 @@ impl MemoryHost {
         MemoryHost {
             nodes,
             random: 12345,
+            read_chunk: None,
+            reverse_replies: false,
         }
     }
 
@@ -117,6 +123,9 @@ impl MemoryHost {
             for (key, request) in step.requests {
                 outcome.requests.push(format!("{key} {request:?}"));
                 replies.push((key, self.answer(&request)));
+            }
+            if self.reverse_replies {
+                replies.reverse();
             }
             match step.status {
                 Status::Running => {}

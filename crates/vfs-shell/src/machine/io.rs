@@ -46,6 +46,8 @@ pub struct Hub {
     pub last_sub_status: Option<i32>,
     /// How deep in command substitutions the walk is, for `set -x`.
     pub sub_depth: u32,
+    /// A host's own test of whether this step's slice is spent, when it counts fuel itself.
+    pub probe: Option<Box<dyn FnMut() -> bool>>,
 }
 
 pub type HubRef = Rc<RefCell<Hub>>;
@@ -72,6 +74,7 @@ impl Hub {
             job_status: BTreeMap::new(),
             last_sub_status: None,
             sub_depth: 0,
+            probe: None,
         }
     }
 
@@ -197,7 +200,14 @@ impl Future for Checkpoint {
             return Poll::Ready(Err(Fatal::Cancelled));
         }
         hub.tick();
-        if this.waited || hub.ticks < hub.slice_end {
+        if this.waited {
+            return Poll::Ready(Ok(()));
+        }
+        let spent = match hub.probe.as_mut() {
+            Some(probe) => probe(),
+            None => hub.ticks >= hub.slice_end,
+        };
+        if !spent {
             return Poll::Ready(Ok(()));
         }
         this.waited = true;

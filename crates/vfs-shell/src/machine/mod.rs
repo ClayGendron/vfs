@@ -366,6 +366,11 @@ impl Machine {
         self.hub.borrow_mut().cancelled = true;
     }
 
+    /// Let the host judge when a step's slice is spent, in place of the machine's own count.
+    pub fn set_slice_probe(&mut self, probe: Box<dyn FnMut() -> bool>) {
+        self.hub.borrow_mut().probe = Some(probe);
+    }
+
     /// Bytes the machine holds now, as it counts them.
     pub fn memory_used(&self) -> usize {
         self.hub.borrow().memory_used

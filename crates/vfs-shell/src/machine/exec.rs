@@ -558,7 +558,6 @@ fn exec_compound<'b>(
                 sh.loop_depth = sh.loop_depth.saturating_add(1);
                 let result: Status = async {
                     loop {
-                        sh.hub.borrow_mut().count_iteration()?;
                         io::checkpoint(&sh.hub).await?;
                         let outer = sh.in_condition;
                         sh.in_condition = true;
@@ -583,6 +582,8 @@ fn exec_compound<'b>(
                         if (tested == 0) == *until {
                             break;
                         }
+                        // An iteration is a run of the body; the last test that ends the loop is not one.
+                        sh.hub.borrow_mut().count_iteration()?;
                         match exec_list(ctx, sh, body).await {
                             Ok(code) => status = code,
                             Err(Flow::Break(n)) => {
@@ -663,7 +664,6 @@ fn exec_compound<'b>(
                 sh.loop_depth = sh.loop_depth.saturating_add(1);
                 let result: Status = async {
                     loop {
-                        sh.hub.borrow_mut().count_iteration()?;
                         io::checkpoint(&sh.hub).await?;
                         if let Some(word) = test {
                             let text = expand_single(ctx, sh, word, Mode::Single).await?;
@@ -671,6 +671,7 @@ fn exec_compound<'b>(
                                 break;
                             }
                         }
+                        sh.hub.borrow_mut().count_iteration()?;
                         match exec_list(ctx, sh, body).await {
                             Ok(code) => status = code,
                             Err(Flow::Break(n)) => {

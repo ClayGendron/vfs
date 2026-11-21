@@ -1,7 +1,13 @@
 //! The rules the crate's own source is held to: it names no host, it can
 //! reach no file, process, network, environment, thread or clock, and it
 //! holds no unsafe code.
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::string_slice,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing
+)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,22 +42,74 @@ fn no_identifier_names_the_first_host() {
     }
 }
 
+/// The modules of `std` that reach past the machine.
+const FORBIDDEN: &[&str] = &["fs", "process", "net", "env", "thread", "time", "os", "io"];
+
+/// The names a path through `std` reaches, grouped imports included.
+fn std_paths(code: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = code;
+    while let Some(at) = rest.find("std::") {
+        let after = &rest[at + 5..];
+        if let Some(group) = after.strip_prefix('{') {
+            let end = group.find('}').unwrap_or(group.len());
+            for item in group[..end].split(',') {
+                let name = item
+                    .trim()
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("");
+                found.push(name.to_owned());
+            }
+        } else {
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            found.push(name);
+        }
+        rest = &rest[at + 5..];
+    }
+    found
+}
+
 #[test]
 fn nothing_reaches_past_the_machine() {
-    let forbidden = [
-        "std::fs",
-        "std::process",
-        "std::net",
-        "std::env",
-        "std::thread",
-        "std::time",
-        "std::os",
-    ];
     for (path, text) in sources() {
-        for name in forbidden {
-            assert!(!text.contains(name), "{} uses {name}", path.display());
+        let code: String = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in std_paths(&code) {
+            assert!(
+                !FORBIDDEN.contains(&name.as_str()),
+                "{} reaches std::{name}",
+                path.display()
+            );
+        }
+        for token in [
+            "fs::File",
+            "process::Command",
+            "TcpStream",
+            "UdpSocket",
+            "SystemTime",
+            "Instant::",
+            "thread_local!",
+            "extern crate",
+        ] {
+            assert!(!code.contains(token), "{} uses {token}", path.display());
         }
     }
+}
+
+#[test]
+fn the_rule_sees_a_grouped_import() {
+    assert_eq!(
+        std_paths("use std::{env as _e, fs as _f, process as _p};"),
+        vec!["env", "fs", "process"]
+    );
+    assert_eq!(std_paths("let x = std::fs::read(p);"), vec!["fs"]);
 }
 
 #[test]
