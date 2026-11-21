@@ -9,6 +9,7 @@ from collections.abc import Sequence
 PROTOCOL_VERSION: int
 LEXICAL_UNICODE_VERSION: str
 LEXICAL_PYTHON_VERSION: str
+SHELL_PROGRAMS: list[str]
 
 def distinct_gram_count(data: bytes, cap: int) -> int: ...
 def supported_grammars() -> list[str]: ...
@@ -70,3 +71,24 @@ class ContentMatcher:
     def hit_lines(
         self, bodies: list[bytes], *, before: int, after: int, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[list[tuple[int, int, int, bytes]]], bool]: ...
+
+class ShellMachine:
+    def __init__(
+        self,
+        source: str,
+        *,
+        env: list[tuple[str, str]],
+        cwd: str,
+        name: str,
+        args: list[str],
+        stdin: bytes,
+        programs: list[str],
+        pid: int,
+        limits: dict[str, int] | None = None,
+    ) -> None: ...
+    def step(
+        self, replies: list[tuple[str, str, object]]
+    ) -> tuple[list[tuple[int, bytes]], list[tuple[str, str, dict[str, object]]], tuple[str, int, str | None]]: ...
+    def cancel(self) -> None: ...
+    @property
+    def memory_used(self) -> int: ...

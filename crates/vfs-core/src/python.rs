@@ -641,6 +641,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PROTOCOL_VERSION", PROTOCOL_VERSION)?;
     m.add("LEXICAL_UNICODE_VERSION", lexical::UNICODE_VERSION)?;
     m.add("LEXICAL_PYTHON_VERSION", lexical::PYTHON_VERSION)?;
+    m.add("SHELL_PROGRAMS", shell::programs::NAMES.to_vec())?;
     m.add_function(wrap_pyfunction!(distinct_gram_count, m)?)?;
     m.add_function(wrap_pyfunction!(supported_grammars, m)?)?;
     m.add_function(wrap_pyfunction!(chunk_spans, m)?)?;
@@ -661,5 +662,6 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ContentMatcher>()?;
     m.add_class::<GlobProgram>()?;
     m.add_class::<GlobSet>()?;
+    m.add_class::<crate::shell_binding::ShellMachine>()?;
     Ok(())
 }

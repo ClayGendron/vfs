@@ -664,7 +664,8 @@ impl<'a> Parser<'a> {
     fn at_command_end(&self) -> bool {
         match self.peek() {
             None => true,
-            Some(byte) => matches!(byte, b'\n' | b';' | b'&' | b'|' | b')'),
+            Some(b'&') => !self.starts_with("&>"),
+            Some(byte) => matches!(byte, b'\n' | b';' | b'|' | b')'),
         }
     }
 

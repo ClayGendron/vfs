@@ -112,7 +112,18 @@ This review is a fresh reading, independent of the drafting, of [the spec](../sp
 
 ## Disposition
 
-This section awaits the answer to each finding.
+- **H1.** Taken in part. The requests gained the verb-shaped forms: `mkdir`, `remove` (a recursive one is one `delete(cascade=True)`), `copy`, `move`, `touch` (an if-absent write), and `write` with truncate, append and create-new modes, so `>>` is one append write per flush. Not taken: `grep -r` and `find` still walk through `list` and `read`; a host-answered `grep` request that reaches the indexed verb is reported.
+- **H2.** Taken inside the laws. A key is the path of the task in the walk (one index for each enclosing pipeline stage, subshell, substitution and job) and the ordinal of the request within that task; loop iterations and function calls advance the ordinal. `tests/laws.rs` holds that two runs ask equal key lists and that replies given in reverse order change nothing. Spec 177's fingerprint is not carried; reported.
+- **H3.** Decided: the refused words are `eval`, `source`, `.`, `exec`, `trap`, `jobs`, `fg`, `bg`, `disown`, `suspend`, `alias`, `unalias` and the `coproc` keyword; `&` and `wait` run. `source` of a literal path, read before the walk, is reported and not built.
+- **H4.** The push happens once, with the pull request, at the request made in the session that ran this work. AGENTS.md is unchanged.
+- **H5.** The vfs host drives the native build through `vfs-core`'s binding; the module builds and its laws run under `wasmi`, a test dependency. Linking `wasmtime` into the extension, which `research-runtime.md` measures at about 3.5 MB of wheel, is reported and not taken. The defaults are named constants: 64 MiB of counted memory, 1,000,000 loop iterations, a function depth of 256, and a slice of 10,000 machine checkpoints natively.
+- **M1.** Taken. The slice is the machine's own checkpoints on the native build and the host import `host.slice_spent` on the module; a fuel trap ends the line and the instance.
+- **M2.** Not taken; reported.
+- **M3.** Reported: F1's removal of `SupportsRun`, `move(replace=)` and `glob(case_mode=)` are not built. The work lands as one pull request.
+- **M4.** The score is `scripts/shell_score.sh`. The fuzz targets declare 20,000 and 1,500 iterations in `crates/vfs-shell/tests/laws.rs`. The measured sample and the Oils rate are reported in `progress.md`.
+- **M5.** The facts are in `progress.md`; the spec text is unchanged.
+- **M6.** Taken. Every budget is a field a host sets in either direction (`Limits`, and `limits=` of `vfs.shell.run_line`).
+- **L1 to L11.** L2 holds: the machine's maps are ordered. L6 holds: one list serves every host. L9 is run before the pull request. The rest are reported and not taken.
 
 ## Verdict
 

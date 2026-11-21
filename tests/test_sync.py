@@ -251,7 +251,7 @@ def test_every_session_coroutine_has_a_sync_twin(name: str) -> None:
 
 
 def test_the_constructors_and_the_context_managers_are_twins() -> None:
-    assert len(SESSION_COROUTINES) == len(ALL_OPS) + 1
+    assert len(SESSION_COROUTINES) == len(ALL_OPS) + 2  # close, and cli, which is no op
     _assert_twins(AsyncVirtualFileSystem.__init__, VirtualFileSystem.__init__)
     _assert_twins(AsyncSession.__init__, Session.__init__)
     _assert_twins(AsyncVirtualFileSystem.open_session, VirtualFileSystem.open_session)
@@ -687,7 +687,7 @@ def test_sync_closed_is_final() -> None:
 
 
 def test_the_management_allowlist_is_owned_by_ops() -> None:
-    expected = {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
+    expected = {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge", "cli"}
     assert frozenset(expected) == MANAGEMENT_METHODS
     assert "MANAGEMENT_METHODS = " not in (REPO / "tests" / "test_ops.py").read_text()
 

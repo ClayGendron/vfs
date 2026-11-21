@@ -99,7 +99,21 @@ Records: `confirmed` medium, a 445-byte line aborts a debug-build host on a 1 Mi
 
 ## Disposition
 
-Awaits the author: one line per finding, H1 to L6.
+- **H1.** Fixed: a failed `((` or `$((` reading rewinds the position, the depth and the pending here-documents together.
+- **H2.** Fixed: a `)` that closes nothing at depth zero ends the arithmetic reading, so the text is read as subshells.
+- **H3.** Fixed: a here-document opened inside a here-document body's `$( )` is refused as a syntax error, never misread.
+- **H4.** Fixed: both fuzz targets are in `crates/vfs-shell/tests/laws.rs`, with the budgets' exact-count laws.
+- **H5.** Fixed: the source rule reads grouped `std::{...}` imports, with its own test.
+- **H6.** Fixed: `ruff` and `ty` exclude the seed tree, which is data the cases read.
+- **M1.** The machine now runs every case, so the trees are exercised by 3,000 and more passing cases.
+- **M2.** Not taken: compound commands carry no span of their own; reported.
+- **M3.** The depth law refuses input nested 100,000 deep; a law on a debug build's small stack is not written; reported.
+- **M4.** Taken: a refused word reached at run time (`command eval`, a computed name) ends the line with status 2.
+- **M5.** Fixed: the 35 delta cases carry their `.shell.json` records.
+- **M6.** Not taken: the recorder shares one container per batch and records carry no script hash; reported.
+- **M7.** Not taken: nothing yet stops the known-failures list from growing on `--write`; reported.
+- **M8.** Fixed: `MemoryHost` is built.
+- **L1 to L6.** Not taken; reported.
 
 ## Verdict
 

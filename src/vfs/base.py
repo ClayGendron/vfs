@@ -119,6 +119,7 @@ from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity
 from vfs.session import AsyncSession
+from vfs.shell import LineResult, run_line
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -1652,6 +1653,30 @@ class AsyncVirtualFileSystem:
     # -------------------------------------------------------------------
     # public methods — execution
     # -------------------------------------------------------------------
+
+    async def cli(
+        self,
+        line: str,
+        *,
+        cwd: str = "/",
+        stdin: bytes = b"",
+        authority: Authority | None = None,
+    ) -> LineResult:
+        """Run a line of bash, with every effect of it a public verb called as the caller.
+
+        The line is parsed whole before anything runs, so a syntax error, a refused construct
+        (``eval``, ``exec``, ``trap``, ``source`` and job control past the call) or a spent budget
+        fails the call and changes nothing. Then each file the line reads, lists or writes is a call
+        of :meth:`read`, :meth:`stat`, :meth:`ls`, :meth:`write`, :meth:`mkdir`, :meth:`delete`,
+        :meth:`copy` or :meth:`move` with ``authority``, so the line can do nothing the caller could
+        not. A line never runs as the system actor.
+
+        The call returns a :class:`Result` with ``stdout`` and ``stderr`` as bash prints them and
+        ``exit_status`` as bash would exit. A program's own non-zero status is not a failure of the
+        call; a verb a program was refused is kept on the result as a warning.
+        """
+        who = caller_for(authority, self._default_authority, op="cli")
+        return await run_line(self, line, who, cwd=cwd, stdin=stdin)
 
     async def run(
         self,

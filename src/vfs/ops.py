@@ -106,7 +106,7 @@ ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
 
 MANAGEMENT_METHODS: Final[frozenset[str]] = frozenset(
-    {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
+    {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge", "cli"}
 )
 """The router's public coroutines that manage the mount tree rather than route an op.
 They are not ops; the router's public surface is exactly ``ALL_OPS | MANAGEMENT_METHODS``,
