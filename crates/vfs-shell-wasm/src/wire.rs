@@ -868,8 +868,22 @@ impl Reader<'_> {
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/// Each byte's sextet, or `INVALID` for a byte that is no base64 digit: one lookup per byte.
+// Built at compile time, where an index out of range fails the build and never a call.
+#[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+const DECODE: [u8; 256] = {
+    let mut table = [INVALID; 256];
+    let mut index = 0;
+    while index < ALPHABET.len() {
+        table[ALPHABET[index] as usize] = index as u8;
+        index += 1;
+    }
+    table
+};
+const INVALID: u8 = 0xff;
+
 pub fn base64_encode(bytes: &[u8]) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3).saturating_mul(4));
     for chunk in bytes.chunks(3) {
         let b0 = u32::from(chunk.first().copied().unwrap_or(0));
         let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
@@ -888,14 +902,15 @@ pub fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn base64_decode(text: &str) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity((text.len() / 4).saturating_mul(3));
     let mut buffer = 0u32;
     let mut bits = 0u32;
     for byte in text.bytes() {
-        let Some(value) = ALPHABET.iter().position(|b| *b == byte) else {
+        let value = DECODE.get(usize::from(byte)).copied().unwrap_or(INVALID);
+        if value == INVALID {
             continue;
-        };
-        buffer = (buffer << 6) | u32::try_from(value).unwrap_or(0);
+        }
+        buffer = (buffer << 6) | u32::from(value);
         bits = bits.saturating_add(6);
         if bits >= 8 {
             bits = bits.saturating_sub(8);

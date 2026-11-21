@@ -4,7 +4,7 @@ A draft, written on 2026-11-21 from the structural review of the shell (`agents/
 
 ## The outcome wanted
 
-`grep -rn mfa /enterprise | head -20` costs one call of the `grep` verb, not one `read` for each file beneath the root, and `find /docs -name '*.md'` one call of `glob`. `traverse`, `grant`, `revoke`, `grants`, `edit`, `mkedge` and `rmedge` run as programs of the shell, each one call of its verb as the caller. A caller of `cli` can lower the line's budgets.
+`grep -rn mfa /enterprise | head -20` costs one call of the `grep` verb, not one `read` for each file beneath the root, and `find /docs -name '*.md'` one call of `glob`. `traverse`, `grant`, `revoke`, `grants`, `edit`, `mkedge` and `rmedge` run as programs of the shell, each one call of its verb as the caller.
 
 ## Builds on
 
@@ -13,7 +13,6 @@ The program request of `agents/2026-11-21-the-shell-speaks-bash/spec.md`: a name
 ## The problem
 
 - The library's `grep -r` and `find` walk with `list` and `read`: 200 files under a root cost 200 `read` calls, and every body is held for the line. At the reference deployment's ten million files the roadmap's example is ten million calls.
-- `cli` takes no `limits`, `fuel` or `deadline`; only `vfs.shell.run_line` does.
 
 ## Decisions
 
@@ -21,11 +20,11 @@ The program request of `agents/2026-11-21-the-shell-speaks-bash/spec.md`: a name
 2. The host's `grep` prints exactly what GNU grep prints for the rows the verb returns; the corpus's program-tier `grep -r` cases are run through the vfs host to hold it.
 3. `find` is served from `glob` for the `-name`, `-type` and `-path` forms, and from the library otherwise.
 4. Each verb with no Unix name is one entry of `_PROGRAMS`, with a usage line on a bad argument and status 2.
-5. `cli` gains `limits`, `fuel` and `deadline`, named as `run_line` names them. This changes a public signature.
+5. A redirection opens its file with a write of no bytes when its command could act first, so the caller's refusal is known before the command runs. Once the roadmap's write planning (`write(plan=True)`) lands, that opening write becomes a plan call and one write holds everywhere. Library programs that only read (`grep`, `sort`, `head`, `sed` without `-i`) could defer their file as `echo` does now.
 
 ## Tests
 
-A spied test counts one `grep` verb call for `grep -rn x /docs` over 200 files and the same stdout as the library's; one per verb program; `cli(limits=...)` ends a loop at a lowered budget.
+A spied test counts one `grep` verb call for `grep -rn x /docs` over 200 files and the same stdout as the library's; one per verb program.
 
 ## Scope
 
