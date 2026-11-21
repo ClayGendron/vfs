@@ -74,6 +74,47 @@ async def cancelled_while_it_waits(attempt: Waiting, message: str = "the caller 
     return raised.value
 
 
+async def cancelled_with(messages: list[str | None]) -> asyncio.CancelledError:
+    """Cancel the caller of an attempt that waits once for each of *messages*, let it go, and return what it raised."""
+    attempt = Waiting()
+    caller = asyncio.ensure_future(run_out_of_reach(attempt))
+    await attempt.started.wait()
+    for message in messages:
+        caller.cancel(message)
+        await turns_of_the_loop()
+    attempt.let_go()
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await caller
+    return raised.value
+
+
+def chain_of(cancellation: BaseException) -> list[tuple[Any, ...]]:
+    """The arguments of *cancellation* and of each error behind it, as a canceller that looks for its own reads them."""
+    found: list[tuple[Any, ...]] = []
+    error: BaseException | None = cancellation
+    while error is not None:
+        found.append(error.args)
+        error = error.__context__
+    return found
+
+
+@pytest.fixture
+def thrown(monkeypatch: pytest.MonkeyPatch) -> list[BaseException]:
+    """Every cancellation that the wait of a caller is thrown, in order, as the very errors."""
+    seen: list[BaseException] = []
+    wait = asyncio.wait
+
+    async def recording(tasks: Any) -> Any:
+        try:
+            return await wait(tasks)
+        except asyncio.CancelledError as error:
+            seen.append(error)
+            raise
+
+    monkeypatch.setattr(asyncio, "wait", recording)
+    return seen
+
+
 def failing(error: BaseException) -> Callable[[], Any]:
     def fail() -> Any:
         raise error
@@ -169,19 +210,39 @@ class TestACancelledCaller:
         raised = await cancelled_while_it_waits(Waiting(), "the scope ran out")
         assert raised.args == ("the scope ran out",)
 
-    async def test_a_caller_cancelled_twice_is_raised_the_first_cancellation(self) -> None:
+    async def test_the_error_raised_is_the_very_one_the_caller_was_cancelled_with(
+        self, thrown: list[BaseException]
+    ) -> None:
+        """Guards the raise: a new error with the same message is not the one a canceller holds on to."""
+        raised = await cancelled_with(["mine"])
+        assert [raised] == thrown
+
+    async def test_a_caller_cancelled_twice_is_raised_the_first_cancellation(self, thrown: list[BaseException]) -> None:
         """Guards which cancellation is kept: the last one would hide the canceller that came first."""
-        attempt = Waiting()
-        caller = asyncio.ensure_future(run_out_of_reach(attempt))
-        await attempt.started.wait()
-        caller.cancel("first")
-        await turns_of_the_loop()
-        caller.cancel("second")
-        await turns_of_the_loop()
-        attempt.let_go()
-        with pytest.raises(asyncio.CancelledError) as raised:
-            await caller
-        assert raised.value.args == ("first",)
+        raised = await cancelled_with(["first", "second"])
+        assert raised is thrown[0]
+        assert raised.args == ("first",)
+
+    async def test_a_later_cancellation_of_another_canceller_is_found_behind_the_first(
+        self, thrown: list[BaseException]
+    ) -> None:
+        """A canceller that looks for its own cancellation behind the one raised finds it.
+
+        Guards the chain: a time limit cancels with no message and a cancel scope
+        with its own, and with only the first raised the scope does not know its cancellation.
+        """
+        raised = await cancelled_with([None, "the scope's"])
+        assert raised is thrown[0]
+        assert raised.__context__ is thrown[1]
+        assert chain_of(raised) == [(), ("the scope's",)]
+
+    async def test_a_canceller_that_cancels_again_and_again_is_behind_the_first_once(self) -> None:
+        """Guards the test for a message already kept: a scope cancels at every turn of the loop while it waits."""
+        raised = await cancelled_with(["a scope's", "a scope's", "another's", "a scope's", "another's"])
+        assert chain_of(raised) == [("a scope's",), ("another's",)]
+
+    async def test_a_caller_cancelled_once_is_raised_a_cancellation_with_nothing_behind_it(self) -> None:
+        assert chain_of(await cancelled_with(["mine"])) == [("mine",)]
 
     async def test_the_attempt_runs_on_to_its_end(self) -> None:
         """Guards ``run_out_of_reach``: an attempt that is cancelled with its caller never reaches its end."""
@@ -259,6 +320,25 @@ class TestAnAttemptNobodyCancelled:
         assert kept.sent == [ADD_TWO]
         assert await kept.rows() == [1, 2]
 
+    async def test_a_caller_that_was_cancelled_carries_no_mark_of_its_own(self, kept: Kept) -> None:
+        """Guards where the mark is set: in the caller's context it would refuse whatever the caller does next."""
+
+        async def caller() -> None:
+            with pytest.raises(asyncio.CancelledError):
+                await run_out_of_reach(attempt)
+            async with kept.sessions() as session:
+                await session.execute(text(ADD_TWO))
+                await session.commit()
+
+        attempt = Waiting()
+        task = asyncio.ensure_future(caller())
+        await attempt.started.wait()
+        task.cancel()
+        await turns_of_the_loop()
+        attempt.let_go()
+        await task
+        assert await kept.rows() == [1, 2]
+
     async def test_the_mark_of_one_attempt_is_not_seen_by_the_next(self, kept: Kept) -> None:
         await cancelled_while_it_waits(Waiting())
 
@@ -298,6 +378,26 @@ class TestAMarkedAttempt:
 
         refusal = await cancelled_at(gate, attempt)
         assert (str(refusal), kept.sent) == (CANCELLED_ATTEMPT, [ADD_TWO])
+        assert await kept.rows() == [1]
+
+    async def test_it_stays_marked_when_its_caller_is_cancelled_again(self, kept: Kept) -> None:
+        """Guards the mark under a second cancellation: taken off again, the write of a caller cancelled twice lands."""
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.sessions() as session:
+                await session.execute(text(ADD_TWO))
+                await gate()
+                await session.commit()
+
+        caller = asyncio.ensure_future(run_out_of_reach(attempt))
+        await gate.started.wait()
+        for message in ("first", "second"):
+            caller.cancel(message)
+            await turns_of_the_loop()
+        gate.let_go()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
         assert await kept.rows() == [1]
 
     async def test_it_is_refused_the_first_use_of_a_session_and_checks_no_connection_out(self, kept: Kept) -> None:

@@ -22,6 +22,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite.core
+import anyio
 import pytest
 from sqlalchemy import event
 
@@ -540,6 +541,39 @@ class TestTheCallerWaitsForItsAttempt:
             await cancel_while_held(fs.write(path="/a.txt", content="new"), round_trip)
             await collect_what_was_dropped()
         assert reports == []
+        assert (await fs.read("/a.txt")).one().content == "old"
+
+
+class TestACallerCancelledByATimeLimitAndByACancelScope:
+    """Two cancellers of one call: a time limit, which cancels with no message, and a scope, which knows its own by one.
+
+    The time limit is made to run out by a time that has passed, so no test waits on a clock.
+    """
+
+    @ON_EVERY_HOST
+    @pytest.mark.parametrize("first", ["the time limit", "the scope"])
+    async def test_the_scope_knows_its_cancellation_and_what_follows_it_runs(
+        self, fs: AsyncVirtualFileSystem, round_trip: HeldRoundTrip, first: str
+    ) -> None:
+        """Guards the cancellations kept behind the first: with the first alone raised, the scope lets it escape."""
+        round_trip.hold(reads_entries)
+        cancellers: list[Callable[[], Any]] = []
+
+        async def handler() -> tuple[bool, str]:
+            with anyio.CancelScope() as scope:
+                async with asyncio.timeout(None) as limit:
+                    cancellers.extend([lambda: limit.reschedule(0), scope.cancel])
+                    await fs.stat("/a.txt")
+            return scope.cancelled_caught, "ran on after the scope"
+
+        handled = asyncio.ensure_future(handler())
+        await round_trip.reached.wait()
+        for cancel in cancellers if first == "the time limit" else reversed(cancellers):
+            cancel()
+            await turns_of_the_loop()
+        still_waiting = not handled.done()
+        round_trip.let_go()
+        assert (still_waiting, await handled) == (True, (True, "ran on after the scope"))
         assert (await fs.read("/a.txt")).one().content == "old"
 
 

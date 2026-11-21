@@ -10,7 +10,9 @@ writer out.
 
 So on SQLite each attempt runs in a task of its own, and a caller that
 is cancelled waits for its attempt to end before its cancellation is
-raised.
+raised. A caller that was cancelled more than once is raised the first
+cancellation, with each later one of another canceller behind it as its
+``__context__``, so each canceller finds its own.
 
 An attempt whose caller was cancelled is marked, and a marked attempt
 stops. The statement in flight ends, and no other is sent: the next one
@@ -50,6 +52,7 @@ is, or sets the mark to ``None`` first.
 from __future__ import annotations
 
 import asyncio
+import itertools
 from contextlib import suppress
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, TypeVar
@@ -95,12 +98,17 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
     is cancelled while ``attempt`` runs, ``attempt`` is marked and runs on
     until its next refusal. The caller goes on waiting, however many times
     it is cancelled. Once ``attempt`` has ended it raises the first of those
-    cancellations, the same ``CancelledError`` and not a new one, so a
-    canceller that knows its own cancellation by its message still does.
-    What ``attempt`` returned or raised is then dropped.
+    cancellations, the same ``CancelledError`` and not a new one. What
+    ``attempt`` returned or raised is then dropped.
+
+    A caller can have two cancellers, such as a time limit and a cancel
+    scope, and a scope knows its own cancellation by the message on it. So
+    each later cancellation with a message not yet kept is the
+    ``__context__`` of the one kept before it, where a canceller that
+    does not find its message on the error raised looks next.
     """
     mark = _Mark()
-    cancellation: asyncio.CancelledError | None = None
+    cancellations: list[asyncio.CancelledError] = []
 
     async def marked() -> T:
         # Set here, in the attempt's own task: a task cannot set a variable in another's context.
@@ -113,13 +121,17 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
             await asyncio.wait({task})
         except asyncio.CancelledError as raised:
             mark.cancelled = True
-            cancellation = cancellation or raised
-    if cancellation is None:
+            # A scope cancels again at every turn of the loop, so one cancellation is kept for each message.
+            if all(raised.args != kept.args for kept in cancellations):
+                cancellations.append(raised)
+    if not cancellations:
         return task.result()
     # Read what the dropped attempt raised, or the loop reports it as never retrieved.
     with suppress(asyncio.CancelledError, Exception):
         task.result()
-    raise cancellation
+    for kept, later in itertools.pairwise(cancellations):
+        kept.__context__ = later
+    raise cancellations[0]
 
 
 # ---------------------------------------------------------------------------
