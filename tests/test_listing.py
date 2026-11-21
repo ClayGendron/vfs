@@ -45,6 +45,25 @@ def test_an_empty_table_is_governed_by_no_mount() -> None:
     assert listing_module.MountListing({}).governing(Path("/a")) == ()
 
 
+@pytest.mark.parametrize(("mounted", "steps"), [(("/y",), 1), (("/x/x",), 2), (("/y/y/y",), 3)])
+def test_the_walk_up_a_deep_path_starts_at_the_depth_of_the_deepest_mount(
+    mounted: tuple[str, ...], steps: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = {Path(path): Mount(Path(path), BindableStorage()) for path in ("/", *mounted)}
+    listing = listing_module.MountListing(table)
+    walked: list[str] = []
+    original = listing_module._parent
+
+    def counted(path: str) -> str:
+        walked.append(path)
+        return original(path)
+
+    monkeypatch.setattr(listing_module, "_parent", counted)
+    governing = listing.governing(deep_path())
+    assert [mount.path for mount in governing] == [path for path in table if deep_path().startswith(path)]
+    assert len(walked) == steps
+
+
 def deep_path() -> Path:
     """A legal path of 1,024 bytes, the longest a path may be."""
     return Path("/x" * 512)

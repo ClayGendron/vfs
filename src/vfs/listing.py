@@ -119,7 +119,8 @@ class MountListing:
     every mount point and of every directory above one, apart from the root. A ``glob`` judges them.
     Each of these lists is in path order, so no answer depends on the order of a set or on the
     order the mounts were added in. ``ordered`` is every mount path in path order, which
-    :meth:`beneath` searches, and ``rank`` gives each mount path its place in the table.
+    :meth:`beneath` searches, and ``rank`` gives each mount path its place in the table. ``deepest``
+    is the number of segments in the deepest mount path, so a walk up a path can start there.
     """
 
     mounts: Mapping[Path, Mount]
@@ -130,11 +131,13 @@ class MountListing:
     points: tuple[Observation, ...] = field(init=False)
     ordered: tuple[Path, ...] = field(init=False)
     rank: Mapping[Path, int] = field(init=False)
+    deepest: int = field(init=False)
 
     def __post_init__(self) -> None:
         table = dict(self.mounts)
         object.__setattr__(self, "ordered", tuple(sorted(table)))
         object.__setattr__(self, "rank", {path: index for index, path in enumerate(table)})
+        object.__setattr__(self, "deepest", max((path.count("/") for path in table if path != ROOT), default=0))
         above: set[Path] = set()
         for path in table:
             node = path
@@ -171,15 +174,16 @@ class MountListing:
     def governing(self, path: Path) -> tuple[Mount, ...]:
         """Return the mounts at or above ``path``, the root's first, or none for an empty table.
 
-        The call cuts the path at each ``/`` and looks each prefix up in the table as plain text, so it
-        costs the depth of the path and never the number of mounts. A table that holds only the root
-        answers at once.
+        The call costs at most the depth of the deepest mount path in table lookups, and never the
+        number of mounts. A table that holds only the root answers at once.
         """
         root = self.mounts.get(ROOT)
         if not self.above:
             return () if root is None else (root,)
         found: list[Mount] = []
-        node: str = path
+        # A prefix deeper than every mount path names no mount, so the walk starts at that depth.
+        parts = path.split("/", self.deepest + 1)
+        node: str = "/".join(parts[: self.deepest + 1]) if len(parts) > self.deepest + 1 else path
         while node != ROOT:
             if (mount := self.mounts.get(node)) is not None:
                 found.append(mount)
@@ -191,16 +195,14 @@ class MountListing:
     def beneath(self, path: Path) -> list[Mount]:
         """Return the mounts that lie strictly beneath ``path``, in table order.
 
-        The mount paths that start with ``path`` and a ``/`` are one run of :attr:`ordered`, found by
-        a binary search, so the call costs the log of the number of mounts and the mounts it returns.
-        This says where calls are sent, and not what a caller may see.
+        The call costs the log of the number of mounts and the mounts it returns, and never a visit
+        to each mount. This says where calls are sent, and not what a caller may see.
         """
         if path == ROOT:
-            keys = [key for key in self.ordered if key != ROOT]
-        else:
-            # "0" is the character after "/", so the run ends before the first path that starts with it.
-            start = bisect.bisect_left(self.ordered, path + "/")
-            keys = list(self.ordered[start : bisect.bisect_left(self.ordered, path + "0", start)])
+            return [mount for key, mount in self.mounts.items() if key != ROOT]
+        # "0" is the character after "/", so the run of paths beneath ends before the first that starts with it.
+        start = bisect.bisect_left(self.ordered, path + "/")
+        keys = self.ordered[start : bisect.bisect_left(self.ordered, path + "0", start)]
         return [self.mounts[key] for key in sorted(keys, key=self.rank.__getitem__)]
 
     async def called(
