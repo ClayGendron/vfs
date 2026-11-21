@@ -1,6 +1,12 @@
 # How we document
 
-This page holds the rules for the documentation of VFS. It covers docstrings and the [glossary](../reference/glossary.md). The rules exist so that a word has one meaning, and a meaning has one word, on every page and in every docstring.
+This page holds the rules for the documentation of VFS. It covers pages, docstrings and the [glossary](../reference/glossary.md). The rules exist so that a word has one meaning, and a meaning has one word, on every page and in every docstring.
+
+## Pages
+
+A page is written as prose. Its sentences sit in paragraphs, and each paragraph carries one idea from its first sentence to its last. A reader follows a reason through a paragraph, and a list of bullet points gives the reader the conclusions with the reasons cut away.
+
+A list is for things that are a list, such as steps taken in order or a set of options to choose from. A table is for things that have the same parts, set side by side. Neither carries an argument. A page is never bullet points for the greater part.
 
 ## Docstrings
 
