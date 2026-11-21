@@ -47,6 +47,8 @@ Nothing of the shell is built. The earlier spec designed a bash subset with a Py
 
 14. **A red suite lives in a green tree.** `tests/shell/known_failures.txt` lists every case that does not yet pass. The gate fails when an unlisted case fails, and also when a listed case passes, so the list can only shrink and is always exact. One command prints the score: cases passing over cases total, by area and in all, for the own corpus and the vendored suite apart. That number is the measure of the work.
 
+15. **The crate builds for WebAssembly as well as natively.** Because the machine does no IO and has one entry, it compiles to `wasm32-unknown-unknown` with no change, and the gate builds that target from the first crate commit. Run natively, the walls of decisions 6 to 9 are held by the crate's own counting and lints. Run inside a WebAssembly runtime, the runtime adds a second wall from outside: its own instruction count, a hard memory limit, a deadline it can enforce mid-step, and a trap in place of a process abort on a stack overflow or a failed allocation. The machine's own fuel and byte counts stay in both, because they give the classified error and do not change with the compiler. Which of the two the vfs host runs is a choice to confirm, after step 0 measures it.
+
 ## Tests
 
 The suite is built before the interpreter. It has five layers.
@@ -61,7 +63,7 @@ The suite is built before the interpreter. It has five layers.
 
 The order of work. Each step ends with the gate green and the score printed.
 
-0. Research and spec review. The prior art above is studied for four questions: how fuel and interruption are counted, how an interpreter pauses at a host call and resumes, how memory is bounded without measuring the process, and what each bash-in-Rust project's suite covers. The spec is reviewed before anything is built.
+0. Research and spec review. The prior art above is studied for five questions: how fuel and interruption are counted, how an interpreter pauses at a host call and resumes, how memory is bounded without measuring the process, what each bash-in-Rust project's suite covers, and what running the machine inside a WebAssembly runtime costs (the size it adds to an install, the first load, and each call across the boundary, counted against about 20 calls a second at peak). The spec is reviewed before anything is built.
 1. The harness: the recorder script, the seed tree, the case format, the runner with the known-failures list, the score command, the vendored suite with its licence record, and the corpus recorded. Every case is listed as failing. No interpreter code exists yet.
 2. The crate, its lints and greps, `MemoryHost`, the lexer and the parser, and the parser fuzz target. Every corpus script parses; every malformed case classifies.
 3. The machine: simple commands, variables, quoting, the expansions, the first builtins, fuel, memory and the slice.
@@ -74,7 +76,7 @@ Out of scope here: the durable run itself, tools and guests, `awk` and `jq`, and
 
 ## Not checked
 
-- No prior-art clone was read for this spec; the four research questions are open work, not findings.
+- No prior-art clone's source was read for this spec; the five research questions are open work, not findings. Of `../wasi_python`, only the README's account of its limits was read: instructions, time, memory, output and open files each have a cap, and the result says which one ended a call. The host's limits here follow that vocabulary.
 - The licence of the Oils spec suite was not checked at a refreshed commit.
 - The recorder was not written or run; Docker was not running when this was written.
 - The seed cases under `tests/shell/cases/` have no record yet.
@@ -82,6 +84,7 @@ Out of scope here: the durable run itself, tools and guests, `awk` and `jq`, and
 
 ## Choices to confirm
 
+- Whether the vfs host runs the machine natively or inside a WebAssembly runtime. Natively costs nothing at install or per call, and a missed depth check or a missed byte count ends the host process. Inside a runtime, those become a trap, and the runtime joins the base install and the latency of every `cli` call.
 - The crate's name, should it be published apart.
 - The bash version pinned as referee: 5.3 is taken here.
 - Whether the dependency list of the crate is empty or a short declared list (a regular-expression engine for `=~` is the first candidate).
