@@ -597,8 +597,9 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
 async def _apply_stale(storage: DatabaseStorage, plan: WritePlan) -> bool:
     """Run *plan*'s statements against committed state; whether the guard refused (classified or redriven).
 
-    The session begins as a verb's writer does, waiting for the write lock: a plain read transaction that
-    then writes is refused at once by SQLite whenever the host's statistics pass holds the lock.
+    The session begins as a verb's writer does, holding the write lock from its first read: a plain read
+    transaction that then writes is refused at once if another connection, such as the host's statistics
+    pass, committed in between.
     """
     host = storage._host
     async with host.session_factory() as session:

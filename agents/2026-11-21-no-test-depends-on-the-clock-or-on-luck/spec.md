@@ -1,6 +1,6 @@
 # No test depends on the clock or on luck
 
-A draft, written on 2026-11-21 from the tests seen to fail now and then. It is not reviewed, and nothing is built.
+A draft, written on 2026-11-21 from the tests seen to fail now and then, and built on 2026-11-21. What each case turned out to be, and what was done, is under [What was found](#what-was-found). What was not done is in three specs of its own, named at the end.
 
 ## The outcome wanted
 
@@ -41,6 +41,27 @@ In: the tests named above, `tests/conftest.py`'s warning filters, and the Playwr
 ## Not checked
 
 - The cause of the two-writers failure and of the composed-scope failure.
+
+## What was found
+
+Each was run under eight busy loops on four cores, the load generator below, unless it says "read".
+
+- **The two writers.** The rival's write ran out of SQLite's `busy_timeout`: five seconds, retried four times, while the other wrote 30,000 files. It failed 6 of 6 under load. `_waits_out_every_lock` in `tests/support/database_helpers.py` raises the test's `busy_timeout` to SQLite's largest, and it passed 6 of 6 under load and 20 of 20 in the after run. Its two `success` assertions now print the errors.
+- **The sync facade close, and the close that interrupts a pass.** Each waited on a clock: `first.wait(timeout=10.0)`, the router's default `close_timeout` of ten seconds, and a bound of one second. Each now waits on its event and closes with `close_timeout=math.inf`; the rollback and the empty `sqlite_stat1` remain the proof that the pass was interrupted. The timed-out close's own wait for the pass lost its ten-second bound.
+- **The composed scope.** Not reproduced: its SQLite leg passed 20 of 20 under load. The cause is still not found.
+- **The beat.** The provider now waits on an event the statement listener sets at the fifth beat, not on 100,000 turns of the loop.
+- **The trash snapshot.** The test's own helper opened a plain `BEGIN`, read, then wrote; when another connection committed in between, SQLite refused the upgrade at once with `database is locked`. It failed 7 of 100 under load with branch coverage. The helper now begins as a writer, and it passed 100 of 100.
+- **The Postgres ranking pin.** `tests/ranking/pins.py`, like every helper module of `tests/support/`, `tests/ranking/` and `tests/lint/`, was not rewritten by pytest, so its assertions printed nothing. `tests/conftest.py` now registers the three packages for rewriting, and `test_every_helper_module_that_asserts_is_rewritten` holds it. Not run on Postgres.
+- **The aiosqlite thread and the unclosed connections.** Four sources, each now closed: `with sqlite3.connect(...)` commits but never closes, in `test_authorized.py` and `test_statistics.py`; pytest-asyncio's setup asking for the current loop before one was set, which up to Python 3.13 makes a loop nobody closes; a test's own `engine.dispose()` while the statistics pass held a connection; and a timed-out close that leaves the pass's connection in the disposed pool, a defect in `src/` the test now reclaims by hand. `ResourceWarning`, `PytestUnraisableExceptionWarning` and `PytestUnhandledThreadExceptionWarning` are errors in `pyproject.toml`, and the full suite passes with them.
+- **The armed hold that hung CI.** pytest-timeout cancels a test's deadline as soon as one of its phases fails, so a test that failed and then hung in teardown ran with no deadline and held its worker for good. With the out-of-reach rule taken away, `TestACallerCancelledByATimeLimitAndByACancelScope` hung that way under two workers, in pytest-asyncio's `Runner.close` waiting on the driver task. `tests/conftest.py` now arms its own deadline in place of pytest-timeout's signal timer: at the deadline every thread's stack goes to `test-hangs/<worker>-<pid>.txt` under the test's name and the test fails; the deadline is kept through teardown; and a backstop at half the deadline again writes the stacks from C and ends the worker. `timeout_method` is `signal`. The broken build then ended in under five minutes with 12 failures, 15 errors and the stacks of each in the files. Both workflows upload `test-hangs/` when a job fails or is cancelled. Three tests in `tests/test_suite_guards.py` run a child pytest under two workers with hanging tests and hold it.
+- **The docs site.** Each test that needs scripts waits for the page to say it is ready.
+- **The inventory.** A search of `tests/` for other waits on a clock found about twenty more. The clearest were changed: `test_close_disposes_concurrently_not_sequentially` asserted elapsed time and now has two closes that each wait for the other to begin; the render budget tests slept past a ten-millisecond budget and now move a hand clock; the lease heartbeat tests polled with sleeps and now wait on events; `LoopTicker.hop` lost its five-second bound and says at once when it is called on the loop's own thread; and `test_planning_leaves_the_loop` hops instead of counting turns.
+
+## Follow-up specs
+
+- `agents/2026-11-21-a-timed-out-close-leaves-no-connection-open/spec.md`: the connection a timed-out close leaves open.
+- `agents/2026-11-21-a-test-session-that-writes-begins-as-a-writer/spec.md`: the other hand-built test sessions open to the trash test's refusal.
+- `agents/2026-11-21-every-wait-in-a-test-is-bounded-by-the-run-alone/spec.md`: the rest of the inventory, and the two causes not found.
 
 ## One line
 

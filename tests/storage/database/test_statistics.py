@@ -1066,7 +1066,8 @@ class TestPlannerStatistics:
         with closing(sqlite3.connect(file)) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
         # The pass checked its connection back in to the pool the timed-out close had disposed, which nothing closes.
-        assert disposed_pool is not engine.sync_engine.pool and disposed_pool.checkedin() == 1
+        assert isinstance(disposed_pool, QueuePool) and disposed_pool is not engine.sync_engine.pool
+        assert disposed_pool.checkedin() == 1
         await greenlet_spawn(disposed_pool.dispose)
 
     @pytest.mark.slow

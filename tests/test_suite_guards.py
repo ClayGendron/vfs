@@ -153,7 +153,8 @@ def _run_child(tmp_path: Path, source: str, *arguments: str) -> subprocess.Compl
     (tmp_path / "pytest.ini").write_text(CHILD_INI, encoding="utf-8")
     command = [sys.executable, "-m", "pytest", "-c", str(tmp_path / "pytest.ini"), "--rootdir", str(tmp_path)]
     command += ["-p", "tests.conftest", "-p", "no:cacheprovider", "-q", *arguments, str(tmp_path / "test_hanging.py")]
-    environment = {**os.environ, "PYTHONPATH": str(REPO), HANG_DIR_VAR: str(tmp_path / "hangs")}
+    environment = dict(os.environ)
+    environment.update({"PYTHONPATH": str(REPO), HANG_DIR_VAR: str(tmp_path / "hangs")})
     environment.pop("PYTEST_XDIST_WORKER", None)
     return subprocess.run(
         command, capture_output=True, text=True, env=environment, timeout=RUN_BACKSTOP_SECONDS, check=False
