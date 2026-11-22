@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -47,7 +46,8 @@ from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    import threading
+    from collections.abc import AsyncIterator, Callable, Iterator
 
 # The demo tree: needle sits at every level; decoy never matches.
 TREE = (("/notes.txt", "needle root"), ("/data/a.txt", "needle a"), ("/data/deep/b.py", "needle b"))
@@ -487,6 +487,7 @@ async def test_each_batch_gets_the_wall_budget_cut_at_worker_start(monkeypatch: 
     # A fake clock: the deadline is read at 100, the batch check at 101, the worker starts at 103.
     ticks = iter([100.0, 101.0, 103.0])
     monkeypatch.setattr(deadline_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(chain_module, "WALL_TIME_BUDGET", 10.0)
     budgets: list[float | None] = []
 
     class Recording:
@@ -502,12 +503,15 @@ async def test_each_batch_gets_the_wall_budget_cut_at_worker_start(monkeypatch: 
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     result = await fs.grep("x", observations=_held(("/a", "x")), output_mode=mode)  # ty: ignore[invalid-argument-type]
     assert len(result.observations) == 1
-    assert budgets == [chain_module.WALL_TIME_BUDGET - 3.0]
+    assert budgets == [7.0]
     await fs.close()
 
 
-async def test_close_never_waits_for_a_running_batch(monkeypatch: pytest.MonkeyPatch) -> None:
-    started, release = threading.Event(), threading.Event()
+async def test_close_never_waits_for_a_running_batch(
+    monkeypatch: pytest.MonkeyPatch, thread_gate: Callable[[], threading.Event]
+) -> None:
+    # The teardown opens both gates, so a close() that waits on the worker fails this test at its deadline.
+    started, release = thread_gate(), thread_gate()
     finished: list[bool] = []
     real = chain_module.compile_verifier
 
@@ -525,13 +529,9 @@ async def test_close_never_waits_for_a_running_batch(monkeypatch: pytest.MonkeyP
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     task = asyncio.create_task(fs.grep("x", observations=_held(("/a", "x"))))
     await asyncio.to_thread(started.wait)
-    # A safety release, so a close() that waits on the worker fails this test instead of hanging it.
-    safety = threading.Timer(5.0, release.set)
-    safety.start()
     await fs.close()
     assert finished == []
     release.set()
-    safety.cancel()
     result = await task
     assert [str(o.path) for o in result.observations] == ["/a"]
 
@@ -545,9 +545,12 @@ def one_worker_pool(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     shutdown_offload_pool()
 
 
-async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.MonkeyPatch, one_worker_pool: None) -> None:
+async def test_a_batch_queued_at_close_still_finishes(
+    monkeypatch: pytest.MonkeyPatch, one_worker_pool: None, thread_gate: Callable[[], threading.Event]
+) -> None:
     # One worker: grep a's batch holds it, grep b's batch waits in the queue when close() lands.
-    started, release = threading.Event(), threading.Event()
+    # The teardown opens both gates, so a close() that waits on the worker fails this test at its deadline.
+    started, release = thread_gate(), thread_gate()
     real = chain_module.compile_verifier
 
     class HeldOnce:
@@ -566,15 +569,11 @@ async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.Monkey
     first = asyncio.create_task(fs.grep("a", observations=_held(("/a", "a"))))
     await asyncio.to_thread(started.wait)
     second = asyncio.create_task(fs.grep("b", observations=_held(("/b", "b"))))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    # A safety release, so a close() that waits on the worker fails this test instead of hanging it.
-    safety = threading.Timer(5.0, release.set)
-    safety.start()
+    while (pool := offload_module._pool) is None or pool._work_queue.qsize() < 1:
+        await asyncio.sleep(0)
     await fs.close()
     assert not release.is_set()
     release.set()
-    safety.cancel()
     results = await asyncio.gather(first, second)
     assert [[str(o.path) for o in r.observations] for r in results] == [["/a"], ["/b"]]
 
@@ -834,7 +833,7 @@ async def test_both_prefilters_answer_alike(
             return answer
 
         monkeypatch.setattr(reads_module.AdmittedScope, "composed", spied)
-        answers.append(await asyncio.wait_for(call.run(shape_worlds), 60))
+        answers.append(await call.run(shape_worlds))
         plans.append(taken)
     fan, composed = answers
     assert plans == ([set(), set()] if call.name in _REFUSED_WHOLE else [{False}, {True}])

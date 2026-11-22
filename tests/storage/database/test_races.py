@@ -51,7 +51,7 @@ from tests.support.commit_worlds import (
     row_at,
     version_count,
 )
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from vfs.authority import Authority, Principal
@@ -204,7 +204,7 @@ class TestMkedgeEndpointLocks:
                 created = await storage.mkedge(edges=[edge])
             assert created.success is True
             assert created.observations[0].status == "created"
-            deleted = await asyncio.wait_for(pending["delete"], timeout=60)
+            deleted = await pending["delete"]
             assert deleted.success is True
             # Converged: the cascade swept the edge the lock let land first,
             # proven by absence through the public verb.
@@ -449,9 +449,6 @@ class TestExpectedVersionRivals:
 # The row lock an append holds
 # ---------------------------------------------------------------------------
 
-# How long a call beside a held lock may run before the test is stopped as hung. Never a measurement.
-_HUNG_AFTER_SECONDS = 60.0
-
 
 class TestAppendLock:
     """An append locks the one row it adds to: no reader waits on it, and no writer of another file does."""
@@ -467,14 +464,15 @@ class TestAppendLock:
                 returned: list[bool] = []
 
                 async def while_locked() -> None:
-                    # The append has locked its row and read its body, and has not committed.
+                    # The append has locked its row and read its body, and has not committed; a call
+                    # that waits on that lock never returns, and the run's deadline ends the test.
                     calls = (
                         beside.read(path=Path("/log.txt")),
                         beside.stat(path=Path("/log.txt")),
                         beside.grep(pattern="needle"),
                         beside.edit(path=Path("/other.txt"), edits=[EditOperation(old="x", new="y")]),
                     )
-                    results = await asyncio.wait_for(asyncio.gather(*calls), _HUNG_AFTER_SECONDS)
+                    results = await asyncio.gather(*calls)
                     returned.extend(result.success for result in results)
 
                 handler, _ = _self_clearing("write:before-apply", while_locked)
@@ -538,7 +536,7 @@ class TestGhostRefusal:
             now = datetime.now(UTC)
             ghost_id = str(ULID())
             async with host.session_factory() as session:
-                conn = await session.connection(execution_options={"vfs_writer": True})
+                conn = await begin_as_writer(session)
                 d_id = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
                 await conn.execute(
                     insert(entry).values(
@@ -970,7 +968,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -1316,7 +1314,7 @@ class TestLeaseFence:
                 existing = dict((await conn.execute(select(*columns))).mappings().one())
             for row, unique in ((existing, True), ({**existing, "entry_id": None}, False)):
                 async with storage._host.session_factory() as session:
-                    await session.connection(execution_options={"vfs_writer": True})
+                    await begin_as_writer(session)
                     with pytest.raises(IntegrityError) as raised:
                         await dialects.bulk_insert(session, chunks, [row])
                     assert dialects.is_unique_violation(raised.value) is unique, raised.value

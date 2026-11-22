@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from tests.support.commit_worlds import ALICE, EVE, attempts, clearing, drop_world, land, paths_under, row_at
-from tests.support.database_helpers import _ReturningSession, _url
+from tests.support.database_helpers import _ReturningSession, _url, begin_as_writer, writer_engine
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
@@ -461,7 +461,7 @@ class TestRevive:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="one")])).success is True
         content = storage._host.tables.content
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(delete(content))
         assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="two")])).success is True
         assert await _count(storage, "versions") == 0
@@ -603,7 +603,7 @@ async def _apply_stale(storage: DatabaseStorage, plan: WritePlan) -> bool:
     """
     host = storage._host
     async with host.session_factory() as session:
-        await session.connection(execution_options={"vfs_writer": True})
+        await begin_as_writer(session)
         try:
             errors = await _apply(
                 session, host.tables, host.profile, host.parameter_budget, host.membership_budget, plan, overwrite=True
@@ -1387,7 +1387,7 @@ class TestPurgeHardening:
         tables = storage._host.tables
         entry = tables.entry
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             found = await session.execute(select(entry.c.entry_id).where(entry.c.path.like("/d/%")))
             ids = [row.entry_id for row in found]
             for eid in ids[:20]:

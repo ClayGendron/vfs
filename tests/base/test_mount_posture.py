@@ -39,9 +39,6 @@ ADA = Authority.of(Principal("ada"))
 # The two faces of the kernel, with calls to await and with plain calls.
 Face = type[AsyncVirtualFileSystem] | type[VirtualFileSystem]
 
-# The deadline for every wait here, so a wrong build fails a test and does not hang the suite.
-RETURNS_WITHIN = 5.0
-
 
 async def closed() -> AsyncVirtualFileSystem:
     """A file system whose posture gives nobody anything, so only a grant or the system actor passes."""
@@ -333,10 +330,10 @@ async def test_the_posture_is_set_before_the_mount_is_in_the_table() -> None:
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage(fs)
     task = asyncio.create_task(fs.add_mount(child, "/data", posture="none"))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     assert paths(fs) == ["/"]
     child.release.set()
-    await asyncio.wait_for(task, RETURNS_WITHIN)
+    await task
     assert paths(fs) == ["/", "/data"]
     assert child.seen == [["/"]]
 
@@ -425,11 +422,11 @@ async def test_a_gate_tightened_while_the_mount_point_is_checked_changes_no_post
     fs = AsyncVirtualFileSystem(storage=root)
     child = RecorderStorage()
     task = asyncio.create_task(fs.add_mount(child, "/m", posture="none", authority=SYSTEM))
-    await asyncio.wait_for(root.entered.wait(), RETURNS_WITHIN)
+    await root.entered.wait()
     await fs.update_mount("/", permissions="read", authority=SYSTEM)
     root.release.set()
     with pytest.raises(MountError) as exc:
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert exc.value.errors[0].kind is ErrorKind.read_only
     assert child.calls == []
 
@@ -541,13 +538,13 @@ async def test_no_second_call_mounts_a_storage_while_its_posture_is_being_set() 
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     first = asyncio.create_task(fs.add_mount(child, "/a", posture="none"))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     with pytest.raises(ValueError, match="another call is mounting"):
         await fs.add_mount(child, "/b")
     with pytest.raises(ValueError, match="another call is mounting"):
         await fs.add_mount(child, "/b", posture="read")
     child.release.set()
-    await asyncio.wait_for(first, RETURNS_WITHIN)
+    await first
     assert paths(fs) == ["/", "/a"]
     assert [op for op, _ in child.calls].count("set_posture") == 1
 
@@ -565,12 +562,12 @@ async def test_the_posture_stays_when_the_table_refuses_the_mount_after_it_was_s
     fs = AsyncVirtualFileSystem(storage=BindableStorage())
     child = WaitingPostureStorage()
     first = asyncio.create_task(fs.add_mount(child, "/data", posture="none"))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     # A mount lock held across the posture write would keep this call from returning.
-    await asyncio.wait_for(asyncio.create_task(fs.add_mount(RecorderStorage(), "/data")), RETURNS_WITHIN)
+    await fs.add_mount(RecorderStorage(), "/data")
     child.release.set()
     with pytest.raises(ValueError, match="Mount already exists"):
-        await asyncio.wait_for(first, RETURNS_WITHIN)
+        await first
     ops = [op for op, _ in child.calls]
     assert ops.count("set_posture") == 1
     assert ops[-1] == "set_posture"
@@ -580,10 +577,10 @@ async def test_a_cancelled_posture_write_frees_the_storage() -> None:
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     task = asyncio.create_task(fs.add_mount(child, "/a", posture="none"))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     await fs.add_mount(child, "/a")
     assert paths(fs) == ["/", "/a"]
 
@@ -606,11 +603,11 @@ async def test_a_mount_point_that_gains_a_row_during_the_posture_write_is_not_co
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     task = asyncio.create_task(fs.add_mount(child, "/inbox", posture="read", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     assert (await fs.write(path="/inbox/note.txt", content="hello", authority=SYSTEM)).success is True
     child.release.set()
     with pytest.raises(ValueError, match="not empty"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert paths(fs) == ["/"]
     assert (await fs.read("/inbox/note.txt", authority=SYSTEM)).success is True
     assert [op for op, _ in child.calls] == ["grants", "set_posture"]
@@ -620,11 +617,11 @@ async def test_a_mount_point_that_gains_a_row_while_a_held_posture_is_read_is_no
     fs = AsyncVirtualFileSystem()
     child = WaitingGrantsMemoryStorage()
     task = asyncio.create_task(fs.add_mount(child, "/inbox", posture="read_write", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     assert (await fs.write(path="/inbox/note.txt", content="hello", authority=SYSTEM)).success is True
     child.release.set()
     with pytest.raises(ValueError, match="not empty"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert paths(fs) == ["/"]
     assert (await fs.read("/inbox/note.txt", authority=SYSTEM)).success is True
     assert child.posture_writes == 0
@@ -634,11 +631,11 @@ async def test_a_mount_point_removed_during_the_posture_write_is_not_mounted() -
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     task = asyncio.create_task(fs.add_mount(child, "/gone", posture="read", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     assert (await fs.delete("/gone", authority=SYSTEM)).success is True
     child.release.set()
     with pytest.raises(ValueError, match="no directory stored at the mount point"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert paths(fs) == ["/"]
 
 
@@ -646,15 +643,15 @@ async def test_a_mount_point_whose_holder_changed_during_the_posture_write_is_no
     root = WaitingLsStorage()
     fs = AsyncVirtualFileSystem(storage=root)
     parent = asyncio.create_task(fs.add_mount(InMemoryStorage(), "/work", authority=SYSTEM))
-    await asyncio.wait_for(root.entered.wait(), RETURNS_WITHIN)
+    await root.entered.wait()
     child = WaitingPostureStorage()
     task = asyncio.create_task(fs.add_mount(child, "/work/sub", posture="read", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     root.release.set()
-    await asyncio.wait_for(parent, RETURNS_WITHIN)
+    await parent
     child.release.set()
     with pytest.raises(ValueError, match="no directory stored at the mount point"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert paths(fs) == ["/", "/work"]
 
 
@@ -663,11 +660,11 @@ async def test_a_mount_point_whose_holder_was_removed_while_the_posture_is_read_
     await fs.add_mount(InMemoryStorage(), "/work", authority=SYSTEM)
     child = WaitingGrantsStorage()
     task = asyncio.create_task(fs.add_mount(child, "/work/sub", posture="none", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     await fs.remove_mount("/work", authority=SYSTEM)
     child.release.set()
     with pytest.raises(ValueError, match="no directory stored at the mount point"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert paths(fs) == ["/"]
 
 
@@ -675,11 +672,11 @@ async def test_a_kernel_closed_during_the_posture_write_adds_no_mount() -> None:
     fs = AsyncVirtualFileSystem()
     child = WaitingPostureStorage()
     task = asyncio.create_task(fs.add_mount(child, "/data", posture="none", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     await fs.close()
     child.release.set()
     with pytest.raises(ValueError, match="filesystem is closed"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert paths(fs) == []
 
 
@@ -687,11 +684,11 @@ async def test_a_kernel_closed_while_the_posture_is_read_writes_no_posture() -> 
     fs = AsyncVirtualFileSystem()
     child = WaitingGrantsStorage()
     task = asyncio.create_task(fs.add_mount(child, "/data", posture="read", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     await fs.close()
     child.release.set()
     with pytest.raises(ValueError, match="filesystem is closed"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert [op for op, _ in child.calls] == ["grants"]
 
 
@@ -699,11 +696,11 @@ async def test_a_gate_tightened_while_the_posture_is_read_writes_no_posture() ->
     fs = AsyncVirtualFileSystem()
     child = WaitingGrantsStorage()
     task = asyncio.create_task(fs.add_mount(child, "/data", posture="read", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     await fs.update_mount("/", permissions="read", authority=SYSTEM)
     child.release.set()
     with pytest.raises(MountError) as exc:
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert exc.value.errors[0].kind is ErrorKind.read_only
     assert [op for op, _ in child.calls] == ["grants"]
 
@@ -712,11 +709,11 @@ async def test_a_mount_point_taken_while_the_posture_is_read_writes_no_posture()
     fs = AsyncVirtualFileSystem()
     child = WaitingGrantsStorage()
     task = asyncio.create_task(fs.add_mount(child, "/data", posture="read", authority=SYSTEM))
-    await asyncio.wait_for(child.entered.wait(), RETURNS_WITHIN)
+    await child.entered.wait()
     await fs.add_mount(RecorderStorage(), "/data", authority=SYSTEM)
     child.release.set()
     with pytest.raises(ValueError, match="Mount already exists"):
-        await asyncio.wait_for(task, RETURNS_WITHIN)
+        await task
     assert [op for op, _ in child.calls] == ["grants"]
 
 

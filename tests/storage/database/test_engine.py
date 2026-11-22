@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool, QueuePool
 from ulid import ULID
 
-from tests.support.database_helpers import _fresh_url
+from tests.support.database_helpers import _fresh_url, _waits_out_every_lock, writer_engine
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.authority import EVERYONE_NAME
 from vfs.models import Entry
@@ -255,7 +255,7 @@ class TestFirstTouch:
         seeded = DatabaseStorage(url=_fresh_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
-        async with seeded._host.engine.begin() as conn:
+        async with writer_engine(seeded._host.engine).begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_fresh_url(tmp_path))
@@ -280,7 +280,7 @@ class TestFirstTouch:
         seeded = DatabaseStorage(url=_fresh_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
-        async with seeded._host.engine.begin() as conn:
+        async with writer_engine(seeded._host.engine).begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_fresh_url(tmp_path))
@@ -321,6 +321,9 @@ class TestFirstTouch:
     async def test_two_instances_first_touch_concurrently(self, tmp_path) -> None:
         a = DatabaseStorage(url=_fresh_url(tmp_path))
         b = DatabaseStorage(url=_fresh_url(tmp_path))
+        # The second to the file waits on the first's provisioning commit, never on the busy budget.
+        _waits_out_every_lock(a)
+        _waits_out_every_lock(b)
         first, second = await asyncio.gather(a.first_touch(), b.first_touch())
         assert first.success is True
         assert second.success is True
@@ -545,6 +548,44 @@ class TestPoolExhaustion:
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.unavailable
         assert result.errors[0].retryable is True
+        await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# A writer behind another writer's lock
+# ---------------------------------------------------------------------------
+
+
+class TestBusyWriter:
+    async def test_a_write_behind_a_held_lock_gives_up_after_four_tries_and_changes_nothing(self, tmp_path) -> None:
+        """Pins the busy budget the storage docstring states: five seconds a try, four tries, a retryable conflict."""
+        assert "PRAGMA busy_timeout = 5000" in SQLITE.session_settings
+        url = _fresh_url(tmp_path)
+        storage = DatabaseStorage(url=url)
+        assert storage._host._retry_attempts == 4
+        assert (await storage.first_touch()).success is True
+        begins: list[str] = []
+
+        @event.listens_for(storage.engine.sync_engine, "checkout")
+        def impatient(dbapi_connection, record, proxy) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA busy_timeout = 0")
+            cursor.close()
+
+        @event.listens_for(storage.engine.sync_engine, "before_cursor_execute")
+        def begun(conn, cursor, statement, parameters, context, executemany) -> None:
+            if statement.startswith("BEGIN IMMEDIATE"):
+                begins.append(statement)
+
+        rival = sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"), isolation_level=None)
+        rival.execute("BEGIN IMMEDIATE")
+        refused = await storage.write(entries=[Entry(path=Path("/late.txt"), content="x")])
+        assert begins == ["BEGIN IMMEDIATE"] * 4
+        assert [(error.kind, error.retryable) for error in refused.errors] == [(ErrorKind.conflict, True)]
+        rival.execute("COMMIT")
+        rival.close()
+        assert (await storage.stat(path=Path("/late.txt"))).success is False
+        assert (await storage.write(entries=[Entry(path=Path("/late.txt"), content="x")])).success is True
         await storage.close()
 
 

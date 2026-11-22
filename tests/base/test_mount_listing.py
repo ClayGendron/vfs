@@ -1250,7 +1250,7 @@ async def held_listing(
     parent.hold = True
     parent.as_it_starts = fs.close if closed_as_it_starts else None
     pending = asyncio.create_task(fs.ls("/") if verb == "ls" else fs.tree("/", max_depth=1))
-    await asyncio.wait_for(parent.started.wait(), 5)
+    await parent.started.wait()
     parent.hold = False
     return fs, parent, anchor, pending
 
@@ -1260,7 +1260,7 @@ async def test_a_mount_added_while_a_listing_waits_leaves_that_listing_as_it_beg
     fs, parent, _anchor, pending = await held_listing(verb)
     await fs.add_mount(RootedStorage(), "/site")
     parent.release.set()
-    listed = ok(await asyncio.wait_for(pending, 5))
+    listed = ok(await pending)
     assert {(row.path, row.version) for row in listed.observations} == {("/anchor", 3), ("/site", 17)}
 
 
@@ -1270,7 +1270,7 @@ async def test_a_kernel_closed_as_a_listing_starts_asks_no_mounted_storage(verb:
     # parent's first step, before any mounted root has had its turn.
     _fs, parent, anchor, pending = await held_listing(verb, closed_as_it_starts=True)
     parent.release.set()
-    listed = ok(await asyncio.wait_for(pending, 5))
+    listed = ok(await pending)
     assert anchor.calls == []
     # The mount is still listed as a mount.
     assert {(row.path, row.version) for row in listed.observations} == {("/anchor", None), ("/site", 17)}
@@ -1299,11 +1299,11 @@ async def test_a_glob_that_finds_the_kernel_closed_asks_no_storage(cap: int | No
     fs = AsyncVirtualFileSystem(storage=parent)
     await fs.add_mount(child, "/m")
     pending = asyncio.create_task(fs.glob("m", paths=roots, max_count=cap))
-    await asyncio.wait_for(parent.started.wait(), 5)
+    await parent.started.wait()
     await fs.close()
     child.calls.clear()
     parent.release.set()
-    found = await asyncio.wait_for(pending, 5)
+    found = await pending
     assert child.calls == []
     # The mounted root is refused as closed, so it shows as any mounted root that cannot answer.
     assert [(row.path, row.populated) for row in found.observations] == [("/m", BARE)]
@@ -1394,10 +1394,10 @@ async def test_a_mount_removed_while_a_glob_waits_is_returned_once() -> None:
     child = HeldRoot()
     await fs.add_mount(child, "/data")
     pending = asyncio.create_task(fs.glob("data"))
-    await asyncio.wait_for(child.started.wait(), 5)
+    await child.started.wait()
     await fs.remove_mount("/data")
     child.release.set()
-    assert ok(await asyncio.wait_for(pending, 5)).paths.count("/data") == 1
+    assert ok(await pending).paths.count("/data") == 1
 
 
 class Marked(BindableStorage):
@@ -1442,13 +1442,13 @@ async def test_a_mount_replaced_while_a_search_plans_its_scope_leaves_that_searc
 
     monkeypatch.setattr(base_module, "planned_scope", held)
     pending = asyncio.create_task(getattr(fs, verb)("*" if verb == "glob" else "needle", paths=("/m",)))
-    await asyncio.wait_for(started.wait(), 5)
+    await started.wait()
     await fs.remove_mount("/m")
     replacement = Marked(2)
     await fs.add_mount(replacement, "/m")
     replacement.calls.clear()
     resume.set()
-    found = ok(await asyncio.wait_for(pending, 5))
+    found = ok(await pending)
     assert {row.version for row in found.observations if row.version is not None} <= {1}
     assert {str(row.path) for row in found.observations} - {"/m"} == {"/m/v1"}
     assert replacement.calls == []

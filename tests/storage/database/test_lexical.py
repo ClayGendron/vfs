@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import event, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.lexical import pure_score_blocks, pure_tokenize
@@ -60,7 +60,7 @@ async def _seeded(tmp_path) -> DatabaseStorage:
 
 async def _seed_lexical_rows(storage: DatabaseStorage, epoch: int) -> None:
     tables = storage._host.tables
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(
             tables.lex_stats.insert(), [{"epoch": epoch, "n_docs": 1, "avg_dl": 1.0, "k1": BM25_K1, "b": BM25_B}]
         )
@@ -333,7 +333,7 @@ class TestReclaim:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -349,7 +349,7 @@ class TestReclaim:
         # Begun as a verb's writer is: a plain transaction that then writes is refused if the rebuild's statistics
         # pass commits in between.
         async with storage._host.session_factory() as session, session.begin():
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             assert (await indexing.reclaim_built_epoch(session, storage._host.tables, 7)).success is True
         for table in _lexical_tables(storage):
             assert await _count(storage, table, epoch=7) == 0

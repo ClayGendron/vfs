@@ -19,7 +19,7 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
-from tests.support.database_helpers import _SqliteError, _url
+from tests.support.database_helpers import _SqliteError, _url, begin_as_writer
 from tests.support.statements import is_statistics_statement
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -706,9 +706,11 @@ class TestBulkInsert:
         await storage.mkdir(path=Path("/warm"))
         tables = storage._host.tables
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             await session.execute(insert(tables.entry), [_entry_row(_ULID_A, "/a")])
         self._pin_mode(monkeypatch, mode)
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             await bulk_insert(session, tables.entry, [_entry_row(_ULID_B, "/b")])
         core_row, bulk_row = [row for row in await self._landed(storage, "entry") if row[4] in ("/a", "/b")]
         columns = [c.key for c in tables.entry.columns]
@@ -724,6 +726,7 @@ class TestBulkInsert:
         self._pin_mode(monkeypatch, "core")
         calls = self._spy_driver(monkeypatch)
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(5))
         assert calls == []
         assert len(await self._landed(storage, "lex_postings")) == 5
@@ -741,7 +744,7 @@ class TestBulkInsert:
         budget = storage._host.parameter_budget
         page = rows_per_statement(budget, [dict.fromkeys(_BLOCK_KEYS)])
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(page + 329))
             await session.commit()
         assert calls == [page, 329]
@@ -759,7 +762,7 @@ class TestBulkInsert:
         dialect = storage._host.engine.dialect
         monkeypatch.setattr(dialect, "insertmanyvalues_max_parameters", 3)
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(3))
             await session.commit()
         assert calls == [1, 1, 1]
@@ -826,6 +829,7 @@ class TestBulkInsert:
 
         monkeypatch.setattr(AsyncConnection, "exec_driver_sql", spy)
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(2))
         assert all(isinstance(row, dict) and set(row) == set(_BLOCK_KEYS) for row in handed)
         assert len(await self._landed(storage, "lex_postings")) == 2

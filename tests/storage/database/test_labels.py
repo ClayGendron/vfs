@@ -18,6 +18,7 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import DBAPIError
 
 from tests.support.commit_worlds import ANONYMOUS, BOB, CAROL, attempts, clearing, label_world, row_at, stamp
+from tests.support.database_helpers import begin_as_writer
 from tests.support.oracles.grants import GrantWorld, everyone_rank
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.authority import EVERYONE_NAME, Authority
@@ -121,6 +122,7 @@ async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStor
     host = storage._host
     relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
     async with host.session_factory() as session:
+        await begin_as_writer(session)
         assert await relabeller.step(session) is None
 
 
@@ -133,6 +135,7 @@ async def test_the_rebuild_repairs_every_label_from_the_posture_rows(storage: In
     host = storage._host
     entry = host.tables.entry
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(update(entry).values(everyone_level=LEVEL_RANK["read_write"]))
         done = await rebuild_labels(session, host.tables, host.profile, host.membership_budget)
     assert done.rows >= len(paths) and done.statements >= 3
@@ -153,6 +156,7 @@ async def test_a_relabel_walks_a_large_subtree_in_bounded_chunks(storage: InMemo
     host = storage._host
     profile = replace(host.profile, relabel_rows=7)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         await session.execute(
             host.tables.grants.update()
@@ -164,6 +168,7 @@ async def test_a_relabel_walks_a_large_subtree_in_bounded_chunks(storage: InMemo
     steps: list[Relabel] = []
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             done = await relabeller.step(session)
         if done is None:
             break
@@ -187,6 +192,7 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
     host = storage._host
     profile = replace(host.profile, relabel_rows=7)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         await session.execute(
             host.tables.grants.update()
@@ -196,6 +202,7 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
         await mark_relabel(session, host.tables, "/", revision)
     dying = Relabeller(host.tables, profile, host.membership_budget)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         assert await dying.step(session) is not None
     entry = host.tables.entry
     async with host.session_factory() as session:
@@ -213,6 +220,7 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
     resumed = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await resumed.step(session) is None:
                 break
     world = GrantWorld([GrantRow("*", "/", "none")])
@@ -233,6 +241,7 @@ async def test_the_marks_and_the_pending_postures_follow_the_table(storage: InMe
         empty = await inflight_postures(session, host.tables, host.profile, host.membership_budget, none)
     assert none == () and empty == {}
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await mark_relabel(session, host.tables, "/a", 7)
         # A second mark on the same path resets the cursor and restamps, never doubles the row.
         await session.execute(host.tables.relabels.update().values(cursor="/a/x"))
@@ -275,6 +284,7 @@ async def test_the_generic_floor_relabels_with_literal_ranges_and_counts_one_at_
     host = storage._host
     profile = replace(host.profile, range_source=None)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         await session.execute(
             host.tables.grants.update()
@@ -285,6 +295,7 @@ async def test_the_generic_floor_relabels_with_literal_ranges_and_counts_one_at_
     relabeller = Relabeller(host.tables, profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await relabeller.step(session) is None:
                 break
     world = GrantWorld([GrantRow("*", "/", "none"), GrantRow("*", "/d/sub", "read_write")])
@@ -298,6 +309,7 @@ async def test_hold_revision_locks_without_advancing(storage: InMemoryStorage) -
     await storage.first_touch()
     host = storage._host
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         before = await read_revision(session, host.tables)
         held = await hold_revision(session, host.tables)
         bumped = await bump_revision(session, host.tables)
@@ -309,6 +321,7 @@ async def test_a_mount_with_no_root_posture_rebuilds_to_none(storage: InMemorySt
     host = storage._host
     grants, entry = host.tables.grants, host.tables.entry
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(grants.delete())
         await rebuild_labels(session, host.tables, host.profile, host.membership_budget)
     async with host.session_factory() as session:
@@ -460,6 +473,7 @@ class TestProof:
         """
         host = storage._host
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             await session.execute(host.tables.principal_revisions.delete())
         result = await storage.write(entries=[Entry(path=Path("/new.txt"), content="x")], authority=SYSTEM)
         assert [(error.kind, error.retryable) for error in result.errors] == [(ErrorKind.conflict, True)]

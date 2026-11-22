@@ -59,7 +59,7 @@ class TestSqliteVec:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.first_touch()).success is True
         async with storage._host.session_factory() as session:
-            version = (await session.execute(text(engine_module.SQLITE_VEC_PROBE))).scalar_one()
+            version = (await session.execute(text(SQLITE_VEC_PROBE))).scalar_one()
             assert version.startswith("v")
             packed = (await session.execute(text("SELECT vec_f32('[1.0, 0.0]')"))).scalar_one()
             distance = (
@@ -72,7 +72,7 @@ class TestSqliteVec:
         storage = InMemoryStorage()
         assert (await storage.first_touch()).success is True
         async with storage._host.session_factory() as session:
-            assert (await session.execute(text(engine_module.SQLITE_VEC_PROBE))).scalar_one().startswith("v")
+            assert (await session.execute(text(SQLITE_VEC_PROBE))).scalar_one().startswith("v")
         await storage.close()
 
     async def test_an_interpreter_without_extension_loading_refuses_at_first_touch(

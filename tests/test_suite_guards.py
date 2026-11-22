@@ -6,13 +6,17 @@ failed once in CI printed neither list. A connection or a thread a test
 leaves behind is reported by the collector in whatever test runs next,
 or only in the summary, unless the suite makes it an error. A test that
 hangs under parallel workers is ended alone, and every thread's stack
-is left in a file, because pytest-xdist drops a worker's stderr.
+is left in a file, because pytest-xdist drops a worker's stderr. A
+thread a failed test leaves on a gate is freed, and every budget a test
+does not name is unbounded.
 """
 
 from __future__ import annotations
 
 import ast
 import importlib
+import inspect
+import math
 import os
 import subprocess
 import sys
@@ -21,7 +25,18 @@ from typing import Final
 
 import pytest
 
-from tests.conftest import HANG_DIR_VAR, HELPER_PACKAGES
+from tests.conftest import HANG_DIR_VAR, HELPER_PACKAGES, UNBOUNDED_ARGUMENTS
+from vfs import base as base_module
+from vfs import chain as chain_module
+from vfs import fanout as fanout_module
+from vfs import listing as listing_module
+from vfs.base import AsyncVirtualFileSystem
+from vfs.rendering import RenderLimits
+from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.postgres import PostgresStorage
+from vfs.storage.backends.sqlite import SQLiteStorage
+from vfs.sync import VirtualFileSystem
 
 TESTS: Final = Path(__file__).parent
 REPO: Final = TESTS.parent
@@ -112,6 +127,61 @@ def test_the_next_test_inherits_nothing():
         if thread is not threading.current_thread() and not thread.daemon:
             thread.join()
 """
+READS_THEN_WRITES: Final = """
+from sqlalchemy import text
+
+from tests.support.database_helpers import _fresh_url, begin_as_writer
+from vfs.storage.backends.database import DatabaseStorage
+
+READ = text("SELECT grant_revision FROM vfs_meta")
+WRITE = text("UPDATE vfs_meta SET grant_revision = grant_revision")
+
+
+async def test_a_plain_session_that_reads_then_writes(tmp_path):
+    storage = DatabaseStorage(url=_fresh_url(tmp_path))
+    assert (await storage.first_touch()).success
+    async with storage._host.session_factory() as session:
+        await session.execute(READ)
+        await session.execute(WRITE)
+        await session.commit()
+
+
+async def test_a_writer_session_that_reads_then_writes(tmp_path):
+    storage = DatabaseStorage(url=_fresh_url(tmp_path))
+    assert (await storage.first_touch()).success
+    async with storage._host.session_factory() as session:
+        await begin_as_writer(session)
+        await session.execute(READ)
+        await session.execute(WRITE)
+        await session.commit()
+
+
+async def test_a_plain_session_whose_first_statement_writes(tmp_path):
+    storage = DatabaseStorage(url=_fresh_url(tmp_path))
+    assert (await storage.first_touch()).success
+    async with storage._host.session_factory() as session:
+        await session.execute(WRITE)
+        await session.execute(READ)
+        await session.execute(WRITE)
+        await session.commit()
+"""
+GATED: Final = """
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+
+@pytest.fixture
+def pool():
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        yield executor
+
+
+def test_a_failure_while_a_thread_waits_on_its_gate(pool, thread_gate):
+    gate = thread_gate()
+    pool.submit(gate.wait)
+    assert False
+"""
 CHILD_INI: Final = """[pytest]
 asyncio_mode = auto
 timeout = {deadline}
@@ -189,6 +259,55 @@ def test_no_test_leaves_a_loop_that_pytest_asyncio_made_unasked(tmp_path: Path) 
 def test_a_driver_thread_stopped_unawaited_ends_on_its_tests_loop(tmp_path: Path) -> None:
     ran = _run_child(tmp_path, STOPPED_MID_WORK, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
     assert ran.returncode == 0, ran.stdout
+
+
+@pytest.mark.slow
+def test_a_plain_transaction_that_reads_then_writes_fails_its_test(tmp_path: Path) -> None:
+    ran = _run_child(tmp_path, READS_THEN_WRITES, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
+    assert ran.returncode == 1, ran.stdout
+    assert "3 passed, 1 error" in ran.stdout, ran.stdout
+    assert "ERROR at teardown of test_a_plain_session_that_reads_then_writes" in ran.stdout, ran.stdout
+    assert "a plain SQLite transaction read and then wrote" in ran.stdout, ran.stdout
+    assert "'UPDATE vfs_meta SET grant_revision = grant_revision'" in ran.stdout, ran.stdout
+    assert "test_hanging.py:16 in test_a_plain_session_that_reads_then_writes" in ran.stdout, ran.stdout
+
+
+@pytest.mark.slow
+def test_a_test_that_fails_before_it_opens_a_gate_frees_the_thread_waiting_there(tmp_path: Path) -> None:
+    ran = _run_child(tmp_path, GATED, "-n", "0", deadline=QUIET_DEADLINE_SECONDS)
+    assert ran.returncode == 1, ran.stdout
+    assert "1 failed in" in ran.stdout and " error" not in ran.stdout, ran.stdout
+
+
+@pytest.fixture(scope="module")
+def module_budgets() -> tuple[AsyncVirtualFileSystem, InMemoryStorage]:
+    """A router and a storage built before any function-scoped fixture of a test runs."""
+    return AsyncVirtualFileSystem(), InMemoryStorage()
+
+
+def test_every_budget_a_test_does_not_name_is_unbounded(
+    module_budgets: tuple[AsyncVirtualFileSystem, InMemoryStorage],
+) -> None:
+    router, storage = module_budgets
+    assert router._close_timeout == math.inf
+    walls = (storage._grep_wall_seconds, storage._search_wall_seconds, storage._glob_wall_seconds)
+    assert walls == (math.inf,) * 3 and storage._embed_timeout == math.inf
+    for kind in (
+        DatabaseStorage,
+        SQLiteStorage,
+        PostgresStorage,
+        InMemoryStorage,
+        AsyncVirtualFileSystem,
+        VirtualFileSystem,
+    ):
+        defaults = inspect.unwrap(vars(kind)["__init__"]).__kwdefaults__
+        assert {name: defaults[name] for name in UNBOUNDED_ARGUMENTS & defaults.keys()} == dict.fromkeys(
+            UNBOUNDED_ARGUMENTS & defaults.keys(), math.inf
+        )
+    assert [module.WALL_TIME_BUDGET for module in (base_module, chain_module, fanout_module, listing_module)] == [
+        math.inf
+    ] * 4
+    assert RenderLimits().seconds == math.inf
 
 
 # ---------------------------------------------------------------------------

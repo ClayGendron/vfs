@@ -35,7 +35,7 @@ from tests.support.commit_worlds import (
     row_at,
     stamp,
 )
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, _waits_out_every_lock
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry
@@ -678,6 +678,10 @@ class TestClosedWindows:
         url = _url(tmp_path)
         storage = InMemoryStorage() if backend == "memory" else DatabaseStorage(url=url)
         second = storage if backend == "memory" else DatabaseStorage(url=url)
+        if second is not storage:
+            # The rival waits on the verb's commit, never on the busy budget.
+            _waits_out_every_lock(storage)
+            _waits_out_every_lock(second)
         world = {"landing": drop_world, "late-row": drop_world, "revoke": grant_world}[window]
         await world(storage)
         sessions = attempts(monkeypatch, storage)

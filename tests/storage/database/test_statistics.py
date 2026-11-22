@@ -27,9 +27,8 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
-from sqlalchemy.util import greenlet_spawn
 
-from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock
+from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock, begin_as_writer, writer_engine
 from tests.support.plan_store import (
     PATH_INDEXES,
     PLAN_ARMS,
@@ -248,7 +247,7 @@ async def _own_tables_listed(storage: DatabaseStorage) -> list[str]:
     """
     own = {f'ANALYZE "main"."{table.name}"': table.name for table in storage._host.tables.metadata.tables.values()}
     async with storage._host.session_factory() as session:
-        conn = await session.connection(execution_options={"vfs_writer": True})
+        conn = await begin_as_writer(session)
         listed = [str(row[0]) for row in (await conn.exec_driver_sql(LISTING)).all()]
         indexed = [
             own[statement]
@@ -543,7 +542,7 @@ class TestPlannerStatistics:
         assert _count(traced, SCHEMA_RELOAD) == 1
         await storage._host.settle_statistics()
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.exec_driver_sql("DELETE FROM sqlite_stat1")
             await session.commit()
         failing = _fail_analyze(engine, ordinal=2)
@@ -589,7 +588,7 @@ class TestPlannerStatistics:
     async def test_the_pass_analyzes_only_the_tables_of_the_mount(self, tmp_path) -> None:
         """Guards: a pass acting on every statement the listing prints, tables that are not the mount's included."""
         storage = DatabaseStorage(url=_url(tmp_path))
-        async with storage.engine.begin() as conn:
+        async with writer_engine(storage.engine).begin() as conn:
             await conn.exec_driver_sql("CREATE TABLE other_rows (id INTEGER PRIMARY KEY, label TEXT)")
             await conn.exec_driver_sql("CREATE INDEX ix_other_rows_label ON other_rows (label)")
             for index in range(1_000):
@@ -676,8 +675,8 @@ class TestPlannerStatistics:
             await asyncio.Event().wait()
 
         task = asyncio.create_task(caller())
+        # The cancel lands while the pass runs its first ANALYZE, the moment a pass the caller owned would lose.
         await first.wait()
-        await asyncio.sleep(0.005)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -1070,10 +1069,49 @@ class TestPlannerStatistics:
         assert [item for item in traced[pass_begin:] if item.kind == "commit" and item.connection == connection] == []
         with closing(sqlite3.connect(file)) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
-        # The pass checked its connection back in to the pool the timed-out close had disposed, which nothing closes.
+        # The pass checked its connection back in to the pool the timed-out close had disposed, and closed it there.
         assert isinstance(disposed_pool, QueuePool) and disposed_pool is not engine.sync_engine.pool
-        assert disposed_pool.checkedin() == 1
-        await greenlet_spawn(disposed_pool.dispose)
+        assert disposed_pool.checkedin() == 0
+
+    async def test_a_close_retried_while_the_pass_is_held_leaves_no_pass_running(
+        self, tmp_path, large_store, monkeypatch
+    ) -> None:
+        """Guards: a retried close cancelling the pass again, ending its interrupt loop while it still runs."""
+        url = _copied(large_store, tmp_path)
+        _empty_statistics(url)
+        storage = DatabaseStorage(url=url)
+        host = storage._host
+        file = url.removeprefix("sqlite+aiosqlite:///")
+        rival = sqlite3.connect(file, timeout=0, isolation_level=None)
+        held, stopping = asyncio.Event(), asyncio.Event()
+        real_stop = host.stop_analysis
+
+        @event.listens_for(host.engine.sync_engine, "before_cursor_execute")
+        def hold(conn, cursor, statement, parameters, context, executemany) -> None:
+            if statement == PASS_BEGIN and not held.is_set():
+                rival.execute("BEGIN IMMEDIATE")
+                held.set()
+
+        async def stop_analysis() -> None:
+            stopping.set()
+            await real_stop()
+
+        monkeypatch.setattr(host, "stop_analysis", stop_analysis)
+        first_pool = host.engine.sync_engine.pool
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await held.wait()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(storage.close(), 0.01)
+        stopping.clear()
+        retried = asyncio.ensure_future(storage.close())
+        await stopping.wait()
+        rival.execute("COMMIT")
+        rival.close()
+        await retried
+        assert [task for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)] == []
+        with closing(sqlite3.connect(file)) as connection, connection:
+            assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
+        assert isinstance(first_pool, QueuePool) and first_pool.checkedin() == 0
 
     @pytest.mark.slow
     async def test_a_held_advisory_rides_on_a_topology_verb_and_on_posture(self, tmp_path) -> None:
