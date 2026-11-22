@@ -1,6 +1,8 @@
 # A policy judges each step before it runs
 
-This spec is a draft, written on 2026-11-22. It is not reviewed, and nothing in it is built. It is spec 6 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It rests on that overview, on the guide `documentation/how-to/interrupt-a-job-and-ask-a-person.md` (its steps 1 and 2 and its sections "Combine Policies" and "The System Authority Is Never Interrupted"), on the code of the branch `a-job-is-interrupted-and-resumed` at `6dae6a1d`, and on four studies under `agents/2026-11-22-a-job-is-interrupted-and-resumed/research/`: `cedar.md`, `approval-modes.md`, `langgraph.md` and `temporal.md`. Every probe named below was run on 2026-11-22 on a SQLite file or the in-memory storage, under Python 3.13.11. The probe scripts were scratch files and are not kept, so each result is stated where it is used. The specs for the job record (7), the session handle (2) and the replayed line (8) were drafted on the same day, and were not seen while this one was designed. Once it was drafted, each of the three was read for one thing only: what it asks of this spec. Decision 21, the verdict of decision 13, one row of decision 15 and one line of decision 9 answer those asks. Nothing else in those drafts was checked against this one.
+This spec is a draft, written on 2026-11-22. It is not reviewed, and nothing in it is built. It is spec 6 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It rests on that overview, on the guide `documentation/how-to/interrupt-a-job-and-ask-a-person.md` (its steps 1 and 2 and its sections "Combine Policies" and "The System Authority Is Never Interrupted"), on the code of the branch `a-job-is-interrupted-and-resumed` at `6dae6a1d`, and on four studies under `agents/2026-11-22-a-job-is-interrupted-and-resumed/research/`: `cedar.md`, `approval-modes.md`, `langgraph.md` and `temporal.md`. Every probe named below was run on 2026-11-22 on a SQLite file or the in-memory storage, under Python 3.13.11. The probe scripts were scratch files and are not kept, so each result is stated where it is used. The other eight specs were drafted on the same day, without sight of this one.
+
+**Round two, 2026-11-22.** The other eight drafts were then read: each one's Builds on, every decision that names this spec or something it owns, and every decision this spec leans on. A name another spec owns is written here as that spec has it, and is cited by its number and its heading, because the others were being revised at the same time. Decision 23 is new. Decisions 2, 3, 8, 10, 13, 16 and 17 changed in what they decide, and each says where. Most of the others gained a citation and nothing else. No decision was renumbered or removed. This spec keeps no record, so the first three rulings of round two, on the kernel store, the session key and the etag, ask nothing of it but what decisions 21 and 23 say. What no other spec provides yet is under "Needs no other spec meets yet".
 
 ## The outcome wanted
 
@@ -12,28 +14,46 @@ A host hands VFS functions of its own, and VFS shows each one every verb it is t
 |---|---|---|
 | The parameter table, `src/vfs/params.py` | landed | The table's rows become the fields of the step classes. Decision 2. |
 | The cancellation rule, `documentation/maintainers/cancellation.md` | landed | A cancelled call leaves its storage whole. A call cancelled while a policy is asked has reached no storage. |
-| Spec 1, a row carries an etag | drafted, 2026-11-22 | It adds `if_match` to `write`, `edit`, `delete` and `move`. It is built before this spec, so its rows are fields of four step classes when the classes are written. Nothing else is needed. |
-| Spec 2, a session is stored, named and forked | drafted, 2026-11-22 | It owns `fs.session(..., policies=())` and the handle. This spec needs three things of it. The handle builds a `PolicySet` from what it was given, through this spec's constructor, which raises the `TypeError` of decision 9 and the `ValueError` of decision 17. The handle keeps that set. Each verb the handle forwards runs inside `decisions.with_policies(...)`, which decision 17 defines. |
-| Spec 7, a job is interrupted and resumed | drafted, 2026-11-22 | It owns `interrupt()`, `require_approval()`, the job and `resume`. This spec owns the place a policy is asked and what the kernel does with its outcome. The needs arise in decisions 6, 12, 13, 15, 16, 17 and 18, and are listed once below this table. It asks this spec for a step that turns into JSON, a canonical form, one judging coroutine and a decision that can carry an interrupt's id: decisions 21, 13 and 12. |
-| Spec 3, the session remembers what it read | drafted earlier, being rewritten | Its two refusals, `vfs.conflict.unread` and `vfs.conflict.changed`, are judged before the call site of decision 10 wherever they can be judged without the storage, so that nobody is asked about a change the session would refuse. |
-| Spec 8, an interrupted line replays its replies | drafted, 2026-11-22 | A step that a replayed line makes carries the same `via` as the first run. Decision 6. It asks for a test, with no I/O, of whether any policy can apply to a call, which decision 9 gives. |
+| Spec 0, the kernel keeps records of its own | drafted | Nothing. This spec keeps no record, so it uses none of the forms of spec 0, decision 22 ("The interface is private, and this is all of it"). Spec 0, decision 21 ("The store judges no rights, and no session, policy or tool can reach it") holds here: a policy is handed a step, and a step holds nothing that reaches the store. |
+| Spec 1, a row carries an etag | drafted | It is built before this spec and changes the table the step classes are written from. Spec 1, decision 6 ("`write`, `edit`, `delete` and `move` take `if_match`, and their batch forms take `if_matches`"), decision 7 ("`if_version` and `if_versions` leave") and decision 14 ("The four public faces, the parameter table and the seam carry the same names") say how. Its decision 8 ("The rules at the gate") adds two kinds of parameter, `etag` and `etags`, which a field of a step class can have. Decisions 2 and 21 here take them. Met. |
+| Spec 2, a session is stored, named and forked | drafted | Spec 2, decision 2 ("`fs.session(authority=None, id=None, *, strict=True, policies=())` returns a handle and does no I/O") and decision 3 ("The handle holds seven values, and only its current turn ever changes") give the handle and its slot `_policies`, public as `policies`, a tuple. Its decision 4 ("`strict` and `policies` belong to the handle and are never stored") leaves the reading of `policies` to this spec, and until this spec lands refuses a non-empty `policies` with `ValueError`. Decision 17 here removes that refusal and its test, and says what the handle then does. Met. |
+| Spec 3, the session remembers what it read | drafted | Spec 3, decision 8 ("A read writes its stamps behind, and a change writes them with the change") orders a change through a session: strict refuses at its step 3, and the kernel is called at its step 5, where the policies are. So `vfs.conflict.unread` (spec 3, decision 12, "The two refusals are `vfs.conflict.changed` and `vfs.conflict.unread`, and neither carries a version") is given before any policy is asked. `vfs.conflict.changed` is found by the storage's precondition, after the policies, as every refusal of a verb's body is. Met. |
+| Spec 4, a session works in turns | drafted | Nothing is needed. A fork's handle carries the source handle's policies (spec 4, decision 16, "`fork(id, before=turn)` makes a new session of the same owner under an id that owner has not used"). |
+| Spec 5, a rewind puts a session's files back | drafted | It asks this spec for two things. Spec 5, decision 13 ("A rewind with files is one step to the policies and one job to an interrupt") needs a step class that is no verb's, `RewindStep`, and a way to have it judged. Spec 5, decision 9 ("Steps run in batches through the router's verbs, as the session's authority, below the session and below the policies") needs a way to dispatch a verb inside a step already judged. Decision 23 here gives both. |
+| Spec 7, a job is interrupted and resumed | drafted | It owns `interrupt`, `require_approval`, the job and `resume`. This spec owns the place a policy is asked and the judging coroutine. What each asks of the other is in the two lists below this table. |
+| Spec 8, an interrupted line replays its replies | drafted | Spec 8, decision 4 ("Replies are kept in memory while a line runs, and are written only when it stops") asks for a test, with no I/O, of whether any policy can apply to a call. Decision 9 here gives `decisions.guarded`. It asks for a step for each verb a line's host calls and a `via` that can name a line: decisions 2 and 6. This spec asks one thing of it, that a resumed line carries its `via`, which is not met yet. |
 | Tools (`@tool`, `/.vfs/bin`) | not written | `RunStep` and its call site exist. The tools spec states how a run's rights are proven before its policies, and adds its own value to the type of `via`. |
 
-**What is needed of spec 7, in one list.**
+**What this spec asks of spec 7, and where it is met.**
 
-1. Awaited inside a policy, `interrupt()` and `require_approval()` either return at once, because the job holds an answer for that place, or stop the policy with a signal. The signal is a subclass of `BaseException` and not of `Exception`, so a policy's `except Exception` cannot swallow it. Raising it writes nothing.
-2. Spec 7 gives one context manager that the judging coroutine enters around each policy, with the step and the policy's name, so that an interrupt is filed under that name. It is entered beside this spec's own mark in the call context of decision 6.
-3. Given the step, the name of a policy and that policy's signal, spec 7 stores the job and returns the interrupted result. The kernel returns that result as the verb's.
-4. On a resume, spec 7 sees whether the answer it was given was asked for by a policy in that pass. An answer that was asked for by nobody ends the job, and its step is not run (decision 16). Spec 7 also says, for one asking, whether its signal was raised and then caught by the policy (decision 15).
-5. `require_approval` marks the `Decision` it returns for a person's "no", by putting the interrupt's id in the field `answered` of decision 12, and spec 7 builds the `vfs.interrupt.denied` refusal for a decision that carries one.
-6. A resumed step passes the gate, the rights proof and the judging coroutine again, as the job's caller, and a step of a line carries its `via`. Entering through the public verb gives all three.
-7. `interrupt()` reached in a job of the system authority fails the step. No policy can reach it there, by decision 18, so only a tool can.
-8. A job that a session's policy interrupted is resumed with that session's policies in the call context, which `session.resume` gives it.
+1. Awaited inside a policy, `interrupt` and `require_approval` either return at once, because the job holds an answer for that place, or stop the policy with a signal that is a `BaseException` and no `Exception`. Raising it writes nothing. Met by spec 7, decision 8 ("`interrupt(message, schema, *, details=None)` stops its policy by raising a `BaseException`, and returns the answer once the job has it"): the signals are `Interrupted` and `AnswerRefused`.
+2. An asking context around each policy, so that an interrupt is filed under the policy's name. Met by the same decision: the judging coroutine sets the context before it awaits a policy and resets it after. The value a run hands the coroutine, and the function that makes one policy's context from it, have no name there. That is listed under "Needs no other spec meets yet".
+3. Given the step, a policy's name and its `Interrupted`, the job is stored and the interrupted result returned. Met by spec 7, decision 6 ("The job is committed before the interrupted result is returned"), decision 12 ("The interrupted result is a `Result` with one fatal entry of the kind `vfs.interrupted`, and it carries the job") and `store_job` of decision 37 ("A line's job uses the same record, states and claim, and spec 8 supplies what is saved and how it is carried on").
+4. An answer nobody asks for again never runs the step. Met by spec 7, decision 20 ("A resume runs the policies again with the answers the job has, and the run ends in one of seven ways"), its last row. A stop that a policy caught is recorded by the asking context: spec 7, decision 8, "A policy that swallows the stop".
+5. `require_approval` marks the decision it returns for a person's "no" with the interrupt's id. Met by spec 7, decision 11 ("`require_approval(message, *, details=None)` is `interrupt(message, Approval)` turned into a decision that remembers which answer it came from"). The refusal for it is spec 7, decision 27 ("A denial and a cancel are the kinds `vfs.interrupt.denied` and `vfs.interrupt.cancelled`, and their words name the principal that answered by its name").
+6. A resumed step is judged again by the judging coroutine and passes the gate again. Met by spec 7, decision 20, and by decision 22 ("The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`"), which dispatches through the kernel's own path for the verb. This spec first asked that the rights proof be asked again too. Spec 7 leaves the caller's rights to the storage when the verb runs, and decision 10 here now says so. Two sentences those decisions need are listed under "Needs no other spec meets yet".
+7. `interrupt` reached in a job of the system authority fails the step. Met by spec 7, decision 30 ("A job of the system authority is never interrupted, and a step that would interrupt it fails with the rule's words").
+8. A job that a session's policy judged is resumed with that session's policies. Met by spec 7, decision 33 ("A job its session's policies judged is resumed through a handle that carries policies of the same names"), from the names the verdict of decision 13 here reports.
+
+**What spec 7 asks of this spec, and where it is met.** Its Builds on asks for ten things.
+
+| It asks for | Here |
+|---|---|
+| A `Step` with `verb`, `paths`, `authority` and `via` that turns into JSON and back into an equal value, bytes as base64 | Decision 21 |
+| A canonical form in which each body stands as its sha256 | Decision 21 |
+| One judging coroutine, called for the first run and for every resume, that reports allow, a denial by a policy, a denial by an answer with its interrupt's id, a stop with the first raiser in policy order, or a refused answer | Decision 13 |
+| Policy names that are unique among those asked about one step | Decisions 9 and 17 |
+| The names of the session's policies that were shown the step | Decision 13, `Verdict.of_session` |
+| A module for `Step` that imports nothing from `vfs.results` | Decision 2 |
+| A `Decision` that can carry an interrupt's id, set only by `require_approval` | Decision 12 |
+| Failing closed for a policy that returns after its `interrupt` raised the stop | Decision 15 |
+| No policy run for the system authority | Decision 18 |
+| The caller's access judged before any policy is asked | Decision 10, for a first call of a change. Not for a read, a restore's verdict on a row, or a resume. "Needs no other spec meets yet" says why. |
 
 ## Terms
 
 - **Verb.** One of the 25 operations in `Op` (`src/vfs/ops.py:38`), such as `edit`.
-- **Step.** One verb about to run, with the arguments the kernel has checked, as a typed value that cannot be changed.
+- **Step.** One verb about to run, with the arguments the kernel has checked, as a typed value that cannot be changed. One step is no verb: a rewind that puts files back (decision 23).
 - **Step class.** The Python class of the steps of one verb, such as `EditStep`.
 - **Group.** A base class that several step classes share. `Mutation` is the one group.
 - **Policy.** An `async` function the host writes and marks with `@policy`. It takes a step and returns a decision.
@@ -46,7 +66,8 @@ A host hands VFS functions of its own, and VFS shows each one every verb it is t
 - **Fail closed.** A guard that breaks refuses. Fail open is the opposite: a guard that breaks lets the work through.
 - **The system authority.** `Authority.system()`, the caller that stands for the host's own code.
 - **Line.** One call of `cli`: a line of bash whose every file access is a call of a public verb.
-- **Signal.** What `interrupt()` raises to stop a policy when no answer is on record. Spec 7 defines it.
+- **Signal.** What `interrupt` raises to stop a policy. Spec 7 has two, `Interrupted` and `AnswerRefused` (spec 7, decision 8).
+- **Judging coroutine.** The one coroutine that asks every policy typed for a step and reports what they decided (decision 13).
 - **Pass.** One asking of every policy typed for a step. A step that is interrupted and resumed has more than one pass.
 - **Statement.** A SQL statement other than `BEGIN`, `COMMIT`, `PRAGMA`, `SAVEPOINT`, `RELEASE` and `ROLLBACK`.
 
@@ -68,6 +89,7 @@ A host hands VFS functions of its own, and VFS shows each one every verb it is t
 | A `restore` gives its verdict on a row when it reads that row, inside its body. | Read, `backend.py:824-862`. |
 | `cli` is not an op. Each request of a line is answered by one public verb, called with the line's authority. Nothing tells that verb it was made by a line. | Read, `src/vfs/ops.py:15-19`, `src/vfs/shell/host.py:353-367`, `:377`, `:421`, `:430`, `:471-493`. |
 | A line never runs as the system authority. | Read, `src/vfs/shell/host.py:216-218`. |
+| The line `cat /a; echo x > /b; rm /c` makes seven calls of public verbs: `stat`, `read`, `stat`, `stat`, `write`, `stat`, `delete`. The line `echo hi` makes none. A `cat` that is refused prints its error, the line goes on to `|| echo fallback`, exits 0, and keeps the refusal as one warning. | Run, in round two, once the extension was rebuilt. |
 | A chained `glob` or `grep`, one given rows in hand, calls the kernel's own public `stat` or `read` for a fact a row lacks. | Read, `src/vfs/chain.py:99` and `:150`. |
 | `run` routes, and no storage that ships answers it. | Read, `src/vfs/storage/protocol.py:390`. `backend.py` has no `run` method. |
 | The synchronous face owns one loop on one thread. A verb called from that thread is refused `invalid` and never waited on. A call's task runs in a copy of the caller's context. | Read, `src/vfs/sync.py:94-96` and `:691-698`. |
@@ -122,7 +144,7 @@ class EditStep(Mutation):
 - `ParamKind`, `ParamSpec` and `param` move to `steps.py`. `steps.py` imports the standard library, `vfs.ops`, `vfs.authority`, `vfs.paths` and `vfs.storage.grants`, and names model types only under `TYPE_CHECKING`. It imports nothing from `vfs.results`, so the result envelope may import a step.
 - `params.py` imports the classes and builds `PARAMS` from them when it is imported: for each verb, the rows of its class's fields in the order they are written, then the `authority` row. `RULES`, `VALUE_RULES`, `param_violation` and every name `params.py` exports today stay where they are. No `ParamSpec(` call is left in `params.py`.
 - `STEPS: Final[dict[Op, type[Step]]]` in `steps.py` maps each verb to its class.
-- The derived table equals today's: 25 verbs, 142 rows, each row's name, kind, bounds, choices, default and words unchanged. The gate, its messages and the signature test are untouched.
+- The derived table equals the table it replaces, row for row: each row's name, kind, bounds, choices, default and words unchanged. That table holds 25 verbs and 142 rows at `6dae6a1d`. It holds 148 once spec 1, decision 14, has landed: two rows leave `write` and eight join the four verbs. The gate, its messages and the signature test are untouched.
 
 Three verbs take a scope parameter named `paths`: `glob`, `grep` and `search`. Every step has a core attribute of that name (decision 4), and the two do not mean the same thing when the verb is given rows in hand. On those three classes the field is `roots`, and its row keeps the name `paths` through `param(..., name="paths")`.
 
@@ -154,9 +176,13 @@ Three verbs take a scope parameter named `paths`: `glob`, `grep` and `search`. E
 | `AddMemberStep` | `add_member` | `Mutation` | `group`, `member`, `path` |
 | `RemoveMemberStep` | `remove_member` | `Mutation` | `group`, `member`, `path` |
 
-The classes are written from the table as it stands when this spec is built. A parameter another spec adds first, such as spec 1's `if_match`, is a field then.
+The table above lists the attributes as the tree has them at `6dae6a1d`. The classes are written from the table as it stands when this spec is built, and spec 1 is built first. By spec 1, decision 6 and decision 7, `WriteStep` then has `if_match` and `if_matches` in place of `if_version` and `if_versions`, and `EditStep`, `DeleteStep` and `MoveStep` have `if_match` and `if_matches` too. Their fields are of spec 1's kinds `etag` and `etags`.
 
-All 27 classes are exported from `vfs` by name, as the guide imports them.
+One class is no verb's: `RewindStep`, which decision 23 adds. It is in none of the table's rows and has no row in `PARAMS`.
+
+All 28 classes are exported from `vfs` by name, as the guide imports them.
+
+`verb` is a `str` on `Step`. On the 25 classes above it is an `Op`. On `RewindStep` it is `"rewind"`.
 
 | Way to hold the description | Verdict |
 |---|---|
@@ -168,7 +194,9 @@ Reason: a policy's author reads `step.old` in an editor and a type checker check
 
 ### 3. `Step` is every step, and `Mutation` is the one group
 
-`Step` is the base class of all 25. `Mutation` is the base class of the 15 whose verb is in `WRITE_GATED_OPS` (`src/vfs/ops.py:98`): the ten that change the file tree, and the five that change who may see it. Neither base class has a `verb`, and neither is ever built.
+`Step` is the base class of every step class. `Mutation` is the base class of the 15 whose verb is in `WRITE_GATED_OPS` (`src/vfs/ops.py:98`): the ten that change the file tree, and the five that change who may see it. Neither base class has a `verb`, and neither is ever built.
+
+Round two adds a sixteenth class under `Mutation`: `RewindStep`, the rewind that puts files back (decision 23). `Mutation` is therefore the fifteen verbs and `RewindStep`, as the ruling for this spec has it.
 
 The guide lists seven changes under `Mutation`: a write, an edit, a delete, a move, a copy, a new directory and a restore. The other eight are an edge made or removed, a sweep, a grant, a revoke, a posture, and a member added or removed.
 
@@ -182,7 +210,7 @@ Reason for the fifteen: `WRITE_GATED_OPS` is the set a read-only mount refuses, 
 
 | Attribute | Type | What it holds |
 |---|---|---|
-| `verb` | `Op` | The verb's name. It is set on the class. |
+| `verb` | `str` | The verb's name, one of `Op`, or `"rewind"` for the one step that is no verb (decision 23). It is set on the class. |
 | `paths` | `tuple[Path, ...]` | Every path the step names, as the kernel sees it, with the mount's path in front. In the order named, with nothing removed. |
 | `subtree` | `bool` | Whether the step acts on everything beneath its paths. |
 | `authority` | `Authority` | The caller. Never `None`: a call that names none carries the kernel's default authority, or the anonymous one. |
@@ -222,7 +250,7 @@ Reason for `subtree` as a public attribute: the kernel already holds this fact f
 ### 5. A step is built after every check the kernel makes by itself, only when a policy will see it, and it cannot be rebound
 
 - **When.** A step is built at the call site of decision 10, after the gate has passed. A call the gate refuses builds none. A call no policy is typed for builds none. A call of the system authority builds none.
-- **From what.** The values the gate admitted. A path the verb names directly, which is `path`, `src`, `dest`, `source`, `target` and each of `roots`, is the `Path` it resolved to. A sequence is a tuple. A mapping, which is `if_versions` and a run's `arguments`, is a read-only view (`types.MappingProxyType`). A parameter the caller left out holds its default. A value inside a model or a pair is as the caller gave it, and `paths` holds the resolved form of every path.
+- **From what.** The values the gate admitted. A path the verb names directly, which is `path`, `src`, `dest`, `source`, `target` and each of `roots`, is the `Path` it resolved to. A sequence is a tuple. A mapping is a read-only view (`types.MappingProxyType`): a run's `arguments`, and `if_versions` today or `if_matches` once spec 1, decision 6, has landed. A parameter the caller left out holds its default. A value inside a model or a pair is as the caller gave it, and `paths` holds the resolved form of every path.
 - **As the caller gave the call.** An `edit` given `old` and `new` has those two and `edits` is `None`. A `write` given `path` and `content` has those and `entries` is `None`. `step.parameters()` returns the verb's arguments as a mapping from parameter name to value, without the ones that hold their default, so that `getattr(fs, step.verb)(**step.parameters(), authority=step.authority)` is the same call.
 - **Frozen.** Every class is `frozen=True`, so assigning an attribute raises `FrozenInstanceError`. An `Observation` and an `EditOperation` in a step refuse assignment too.
 - **Two models in a step can be changed in place.** An `Entry` and an `Edge` accept assignment today. A policy that assigns to one changes the caller's own object. It does not change what this call hands its storage, because the kernel made the storage's copies before the step was built (`src/vfs/base.py:2486`, `:2572`). Freezing the two models is a change to `src/vfs/models/` of its own: a probe that froze `Entry` by configuration could not construct one.
@@ -242,7 +270,7 @@ class Line:
     cwd: str     # the directory the line started in
 ```
 
-- **Each verb a line makes is a step.** A `cat` is a `ReadStep`. A redirect is a `WriteStep`. An `rm` is a `DeleteStep`. A `grep -r` that the indexed verb serves is a `GrepStep`. Each has `via` set to the `Line`. A step of a direct call has `via` of `None`.
+- **Each verb a line makes is a step.** A `cat` is a `ReadStep`. A redirect is a `WriteStep`. An `rm` is a `DeleteStep`. A `grep -r` that the indexed verb serves is a `GrepStep`. Each has `via` set to the `Line`. A step of a direct call has `via` of `None`. The shell also probes: a probe found that `cat /a; echo x > /b; rm /c` makes four `stat` calls beside its `read`, its `write` and its `delete`, and each is a `StatStep` of the line.
 - **Reads inside a line are steps like any other.** A file system with only `Mutation` policies asks nothing about them.
 - **The line itself is shown to no policy.** There is no step class for `cli`, and no policy is asked before a line starts. A line that makes no verb, such as `echo hi`, reaches no policy.
 - **A verb's own inner calls are part of its step.** A chained `glob` or `grep` calls the kernel's `stat` or `read` for a fact a row lacks (`src/vfs/chain.py:99`, `:150`). Those calls are shown to no policy. The outer step names the same rows in `paths`.
@@ -255,12 +283,14 @@ class CallContext:
     via: Line | None = None                    # set by run_line for the length of the line
     policies: PolicySet | None = None          # a session's own, decision 17
     asking: Asking | None = None               # the kernel that is asking, and the policy's name
-    inner: object | None = None                # the kernel whose verb is making its own calls
+    inner: object | None = None                # the kernel whose call sites ask nothing here
 ```
 
-`Asking` is a frozen value of two fields, `kernel` and `policy`. `run_line` enters `decisions.in_line(Line(line, cwd))` around the whole line. The call site of a chained `glob` or `grep` enters `decisions.within(self)` around its filter. The context is read once at each call site. A task the kernel starts inherits it, and the synchronous face runs each call in a copy of its caller's context (`src/vfs/sync.py:94-96`), so both faces carry it.
+`Asking` is a frozen value of two fields, `kernel` and `policy`. `run_line` enters `decisions.in_line(Line(line, cwd))` around the whole line. The call site of a chained `glob` or `grep` enters `decisions.within(self)` around its filter. `within` has two more users, which decision 23 names: a step that is carried out by calls of public verbs after it was judged whole. The context is read once at each call site. A task the kernel starts inherits it, and the synchronous face runs each call in a copy of its caller's context (`src/vfs/sync.py:94-96`), so both faces carry it.
 
-`interrupt()` takes no argument that names its job, so spec 7 keeps a context of its own for the policy that is being asked. The judging coroutine enters both around each policy: this spec's mark, which decision 19 reads, and spec 7's (need 2). The two are not merged, because this one exists from landing 2 and spec 7's holds answers.
+A line that goes through a session reaches the kernel through spec 3's guarded router (spec 3, decision 17, "The shell's host sends what a line is shown and what it changes through the guarded router, and its probes through the kernel"). The router calls the same public verbs inside the same context, so its steps carry the line's `via`.
+
+`interrupt` takes no argument that names its job, so spec 7 keeps a context of its own for the policy that is being asked: the asking context of spec 7, decision 8. The judging coroutine sets both around each policy: this spec's mark, which decision 19 reads, and spec 7's. The two are not merged, because this one exists from landing 2 and spec 7's holds a job's answers.
 
 The type of `via` is `Line | None` in this spec. The tools spec adds a value for a step that a tool's function makes.
 
@@ -297,7 +327,7 @@ It returns a `Policy`, a frozen value.
 | Attribute | What it holds |
 |---|---|
 | `name` | The function's `__name__`, or the `name` keyword. It is what a refusal and an interrupt name. |
-| `covers` | The step classes the policy sees: every one of the 25 that is a subclass of a member of the annotation. |
+| `covers` | The step classes the policy sees: every one of the 26 in `STEP_CLASSES` (decision 23) that is a subclass of a member of the annotation. |
 | `timeout` | The seconds one asking may take. `POLICY_TIMEOUT_SECONDS`, which is 10.0, unless the keyword set it. |
 
 `await a_policy(step)` calls the function, so a policy is tested alone. Two `Policy` values are equal when they wrap the same function. A ready-made policy is equal to another made with the same arguments (decision 20).
@@ -308,7 +338,7 @@ Reason: the Temporal study found a validator of the wrong shape that was accepte
 
 ### 8. The type of a policy's argument is the only thing that chooses the steps it sees
 
-A policy is asked about a step when the step's class is in its `covers`. `Step` covers all 25. `Mutation` covers 15. `DeleteStep | MoveStep` covers 2. `Mutation | RunStep` covers 16.
+A policy is asked about a step when the step's class is in its `covers`. With `RewindStep` counted, as round two has it, `Step` covers all 26, `Mutation` covers 16, `DeleteStep | MoveStep` covers 2, and `Mutation | RunStep` covers 17.
 
 A registry keeps a table from each step class to the tuple of policies that cover it, in the order they were added. The table is built when the registry changes. A call looks its verb's class up once. When the tuple is empty, the call builds no step, asks no storage for a rights proof, and awaits nothing.
 
@@ -335,7 +365,8 @@ fs.policies() -> tuple[Policy, ...]
 - Two different policies with one `name` raise `ValueError`. A name is what an interrupt is filed under, so one registry never holds it twice.
 - None of the three is a coroutine, and none does I/O. They are plain methods on both faces, as `mounts()` and `capabilities()` are, and the twin test names them.
 - `VirtualFileSystem.wrap(fs)` keeps the registry of the kernel it wraps.
-- `decisions.guarded(registry)` says whether the registry or the call context holds any policy. It is two truth tests and no I/O. A line asks it once, when it starts, to learn whether it can be interrupted at all.
+- `decisions.guarded(registry)` says whether the registry or the call context holds any policy. It is two truth tests and no I/O. It is the test spec 8, decision 4 ("Replies are kept in memory while a line runs, and are written only when it stops") asks for: a line asks it once, when it starts, to learn whether it can be interrupted at all.
+- The three methods manage a collection the kernel keeps, so they return plain values and raise, as ruling 5 of round two has it and as `add_mount` does today.
 - The names follow `documentation/maintainers/how-we-name.md`: `add` and `remove` for a thing that joins or leaves a collection the file system keeps, and a plural noun for the collection.
 
 The registry is a frozen value, `PolicySet`: the tuple, and the table of decision 8. A change builds a new one under a `threading.Lock` and replaces the kernel's reference in one assignment. A call reads the reference once, at its call site.
@@ -367,10 +398,12 @@ What `_admit` does, in order. The first step that returns ends it.
 
 1. Read the registry and the call context. Find the policies typed for this verb's class: the file system's, then the session's that are not already among them (decision 17).
 2. If the context says a policy of this kernel is being asked and the caller is not the system authority, refuse `invalid` (decision 19).
-3. If the context says this kernel's own verb is making the call, or no policy is typed for the class, or the caller is the system authority: return, and the verb runs.
+3. If the context says this kernel's call sites ask nothing here (`decisions.within`, decisions 6 and 23), or no policy is typed for the class, or the caller is the system authority: return, and the verb runs.
 4. Build the step.
-5. For a `Mutation`, ask each mount the step reaches for its rights proof, at the same time, with the arguments the verb will be sent (decision 11). If any refuses, return the refusals, merged as the verb would merge them. No policy is asked.
-6. Ask the policies (decision 13). Return the refusal or the interrupted result they give, or return and let the verb run.
+5. For a `Mutation` that is a verb's, ask each mount the step reaches for its rights proof, at the same time, with the arguments the verb will be sent (decision 11). If any refuses, return the refusals, merged as the verb would merge them. No policy is asked.
+6. Ask the policies, through the judging coroutine (decision 13). Return the refusal its verdict gives. From landing 3, when the verdict holds a stop, hand it to spec 7 and return the interrupted result spec 7 makes (spec 7, decision 6, "The job is committed before the interrupted result is returned"). Otherwise return and let the verb run.
+
+Step 1 is also a kernel-private call of its own, `fs._chosen(cls)`, which returns the policies and the names of those that came from the call context. Spec 7's `resume` calls it for the step it rebuilt (decision 23).
 
 So for a change, the order of refusals is: a wrong argument, a wrong path, a busy mount point, an unsupported verb, a reserved path, a read-only map, the caller's rights, and only then a policy. A change the caller may not make is refused in the storage's own words, and no policy is called for it.
 
@@ -387,8 +420,12 @@ What is and is not proven before a policy is asked:
 | Every read, and `grants` | Nothing. A read's rights are a filter over rows, applied as the storage answers (`backend.py:1197-1251`). A policy may be asked about a read whose answer is then `not_found`. |
 | `run` | Nothing in this spec. No storage that ships answers `run`. The tools spec states the proof. |
 | A chained `glob` or `grep` | Nothing. It reads no storage for a row that carries what it needs, and the inner read it may make is judged as any read is. |
+| A `RewindStep` | Nothing. It has no rights gate of its own. Each change it makes is judged by the storage when it is dispatched, as the session's authority (spec 5, decision 9, "Steps run in batches through the router's verbs, as the session's authority, below the session and below the policies"). |
+| A step carried on by a resume | Nothing before its policies. Spec 7, decision 20 ("A resume runs the policies again with the answers the job has, and the run ends in one of seven ways") runs the judging coroutine on the saved step, and spec 7, decision 22 ("The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`") then dispatches it, where the storage judges the caller's rights. So a caller who lost a right while its job waited is refused by the verb, after the policies were asked again. |
 
 A refusal the body of a verb finds after its gate is found after the policies were asked: a row a rival changed inside the window, and a mapped path of a move that an earlier pair of the same call closed (`authorized.py:363-391`).
+
+The proof is a promise about a first call. Round two narrowed it by the last row: the proof needs the mounts a route resolved, and a resume has a saved step and no route. The person who answers a job is judged by spec 7's own rule, before any policy runs (spec 7, decision 17, "A job may be resumed by the system authority, and by an authority that holds `read_write` on every path the step names").
 
 The cases, walked:
 
@@ -458,6 +495,17 @@ The size of a proof is bounded as the gate is. Its reads over the step's paths a
 | `holds(path, level)` at the verb's rung, once for each path | Rejected. It knows no row. A caller who holds `add` and owns the file may edit it, by the owner floor, and `holds` at `contribute` would refuse them. It is also one call for each path. |
 | The verb's own gate, as a question | Chosen. It is the same code, so it cannot disagree with the verb except by a change made in between. |
 
+**`admits` beside spec 7's `holds_all`.** Spec 7, decision 18 ("A storage answers the rights question for many paths in one call") adds `holds_all(paths, level, authority)` to `SupportsHolds`. The two answer different questions, and both stay.
+
+| | `admits` | `holds_all` |
+|---|---|---|
+| Asked about | The caller of a step | The person who answers a job |
+| The question | Would this verb's rights gate let this call through | Does this authority hold one named rung at every path |
+| Reads rows | Yes: a row's owner, its label, whether it is there | No: grants and postures only |
+| The rung | The verb's own, which differs for a new name, an occupied one and a deleted one | `read_write`, whatever the verb |
+
+`holds_all` cannot serve the proof, for the reason `holds` cannot: it knows no row, so it would refuse an owner editing its own file. `admits` cannot serve spec 7's rule: the person who answers is not making the call, and an `edit` is admitted at `contribute`, a rung below the `read_write` that spec 7, decision 17, requires of whoever resumes.
+
 Reason: the only judgement that never refuses a call the verb would allow is the verb's own.
 
 ### 12. A `Decision` allows or denies, and nothing else
@@ -478,7 +526,7 @@ class Decision:
 - `Decision.deny(reason)` takes a reason, which is a string that is not blank. A reason of another type raises `TypeError`, and a blank one raises `ValueError`. Raised inside a policy, either fails it closed.
 - The reason is carried whole. The renderer folds its newlines, as it folds every message's (`src/vfs/results/render.py:103-105`).
 - There is no third value. A policy that needs a person does not return something: it awaits `interrupt()` or `require_approval()`, which spec 7 owns, and returns a decision once it has the answer.
-- Landing 3 adds one field, `answered: str | None`, which is `None` for a decision a policy made by itself. `require_approval` sets it, to the id of the interrupt that was answered, on the decision it returns for a person's "no". Nothing else sets it.
+- Landing 3 adds one field, `answered: str | None`, which is `None` for a decision a policy made by itself. `require_approval` sets it, to the id of the interrupt that was answered, on the decision it returns for a person's "no" (spec 7, decision 11, "`require_approval(message, *, details=None)` is `interrupt(message, Approval)` turned into a decision that remembers which answer it came from"). Nothing else sets it. The id is spec 7's (its decision 9, "An interrupt's id is derived from the job, the place, the raiser and a count, and an answer is used only for the question it answered").
 
 `Decision` is exported from `vfs`.
 
@@ -488,7 +536,21 @@ Reason: Cedar's stable decision has two values, and its third outcome lives in a
 
 The order is the file system's policies in the order they were added, then the session's in the order they were given (decision 17). They are asked one after another. One policy has returned, or has been stopped, before the next is called.
 
-The asking is one coroutine, `decisions.judge(step, policies)`. It is called for a first call and for every resume. It returns a `Verdict` of plain values and builds no `Result`: `decisions.py`, like `steps.py`, imports nothing from `vfs.results`. The kernel turns a verdict into the verb's result.
+The asking is one coroutine, the judging coroutine. Round two gave it a module of its own, `src/vfs/judging.py`.
+
+```python
+async def judge(
+    step: Step,
+    policies: Sequence[Policy],
+    *,
+    of_session: Collection[str] = (),
+    run: object | None = None,
+) -> Verdict: ...
+```
+
+It is called for a first call, by the kernel's call site, and for every resume, by spec 7's `resume` (spec 7, decision 20). `run` is spec 7's value for the run the asking belongs to: the job's id when there is one, the step's place, the answers on record, the answer just given, and whether the job may be interrupted (spec 7, decision 8). It is `None` until landing 3, and this spec passes it through unread. The coroutine returns a `Verdict` of plain values and builds no `Result`: `steps.py`, `decisions.py` and `judging.py` import nothing from `vfs.results`. The kernel turns a verdict into the verb's result.
+
+Why a module of its own. Spec 7 puts `require_approval` in `src/vfs/jobs/asking.py`, and it returns a `Decision`, so that module imports `decisions.py`. From landing 3 the judging coroutine sets spec 7's asking context and catches its two signals, so it imports `jobs/asking.py`. With the coroutine inside `decisions.py`, the two modules would import each other. The order is `steps`, `decisions`, `jobs/asking`, `judging`, `base`.
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -503,9 +565,13 @@ class Verdict:
     refusals: tuple[Refusal, ...] = ()   # in the order asked; empty when nothing denied
     asked: tuple[str, ...] = ()          # the name of every policy asked, in order
     of_session: tuple[str, ...] = ()     # those that came from the call context
+    stopped: tuple[str, BaseException] | None = None   # landing 3: the first policy stopped, and its `Interrupted`
+    unfit: BaseException | None = None                 # landing 3: an `AnswerRefused`
 ```
 
-Landing 3 adds one field to `Verdict`, for the first policy a signal stopped and its signal.
+`Refusal` and `Verdict` are in `judging.py`. The five things spec 7 asks the coroutine to report are these fields: allow is a verdict with nothing in it, a denial by a policy is a `Refusal`, a denial by an answer is a `Refusal` whose `answered` is the interrupt's id, a stop is `stopped`, and a refused answer is `unfit`. `of_session` is what spec 7, decision 33 ("A job its session's policies judged is resumed through a handle that carries policies of the same names") stores on the job.
+
+From landing 3, around each policy the coroutine sets spec 7's asking context from `run`, the step and the policy's name, and resets it when the policy returns or raises, as spec 7, decision 8, describes. It catches `Interrupted` and `AnswerRefused` there. An `AnswerRefused` ends the asking at once: the answer does not fit its schema, no later policy is asked, and spec 7 answers `vfs.invalid` and leaves the job as it was (spec 7, decision 19, "An answer is checked by the policy's own `interrupt`, during the run that `resume` makes, and a wrong answer writes nothing").
 
 Each asking has one of four outcomes.
 
@@ -514,13 +580,13 @@ Each asking has one of four outcomes.
 | Allow | The policy returned `Decision.allow()`. |
 | Deny | The policy returned a denial. |
 | Failed | Decision 15. It counts as a denial. |
-| Interrupt | The policy was stopped by spec 7's signal. Landing 3. |
+| Interrupt | The policy was stopped by spec 7's `Interrupted`. Landing 3. |
 
 After the last policy:
 
 1. **If any denied or failed, the step is refused.** The result carries one error for each policy that denied or failed, in the order they were asked. No person is asked. No job is stored. Every signal of this pass is dropped.
-2. **Otherwise, on a resume, if nobody asked for the answer the resume carried, the step is not run** (decision 16). Spec 7 sees this and ends the job.
-3. **Otherwise, if any was stopped by a signal, the job is interrupted for the first of them in order.** The kernel hands spec 7 the step, that policy's name and its signal, and returns what spec 7 returns. The signals of later policies are dropped. Each is raised again, by its own policy, in a later pass.
+2. **Otherwise, on a resume, if nobody asked for the answer the resume carried, the step is not run** (decision 16). Spec 7 sees this and ends the job (spec 7, decision 20, last row).
+3. **Otherwise, if any was stopped by a signal, the job is interrupted for the first of them in order.** The verdict's `stopped` holds that policy's name and its `Interrupted`. The kernel hands spec 7 the step and the verdict, spec 7 stores the job with `store_job` (spec 7, decision 37), and the kernel returns the interrupted result of kind `vfs.interrupted` (spec 7, decision 12). The signals of later policies are dropped. Each is raised again, by its own policy, in a later pass. Spec 7 has the same rule from its side (spec 7, decision 25, "A job waits on one interrupt at a time, in the order the policies were added").
 4. **Otherwise every policy allowed, and the verb runs.**
 
 Every policy is asked in every pass, whatever an earlier one decided. A policy that awaits an interrupt does nothing to the ones after it: they are still asked, in order. That is how a later denial is found before a person is troubled.
@@ -565,7 +631,9 @@ One error is made for each policy that denied.
 
 The result has `ops` of the verb, no row, and `success` false. Nothing was dispatched to any mount, so a step over three mounts is refused on all three.
 
-From landing 3, a denial whose decision carries `answered` is a person's answer and not the policy's own. Its error is the one spec 7 builds, of kind `vfs.interrupt.denied`, and it takes the same place in the order.
+From landing 3, a denial whose decision carries `answered` is a person's answer and not the policy's own. Its error is the one spec 7 builds, of kind `vfs.interrupt.denied`, and it takes the same place in the order (spec 7, decision 27, "A denial and a cancel are the kinds `vfs.interrupt.denied` and `vfs.interrupt.cancelled`, and their words name the principal that answered by its name").
+
+Ruling 6 of round two confirms the kind: `vfs.permission_denied.policy` is this spec's, and the other eight cite it. Spec 5 raises it from a rewind a policy denies (spec 5, decision 13).
 
 An example, for a policy named `contracts_are_frozen` that returned `Decision.deny("Contracts are frozen until Friday.")` for an edit:
 
@@ -573,7 +641,9 @@ An example, for a policy named `contracts_are_frozen` that returned `Decision.de
 ERROR /contracts/acme.md: Refused by a policy: Contracts are frozen until Friday. (policy contracts_are_frozen) — A rule of this file system refused this step, so nothing was changed. Do not retry it or make the change another way. (retry: never)
 ```
 
-Inside a line, the verb's refusal becomes a host error as any refusal does. `_HOST_ERROR` in `src/vfs/shell/host.py` gains the new kind, mapped to `permission_denied`, so the command prints "Permission denied" and exits non-zero, and the line goes on to its next command. The refusal is kept on the line's result as a warning, with the reason.
+Inside a line, the verb's refusal becomes a host error as any refusal does. `_HOST_ERROR` in `src/vfs/shell/host.py` gains the new kind, mapped to `permission_denied`, so the command prints "Permission denied" and exits non-zero, and the line goes on to its next command. The refusal is kept on the line's result as a warning, with the reason. A probe in round two ran the shape of this with a rights refusal: the command printed its error, `|| echo fallback` ran, the line exited 0, and the result kept one warning.
+
+Spec 8 gives a line a way to print a refusal's own words: the reply `denied` (spec 8, decision 18, "A denial reaches the machine as a refusal with its own words, and its command exits as it does for `Permission denied`"). It gives that reply for `vfs.interrupt.denied` alone. A policy's reason would read better there than "Permission denied", and what spec 8 would need to say is listed under "Needs no other spec meets yet".
 
 A caller that raises on failure gets what `permission_denied` raises, by the family rule (`src/vfs/exceptions.py:88-99`).
 
@@ -598,8 +668,9 @@ Each asking is wrapped. What the wrapper does with what happens:
 | Was still waiting when its timeout passed | Failed | `"timeout"` | One `WARNING` |
 | Returned after its timeout, having held the loop without waiting | Failed | `"timeout"` | One `WARNING`, and once for each policy name a second that says it held the event loop |
 | Caught the timeout's cancellation and returned | Failed | `"timeout"` | One `WARNING` |
-| Was stopped by spec 7's signal | Interrupt | | Nothing |
-| Caught spec 7's signal and returned anything. Landing 3 | Failed | `"swallowed"` | One `WARNING` |
+| Was stopped by spec 7's `Interrupted` | Interrupt | | Nothing |
+| Caught spec 7's `Interrupted` and returned anything. Landing 3. The asking context records that a stop was raised (spec 7, decision 8, "A policy that swallows the stop") | Failed | `"swallowed"` | One `WARNING` |
+| Raised spec 7's `AnswerRefused`. Landing 3 | The asking ends, and the verdict carries it (decision 13) | | Nothing |
 | Was cancelled because its caller was | `CancelledError` goes on to the caller | | Nothing |
 | Raised `KeyboardInterrupt` or `SystemExit` | It goes on to the caller | | Nothing |
 
@@ -623,7 +694,7 @@ Reason: the Cedar probe ran a guard that raised, and the request was allowed. A 
 
 ### 16. A policy is asked again when its job is resumed, and an answer nobody asks for again never runs the step
 
-A resumed step is a new pass. The gate runs, the rights are proven, and every policy typed for the step is asked, as for a first call. `interrupt()` now returns the answer on record, so the policy that asked goes on to its decision.
+A resumed step is a new pass. Every policy typed for the step is asked, as for a first call, by the same judging coroutine (spec 7, decision 20, "A resume runs the policies again with the answers the job has, and the run ends in one of seven ways"). `interrupt` now returns the answer on record, so the policy that asked goes on to its decision. The rights proof is not asked again at a resume: decision 10 says why, and the storage judges the caller when the saved step is dispatched.
 
 What a policy may rest on:
 
@@ -641,9 +712,9 @@ VFS cannot prove a function pure. It finds the one departure that would be dange
 | A policy that allowed before now needs a person | The job is interrupted again, for that policy. |
 | The policy that asked allows without asking again | **The step is not run.** Every policy allowed, and nobody asked for the answer the resume carried. |
 | The policy that asked is not among those asked: it was removed, or the process that resumes never added it | **The step is not run**, for the same reason. |
-| The policy that asked asks something else at that place | Spec 7's rule for a question that changed. |
+| The policy that asked asks something else at that place | The recorded answer is dropped and the job is interrupted with the question now asked (spec 7, decision 9, "An interrupt's id is derived from the job, the place, the raiser and a count, and an answer is used only for the question it answered"). |
 
-The two rows in bold are one rule: **an answer that is no longer asked for never lets the step through.** This spec states the rule, because it follows from asking again. Spec 7 keeps the answers, so it is spec 7 that sees an answer go unused, ends the job, and words the refusal the resume returns. Its draft answers `vfs.conflict`, with the job finished and nothing carried out, and the caller makes the call again to be judged by the policies as they now are. The judging coroutine's part is small: it reports that every policy allowed, and names the policies it asked.
+The two rows in bold are one rule: **an answer that is no longer asked for never lets the step through.** This spec states the rule, because it follows from asking again. Spec 7 keeps the answers, so it is spec 7 that sees an answer go unused, ends the job, and words the refusal. That is the last row of spec 7, decision 20: the job is `finished`, the answer is not recorded, and `resume` returns `vfs.conflict`, "the question this job was waiting on is no longer asked, and nothing was carried out". The caller makes the call again, and it is judged by the policies as they now are. The judging coroutine's part is small: it reports that every policy allowed, and names the policies it asked.
 
 Why the rule is needed. A person answered "no". If the policy that asked is gone, or has changed its mind about asking, nothing reads that "no", every other policy allows, and the step would run against the person's answer.
 
@@ -653,17 +724,19 @@ Reason: the approval study found this defect in a shipped library: a predicate t
 
 ### 17. A session's policies are asked after the file system's and can only add
 
-- A handle is given its policies by `fs.session(..., policies=[...])`, which spec 2 owns. They are code, so they are not stored with the session, and each handle carries the ones it was given.
-- The handle builds a `PolicySet` from them once, and each verb it forwards runs inside `decisions.with_policies(that_set)`. A handle given none enters nothing.
+- A handle is given its policies by `fs.session(..., policies=[...])` (spec 2, decision 2, "`fs.session(authority=None, id=None, *, strict=True, policies=())` returns a handle and does no I/O"). They are code, so they are not stored with the session, and each handle carries the ones it was given, in its slot `_policies`, public as `policies`, a tuple (spec 2, decision 3 and decision 4).
+- Spec 2, decision 4, refuses a non-empty `policies` with `ValueError`, "policies are not served yet", until this spec lands. This spec removes that line and the test `test_a_non_empty_policies_is_refused_until_policies_exist`, and changes the parameter's type from `Iterable[object]` to `Iterable[Policy]`.
+- `fs.session` then checks what it was given, through `decisions.policy_set(policies, beside=registry)`: the function that builds a `PolicySet`, with the `TypeError` of decision 9 for an item that is no `Policy` and the `ValueError` below for a name used twice. It does no I/O, so spec 2's rule for `fs.session` holds. The function keeps its last results by the tuple it was given, so a handle asked for at the top of every request with the same policies builds the set once.
+- Each verb the handle forwards, and its `cli`, runs inside `decisions.with_policies(that_set)`. A handle given none enters nothing. Spec 3's guarded router sits between the handle and the kernel and runs inside the same context.
 - At the call site the policies asked are the file system's, in order, and then the session's that are not equal to one already there. A policy in both is asked once, in the file system's place.
 - Two different policies with one `name` cannot both be asked, because an interrupt is filed by name. `fs.session` raises `ValueError` when a policy it is given shares a name with a different one in its own list or in the file system's registry at that moment. When the clash appears later, because a policy was added to the file system afterwards, the step is refused before any policy is asked, with `data["failed"]` of `"duplicate"` and the detail `two policies are named <name>, so the step was refused`.
 - A handle has no `add_policy` and no `remove_policy`, and nothing it carries can take a file system's policy out of the asking.
 
 A session can therefore ask for more review and never for less: the strictest answer wins over the union, and the union only grows.
 
-A job that a session's policy interrupted is resumed through a handle that carries that policy, with `session.resume`. Resumed with `fs.resume`, the policy that asked is absent, nobody asks for the answer, and the step is not run, by decision 16.
+A job that a session's policies judged is resumed through a handle that carries policies of the same names. That rule and its refusals are spec 7's (spec 7, decision 33, "A job its session's policies judged is resumed through a handle that carries policies of the same names"): `fs.resume` of such a job is refused `vfs.invalid`, and so is `session.resume` on a handle whose policies have other names. What this spec gives it is `Verdict.of_session`, the names of the session's policies that were asked about the step, and `handle.policies`, whose names the resume compares.
 
-Until spec 2's handle exists, the rule is built and tested through `decisions.with_policies` itself. The one line in each of the handle's verbs lands with whichever of the two specs is built second.
+Until spec 2's handle is in the tree, the rule is built and tested through `decisions.with_policies` itself. The edits to `fs.session` and to the handle's verbs land with whichever of the two specs is built second.
 
 Reason: the decision record "the session law" rules that a session never widens itself (rule 1). The same holds for review: the approval study's nearest precedent says a narrower scope "can add a gate but never remove one" (`approval-modes.md`, section 3).
 
@@ -674,7 +747,8 @@ When `step.authority.is_system` would be true, `_admit` returns before it builds
 - A call that names no authority runs as the kernel's `default_authority`. When that is the system authority, the call is shown to no policy. The warning the kernel logs for such a default (`src/vfs/authority.py:247-258`) gains six words: "...passes every rights check and is shown to no policy".
 - A line never runs as the system authority (`src/vfs/shell/host.py:216-218`), so every step of every line is shown to its policies.
 - The anonymous caller is not exempt. Its steps are shown as any caller's are.
-- A policy cannot interrupt a system job, because it is never asked about one. A tool can try. Spec 7 makes that fail the step (need 7).
+- A policy cannot interrupt a system job, because it is never asked about one. A tool can try. Spec 7 makes that fail the step with `vfs.invalid` (spec 7, decision 30, "A job of the system authority is never interrupted, and a step that would interrupt it fails with the rule's words").
+- A rewind that puts files back as the system authority is shown to no policy either (spec 5, decision 13).
 
 Reason: the system authority stands for the host's own code, which wrote the policies and can remove them. A nightly load of a million files as the system authority must not stop for a person, and must not pay for a rule it is exempt from. The decision record "the session law" names the system actor as the one marked exception (rule 6), and this is the same exception.
 
@@ -714,7 +788,9 @@ def review(*, paths: Sequence[str]) -> Policy: ...
 
 Nothing else ships. There is no `policies.strictest`, because the registry is the combiner. There is no string such as `policies="review"`. There is no policy that lets every change through that VFS can undo, because no public verb reverts a file to an earlier version yet.
 
-It needs `require_approval`, so it is built in landing 3.
+It needs `require_approval` (spec 7, decision 11), so it is built in landing 3.
+
+A `RewindStep` is a `Mutation`, so `review` is asked about a rewind that puts files back, and asks for a person when any file it would put back is under one of its paths.
 
 Reason: the approval study ranks a review scoped by path first, as the one mode every product has and the one the guide teaches, and warns against a default over the whole tree: at the reference deployment that is about 37 questions a person a day, and people who are asked that often approve 93 to 97 percent of what they are shown (`approval-modes.md`, sections 6 and 7). So `paths` has no default.
 
@@ -735,14 +811,19 @@ step.canonical() -> bytes
 | A path, a string, an integer, a boolean | The value |
 | Bytes, a write's `data` | A string of base64 |
 | A sequence of strings | A list. `columns`, a set, is a sorted list. |
-| A mapping, `if_versions` and a run's `arguments` | An object. A run's `arguments` that hold a value JSON cannot carry make `to_payload` raise `ValueError` naming the key. |
+| An etag, spec 1's kind `etag` | The value, a string of twenty characters. It is compared and never taken apart (spec 1, decision 2, "An etag is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version"). |
+| A mapping: a run's `arguments`, and `if_versions` today or `if_matches`, spec 1's kind `etags`, once it has landed | An object. A run's `arguments` that hold a value JSON cannot carry make `to_payload` raise `ValueError` naming the key. |
 | `observations` | Each row as `model_dump(mode="json")` gives it. The model already writes bytes as base64 (`src/vfs/models/entry.py:447`). |
 | `entries` | Each entry as `model_dump(mode="json")` gives it, with `data` written as base64 by this method. A probe found that the dump raises `UnicodeDecodeError` for a bytes body that is not UTF-8, and that with `data` as base64 a text entry, a bytes entry and a directory each come back equal. |
 | `edits` | Each as `{"old": ..., "new": ..., "replace_all": ...}` |
 | `moves`, `copies` | Each pair as a list of two strings |
 | `edges` | Each edge as `model_dump(mode="json")` gives it |
 
-`from_payload` finds the class by `verb` in `STEPS`, reads each field back by its kind, and builds the step. A verb that is not in `STEPS`, or a field of the wrong shape, raises `ValueError`. It does not run the gate. The step is checked when its call is made again.
+`from_payload` finds the class by `verb` in `STEP_CLASSES` (decision 23), reads each field back by its kind, and builds the step. A verb that is not there, or a field of the wrong shape, raises `ValueError`. It does not run the gate. The step is checked when its call is made again.
+
+A `RewindStep` has four fields, a string and three integers, and each is written as it is. Its canonical form is its `verb` and those four.
+
+The fingerprint spec 7 takes over the canonical form is spec 7, decision 26 ("The same step made again by the same caller while its job waits joins that job").
 
 For every class and every form a verb takes, `Step.from_payload(step.to_payload(), authority=step.authority) == step`.
 
@@ -762,11 +843,57 @@ Reason: spec 7 saves a stopped step and tells two stopped steps apart by a finge
 
 ### 22. Three landings, in this order
 
-1. **The step classes.** `steps.py`, the table built from it, the payload and the canonical form of decision 21, the exports, the reference page and the glossary term Step. No verb behaves differently.
-2. **Policies that allow and deny.** `decisions.py`, the registry on both faces, the kind, `admits`, the eight call sites, failing closed, the system authority's exemption, `via`, the rule for a session's policies, the reference page and the glossary term Policy. Decisions 7 to 15 without the interrupt outcome, and 17 to 19.
-3. **Policies that interrupt.** The fourth outcome of decision 13, the swallowed stop of decision 15, `Decision.answered`, `policies.review`, and the tests of decision 16's rule, which spec 7's code keeps. It is built in the same pull request as spec 7's `interrupt()`, because its code reads spec 7's signal.
+1. **The step classes.** `steps.py`, the table built from it, the payload and the canonical form of decision 21, `RewindStep` and `STEP_CLASSES` of decision 23, the exports, the reference page and the glossary term Step. No verb behaves differently. It is built after spec 1's landings, so the table it replaces is spec 1's.
+2. **Policies that allow and deny.** `decisions.py`, `judging.py`, the registry on both faces, the kind, `admits`, the eight call sites, `_chosen`, `_ask` and `within` of decision 23, failing closed, the system authority's exemption, `via`, the rule for a session's policies, the reference page and the glossary term Policy. Decisions 7 to 15 without the interrupt outcome, and 17 to 19. Where spec 2's handle is already in the tree, this landing also makes the edits of decision 17 to it.
+3. **Policies that interrupt.** The fourth outcome of decision 13, the swallowed stop of decision 15, `Decision.answered`, `policies.review`, and the tests of decision 16's rule, which spec 7's code keeps. It is built in the same pull request as spec 7's third landing (spec 7, decision 39, "Four landings, in this order": "Interrupting and resuming a step"), because its code reads spec 7's signals and sets spec 7's context.
+
+Decision 23 was added in round two. It names no landing of its own: its class is in landing 1 and its three calls are in landing 2.
 
 Reason: each leaves the tree green and is of use alone. The first is a refactor that the second and every later spec can rest on. The second gives a host a deny rule with no job table. The third cannot exist before the thing it reads.
+
+### 23. A step class need not be a verb's: `RewindStep` is one, and a step that is carried out by many calls is judged once
+
+Added in round two, by ruling 7: a step need not be a verb. Spec 5's rewind that puts files back is one step and one job (spec 5, decision 13, "A rewind with files is one step to the policies and one job to an interrupt").
+
+```python
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class RewindStep(Mutation):
+    """A rewind that is about to put a session's files back."""
+
+    verb: ClassVar[str] = "rewind"
+    before: str          # the turn id the rewind goes back to before
+    session_key: int     # the session, by its key
+    turn_number: int     # the number of the turn named by `before`
+    through: int         # the newest change row the plan covers
+```
+
+- **Its fields.** `session_key` is the key of spec 2, decision 13 ("`vfs_sessions` holds one row per session, under a key that is never used twice"). `turn_number` is the number of spec 4, decision 2 ("`vfs_session_turns` holds one row per turn"). `through` is the id spec 5 reads when it selects the session's change rows (spec 5, decision 6, "A rewind with files walks the session's change rows newest first and undoes each one"). These three are what spec 5, decision 13, saves for the job, and `before` is the turn id spec 5 asks the step to carry.
+- **Its core attributes.** `paths` is every path the plan would change: the path an entry is at and the path it goes back to. `subtree` is false, because the plan names each path. `authority` is the session's. `via` is `None`.
+- **Its group.** It is a `Mutation`. A policy typed `Mutation` or `Step` is asked about it. A policy typed for one verb, such as `DeleteStep`, is not.
+- **It has no row in the parameter table.** `rewind` is no verb and has no gate of its own. Its fields are plain dataclass fields, and `parameters()` returns the four.
+- **`STEP_CLASSES`.** `STEPS` stays the 25 classes of the verbs, keyed by `Op`, because the parameter table is built from it. `STEP_CLASSES: Final[dict[str, type[Step]]]` holds all 26, keyed by `verb`. `covers` (decision 7) and `from_payload` (decision 21) read `STEP_CLASSES`. A later step that is no verb joins it.
+
+A step that no verb's call site builds needs a way to be judged, and a step that is carried out by many verb calls needs those calls not to be judged again. Three kernel-private members give both. None is public, and none is on a session.
+
+| Member | What it does | Who calls it |
+|---|---|---|
+| `fs._chosen(cls)` | Returns the policies typed for a step class, the file system's and then the call context's, and the names of those that came from the context. It is step 1 of `_admit` (decision 10). | `_admit`, `_ask`, and spec 7's `resume` for the step it rebuilt |
+| `await fs._ask(step)` | Judges a step that was built outside a call site. It is steps 1, 2, 3 and 6 of `_admit`: it asks no rights proof, because the step has no verb whose gate could be run. It returns `None` when the step may go on, and otherwise the result to give back: the refusal of decision 14, or spec 7's interrupted result. | Spec 5, for a `RewindStep` |
+| `decisions.within(fs)` | A context in which this kernel's call sites ask nothing: it sets the mark `inner` of decision 6. | The chained `glob` and `grep` (decision 6); spec 5's batches (spec 5, decision 9); spec 7's dispatch of a saved step it has just judged, and the reads of its preview |
+
+Inside `within`, only the policies are skipped. The gate runs. The storage judges the caller's rights on every call, as it always does. So a rewind that a policy allowed can still be refused, entry by entry, by the session's rights as they stand.
+
+What each outcome of `_ask` means for a rewind is spec 5's to say, and spec 5, decision 13, says it: allowed, the steps run; denied, nothing is put back and `rewind` raises with `vfs.permission_denied.policy`; interrupted, nothing is put back and the job is saved.
+
+`within` is a way round the policies, so it is private. It is not exported from `vfs`, no public method enters it, and a policy cannot use it to widen itself: decision 19 refuses a call a policy makes as any caller but the system authority before step 3 of `_admit` is reached.
+
+| How a rewind meets the policies | Verdict |
+|---|---|
+| Each file put back is shown to the policies as its own write, delete or move | Rejected by spec 5, decision 13: a rollback of 300 files would be 300 interrupts, with the files half put back between them. |
+| No policy sees a rewind | Rejected. It changes files, and a policy typed `Mutation` guards changes. |
+| One step, of a class of its own | Chosen. |
+
+Reason: the step classes are the one place that says what a policy can be shown, so a thing a policy must see has a class there, whether or not a verb makes it. One private mark for "already judged" serves the chained filter, the rewind and the resumed step, where three specs would otherwise each invent a way round the call site.
 
 ## Cost
 
@@ -798,7 +925,11 @@ Costed against the reference deployment in the working agreement. Statement coun
 
 **What is not bounded by VFS.** A policy's own work. A policy that waits is ended at its timeout. A policy that holds the loop for a second stalls about 20 calls at the peak hour, and nothing in the process can stop it. A step with `n` policies can take the sum of their timeouts.
 
-**Memory.** A registry is one tuple and one table of 25 keys. A step for 10,000 entries is two tuples of 10,000 references, about 160 KB, for the length of the call.
+**Memory.** A registry is one tuple and one table of 26 keys. A step for 10,000 entries is two tuples of 10,000 references, about 160 KB, for the length of the call.
+
+**A rewind that puts files back.** One `RewindStep`, one asking of each policy typed `Mutation` or `Step`, and no rights proof. Its `paths` hold two paths for each entry the plan would change, so a plan of 10,000 entries is a tuple of 20,000 references. The batches it then dispatches run inside `decisions.within`, where each call site returns after the one context read, so 10,000 files put back add no asking beyond the first.
+
+**A resume.** One more pass of the judging coroutine, and no rights proof. Its statements are spec 7's.
 
 ## Left as it is
 
@@ -822,9 +953,10 @@ Each is written and seen failing before the code. Counts are of calls to a spied
 
 Landing 1, `tests/test_steps.py` and `tests/test_params.py`:
 
-- `test_every_op_has_one_step_class`: `set(STEPS)` equals `ALL_OPS`, 25 classes, each `verb` is its key, and each name is the verb in capitalised words with `Step`.
-- `test_mutation_is_the_write_gated_ops`: the verbs of the subclasses of `Mutation` equal `WRITE_GATED_OPS`, 15.
-- `test_the_table_is_built_from_the_step_classes`: `PARAMS` holds 25 verbs and 142 rows, and the source of `params.py` holds no `ParamSpec(` call, counted as zero.
+- `test_every_op_has_one_step_class`: `set(STEPS)` equals `ALL_OPS`, 25 classes, each `verb` is its key, and each name is the verb in capitalised words with `Step`. `STEP_CLASSES` holds those 25 and `RewindStep`, 26, each under its `verb`.
+- `test_mutation_is_the_write_gated_ops_and_the_rewind`: the verbs of the subclasses of `Mutation` in `STEPS` equal `WRITE_GATED_OPS`, 15, and the subclasses of `Mutation` in `STEP_CLASSES` are those and `RewindStep`, 16.
+- `test_the_table_is_built_from_the_step_classes`: `PARAMS` holds 25 verbs and the number of rows the table held before the landing, taken from the tree the landing starts from: 142 at `6dae6a1d`, and 148 after spec 1. The source of `params.py` holds no `ParamSpec(` call, counted as zero. `"rewind"` is no key of `PARAMS`.
+- `test_a_rewind_step_names_every_path_of_its_plan`: a `RewindStep` built over a plan of 20 entries has 40 paths, `subtree` false and `via` of `None`; `touches("/contracts")` is true when one of them is under `/contracts`; its payload comes back as an equal step.
 - `test_the_scope_of_a_search_keeps_its_parameter_name`: the rows of `glob`, `grep` and `search` each hold one named `paths`, and the three classes each have a field `roots`.
 - Every test in `tests/test_params.py` that exists today passes unchanged, the signature test and the refusal messages among them.
 - `test_a_step_is_frozen`: assigning each of the six core attributes raises `FrozenInstanceError`, and assigning an item of a `RunStep`'s `arguments` raises `TypeError`.
@@ -836,13 +968,13 @@ Landing 1, `tests/test_steps.py` and `tests/test_params.py`:
 - `test_the_canonical_form_ignores_what_is_not_the_call`: two `write` steps built a moment apart from the same path and body have equal canonical forms; a different body, path or flag gives a different one; the same call with `via` a line and with `via` of `None` gives the same one; the bytes hold the body's sha256 and not the body.
 - `test_a_canonical_form_hashes_no_entry_again`: for 10,000 entries a spy on `hashlib.sha256` counts zero.
 - `test_a_steps_repr_holds_no_body`: the `repr` of a `WriteStep` whose content is a marker string does not hold the marker.
-- `tests/test_package.py`: the 27 classes are exported from `vfs`.
+- `tests/test_package.py`: the 28 classes are exported from `vfs`.
 
 Landing 2, `tests/test_decisions.py`:
 
 - `test_policy_refuses_a_wrong_function`: six cases, each raising `TypeError` with no file system made: not `async`; no argument; two arguments; no annotation; an annotation that is no step; an annotation that cannot be resolved.
 - `test_policy_refuses_a_wrong_keyword`: an empty `name`, a `timeout` of zero, a `timeout` that is no number, each `ValueError`.
-- `test_the_annotation_sets_what_a_policy_covers`: `Step` covers 25, `Mutation` 15, `DeleteStep | MoveStep` 2, `Mutation | RunStep` 16.
+- `test_the_annotation_sets_what_a_policy_covers`: `Step` covers 26, `Mutation` 16, `DeleteStep | MoveStep` 2, `Mutation | RunStep` 17, and `RewindStep` 1.
 - `test_a_decision_has_two_values`: `allow()` and `deny("r")`; `deny("")` raises `ValueError`; `deny(None)` raises `TypeError`.
 - `test_the_registry_keeps_its_order`, `test_adding_a_policy_twice_is_one_policy`, `test_two_policies_with_one_name_are_refused`, `test_removing_a_policy_that_is_absent_raises`, `test_an_unmarked_function_is_refused`.
 - `test_two_threads_that_add_both_land`: 2 threads, 100 policies each, 200 in the registry.
@@ -871,46 +1003,53 @@ Landing 2, `tests/base/test_policies.py`, on `RecorderStorage` unless a count of
 - `test_a_registry_change_is_seen_by_the_next_step`: a policy added between two calls is called 0 and then 1 times. A policy added while another call waits inside a policy is not asked about that call.
 - `test_a_policy_reads_its_file_system_as_the_system_authority`: inside a policy, a `read` as the system authority succeeds and asks 0 policies, a `read` as a named caller is `invalid` with the words of decision 19, and a `cli` is refused the same way. A `write` to a second kernel as a named caller lands.
 - `test_a_chained_grep_is_one_step`: a `grep` over rows in hand that must read a body, with a policy typed `Step`: 1 call, of a `GrepStep`.
-- `test_a_contexts_policies_are_asked_after_the_file_systems`: recorded order is the file system's two and then the context's one. A policy in both is called once. Two different policies with one name refuse the step with `failed` of `"duplicate"`.
+- `test_a_contexts_policies_are_asked_after_the_file_systems`: recorded order is the file system's two and then the context's one. A policy in both is called once. Two different policies with one name refuse the step with `failed` of `"duplicate"`. The verdict's `of_session` holds the one name that came from the context.
+- `test_ask_judges_a_step_that_is_no_verb`: `fs._ask(RewindStep(...))` with a policy typed `Mutation`: 1 call of the policy, 0 calls of `admits`. A policy typed `DeleteStep` is called 0 times. As the system authority the policy is called 0 times. A denial comes back as a result of kind `vfs.permission_denied.policy` whose `ops` is `("rewind",)`.
+- `test_a_call_inside_within_asks_no_policy`: inside `decisions.within(fs)`, a `write`, a `delete`, a `restore` and a `move` of 10 entries each, with a policy typed `Step`: 0 calls of the policy, 0 calls of `admits`, 4 dispatches. The same calls on a second kernel inside the first kernel's `within` call that kernel's policy 4 times. A call the caller's rights refuse is still refused inside `within`.
+- `test_chosen_names_the_policies_of_a_class`: `fs._chosen(EditStep)` returns the file system's policies typed for it and then the context's, with the context's names apart.
 
 Landing 2, elsewhere:
 
 - `tests/storage/test_conformance.py`, one contract row for each of the 15 verbs in the table of decision 11: `admits` succeeds where the verb succeeds, fails with the verb's own kind and path where the verb is refused on rights, and leaves every row as it was. On every engine leg.
 - `tests/storage/database/test_authorized.py::test_admits_for_a_write_issues_four_reads`: a named caller with cached rights, one file, counted on SQLite.
-- `tests/shell/test_host.py::test_each_verb_of_a_line_is_a_step_with_via`: `cat /a; echo x > /b; rm /c` with a recording policy typed `Step`: three steps, a `ReadStep`, a `WriteStep` and a `DeleteStep`, each with `via` equal to `Line(text, "/")`. A direct call has `via` of `None`.
+- `tests/shell/test_host.py::test_each_verb_of_a_line_is_a_step_with_via`: `cat /a; echo x > /b; rm /c` with a recording policy typed `Step`: seven steps, as a probe counted the line's calls today: four `StatStep`s, one `ReadStep`, one `WriteStep` and one `DeleteStep`, each with `via` equal to `Line(text, "/")`. A policy typed `Mutation` is called twice. A direct call has `via` of `None`.
 - `tests/shell/test_host.py::test_a_line_is_shown_to_no_policy_itself`: `echo hi` calls the policy 0 times.
 - `tests/shell/test_host.py::test_a_denied_step_fails_as_a_command`: `cat /contracts/a || echo fallback` with a denial of reads under `/contracts`: standard output is `fallback`, standard error holds `Permission denied`, the exit status is 0, and the result holds one warning of the new kind.
 - `tests/test_sync.py`: `_assert_twins` for `add_policy`, `remove_policy`, `policies` and the constructor. `test_a_policy_runs_on_the_facades_loop`: the thread's name inside the policy is `LOOP_THREAD_NAME`. `test_a_policy_that_calls_the_synchronous_face_is_refused_not_hung`: the policy gets an `invalid` result.
 - `tests/results/test_result_laws.py` round-trips the new kind. `tests/results/test_render.py` pins the line of decision 14 exactly.
 - `tests/test_ops.py`: the surface test still holds, since the three new methods are no coroutines.
+- Where spec 2's handle is in the tree: its test `test_a_non_empty_policies_is_refused_until_policies_exist` is deleted, as spec 2, decision 4, says. `test_a_handles_policies_are_checked_when_it_is_asked_for`: an item that is no `Policy` raises `TypeError`, two different policies of one name raise `ValueError`, and neither issues a statement. `test_a_handles_policies_are_asked_after_the_file_systems`: the order through a handle is the order of the context test above.
 
 Landing 3, in `tests/base/test_policies.py` and `tests/test_policies.py`, with spec 7 in the tree:
 
 - `test_a_later_denial_beats_an_earlier_interrupt`: policies `a` (asks) and `b` (denies): the step is refused, and 0 jobs are stored.
 - `test_the_first_interrupt_in_order_is_raised`: the walk of decision 13: calls of `a`, `b`, `c` are 1, 1, 1 in each of three passes, the job is interrupted twice, and 1 mutation lands.
-- `test_an_answer_that_is_not_asked_for_again_never_runs_the_step`: a policy that asks at the call and allows without asking at the resume, answered "no" and then, in a second case, "yes": 0 mutation statements in both, and the result is the refusal spec 7 gives.
+- `test_an_answer_that_is_not_asked_for_again_never_runs_the_step`: a policy that asks at the call and allows without asking at the resume, answered "no" and then, in a second case, "yes": 0 mutation statements in both, and the result is spec 7's `vfs.conflict` (spec 7, decision 20). Spec 7 has the same case from its side, `test_an_answer_no_longer_asked_for_ends_the_job`.
 - `test_a_job_resumed_without_its_policy_never_runs_the_step`: the policy is removed before the resume, and again with a second kernel over the same SQLite file that has no policy: 0 mutation statements, and the verdict names no policy of that name among those asked.
+- `test_an_answer_that_does_not_fit_ends_the_asking`: three policies, the first raises `AnswerRefused`: the second and third are called 0 times, and the verdict's `unfit` holds it.
+- `test_a_policy_that_goes_on_after_it_asked_refuses`: a policy that catches `BaseException` around `require_approval` and returns `Decision.allow()`: `failed` is `"swallowed"`, 0 dispatches, 0 jobs stored.
 - `test_a_policy_that_now_denies_still_denies`, `test_a_policy_that_now_asks_interrupts_again`.
 - `test_review_asks_for_a_change_under_its_paths`: under `/contracts` it is interrupted; under `/notes` it is not, and the policy awaits nothing; a read calls it 0 times; with `paths` of `/legal/contracts`, a `delete("/legal")` with cascade is interrupted.
 - `test_review_names_itself_by_its_paths`, `test_review_refuses_no_paths`, `test_two_reviews_of_the_same_paths_are_one_policy`.
-- `test_a_sessions_policy_interrupts_and_is_resumed_through_its_handle`, once spec 2's handle is in the tree: resumed through the handle the step runs once, and resumed with `fs.resume` it does not run.
+- `test_a_sessions_policy_interrupts_and_is_resumed_through_its_handle`, once spec 2's handle is in the tree: resumed through the handle the step runs once, and resumed with `fs.resume` it is refused `vfs.invalid` and does not run (spec 7, decision 33).
+- `test_review_asks_for_a_rewind_under_its_paths`, once spec 5's rewind is in the tree: a `RewindStep` with one path under `/contracts` is interrupted, and one with none is not.
 
 ## Scope
 
 In, by landing:
 
-1. `src/vfs/steps.py` (new); `src/vfs/params.py` (the table built from the classes); `src/vfs/__init__.py` (27 names and `Line`); `tests/test_steps.py` (new), `tests/test_params.py`, `tests/test_package.py`; `documentation/reference/python-api/steps.md` (new), `index.md`, `glossary.md`.
-2. `src/vfs/decisions.py` (new); `src/vfs/base.py` (the constructor argument, three methods, `_admit`, eight call sites, one branch of `_call_storage`, the refusal in `cli`); `src/vfs/sync.py` (the argument and three twins); `src/vfs/shell/host.py` (`run_line` enters the line, and one row of `_HOST_ERROR`); `src/vfs/storage/protocol.py` (`SupportsAdmits`); `src/vfs/storage/backends/database/backend.py` (`admits`, and each gate as one function); `src/vfs/results/kinds.py` (the kind and its row); `src/vfs/authority.py` (six words); `src/vfs/__init__.py` (`Decision`, `Policy`, `policy`); `tests/support/base_doubles.py` (`admits` on the double); the tests named above; `tests/lint/allowlist.py` (the entries of `base.py` and `backend.py` raised: `base.py` grows by about 100 lines, since the asking lives in `decisions.py` and the kernel only places the call sites and turns a verdict into a result); `documentation/reference/python-api/policies.md` (new), `index.md`, `storage.md`, `glossary.md`.
-3. `src/vfs/policies.py` (new); `src/vfs/decisions.py` (the fourth outcome, the swallowed stop, `Decision.answered`, and spec 7's context entered around each policy); `src/vfs/__init__.py` (`policies`); the tests named above; the guide.
+1. `src/vfs/steps.py` (new, with `RewindStep` and `STEP_CLASSES`); `src/vfs/params.py` (the table built from the classes); `src/vfs/__init__.py` (28 names and `Line`); `tests/test_steps.py` (new), `tests/test_params.py`, `tests/test_package.py`; `documentation/reference/python-api/steps.md` (new), `index.md`, `glossary.md`.
+2. `src/vfs/decisions.py` (new); `src/vfs/judging.py` (new: the judging coroutine, `Refusal` and `Verdict`); `src/vfs/base.py` (the constructor argument, three methods, `_admit`, `_chosen`, `_ask`, eight call sites, one branch of `_call_storage`, the refusal in `cli`); `src/vfs/session.py` and `src/vfs/sync_session.py`, where spec 2's handle is in the tree (the check in `fs.session`, the context around each verb, and spec 2's refusal of `policies` removed); `src/vfs/sync.py` (the argument and three twins); `src/vfs/shell/host.py` (`run_line` enters the line, and one row of `_HOST_ERROR`); `src/vfs/storage/protocol.py` (`SupportsAdmits`); `src/vfs/storage/backends/database/backend.py` (`admits`, and each gate as one function); `src/vfs/results/kinds.py` (the kind and its row); `src/vfs/authority.py` (six words); `src/vfs/__init__.py` (`Decision`, `Policy`, `policy`); `tests/support/base_doubles.py` (`admits` on the double); the tests named above; `tests/lint/allowlist.py` (the entries of `base.py` and `backend.py` raised: `base.py` grows by about 120 lines, since the asking lives in `judging.py` and the kernel only places the call sites and turns a verdict into a result); `documentation/reference/python-api/policies.md` (new), `index.md`, `storage.md`, `glossary.md`.
+3. `src/vfs/policies.py` (new); `src/vfs/judging.py` (the fourth outcome, the swallowed stop, the answer that does not fit, and spec 7's context set around each policy); `src/vfs/decisions.py` (`Decision.answered`); `src/vfs/__init__.py` (`policies`); the tests named above; the guide.
 
 Each landing runs `scripts/ci.sh` and `scripts/docs.sh check`. Landing 2 touches the database backend, so it runs the Postgres leg before its pull request.
 
-Out: everything under "Left as it is"; the job, its record, `interrupt()`, `require_approval()` and `resume`, which are spec 7's; the session handle, which is spec 2's; a line that replays, which is spec 8's.
+Out: everything under "Left as it is"; the job, its record, `interrupt`, `require_approval`, `resume` and `holds_all`, which are spec 7's; the session handle and `fs.session`, which are spec 2's, but for the edits of decision 17; a line that replays and the reply `denied`, which are spec 8's; the rewind, its plan and what it does with the answer of `_ask`, which are spec 5's.
 
 ## What the docs must say
 
 - A policy is a function the host writes. It is shown each step it is typed for, before the step runs, and allows it or denies it with a reason.
-- The type of the argument chooses the steps. `Mutation` is every change, a change of rights included. A policy typed `Mutation` costs nothing on a read.
+- The type of the argument chooses the steps. `Mutation` is every change, a change of rights and a rewind that puts files back included. A policy typed `Mutation` costs nothing on a read.
 - A policy can only narrow. For a change, VFS proves the caller may make it first, and a change the caller may not make is refused before any policy is called.
 - Every policy typed for a step is asked, in the order added. One denial refuses the step. The caller reads every reason.
 - A policy that raises, returns no decision or passes its timeout denies. The timeout is ten seconds, and `@policy(timeout=...)` changes it.
@@ -920,15 +1059,16 @@ Out: everything under "Left as it is"; the job, its record, `interrupt()`, `requ
 
 Pages:
 
-- `documentation/reference/python-api/steps.md`, new: `Step`, `Mutation`, `Line` and the 25 classes, from their docstrings.
+- `documentation/reference/python-api/steps.md`, new: `Step`, `Mutation`, `Line` and the 26 classes, from their docstrings.
 - `documentation/reference/python-api/policies.md`, new: `policy`, `Policy`, `Decision`, and the module `policies`.
 - `documentation/reference/python-api/index.md`: two sections, "Steps" and "Policies".
 - `documentation/reference/python-api/storage.md`: `SupportsAdmits`, if the page lists `SupportsHolds`; the docs export decides, since no public signature names it.
 - The docstrings of `AsyncVirtualFileSystem` and `VirtualFileSystem`: the `policies` argument and the three methods. The docstring of `ErrorKind`: the new kind and its `data`.
 - `documentation/reference/glossary.md`, two terms, between Mount and Storage:
   - **Policy.** A policy is a function the host writes that is shown each [step](#step) before it runs and decides whether it may. It is an `async` function marked with `@policy`, it takes the step, and it returns a `Decision` that allows the step or denies it with a reason. The type of its argument chooses the steps it is shown. A policy can only narrow what a caller may do. Every policy typed for a step is asked, in the order it was added, and one denial refuses the step. A policy that fails denies. No policy is asked about a step of the system authority. Types: `Policy`, `Decision`.
-  - **Step.** A step is one verb about to run, with the arguments VFS has already checked. A direct call such as `edit` is one step, and a shell line makes one step for each verb it carries out. Every step has a `verb`, the `paths` it names, the `authority` that is calling, and `via`, which is the line that made it. Each kind of step adds the arguments of its own verb. A step cannot be changed. Types: `Step`, `Mutation`, and one class for each verb, such as `EditStep`.
-- The guide, `documentation/how-to/interrupt-a-job-and-ask-a-person.md`: the changes listed under "Where this spec disagrees with the overview or the guides".
+  - **Step.** A step is one verb about to run, with the arguments VFS has already checked. A direct call such as `edit` is one step, and a shell line makes one step for each verb it carries out. Every step has a `verb`, the `paths` it names, the `authority` that is calling, and `via`, which is the line that made it. Each kind of step adds the arguments of its own verb. One step is no verb: a rewind that puts a session's files back. A step cannot be changed. Types: `Step`, `Mutation`, one class for each verb, such as `EditStep`, and `RewindStep`.
+- The guide, `documentation/how-to/interrupt-a-job-and-ask-a-person.md`: the changes listed under "Where this spec disagrees with the overview or the guides", and one that round two settled. Where the guide lists what `Mutation` covers, it reads: "a write, an edit, a delete, a move, a copy, a new directory, a restore, an edge made or removed, a sweep, a change to who may access a path, and a rewind that puts files back".
+- The overview's list of public names gains `fs.policies()`, `Policy` and `Line`, by ruling 10 of round two, and its list of error kinds has `vfs.permission_denied.policy`, by ruling 6.
 
 ## Earlier decisions this reverses
 
@@ -951,30 +1091,47 @@ Each is decided above. Each is the owner's to change.
 4. **The timeout of a policy.** Taken: 10 seconds, changed for one policy by `@policy(timeout=...)`. A policy that calls a model may need more.
 5. **One kind for a denial and for a policy that failed, or two?** Taken: one, `vfs.permission_denied.policy`, with `data["failed"]` telling them apart. Both tell a caller the same thing to do.
 6. **May a policy call its file system as a caller other than the system authority?** Taken: no, by decision 19.
-7. **Is `Mutation` the fifteen verbs a read-only mount refuses, or the seven the guide lists?** Taken: the fifteen.
-8. **Are `Entry` and `Edge` frozen?** Taken: not by this spec. It needs a spec of its own, which changes the validators of `Entry`.
-9. **Does every policy see a step that an earlier one denied?** Taken: yes, and the caller reads every reason. Stopping at the first denial would save the later calls.
+7. **Are `Entry` and `Edge` frozen?** Taken: not by this spec. It needs a spec of its own, which changes the validators of `Entry`.
+8. **Does every policy see a step that an earlier one denied?** Taken: yes, and the caller reads every reason. Stopping at the first denial would save the later calls.
+9. **Are a caller's rights proven again before the policies of a resume?** Taken: no, since round two. Spec 7 runs the policies on the saved step and lets the storage judge the caller when the step is dispatched. A caller who lost a right while its job waited can so have one more question put to a person before the verb refuses it. Proving first would need a resume to pass through the verb's call site.
+10. **Does a command a policy denied print the policy's reason, or "Permission denied"?** Taken: "Permission denied", with the reason kept as a warning on the line's result. Spec 8's reply `denied` could carry the reason, and the need is listed below.
+
+One choice of round one is settled. Round two rules that `Mutation` is the fifteen verbs a read-only mount refuses and `RewindStep`.
 
 ## Where this spec disagrees with the overview or the guides
 
-1. **The guide's list of what `Mutation` covers** names seven changes. Proposed: "a write, an edit, a delete, a move, a copy, a new directory, a restore, an edge made or removed, a sweep, and a change to who may access a path". Evidence: `WRITE_GATED_OPS`, `src/vfs/ops.py:98`, and the case of a grant on a guarded folder in decision 3.
-2. **The guide's rule for `touches`** is "any of the paths is that path or inside it". Proposed: add "or the step acts on everything beneath one of its paths, and that path is beneath it". Evidence: under the guide's rule a cascade delete of `/legal` does not touch `/legal/contracts`. The kernel holds the same fact for the permission maps, `src/vfs/base.py:3079`.
-3. **The guide's table of core attributes** has five rows. Proposed: a sixth, `step.subtree`. And a sentence that the scope of a `glob`, a `grep` or a `search` is `step.roots`, because `step.paths` is every path the step names.
-4. **The guide says of `step.via`** that it is "the shell line or tool that made it". Proposed: "`None` for a direct call, or a `Line` with the line's `text` and `cwd`". The tool's half arrives with tools.
-5. **The guide says** "VFS checks the caller's access first, so a call the caller has no right to make is refused before any policy sees it". That is true of a change, and this spec cannot make it true of a read or of a restore's verdict on a row. Proposed: "For a change, VFS checks the caller's access first, so a change the caller has no right to make is refused before any policy sees it. A read is filtered by the caller's access when it is answered." Evidence: `backend.py:1197-1251` and `:832-862`.
-6. **The guide says** a policy that "takes longer than its deadline" denies, and names no value. Proposed: "takes longer than its timeout, which is ten seconds unless `@policy(timeout=...)` sets another". The same sentence can name `@policy(name=...)`.
-7. **The guide's "Combine Policies"** does not say what a caller reads when two policies deny, or where a session's job is resumed. Proposed, two sentences: "When several policies deny, the result carries each one's reason." "A job that a session's policy interrupted is resumed through that session, and any job is resumed by a program that has the policy which interrupted it; otherwise the step is not run."
-8. **The overview's list of error kinds** names none for a policy's refusal. This spec adds `vfs.permission_denied.policy`, by decision 14.
-9. **The overview's list of public names** has `VirtualFileSystem(policies=[...])`. This spec adds `fs.add_policy`, `fs.remove_policy`, which the guide has, and `fs.policies()`, which neither has. It also adds the exports `Policy` and `Line`.
+Three points of round one are settled by round two and are no longer listed: what `Mutation` covers (the ruling for this spec), the kind `vfs.permission_denied.policy` (ruling 6), and the public names `fs.policies()`, `Policy` and `Line` (ruling 10). The words each needs in the guide and the overview are under "What the docs must say".
+
+1. **The guide's rule for `touches`** is "any of the paths is that path or inside it". Proposed: add "or the step acts on everything beneath one of its paths, and that path is beneath it". Evidence: under the guide's rule a cascade delete of `/legal` does not touch `/legal/contracts`. The kernel holds the same fact for the permission maps, `src/vfs/base.py:3079`.
+2. **The guide's table of core attributes** has five rows. Proposed: a sixth, `step.subtree`. And a sentence that the scope of a `glob`, a `grep` or a `search` is `step.roots`, because `step.paths` is every path the step names.
+3. **The guide says of `step.via`** that it is "the shell line or tool that made it". Proposed: "`None` for a direct call, or a `Line` with the line's `text` and `cwd`". The tool's half arrives with tools.
+4. **The guide says** "VFS checks the caller's access first, so a call the caller has no right to make is refused before any policy sees it". That is true of a change when it is first made. This spec cannot make it true of a read or of a restore's verdict on a row, and at a resume the caller's access is checked when the saved step is carried out, after its policies were asked again (spec 7, decision 22). Proposed: "For a change, VFS checks the caller's access first, so a change the caller has no right to make is refused before any policy sees it. A read is filtered by the caller's access when it is answered." Evidence: `backend.py:1197-1251` and `:832-862`.
+5. **The guide says** a policy that "takes longer than its deadline" denies, and names no value. Proposed: "takes longer than its timeout, which is ten seconds unless `@policy(timeout=...)` sets another". The same sentence can name `@policy(name=...)`.
+6. **The guide's "Combine Policies"** does not say what a caller reads when two policies deny, or where a session's job is resumed. Proposed, two sentences: "When several policies deny, the result carries each one's reason." "A job that a session's policies judged is resumed through that session, and any job is resumed by a program that has the policy which interrupted it; otherwise the resume is refused and the step is not run." The second sentence is spec 7's rule (spec 7, decisions 20 and 33) and is proposed here because the section is this spec's public face.
+7. **The overview's model says a step is one verb about to run.** Round two rules that a step need not be a verb. Spec 5 carries the change proposed to the overview's sentence, and decision 23 here is the class.
+
+## Needs no other spec meets yet
+
+Each names the spec that should meet it and the text its decision would need. The first four are needed for this spec to work as written. The last two would make it better.
+
+1. **Spec 7, decision 13 ("The preview is computed once, as the caller, for seven verbs, and every part of it is bounded").** The preview is built by calls of the public read verbs, made as the caller, while its step is being stopped. Under a policy typed `Step`, each of those reads is a step of its own, and its policy would be asked again, inside the asking of the step it is a preview of. Text needed: "The calls a preview makes are made inside `decisions.within(fs)` (spec 6, decision 23), so no policy is asked about them."
+2. **Spec 7, decision 22 ("The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`").** It dispatches "through the kernel's own path for that verb" after decision 20 has run the policies. Without a mark, the verb's call site would ask the same policies a second time, with no asking context for the job. Text needed: "The policies the run asks are those of `fs._chosen(type(step))`. The dispatch is the step's public verb, called with `step.parameters()` and the etags, inside `decisions.within(fs)` (spec 6, decision 23), so the policies the run has just asked are not asked again."
+3. **Spec 7, decision 8 ("`interrupt(message, schema, *, details=None)` stops its policy by raising a `BaseException`, and returns the answer once the job has it").** The judging coroutine is to set the asking context around each policy, and nothing names what it is handed or what it calls. Text needed: "The value a run hands the judging coroutine as `run` is one object of `vfs/jobs/asking.py`. `asking(run, step, policy_name)` returns a context manager that sets the asking context and resets it on the way out. Its value says, once the policy has returned, whether a stop was raised inside it. `vfs/jobs/asking.py` imports `vfs.decisions` and never `vfs.judging`."
+4. **Spec 8, decision 14 ("A resume starts a fresh machine and a fresh host, and answers from the journal until it runs out").** A step the resumed line makes live must carry the `via` its first run gave it, or a policy that reads `step.via` decides differently at the resume. Text needed: "The resumed line runs inside `decisions.in_line(Line(text, cwd))`, built from the line record of decision 3, so every step it makes live carries the same `via` as in its first run."
+5. **Spec 8, decision 18 ("A denial reaches the machine as a refusal with its own words, and its command exits as it does for `Permission denied`").** It gives the reply `denied` for `vfs.interrupt.denied` alone. Text needed: "The host gives `denied` for a refusal whose kind is `vfs.interrupt.denied` or `vfs.permission_denied.policy`, with the message of the fact as its words." Until then a command a policy denied prints "Permission denied", by decision 14 here.
+6. **Spec 7, decision 20 ("A resume runs the policies again with the answers the job has, and the run ends in one of seven ways").** Spec 7's Builds on asks this spec for "the caller's access judged before any policy is asked". This spec meets it for a first call of a change (decision 10). It cannot meet it for a read or for a restore's verdict on a row, because those verdicts are given as the storage answers. It does not meet it at a resume, because the proof needs the mounts a verb's route resolved and spec 7 judges a saved step outside any route. Text that would close the last gap: "Before the policies run again, the saved step's public verb is entered inside the run's context, so its call site asks the rights proof of spec 6, decision 10, and then the judging coroutine." That changes spec 7's order of claim and dispatch, so it is left as a choice for the owner (choice 9).
 
 ## Not checked
 
 - No test was written or run, and the suite was not run. Every count in "Tests" is what the test is to assert.
-- Postgres. The statement counts are SQLite's. The four reads of a proof were counted as the gate's part of a write, not by running `admits`, which does not exist. Whether a proof on Postgres is four round trips or fewer was not run.
+- Postgres. No server was available in either round. The statement counts are SQLite's. The four reads of a proof were counted as the gate's part of a write, not by running `admits`, which does not exist. What to run once `admits` is built: on the Postgres leg, with the `before_cursor_execute` listener, one `write` of one file by a named caller whose rights are cached, with and without one allowing `Mutation` policy; the difference is the proof's statements, expected to be 4. Then the same proof while a second session holds an open write transaction on the same row, to show the proof returns.
 - That each gate in `backend.py` comes apart from its verb as cleanly as it reads. The gates of `delete`, `restore`, `sweep`, `move` and `copy` are already functions. Those of `write`, `edit`, `mkdir`, `mkedge` and `rmedge` are the first lines of a closure.
 - Whether any test pins the words of the default-authority warning that decision 18 lengthens. A search of `tests/` found none.
 - Whether the docs export needs a page for `SupportsAdmits`.
-- The drafts of specs 2, 7 and 8 were read only for what they ask of this spec. Whether they meet what this spec asks of them, the eight needs of spec 7 above all, was not checked. One point was seen and is left as spec 7's: an answer that nobody asks for again ends the job as `vfs.conflict` in its draft.
+- The other eight drafts were read in round two as far as they touch this spec: each Builds on, and the decisions cited above. They were still headed "not seen" when they were read, so each may change. Every citation gives the heading as well as the number for that reason. No decision of another spec was read that this spec neither cites nor depends on.
+- That spec 7's `Interrupted` and `AnswerRefused` can be imported by `judging.py` without a cycle. It holds if `vfs/jobs/asking.py` imports `vfs.decisions` and nothing above it, which is item 3 of "Needs no other spec meets yet".
+- That `fs.session` can call `decisions.policy_set` without I/O was read from spec 2, decision 2, and not run, since neither is built.
+- Whether spec 5 builds a `RewindStep` with the four fields of decision 23. Its text names the session key, the turn's number, `through` and the turn id, and gives no field names.
 - The guide's code blocks were not run. The page says its interface is not built.
 - The cost of a policy that reads a file as the system authority on every step. It is the host's choice, and one read of a small file is one statement as the system authority.
 - A storage that wraps another kernel. None ships. The marks in the call context name the kernel they belong to so that such a storage would be judged by the inner kernel's own policies, and no test can show it.

@@ -1,6 +1,6 @@
 # The kernel keeps records of its own
 
-A draft, written on 2026-11-22 and read against `a-job-is-interrupted-and-resumed` at `6dae6a1d`. It is not reviewed, and nothing is built. It is spec 0 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It rests on the study `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`, on roadmap decision D67 (`context/standards/roadmap.md:1278`), and on five probe scripts run on 2026-11-22 against SQLite 3.50.4 and SQLAlchemy 2.0.52 on Python 3.13.11, which are named where they are used. No probe ran on Postgres.
+A draft, written on 2026-11-22 and read against `a-job-is-interrupted-and-resumed` at `6dae6a1d`. It is not reviewed, and nothing is built. It is spec 0 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It rests on the study `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`, on roadmap decision D67 (`context/standards/roadmap.md:1278`), and on five probe scripts run on 2026-11-22 against SQLite 3.50.4 and SQLAlchemy 2.0.52 on Python 3.13.11, which are named where they are used. No probe ran on Postgres. It was reconciled on 2026-11-22 with the eight other drafts as they stood at `59946f0d`: decisions 24 to 27 are that round's, a sixth probe was run for them, and no decision was renumbered.
 
 ## The outcome wanted
 
@@ -17,7 +17,14 @@ This spec builds no session and no job. It builds the place and the interface.
 - **`agents/2026-11-21-a-sqlite-writer-beside-a-batch-waits-for-its-commit/spec.md`**, landed. A SQLite writer waits five seconds a try for four tries.
 - **`agents/2026-11-21-a-storage-owns-its-engine-well/spec.md`**, drafted and not built. It rewrites `src/vfs/storage/backends/database/engine.py`, and so does landing 1 here. Whichever lands second is rebased on the first. Its decision 1, settings sent once for each connection, then covers the store's connections too.
 - **`agents/2026-11-21-a-cancelled-call-is-whole-on-every-path/spec.md`**, drafted and not built. It rewrites `src/vfs/storage/backends/database/attempts.py`. This spec adds one function to that module and changes none.
-- **Specs 2 to 8 of the overview**, not written or in draft. They build on this one. This spec needs nothing from them, and nothing from spec 1.
+- **The eight other specs of the overview**, each drafted and none built, read at `59946f0d` while each was being revised. This spec needs nothing from any of them to be built. What each asks of the store is answered in decision 27.
+  - Spec 1, `a-row-carries-an-etag-and-a-change-can-require-it`, and spec 6, `a-policy-judges-each-step`, keep no record and do not use the store.
+  - Spec 2, `a-session-is-stored-named-and-forked`: `vfs_sessions` (its decision 13, "`vfs_sessions` holds one row per session, under a key that is never used twice"), `resolve` (decision 14), the use written behind (decision 17), removal and its two sweep passes (decision 22).
+  - Spec 3, `the-session-remembers-what-it-read`: `vfs_session_stamps` (decision 4), its store statement (decision 6), a read's stamps behind and a change's with the change (decision 8), the trim (decision 15).
+  - Spec 4, `a-session-works-in-turns-and-rewinds-or-forks-at-one`: `vfs_session_turns` (decision 2), the counter (decision 4), the rewind's one transaction (decision 12), the fork's copy (decision 17).
+  - Spec 5, `a-rewind-puts-a-sessions-files-back`: `vfs_session_changes` (decision 3), written by the record-after form (decision 4).
+  - Spec 7, `a-job-is-interrupted-and-resumed`: `vfs_jobs` and `vfs_job_pages` (decision 4), the conditional update (decision 5), the job committed before its result returns (decision 6), the claim and its lease (decisions 21 and 23), `cancel_session_jobs` (decision 35), the lapse (decision 36).
+  - Spec 8, `an-interrupted-line-replays-its-replies`: `vfs_job_replies` (decision 9).
 
 ## Terms
 
@@ -40,7 +47,7 @@ This spec builds no session and no job. It builds the place and the interface.
 
 ## What the code does today
 
-Read on 2026-11-22 at `6dae6a1d`. A probe is a script that was run. The five are under the session's scratch directory, in `specs/spec0/`, and none is kept in the repository.
+Read on 2026-11-22 at `6dae6a1d`. A probe is a script that was run. The scripts are under the session's scratch directory, in `specs/spec0/`, and none is kept in the repository.
 
 | Fact | How it is known |
 |---|---|
@@ -225,15 +232,16 @@ Reason for refusing: it is the mount's own rule, "verified, never repaired" (`en
 ### 9. The store is used through `query` and `commit`, and a failure is one exception
 
 ```python
-async def query(self, fn: Callable[[AsyncSession], Awaitable[T]]) -> T
-async def commit(self, fn: Callable[[AsyncSession], Awaitable[T]]) -> T
+async def query(self, fn: Callable[[Transaction], Awaitable[T]]) -> T
+async def commit(self, fn: Callable[[Transaction], Awaitable[T]]) -> T
 
 class KernelStoreUnavailable(Exception):
     error: ResultError
 ```
 
-- Each runs first touch when it is needed, then `fn` in one session under the core's retry. `commit` opens a writer transaction, `BEGIN IMMEDIATE` on SQLite, and commits when `fn` returns. An exception from `fn` rolls back and is raised as it is.
-- `fn` runs again from its first statement when the engine asks for a retry. It reads everything from its arguments and its session.
+- `Transaction` is SQLAlchemy's `AsyncSession`, under the one name the store gives it. In VFS a session is something else (spec 2), so every signature of the store and every module of `vfs.kernel_store` calls this object a transaction. `fn` runs SQLAlchemy Core statements on it with `transaction.execute(statement)`, and reads a row count from the result where it needs one.
+- Each runs first touch when it is needed, then `fn` on one transaction under the core's retry. `commit` opens a writer transaction, `BEGIN IMMEDIATE` on SQLite, and commits when `fn` returns. An exception from `fn` rolls back and is raised as it is.
+- `fn` runs again from its first statement when the engine asks for a retry. It reads everything from its arguments and its transaction.
 - The `fn` of a `query` writes nothing. A SQLite transaction that reads and then writes is refused whenever another connection committed in between, and that refusal is not retried (`dialects.py:382-384`).
 - A `commit` waits as a mount's write does: four tries, and on SQLite five seconds a try.
 - A driver failure that escapes the retry, retries that run out, a pool that gives no connection, a refused first touch and a closed store each raise `KernelStoreUnavailable`. Its `error` is classified by the core's `classify_failure` with the context `kernel store`, or is first touch's refusal. The kinds are the ones that exist: `vfs.unavailable`, `vfs.unavailable.backend`, `vfs.unavailable.schema` and `vfs.internal`. Retries that run out are `vfs.unavailable` and retryable, and not the `vfs.conflict` a mount's write answers, because no precondition of a caller's is stale. The error names no path. A closed store answers `vfs.unavailable.backend` with "the filesystem is closed", the kernel's own words (`base.py:3069-3071`).
@@ -246,7 +254,7 @@ Reason: a caller of the store is kernel code that turns a failure into a `Result
 "With the change" means: inside the same public call, before that call returns, in a transaction on the store. It never means the mount's transaction, on either engine, for any mount. There are two forms, and a spec that writes a record beside a change says which it uses.
 
 ```python
-async def record_after(self, fn: Callable[[AsyncSession], Awaitable[object]]) -> ResultError | None
+async def record_after(self, fn: Callable[[Transaction], Awaitable[object]]) -> ResultError | None
 ```
 
 `record_after` is a `commit` with two differences. It never raises for a store failure: it returns a warning, which the caller adds to the change's result, as a held advisory rides a later write today (`engine.py:489-506`). And it runs in a task its caller's cancellation does not enter. That is one new function in `attempts.py`, `run_to_its_end`, which waits as `run_out_of_reach` does and does not mark the attempt.
@@ -259,7 +267,7 @@ async def record_after(self, fn: Callable[[AsyncSession], Awaitable[object]]) ->
 | after the change commits and before the record commits | the change, and no record |
 | after the record commits | both |
 
-A record exists only if its change landed. A landed change may lack its record. This form is for a record whose absence errs toward a refusal or a second read, as a stamp's does.
+A record exists only if its change landed. A landed change may lack its record. This form is for a record that can only be made from what the change returned, or whose absence errs toward a refusal or a second read. Two specs take it. Spec 3 stores the stamps a change leaves this way (its decision 8, "A read writes its stamps behind, and a change writes them with the change", step 7). Spec 5 stores its change rows this way (its decision 4, "A session writes its change rows after the change commits, by spec 0's record-after form, before the verb returns"), because the etag after a change is not known before it, and a claim left in doubt could not be put back. One `record_after` takes one `fn`, and that `fn` may write the rows of both specs, so a change through a session costs the store one transaction for its stamps and its change rows together.
 
 **Claim before.** `commit(claim)` writes a row that says what is about to be done. Then the change runs. Then `record_after(completion)` marks the claim as done, or as not done when the change was refused.
 
@@ -270,7 +278,7 @@ A record exists only if its change landed. A landed change may lack its record. 
 | after the change commits and before the completion commits | the claim and the change, and no completion |
 | after the completion commits | all three |
 
-A change exists only if its claim was committed first. A claim that cannot be written raises, and the change is not attempted. A claim with no completion is in doubt: its change landed or it did not, and the store cannot say which. The spec that owns the claim settles it by reading the entry against what the claim recorded. This form is for a record whose absence would be a loss, as the record of what a session changed is.
+A change exists only if its claim was committed first. A claim that cannot be written raises, and the change is not attempted. A claim with no completion is in doubt: its change landed or it did not, and the store cannot say which. The spec that owns the claim settles it by reading the entry against what the claim recorded. This form is for a step that must not be carried out twice or by two callers. Spec 7 takes it: its claim is one conditional update committed before the saved step is dispatched, its finish is a second committed statement, and a claim with no finish is freed by a lease (its decisions 21, "Exactly one resume carries a job on, and the loser is refused with the job's state", and 23, "A claim is a lease of five minutes, and a job left running past it is carried on again under the same guard"). A completion need not go through `record_after`: a caller that must know whether its completion landed uses `commit` and handles the raise.
 
 Rules for both forms:
 
@@ -283,12 +291,12 @@ Reason for two transactions everywhere: on SQLite the record is in another file,
 ### 11. A counter is a column that one statement adds to and returns
 
 ```python
-async def next_number(self, session, counter: Column[int], *where: ColumnElement[bool], count: int = 1) -> int
+async def next_number(self, transaction, counter: Column[int], *where: ColumnElement[bool], count: int = 1) -> int
 ```
 
 It issues `UPDATE <table> SET <counter> = <counter> + :count WHERE <where> RETURNING <counter>`, inside the caller's `commit`, and returns the last number of the block. The block is the `count` numbers that end there. A column that starts at 0 hands out 1 first. When no row matches it raises `LookupError`, so the owner makes the row first, in the same `commit`, with an upsert that does nothing on a conflict.
 
-- The counter is a column on the row that owns the sequence: a session's row for its turn numbers, a job's row for its journal positions. No counter is shared by the whole store.
+- The counter is a column on the row that owns the sequence. A session's row holds the counter of its turn numbers, and spec 4's statement S3 is this statement (its decision 4, "`start_turn` stores the turn at once, takes its number from the session's counter, and returns the turn id"). No counter is shared by the whole store. A sequence that only one process at a time can advance needs no `next_number`: spec 8 keeps its journal's counters in the line record, which the holder of the job's claim alone writes (its decision 9).
 - Two processes never get the same number. On SQLite one writer holds the file. On Postgres the second update waits for the first one's row lock and then reads the committed value, at READ COMMITTED.
 - The numbers have no gap when the number is used in the `commit` that took it, because a rollback returns the number with everything else.
 
@@ -297,20 +305,20 @@ Reason: the overview rules that an order is a counter and never a clock. One sta
 ### 12. A batch of rows is written in chunked statements through four helpers
 
 ```python
-async def insert_rows(self, session, table: Table, rows: Sequence[Mapping[str, object]]) -> None
-async def upsert_rows(self, session, table: Table, rows: Sequence[Mapping[str, object]], *,
-                      key: Sequence[str], update: Sequence[str], newest: str | None = None) -> None
-def key_chunks(self, keys: Sequence[K]) -> Iterator[Sequence[K]]
-async def delete_expired(self, session, table: Table, *, key: Column[Any], expires: Column[datetime],
+async def insert_rows(self, transaction, table: Table, rows: Sequence[Mapping[str, object]]) -> None
+async def upsert_rows(self, transaction, table: Table, rows: Sequence[Mapping[str, object]], *,
+                      key: Sequence[str], update: Sequence[str], newest: str | None = None) -> int
+def key_chunks(self, keys: Sequence[K], *, width: int = 1) -> Iterator[Sequence[K]]
+async def delete_expired(self, transaction, table: Table, *, key: Column[Any], expires: Column[datetime],
                          now: datetime, limit: int, where: ColumnElement[bool] | None = None) -> int
 ```
 
 - `insert_rows` is the adapter's `bulk_insert` (`dialects.py:673-724`): `COPY` on Postgres, the driver's `executemany` on SQLite, paged under the live parameter budget.
-- `upsert_rows` sorts the rows by `key`, cuts them by `rows_per_statement` under the same budget, and issues one `INSERT … ON CONFLICT (key) DO UPDATE SET …` for each chunk. An empty `update` makes it `DO NOTHING`. With `newest`, the update carries `WHERE excluded.<newest> >= <table>.<newest>`, so an older row never replaces a newer one. Two rows with one key in one call raise `ValueError`, because Postgres refuses a statement that would update one row twice.
-- `key_chunks` cuts a key list by the membership budget, for an `IN` list.
+- `upsert_rows` sorts the rows by `key`, cuts them by `rows_per_statement` under the same budget, and issues one `INSERT … ON CONFLICT (key) DO UPDATE SET …` for each chunk. An empty `update` makes it `DO NOTHING`. It returns how many rows it inserted or updated, so an insert that did nothing says so. With `newest`, the update carries `WHERE excluded.<newest> >= <table>.<newest>`, so an older row never replaces a newer one. Two rows with one key in one call raise `ValueError`, because Postgres refuses a statement that would update one row twice.
+- `key_chunks` cuts a key list by the membership budget, for an `IN` list. `width` is the binds one key takes, 2 for a pair.
 - `delete_expired` issues `DELETE FROM t WHERE key IN (SELECT key FROM t WHERE expires <= :now [AND where] ORDER BY expires LIMIT :limit)` and returns the rows removed. It is the statement the study measured for reclaim (`research.md:42`). Its text and its binds, three on SQLite and two on Postgres, do not change with the rows it removes.
 
-These are the only shapes the store offers for many rows. Any other statement of a later spec binds a fixed number of parameters.
+These four, and the two that decision 25 adds, are the only shapes the store offers for many rows. Any other statement of a later spec binds a fixed number of parameters, or is cut by decision 25's `row_chunks`.
 
 Reason: a 10,000-entry write through a session is a supported call, and it writes 10,000 records. Chunking owned in one place is what keeps eight specs under SQLite's 32,766 variables and SQLAlchemy's 32,700 parameters. Sorted keys make two processes lock rows in one order.
 
@@ -320,7 +328,7 @@ Reason: a 10,000-entry write through a session is a supported call, and it write
 @dataclass(frozen=True, slots=True)
 class BehindKind:
     name: str
-    write: Callable[[KernelStore, AsyncSession, Sequence[Mapping[str, object]]], Awaitable[None]]
+    write: Callable[[KernelStore, Transaction, Sequence[Mapping[str, object]]], Awaitable[None]]
     key: tuple[str, ...] | None = None
 
 def register_behind(self, kind: BehindKind) -> None
@@ -345,7 +353,7 @@ Reason for flushing as soon as free: a session used in the next request, by anot
 
 `BEHIND_CAPACITY` is 16,384 rows. When a `put_behind` would pass it, the oldest rows are dropped until the buffer fits, and `KernelStore.dropped` counts them. One call that puts more than 16,384 rows keeps its last 16,384.
 
-**Every record written behind may be dropped. A record that may not be dropped is never written behind.** It is written with `commit` or `record_after`, and decision 10 says what its failure leaves. So a kind is written behind only when losing a row errs toward a refusal or a second read: a stamp from a read, a session's time of last use.
+**Every record written behind may be dropped. A record that may not be dropped is never written behind.** It is written with `commit` or `record_after`, and decision 10 says what its failure leaves. So a kind is written behind only when losing a row errs toward a refusal or a second read: a stamp from a read (spec 3, decision 8), a session's use (spec 2, decision 17, "Every call through a handle reports one use, written behind, and a row is touched at most once in five minutes"), the trim of a session's stamps (spec 3, decision 15).
 
 Reason for the oldest: after an outage the rows that land are the newest, which are the ones a session acts on next. Reason for a bound in rows: a row of a record is a few short columns, bounded by its column widths, so 16,384 rows is about 16 MB at ordinary widths, by estimate. The bound guards against rows piling up while the store cannot be written. It is not a limit on a call: the store's capacity is the flusher's, estimated at about 30,000 rows a second on a SQLite file by `probe_flush.py`. A byte budget, through `vfs.batching`, is the direction if a kind with wide rows appears.
 
@@ -366,22 +374,22 @@ async def drain(self, scope: Hashable | None = None) -> None
 
 It returns when every row put behind before the call, under that scope, has been written or dropped. With no scope it waits for every row. When nothing of the scope is waiting it returns at once and sends nothing. When the flush that carries one of those rows fails, it raises `KernelStoreUnavailable`. A caller that is cancelled while it waits loses no row: the flush goes on.
 
-A change that must read what its own session wrote behind calls `drain` with the session's scope first. That is allowed, because a change may wait for the store, and a read may not.
+A change that must read what its own session wrote behind calls `drain` with the session's scope first, or reads those rows where they wait with decision 24's `waiting_behind`. Either is allowed to a change. A read does neither.
 
 Reason: a session reads a file and edits it in the next call, in one process. The stamp may still be in the buffer. Waiting for one scope's rows costs no statement of its own, since the flush was going to run, and it does not wait behind another session's backlog.
 
 ### 17. Expired records are removed by a counted sweep in bounded chunks, and a record past its expiry reads as absent before it is swept
 
 ```python
-Sweeper = Callable[[KernelStore, AsyncSession, datetime, int], Awaitable[int]]
+Sweeper = Callable[[KernelStore, Transaction, datetime, int], Awaitable[int]]
 
 def register_sweeper(self, name: str, sweep: Sweeper) -> None
 async def sweep(self) -> int
 ```
 
 - **Expiry does not depend on the sweep.** Every read of a table that expires filters on its expiry against `store.now()`. The sweep only gives the space back.
-- **A sweeper.** A spec that owns a table with an expiry registers one, in the order parents and dependents need. It is handed the store, a session, the pass's one reading of the clock, and a limit. One call removes at most `limit` rows in all, in the `commit` it is given, and returns how many. It removes a parent only when its dependents are gone. Its statements are `delete_expired`, or of that shape.
-- **A pass.** For each sweeper in turn, the store calls it in a `commit` of its own with `SWEEP_CHUNK`, which is 5,000, until a call removes fewer than 5,000 rows or `SWEEP_CHUNKS_PER_PASS`, which is 8, have run. A pass that fails logs one `WARNING` and ends, and the next pass starts over.
+- **A sweeper.** A spec that owns a table with an expiry registers one, in the order parents and dependents need. It is handed the store, a transaction, the pass's one reading of the clock, and a limit. One call removes at most `limit` rows in all, in the `commit` it is given, and returns how many. It removes a parent only when its dependents are gone. Its statements are `delete_expired` and decision 25's `delete_where`, and decision 26 gives the common case ready-made.
+- **A pass.** For each sweeper in turn, the store calls it in a `commit` of its own with `SWEEP_CHUNK`, which is 5,000, until a call removes no row or `SWEEP_CHUNKS_PER_PASS`, which is 8, have run. A sweeper that works in smaller batches than its limit is therefore called again while it still finds work. A pass that fails logs one `WARNING` and ends, and the next pass starts over.
 - **When.** The store counts its committed write transactions in this process: each flush, each `commit`, each `record_after`, and not the sweep's own. A pass is due after the first 64, and after every 1,024 from then on. The store's task runs it. Between two chunks the task flushes whatever the buffer holds, so a sweep delays a flush by one chunk at most. No pass runs at `close`.
 - **By which process.** Any process, on its own count. No process leads. Two passes at once remove each row once: on SQLite they take turns on the sibling's writer, and on Postgres the second waits a chunk for the first one's row locks and then finds the rows gone.
 - **By hand.** `sweep()` runs one pass now and returns the rows removed. It is what a test calls.
@@ -460,16 +468,20 @@ class KernelStore:
     async def commit(self, fn) -> T
     async def record_after(self, fn) -> ResultError | None
 
-    # statements, called inside fn: decisions 11 and 12
-    async def next_number(self, session, counter, *where, count=1) -> int
-    async def insert_rows(self, session, table, rows) -> None
-    async def upsert_rows(self, session, table, rows, *, key, update, newest=None) -> None
-    def key_chunks(self, keys) -> Iterator[Sequence[K]]
-    async def delete_expired(self, session, table, *, key, expires, now, limit, where=None) -> int
+    # statements, called inside fn: decisions 11, 12 and 25
+    async def next_number(self, transaction, counter, *where, count=1) -> int
+    async def insert_rows(self, transaction, table, rows) -> None
+    async def upsert_rows(self, transaction, table, rows, *, key, update, newest=None) -> int
+    def key_chunks(self, keys, *, width=1) -> Iterator[Sequence[K]]
+    def row_chunks(self, rows, *, width=None) -> Iterator[Sequence[Mapping[str, object]]]
+    async def delete_where(self, transaction, table, *, key, where, limit, order_by=None) -> int
+    async def delete_expired(self, transaction, table, *, key, expires, now, limit, where=None) -> int
 
-    # written behind: decisions 13 to 16
+    # written behind: decisions 13 to 16 and 24
     def register_behind(self, kind: BehindKind) -> None
     def put_behind(self, kind, rows, *, scope=None) -> None
+    def waiting_behind(self, kind, *, scope=None, keys=None) -> list[Mapping[str, object]]
+    def discard_behind(self, kind, *, scope=None, keys=None) -> int
     async def drain(self, scope=None) -> None
 
     # the sweep: decision 17
@@ -481,7 +493,7 @@ class KernelStore:
     async def close(self) -> None
 ```
 
-`vfs.kernel_store` exports `KernelStore`, `KernelStoreUnavailable`, `BehindKind`, `Sweeper` and the constants. It is documented on a Maintainers page and carries no compatibility promise.
+`vfs.kernel_store` exports `KernelStore`, `KernelStoreUnavailable`, `BehindKind`, `Sweeper`, `Transaction`, decision 26's `expiry_sweeper` and the constants. The members that decisions 24 to 26 add are in the listing above. It is documented on a Maintainers page and carries no compatibility promise.
 
 A spec that keeps a record follows eight rules.
 
@@ -489,10 +501,12 @@ A spec that keeps a record follows eight rules.
 2. Its statements are in a module of `vfs.kernel_store`, never in `vfs.base` or `vfs.session`.
 3. A read verb calls `put_behind` and nothing else of the store.
 4. Every stored time and every expiry compared comes from `store.now()`, and every read of a table that expires filters on the expiry.
-5. Many rows are written with decision 12's helpers.
+5. Many rows are written with decision 12's helpers, or by a statement of the spec's own that decision 25 admits.
 6. A record written beside a change names its form, record after or claim before.
 7. A kind's `key` is its upsert's conflict key, and a kind that is also written synchronously passes `newest`.
 8. A table that expires has a sweeper.
+
+A ninth point is not a rule of the store and is recorded here because every table meets it: a table that names a session names it by `session_key` (spec 2, decision 13), and a turn by its number (spec 4, decision 2, "`vfs_session_turns` holds one row per turn").
 
 Reason: eight specs build on this interface at the same time. A list each can copy is what keeps eight designs of storage from appearing.
 
@@ -503,9 +517,114 @@ Reason: eight specs build on this interface at the same time. A list each can co
 3. **The store.** The tables, first touch, `query`, `commit`, `record_after`, the counter, the helpers, the clock, the kernel's construction of the store and its close.
 4. **The writer and the sweep.** `put_behind`, the task, `drain` and the sweep.
 
+Of the members decisions 24 to 26 add, `row_chunks`, `key_chunks` with a width, `delete_where` and the row count of `upsert_rows` land with the third, and `waiting_behind`, `discard_behind` and `expiry_sweeper` with the fourth.
+
 The Maintainers page lands with the third and is completed by the fourth. Each docstring named under "What the docs must say" lands with the landing that makes it true.
 
 Reason: each leaves the tree green and is of use alone. The first is a refactor that the second and third need. The third is enough for a spec that writes only synchronously, and the fourth for one that writes behind.
+
+### 24. A caller can read and withdraw what waits in the buffer, and a deferred task is a kind
+
+```python
+def waiting_behind(self, kind: BehindKind, *, scope: Hashable | None = None,
+                   keys: Iterable[tuple[object, ...]] | None = None) -> list[Mapping[str, object]]
+def discard_behind(self, kind: BehindKind, *, scope: Hashable | None = None,
+                   keys: Iterable[tuple[object, ...]] | None = None) -> int
+```
+
+Both are plain functions, as `put_behind` is. They send nothing, await nothing, and are called on the loop's thread. Each takes a scope, a list of keys, or both, and acts on the rows of the kind that carry the scope and whose key is listed. With neither it raises `ValueError`. A key is the tuple of the kind's `key` fields.
+
+- **`waiting_behind`** returns the rows that were put behind and are not yet stored or dropped: those in the buffer, and those of the flush in flight. A row leaves when its flush commits or when it is dropped. So a caller that finds no waiting row for a key reads the store, and the row is in one or the other unless it was dropped.
+- **`discard_behind`** takes rows out of the buffer and returns how many. A row of the flush in flight is not withdrawn, and is stored. A kind that is also written synchronously therefore still passes `newest` (decision 13).
+- **The cost** is the rows of that scope, or the keys given. The store keeps, for each scope, the keys it holds in the buffer, which it needs for `drain` already.
+- **No callback is offered.** The store does not tell a submitter when a row is stored or dropped. A second table kept in step by callbacks is a copy that can drift from the buffer, and the buffer can be read.
+- **A deferred task is a kind.** A task that must run behind, after rows, is a kind whose row names the task and whose `write` runs its statements. Its `key` is what the task is for, so many requests for one thing become one run. It is registered after the kind whose rows it follows, so it runs after them in the same flush. It may be dropped, as any row may.
+- **One flush is one transaction, and its `info` lasts that long.** Every `write` of a flush receives the same `Transaction`. SQLAlchemy gives it a dictionary, `transaction.info`, which begins empty and ends with the transaction. A function that several kinds call in one flush keeps what it found there. A retry starts a new transaction with an empty one.
+- **The order of the kinds** is one tuple in the kernel's constructor. With the nine specs built it is: spec 3's stamps (its decision 8), spec 3's trim (its decision 15, "A session's stamps are bounded at 16 MiB, and the earliest turns go first"), then spec 2's use (its decision 17).
+
+Who uses them: spec 2's removal drops what this process has queued for the session before it frees the name (its decision 22, "Removal frees the id in one commit and reclaims the rest in bounded chunks"). Spec 3's change takes its paths out of the waiting rows, and reads a stamp that is still waiting without a statement (its decision 8, steps 2 and 7). Spec 4's rewind and fork call `drain` first (its decisions 12 and 17).
+
+Reason: three specs asked for three things under five names: settle, discard, withdraw, a pending table, an awaited flush. Waiting is `drain`, which the first draft had. Reading and withdrawing are the other two, and each is a lookup in a dictionary the writer already keeps.
+
+### 25. A statement of a spec's own is within the interface when its binds are fixed or its rows are cut by the store's budgets
+
+```python
+def row_chunks(self, rows: Sequence[Mapping[str, object]], *, width: int | None = None
+               ) -> Iterator[Sequence[Mapping[str, object]]]
+async def delete_where(self, transaction, table: Table, *, key: Column[Any] | Sequence[Column[Any]],
+                       where: ColumnElement[bool], limit: int, order_by: ColumnElement[Any] | None = None) -> int
+```
+
+A spec is not held to decision 12's four helpers. Three kinds of statement of its own are admitted.
+
+- **A multi-row statement of its own shape, cut by `row_chunks`.** `row_chunks` slices rows by `rows_per_statement` under the live parameter budget, as `upsert_rows` does. `width` is the binds one row takes when the statement binds more than the row's own fields. Spec 3's store statement is one (its decision 6, "A stamp is stored by one statement shape, and a row whose session or turn is gone stores nothing"), and so is the insert of spec 2's `resolve`, whose read of pairs is cut by `key_chunks(pairs, width=2)` (its decision 14, "The row is first written by the first record that needs it, through one function, `resolve`").
+- **A bounded delete, `delete_where`.** It issues `DELETE FROM t WHERE key IN (SELECT key FROM t WHERE <where> [ORDER BY …] LIMIT :limit)` and returns the rows removed. `key` is one column or several, and several are compared as a row value. `delete_expired` is this statement with the expiry as its `where` and its order. It serves the reclaim of a removed session's rows, 5,000 to a transaction (spec 2, decision 22; spec 5, decision 16, "A rewind of the memory alone removes no change row, and a fork copies none"), and the third step of spec 3's trim (its decision 15).
+- **A statement that binds a fixed number of parameters, whatever rows it touches.** An `INSERT … SELECT`, as the fork's copy of turns and of stamps is (spec 4, decision 17, "A fork copies the turns below the fork point, their stamps and their shell state, in statements with a fixed number of binds"). A ranged `DELETE`, as the rewind's removal of turns and of stamps is (spec 4, decision 12, "`rewind(before=turn)` removes that turn and every later one, with their stamps, and cancels their waiting jobs, in one transaction"). A conditional `UPDATE` whose row count the caller reads, as a job's change of state and `cancel_session_jobs` are (spec 7, decision 5, "A job is in one of four states, and every change of state is one conditional update on its revision", and decision 35).
+
+Two rules go with them.
+
+- **Several specs' functions run in one `commit`.** `fn` hands its `transaction` to each. The rewind's steps R2 to R5 are four specs' statements in one transaction (spec 4, decision 12). A line's stop writes spec 7's job row and spec 8's pages together (spec 8, decision 9, "`vfs_job_replies` holds a journal as pages of at most 1 MiB, appended at each stop"). A function that takes "the store, or a transaction of it" takes the `Transaction`.
+- **The store bounds a statement's binds and never the rows it touches.** A statement of fixed binds holds the SQLite store's one writer for its own length, and on Postgres holds its row locks until the commit. What bounds its rows is a bound of the spec that owns it, such as the 16 MiB of stamps one session keeps, and that spec states the hold under its own Cost. Where its rows have no bound, that spec says so and names the direction. A sweeper is the one exception: it removes at most `limit` rows in a call, by decision 17, because nobody asked for it and nobody is waiting for it.
+
+Run on 2026-11-22, `probe_round_two.py`, on SQLite and compiled for Postgres: a bounded delete by a three-column key removed 5 of 8 rows at a limit of 5; an insert that does nothing on a conflict reported 8 rows written, then 1 of 4; a transaction's `info` kept a value to its end, and the next transaction's was empty.
+
+Reason: a rewind and a fork move a session's rows without bringing one into Python, which no helper that takes rows can do. The parameter caps bound a statement's text, and a statement whose text does not grow meets them at any size.
+
+### 26. A table that expires with its dependents is swept by one ready-made sweeper
+
+```python
+def expiry_sweeper(table: Table, *, key: Column[Any], expires: Column[datetime],
+                   dependents: Sequence[Column[Any]] = ()) -> Sweeper
+```
+
+It is a function of `vfs.kernel_store` that returns a `Sweeper` for `register_sweeper`. Each of `dependents` is a column of another table that holds the parent's key. That column's table is the dependent, and its primary key is the key its rows are deleted by.
+
+One call, with `limit` rows to spend:
+
+1. For each dependent in order, a `delete_where` of its rows whose column names a parent that has expired, up to what is left of the limit.
+2. Then a `delete_where` of the parents that have expired and have no dependent row left, oldest first, up to what is left.
+
+It returns the rows it removed in all. A parent is never removed before its dependents, and every statement binds the same few values at any size. A spec that lands later and keeps rows under the same parent adds its column to `dependents`.
+
+Who uses it: spec 7 sweeps `vfs_jobs` with `vfs_job_pages.job_id` as its dependent (its decision 36, "A waiting job lapses `job_lifetime` after it stopped, 24 hours by default, and the sweep removes it"), and spec 8's `vfs_job_replies.job_id` joins that tuple (its decision 9). Spec 2's sweep is not this shape. Its two passes are two sweepers of its own (its decision 22).
+
+Reason: two specs asked for a sweep arm that takes a table, its expiry column and a dependent table. Written once, the order of dependents before parents cannot be got wrong twice.
+
+### 27. Each need the other eight specs state on the store is met by a named member, or is answered here
+
+Read from each spec's "Builds on" at `59946f0d`. Specs 1 and 6 state none.
+
+| Spec, and what it asks | Where it is met |
+|---|---|
+| 2: a store for every root storage, with `vfs_sessions` made in it | Decisions 2 and 6. The table is added to `build_kernel_tables` (decision 8). |
+| 2: a synchronous path, a writer transaction on SQLite, READ COMMITTED on Postgres, one exception, the two budgets | `commit` and `KernelStoreUnavailable` (decision 9), decision 5, `parameter_budget`, `membership_budget`, `row_chunks`, `key_chunks`. |
+| 2: a writer that keeps one use for each session | A kind whose `key` is the session's owner key and id (decision 13). |
+| 2: the writer calls `resolve` at each flush, once for each session, before any other spec's rows | Not the writer, which knows no session. Each kind's `write` calls `resolve` on the flush's one transaction before it writes, and `resolve` keeps what it found in `transaction.info` (decision 24). See "Needs no other spec meets yet", item 1. |
+| 2: `settle` and `discard` for one session | `drain(scope)` (decision 16) and `discard_behind(kind, scope=…)` (decision 24). |
+| 2: a sweep that calls its two passes and can stop between chunks | Two sweepers (decision 17). The task flushes between two calls. |
+| 2 and 4: plain reads that do not wait on the store's writer, and a way to count statements | WAL and `query` (decisions 4 and 9); a listener on `store.engine` (decision 22). |
+| 3: a submit that issues no statement and does not wait | `put_behind` (decision 13). |
+| 3: a waiting row replaced by a later one of its key, and withdrawn by its key | A keyed kind (decision 13), and `discard_behind(kind, keys=…)` (decision 24). |
+| 3: the writer tells the submitter when a row is stored or dropped | Not offered. `waiting_behind` gives the rows not yet stored or dropped (decision 24). See item 4 below. |
+| 3: a flush at a declared count of rows and after a declared delay of a second or less | Neither exists. The task flushes as soon as it is free (decision 13), so the window is one flush, which is shorter than what was asked. |
+| 3: a drain on both faces, and a `close` that drains | `drain` (decision 16) and decision 19. The store's `drain` is private and `async`. A public name for it is not added here. See item 5 below. |
+| 3: a synchronous path with the waits and retries a change has | `commit` and `record_after` (decisions 9 and 10). |
+| 3: a deferred task run by the writer in order with its rows | A kind (decision 24). |
+| 3: rows chunked by the live parameter budget | `row_chunks` (decision 25). |
+| 3: a statement of the store attributed to the call that issued it | A synchronous statement runs in its caller's context, and the task runs in a context of its own (decision 13), so a context variable and a listener on `store.engine` tell them apart, as the study did. |
+| 4: a transaction that runs Core statements at READ COMMITTED on Postgres, and `vfs_session_turns` made with the other tables | `commit` (decisions 5 and 9), decision 8. |
+| 4: an awaited flush of what this process has queued | `drain()` with no scope, or with the session's (decision 16). |
+| 3 and 4: rows removed and copied in bulk on a rewind and a fork | Statements of fixed binds (decision 25). |
+| 5: `record_after`, `query`, `commit`, `insert_rows`, and a record written after its change | As decision 22 lists them. Decision 10 names spec 5's choice of the record-after form. |
+| 7: several statements in one committed transaction; an update that reports its row count | `commit` (decision 9) and decision 25. |
+| 7: an insert that does nothing when a unique index refuses it, and reports that | `upsert_rows(…, update=())`, which returns the rows written (decision 12). |
+| 7: a sweep arm for a table, its expiry column and a dependent table | `expiry_sweeper` (decision 26). |
+| 7: one clock function that every expiry reads and a test replaces | `store.now()` (decision 18). |
+| 8: one transaction that holds a row of `vfs_jobs` and rows of `vfs_job_replies` | One `commit` whose `fn` hands its transaction to spec 7's function (decision 25). |
+| 8: a sweep that calls its orphan statement | `vfs_job_replies.job_id` as a dependent of spec 7's `expiry_sweeper` (decision 26). See item 3 below. |
+| 2, 3, 4, 7, 8: the same on a root storage in memory | Decision 6. |
+
+Reason: each of the eight was written without sight of this spec, and each named what it needed in its own words. One table shows that no need was left to be met by an invention at build time.
 
 ## Cost
 
@@ -533,6 +652,8 @@ Costed against the reference deployment in the working agreement. A store transa
 | In memory | The store's own turn lock, on its own connection. A verb takes the mount's, which is another. |
 
 A read never waits on the store, because a read never calls it. The longest hold is a batch's record write, which queues other record writers and no reader.
+
+**What decisions 24 to 26 add.** `waiting_behind` and `discard_behind` issue no statement and cost the rows of one scope in memory. `expiry_sweeper` is one statement for each dependent and one for the parents in a call, each with the same few binds. A statement of fixed binds costs the store one statement at any size, and holds the SQLite store's writer for as long as it runs; the spec that owns it costs that hold against its own bound.
 
 **Connections.** On Postgres a process holds two pools on the root's database, each of the mount's size: by default 5 kept and up to 15 at a peak, each. A store that is not used opens none.
 
@@ -595,6 +716,11 @@ Landing 3, `tests/kernel_store/test_store.py`:
 - `test_record_after_survives_its_callers_cancellation`: the caller is cancelled at the `kernel-store:before-commit` seam, the row is there, counted as 1, and the error raised is the object the caller was cancelled with.
 - `test_record_after_returns_a_warning_when_the_store_cannot_be_written`: one error of severity `warning` and kind `vfs.unavailable`, and no raise.
 - `test_a_failed_first_touch_is_tried_again`: a second call after a held writer is released succeeds.
+- `test_upsert_rows_says_how_many_rows_it_wrote`: an insert that does nothing on a conflict returns 8 for 8 new rows, then 1 for 4 rows of which 3 are there. Both engines.
+- `test_row_chunks_and_key_chunks_cut_by_the_budget`: with the budget narrowed to 1,000, 10,000 rows of 5 fields are 50 chunks, and at `width=10` they are 100; 10,000 pairs at `width=2` are chunks of at most half the membership budget.
+- `test_delete_where_removes_at_most_its_limit_by_a_three_column_key`: of 8 rows that match, a limit of 5 removes 5 and leaves 3, and the statement's bind count is the same with 8,000. Both engines.
+- `test_two_functions_share_one_commit`: a `fn` that hands its transaction to two functions leaves both their rows, and when the second raises it leaves neither, counted as 2 rows and 0.
+- `test_a_transactions_info_ends_with_it`: a value put in `transaction.info` is read later in the same `commit`, and the next `commit`, and a retried attempt, begin with an empty one.
 - `test_two_commits_at_once_both_land`: two `commit` calls gathered on one store leave 2 rows, on a SQLite file, in memory and on Postgres. Both engines.
 - `test_a_process_that_dies_between_a_change_and_its_record_leaves_the_change_alone`: a child process writes a file through the kernel and leaves through `os._exit(0)` at the `kernel-store:before-commit` seam of its `record_after`. The parent reads the file, counts 0 records, and the exit status is 0. Marked `slow`.
 - `test_a_process_that_dies_after_its_claim_leaves_the_claim_in_doubt`: a child process commits a claim and leaves at the `write:before-apply` seam, and a second leaves at the seam of its completion. The parent counts 1 claim with no completion each time, with the file absent the first time and present the second. Marked `slow`.
@@ -629,15 +755,23 @@ Landing 4, `tests/kernel_store/test_behind.py`:
 - `test_a_put_after_close_is_dropped_and_raises_nothing`, and `test_close_flushes_what_the_buffer_holds`.
 - `test_a_process_that_dies_loses_at_most_its_buffer`: a child process commits 5 rows, puts 7 behind with the task held, and leaves through `os._exit(0)`. The parent reads 5 rows and 0 of the 7, and the exit status is 0. Marked `slow`.
 - `test_a_put_on_another_loop_moves_the_task_there`.
+- `test_waiting_behind_returns_what_is_buffered_and_what_is_in_flight`: with the task held before a flush, 3 rows are waiting; with it held at the `kernel-store:before-commit` seam of that flush, the same 3; after the commit, 0. 0 statements are issued by the calls.
+- `test_discard_behind_withdraws_by_scope_and_by_key`: of 6 waiting rows in two scopes, a discard of one scope returns 3, a discard of 2 keys returns 2, and 1 row is written.
+- `test_a_row_in_flight_is_not_withdrawn`: a discard during the flush returns 0 and the row is stored.
+- `test_waiting_and_discard_with_no_scope_and_no_key_are_refused`: a `ValueError` each.
+- `test_a_deferred_task_runs_once_after_its_rows`: 50 requests of one key are 1 call of the task's `write`, made after the `write` of the kind registered before it, in the same transaction.
 
 Landing 4, `tests/kernel_store/test_sweep.py`:
 
 - `test_a_record_past_its_expiry_is_still_there_until_a_sweep`: the clock is stepped, 0 rows are removed, and `sweep()` then removes them.
-- `test_a_pass_removes_expired_rows_in_chunks_of_five_thousand`: 12,000 expired rows and 100 live ones are 3 delete statements, and 100 rows are left. Marked `slow`.
+- `test_a_pass_removes_expired_rows_in_chunks_of_five_thousand`: 12,000 expired rows and 100 live ones are 4 delete statements, which remove 5,000, 5,000, 2,000 and 0, and 100 rows are left. Marked `slow`.
 - `test_a_pass_stops_after_eight_chunks`: 60,000 expired rows lose 40,000 in 8 statements, and a second pass takes the rest. Marked `slow`.
 - `test_a_pass_is_due_after_64_writes_and_then_every_1024`: counted as calls of a sweeper after 63, 64, 1,087 and 1,088 commits.
 - `test_two_passes_at_once_remove_each_row_once`: two stores remove 2,000 rows between them. Both engines.
 - `test_a_flush_runs_between_two_chunks`.
+- `test_a_sweeper_with_small_batches_is_called_until_it_finds_nothing`: a sweeper that removes 100 rows a call is called 4 times for 300 expired rows.
+- `test_an_expiry_sweeper_removes_dependents_before_parents`: 3 expired parents with 4 dependent rows each, and 1 live parent with 2. A call with a limit of 5 removes 5 dependent rows and 0 parents. The calls that follow remove the other 7 and then the 3 parents. 1 parent and 2 dependent rows are left, and no call removes more than 5. Both engines.
+- `test_an_expiry_sweeper_binds_the_same_values_at_any_size`.
 
 Lint, `tests/lint/test_code_shape.py` and `tests/models/test_kernel_rows.py`:
 
@@ -680,6 +814,8 @@ A docstring changes, so `scripts/docs.sh check` runs before the pull request.
 - **Criterion 6 of story H0 reclaims "in chunks of `membership_budget`".** The sweep's chunk is 5,000 rows, the size the study measured, by a statement that binds no key list and so meets no parameter cap.
 - **Roadmap story H0's rule iv puts the log in the root mount's storage.** The storage names the place and the kernel's store keeps the rows. On SQLite that is D67's second file.
 - **`EngineHost` "owns one mount's database connectivity".** The connectivity becomes `EngineCore`, and the host is what a mount adds to it.
+- **This spec's first draft named the record of what a session changed as the case for the claim-before form.** Spec 5 writes that record after the change (its decision 4), and decision 10 now says so. The claim-before form's case is a job's step.
+- **This spec's first draft ended a sweeper's turn when a call removed fewer than 5,000 rows.** Decision 17 now ends it when a call removes none, so a sweeper with smaller batches finishes its work.
 - **`documentation/maintainers/cancellation.md` says "nothing but the storage makes a session, a connection or a transaction on the engine".** That stays true of the storage's engine. A file system now has a second engine, the store's, which a listener on `storage.engine` does not reach.
 
 ## Choices for the owner
@@ -693,14 +829,27 @@ Each is decided above, and the decision stands until it is ruled on.
 5. **A place that cannot be written is not replaced by memory.**
 6. **The sweep runs on a count, 64 writes and then every 1,024, and there is no public call for it.** A deployment of very short processes may want one.
 7. **The store is a package of its own, `vfs.kernel_store`, and one of its modules may import the adapter.** The other choice is a package inside the adapter.
-8. **`RecordPlace` is a public name of `vfs`,** which a third-party storage needs and the overview's list of public names does not hold.
+8. **The store tells no submitter when a row is stored or dropped.** A caller reads what waits, with `waiting_behind`. The other choice is a callback for each row, which spec 3 asked for.
+9. **The store adds no public call that waits for the writer.** `close` flushes. The other choice is a public drain on both faces, for a host whose process ends with each request and does not close its file system.
 
 ## Where this spec disagrees with the overview or the guides
 
-1. **The overview's list of public names.** It holds no name of this spec. Proposed: add `RecordPlace`, and `record_place` on a storage. Evidence: a third-party storage can only name a place through a public type, and the docs export refuses a public signature whose type no exported name reaches.
-2. **`documentation/how-to/interrupt-a-job-and-ask-a-person.md`, "Find Jobs That Are Waiting".** It says "A file system that keeps its files in memory keeps its jobs in memory too". Proposed: "A file system whose root storage is in memory keeps its jobs in memory too, even when a database is mounted beneath the root. To resume a job from another process, make the root storage a database." Evidence: the overview's own ruling, and the default root, which is in memory.
-3. **`documentation/how-to/keep-a-session-for-each-conversation.md`, the paragraph that begins "A session is stored in the database".** It says VFS keeps the session "in the database you already run". Proposed: add "On SQLite that is a second file beside your database." Evidence: decision D67 and probe step 2.
-4. **The overview's "kept by the storage of the root mount".** This spec reads it as "kept in the place the root storage names". The storage class gains one property and no record logic. No change to the overview's words is proposed.
+1. **`documentation/how-to/interrupt-a-job-and-ask-a-person.md`, "Find Jobs That Are Waiting".** It says "A file system that keeps its files in memory keeps its jobs in memory too". Proposed: "A file system whose root storage is in memory keeps its jobs in memory too, even when a database is mounted beneath the root. To resume a job from another process, make the root storage a database." Evidence: the overview's own ruling, and the default root, which is in memory.
+2. **`documentation/how-to/keep-a-session-for-each-conversation.md`, the paragraph that begins "A session is stored in the database".** It says VFS keeps the session "in the database you already run". Proposed: add "On SQLite that is a second file beside your database." Evidence: decision D67 and probe step 2.
+3. **The overview's "kept by the storage of the root mount".** This spec reads it as "kept in the place the root storage names". The storage class gains one property and no record logic. No change to the overview's words is proposed.
+
+The first draft listed a fourth: the overview's public names held none of this spec's. Ruling 10 of the reconciliation adds `RecordPlace` and a storage's `record_place` to that list, so it is settled.
+
+## Needs no other spec meets yet
+
+Each is a place where another spec's text, as it stood at `59946f0d`, asks the store for something it gives in another form. None stops this spec from being built.
+
+1. **Spec 2, decisions 14 and 17.** They have the writer call `resolve` at each flush. The writer knows no session. Text needed: "`resolve` keeps the keys it found in `transaction.info`, for the length of the transaction, so a flush that names one session in two kinds reads it once. Each kind's `write` calls `resolve` before it writes. The use is a kind registered after every kind that makes rows, and it resolves with `create=False` only the sessions the flush has not yet resolved."
+2. **Spec 2, decision 22.** Its sweep's passes read 100 keys at a time and repeat themselves. Text needed: "Each pass is a `Sweeper` registered with spec 0. One call is one transaction, removes at most `limit` rows and returns the count. Spec 0's pass calls it again until it returns 0. `settle` is `drain(scope)` and `discard` is `discard_behind(kind, scope=…)`, with the session's owner key and id as the scope."
+3. **Spec 8, decision 9.** Its orphan statement, `DELETE … WHERE job_id NOT IN (SELECT … FROM vfs_jobs)`, removes any number of rows in one sweep call. Text needed: "`vfs_job_replies.job_id` is added to the dependents of spec 7's `expiry_sweeper`, so a job's pages go before its row, at most `limit` rows a call. Pages whose job is already gone are removed by a second sweeper, `delete_where` with that `NOT IN` as its `where` and the same limit."
+4. **Spec 3, decision 8.** It keeps a pending table of its own, fed by a report of each row stored or dropped. No such report exists. Text needed: "The pending table is the writer's buffer. The lookup of step 2 calls `waiting_behind(kind, keys=…)` and then the store. Step 7 calls `discard_behind(kind, keys=…)`. No second table is kept." Its need of a flush after a declared delay is met by a flush with no delay.
+5. **Spec 3, decision 8, "How a host closes it".** It has a host call a drain before it answers. The store's `drain` is private. This spec adds no public name for it, because ruling 10's list holds none, and `close` flushes. Text needed, in spec 3, if the owner wants the call: the public name, its twin on the synchronous face, and that it awaits `KernelStore.drain()`.
+6. **Spec 7, decision 36.** It registers a table, an expiry column and a dependent table with the sweep. Text needed: "The sweeper is `expiry_sweeper(jobs, key=jobs.c.job_id, expires=jobs.c.expires_at, dependents=(pages.c.job_id,))`, registered with `register_sweeper`."
 
 ## Not checked
 
@@ -712,6 +861,9 @@ Each is decided above, and the decision stands until it is ruled on.
 - **A read-only Postgres**, such as a standby. The store cannot be written there, and the result is read to be decision 4's unavailable store.
 - **The line counts** `engine.py` falls to and `base.py` rises to.
 - **Whether `bulk_insert` needs a change to be called from outside a storage's session.** It takes a session and a table, and is read to need none.
+- **The other eight specs after `59946f0d`.** Each was read once, in its "Builds on" and in the decisions cited here, while its writer was revising it. A heading or a number cited here may have moved since.
+- **Decisions 24 to 26 on Postgres.** The bounded delete by a row value, the row count of an insert that does nothing, and a dependent's delete through a subquery were compiled for Postgres and run on SQLite. To run: the tests marked *Both engines* that name `delete_where`, `upsert_rows` and `expiry_sweeper`, on the Postgres leg.
+- **How long a statement of fixed binds holds the SQLite store's writer** at the sizes specs 3 and 4 allow: a rewind that removes 16 MiB of stamps, a fork that copies 100,000 turns. To run: each on a SQLite file with a second task counting its own `commit` calls served meanwhile.
 
 ## One line
 

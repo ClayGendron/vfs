@@ -1,6 +1,6 @@
 # A row carries an etag, and a change can require it
 
-A draft, written on 2026-11-22. It is not reviewed, and nothing is built. It is spec 1 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It lifts decisions 1 and 2 out of the spec merged from pull request 42, `agents/2026-11-22-the-session-remembers-what-it-read/spec.md`, and makes them a kernel spec of their own that needs no session. It rests on the landed spec `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, whose preconditions it extends, and on the verification record `agents/2026-11-22-shell-review/reviews/verification.md`, whose four cases it ran again. Every fact about the code was read on the branch `a-job-is-interrupted-and-resumed` at `6dae6a1d`, whose kernel and storage files are those of `dev` at `5a823ea`, and the facts a decision rests on were run that day. The probes sit outside the repository.
+A draft, written on 2026-11-22. It is not reviewed, and nothing is built. It is spec 1 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It lifts decisions 1 and 2 out of the spec merged from pull request 42, `agents/2026-11-22-the-session-remembers-what-it-read/spec.md`, and makes them a kernel spec of their own that needs no session. It rests on the landed spec `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, whose preconditions it extends, and on the verification record `agents/2026-11-22-shell-review/reviews/verification.md`, whose four cases it ran again. Every fact about the code was read on the branch `a-job-is-interrupted-and-resumed` at `6dae6a1d`, whose kernel and storage files are those of `dev` at `5a823ea`, and the facts a decision rests on were run that day. The probes sit outside the repository. It was reconciled the same day with the other eight specs as they stood on disk: decisions 17 to 19 are that round's, and so are the changes to decisions 2, 6, 8, 9, 12, 14 and 16 that each says it carries.
 
 ## The outcome wanted
 
@@ -20,8 +20,13 @@ The check costs no statement, and a read pays no statement for the etag.
 - `agents/2026-11-22-the-session-remembers-what-it-read/spec.md` as merged from pull request 42: drafted. Its decisions 1 and 2 are the source of this spec. It is being rewritten as spec 3 to hold the session half only.
 - `agents/2026-11-22-shell-review/reviews/verification.md`: the record that a version alone does not name a file. Its four cases were run again here.
 - `agents/2026-11-22-a-session-is-stored-named-and-forked/research/history.md`, lineage 4: the entity tag and `If-Match` of HTTP, and the lost update they were made for. Its lesson is that the record of what was read is a validator checked at write time, safe to copy, safe to lose and safe to send with the request.
-- It needs nothing from specs 0 and 2 to 8. It keeps no record, so it needs no kernel store.
-- Specs 3, 5 and 7 build on it. They were being written the same day and none was seen.
+- It needs nothing from specs 0 and 2 to 8. It keeps no record, so it uses none of the forms of spec 0, decision 22 (The interface is private, and this is all of it). It adds no error kind.
+- Built on by, each drafted and read on 2026-11-22:
+  - Spec 3, decision 9 (A session fills in the precondition and, when strict, refuses a change to what it was not shown), which passes `if_match`, `if_matches` and the mark of decision 18; decision 11 (A directory takes no precondition, and being shown it is enough), which agrees with decision 10 here; decision 12 (The two refusals are `vfs.conflict.changed` and `vfs.conflict.unread`, and neither carries a version), which answers in place of this spec's `conflict` only where the session filled the precondition in; and decision 18 (A writer that spans chunks carries the etag its last chunk left), which states `if_match` on an append.
+  - Spec 5, decision 2 (A storage reports every entry row a mutation changed, and what the row was before), which uses `EtagMint`, and decision 7 (An entry is put back only while it is as the session's last change left it), which needs decision 17 here.
+  - Spec 6, decision 2 (Each verb has one step class, and that class is the one description of the verb's arguments), whose classes are written from the parameter table as this spec leaves it.
+  - Spec 7, decision 13 (The preview is computed once, as the caller, for seven verbs, and every part of it is bounded), which needs decision 19 here, and decision 22 (The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`), which needs decisions 6 and 18.
+  - Spec 8, decision 7 (A read is journaled as a reference to the body it saw, and the body is read again on replay), which keeps a row's etag.
 
 ## Terms
 
@@ -40,6 +45,7 @@ The check costs no statement, and a read pays no statement for the etag.
 - **Seam.** The storage protocol, `SupportsMutation` in `src/vfs/storage/protocol.py`.
 - **Trait.** A quality a storage declares through `traits()`, read by the kernel without calling a verb.
 - **Key.** One path of an `if_matches` mapping.
+- **Mark.** The value `ABSENT`, given where an etag is given. It requires that the path holds no live row.
 
 ## What the code does today
 
@@ -59,7 +65,10 @@ Run on 2026-11-22. A file named without a directory is under `src/vfs/storage/ba
 | The claim of a delete already names both: `entry_id = ? AND version = ? AND deleted_at IS NULL` on SQLite (`serialized.py:201-205`) and the same three terms over a `VALUES` join on Postgres (`serialized.py:314-328`), from the snapshot's id and version (`trash.py:458`). | Run on SQLite. Compiled for Postgres. |
 | The claim of a move already names both, on both engines: `entry_id = ? AND version = ?`, from the source row read for the pair (`topology.py:170`, `326-338`). A move never replaces what is at its destination: an occupant, a tombstone included, is `exists` (`topology.py:188-191`). | Read and run. |
 | A delete adds one to the version of the row it names and stamps the rows beneath with no change of version (`trash.py:459-464`, `492-496`). A restore adds one to the root and none beneath (`trash.py:526`, `543-547`). A move adds one to the moved row and none beneath (`topology.py:335`, `387-407`). | Read and run. |
-| The row a delete returns reports the version the row had before the delete (`trash.py:660-668`). | Read and run. |
+| The row a delete returns reports the version the row had before the delete (`trash.py:660-668`). A file deleted at version 1 is a tombstone at 2 in the trash view and is live at 3 after a restore. | Read and run. |
+| A restore judges the row at the path, then the parents (`trash.py:246-258`), and its claim names the entry and the version of the tombstone: `entry_id = ? AND version = ? AND deleted_at IS NOT NULL` (`trash.py:525-531`). At the seam, as the system actor, a restore of a file issues 6 statements. | Read and run. |
+| A batch that creates three files in one directory and replaces a fourth issues 1 insert on `vfs_entries`. The files of one depth are arbitrated as one group, under one flag for the whole call (`writes.py:622-625`). | Read and run. |
+| A `write` whose target is a directory is `wrong_kind`, with or without an expected version (`staging.py:288-290`). | Read and run. |
 | At the seam, as the system actor, on a SQLite file: an update by `write` issues 8 statements, an `edit` 7, a delete of a file 4, a cascading delete of a directory 5, a delete of an empty directory without cascade 6, a move of a file 16. A write with a stale `if_version` issues 1, the snapshot. | Run. |
 | Through the kernel, as the system authority, on a SQLite file that holds five files in `/d`, one in `/d/sub` and one edge, after a `rebuild`: `stat` issues 1 statement, `read` 1, `ls` 2, `tree` 2, `glob` 1, `grep` 7, `search` 8, `traverse` 3. | Run. |
 | A stale `if_version` is `conflict` with `data == {"version": n}` and `retryable` false (`staging.py:521-528`). An `if_absent` over a live row is `exists` with `version` and `content_hash` (`staging.py:531-541`). | Run. |
@@ -125,7 +134,9 @@ class EtagMint:
 
 The engine host builds one `EtagMint` at first touch, where it reads the mount identity, and every site that builds a row from a stored row is handed it.
 
-An etag is compared for equality and nothing else. No code takes one apart, and none can: the digest does not give back the id or the version.
+An etag is compared for equality and nothing else. No code takes one apart, and none can: the digest does not give back the id or the version. The reconciliation rules the same for all nine specs: a record that needs a version keeps it beside the etag, from the same row.
+
+`mint(entry_key, 0)` is lawful. No row is at version 0, since creation sets 1, so the value is no row's etag, is on no row, and never satisfies a precondition. A storage may keep it inside a record of its own to name an entry alone, as spec 5, decision 2 (A storage reports every entry row a mutation changed, and what the row was before) does.
 
 | Form | Verdict |
 |---|---|
@@ -222,6 +233,8 @@ async def move(self, src=None, dest=None, moves=None, *,
 - `if_match` is the precondition of the single form: `path` for `write`, `edit` and `delete`, and `src` with `dest` for `move`, where it names the source.
 - `if_matches` is the precondition of the batch form: `entries`, `observations` or `moves`. It maps a path to the etag required there. A path with no key has no precondition.
 - The precondition holds when the live row at the path has the etag given. Nothing else is compared.
+- A value may be the mark, `ABSENT`, in place of an etag. Decision 18.
+- `restore` takes both arguments too. Decision 17.
 
 The kernel turns `if_match=E` into a mapping of one key, as it turns `if_version` today. A storage sees one shape:
 
@@ -254,11 +267,11 @@ Each is refused before any storage is called. Rows 1 to 5 are in `params.py` and
 
 | Rule | Refusal |
 |---|---|
-| `if_match` is an etag: `is_etag` holds | `invalid`: `"{op} if_match must be an etag, the 20 characters a result carries, got {shown}"`. `shown` is the type's name for a value that is not text, and the first 32 characters in quotes for one that is. A new `ParamKind`, `etag`. |
-| `if_matches` is a mapping of text to etags | `invalid`: `"{op} if_matches must be a mapping of paths to etags, got {type}"`, `"{op} if_matches keys must be strings, got {type}"`, or `"{op} if_matches values must be etags, the 20 characters a result carries, got {shown}"`. A new `ParamKind`, `etags`, checked key by key. |
-| `if_match` goes with the single form, and `if_matches` with the batch form | `invalid`: `"write takes if_match with path, and if_matches with entries"`, `"edit takes if_match with path, and if_matches with observations"`, `"delete takes if_match with path, and if_matches with observations"`, `"move takes if_match with src and dest, and if_matches with moves"`. Two shape rules for each verb. |
+| `if_match` is an etag or the mark: `is_etag` holds, or the value is `ABSENT` | `invalid`: `"{op} if_match must be an etag, the 20 characters a result carries, got {shown}"`. `shown` is the type's name for a value that is not text, and the first 32 characters in quotes for one that is. A new `ParamKind`, `etag`. |
+| `if_matches` is a mapping of text to etags or the mark | `invalid`: `"{op} if_matches must be a mapping of paths to etags, got {type}"`, `"{op} if_matches keys must be strings, got {type}"`, or `"{op} if_matches values must be etags, the 20 characters a result carries, got {shown}"`. A new `ParamKind`, `etags`, checked key by key. |
+| `if_match` goes with the single form, and `if_matches` with the batch form | `invalid`: `"write takes if_match with path, and if_matches with entries"`, `"edit takes if_match with path, and if_matches with observations"`, `"delete takes if_match with path, and if_matches with observations"`, `"move takes if_match with src and dest, and if_matches with moves"`, `"restore takes if_match with path, and if_matches with observations"`. Two shape rules for each verb. |
 | `if_absent=True` with `if_match` or `if_matches` | `invalid`: `"write if_absent=True takes no if_match or if_matches: an absent file has no etag"`. |
-| `append=True` with `entries` | `invalid`, as today. `append=True` with `if_match` is lawful: it is the append that lands at most once. |
+| `append=True` with `entries` | `invalid`, as today. `append=True` with an etag as `if_match` is lawful: it is the append that lands at most once. `append=True` with the mark is `invalid`, with the words `if_absent` has today: `"write takes append or if_absent, not both: an append to an absent path already creates it"`. |
 | Each key of `if_matches` names a target of the call, once it is resolved as the targets are: a file of `entries`, a row of `observations`, a source of `moves` | `invalid`: `"each key of if_matches must be the path of a file in entries"`, `"... of a row in observations"` or `"... of a source in moves"`, with `data={"raw": key}`. In `base.py`. |
 | No two keys name one path | `invalid`: `"if_matches names one path twice"`, with `data={"raw": key}`. |
 | The storage of each mount that receives a key declares the `etag` trait | `unsupported` at the mount's path: `"the storage mounted here issues no etag, so a change there cannot require one"`. Decision 13. |
@@ -277,11 +290,12 @@ Each verb mints the etag of the live row its snapshot read and compares it with 
 
 | Verb | Where it is judged | The statement that carries it, unchanged |
 |---|---|---|
-| `write` | In the plan. Order: the address gates, `if_absent`, the occupant's kind, a required etag against no live row, stage, settle. Settle drops a row whose body is the stored body first, and then refuses each row whose etag is not the one required. | The material `UPDATE`. SQLite: `entry_id = ? AND version = ? AND path = ? AND deleted_at IS NULL`. Postgres: the same four terms over a `VALUES` join. |
+| `write` | In the plan. Order: the address gates, `if_absent` or the mark, a required etag against a live directory, the occupant's kind, a required etag against no live row, stage, settle. Settle drops a row whose body is the stored body first, and then refuses each row whose etag is not the one required. | The material `UPDATE`. SQLite: `entry_id = ? AND version = ? AND path = ? AND deleted_at IS NULL`. Postgres: the same four terms over a `VALUES` join. |
 | `write(append=True)` | As a write, after the row lock and the second read. | The same `UPDATE`. |
 | `edit` | After the miss and before every other judgment of the row: a target whose etag is not the one required is refused, its kind of body is not looked at and its edits are not run. | The same `UPDATE`. |
 | `delete` | In the ladder, after the miss and before `not_empty`. A target covered by another target's cascade is judged too, where it has a key. | The claim `UPDATE`: `entry_id = ? AND version = ? AND deleted_at IS NULL`, as an executemany on SQLite and over a `VALUES` join on Postgres. |
 | `move` | In the pair's ladder, after the source is found live and the root is refused, and before the rename onto itself. | The root claim `UPDATE`: `entry_id = ? AND version = ?`, on both engines. |
+| `restore` | Decision 17: after the ladder and the permit, before the claim. | The claim `UPDATE`: `entry_id = ? AND version = ? AND deleted_at IS NOT NULL`. |
 
 What a `write` answers, by what is at the path when the snapshot is read:
 
@@ -292,7 +306,9 @@ What a `write` answers, by what is at the path when the snapshot is read:
 | live file, same body | `unchanged`, whatever `E` is |
 | live file whose etag is `E`, new body | updated to the next version |
 | live file whose etag is not `E`, new body | `conflict` |
-| live directory | `wrong_kind` |
+| live directory | `conflict`. With no etag required it is `wrong_kind`, as today. |
+
+A live row whose etag is not the one required is `conflict` whatever its kind. This is round two's change: spec 3, decision 11 (A directory takes no precondition, and being shown it is enough) reads a file's etag met by a directory as a file that changed, and `wrong_kind` would tell a caller that required a file nothing about what became of it.
 
 `unchanged` comes before the comparison for a `write` and after it for an `edit`. A write of the body a row holds is recognisably a call sent twice, and it writes nothing. An edit is no stored value, so its second sending cannot be told from a stale one, and it is `conflict`.
 
@@ -341,11 +357,16 @@ Reason: a precondition protects what a call would replace. A move replaces nothi
 | The same, and the row probed has moved away | `conflict` | none: the row now at the path was not read | no |
 | A plain write lost its guard | `conflict` | `{"version": v, "etag": e}` where the row is still at the path, and none where it moved | yes, as today |
 | A required etag against no live row | `not_found` | the trashed hint on a tombstone | no |
+| The mark, on a `write`, over a live row | `exists` | `{"version": v, "content_hash": h, "etag": e}` | no |
+| The mark, on `edit`, `delete` or `move`, over a live row | `conflict` | `{"version": v, "etag": e}` | no |
+| A `restore` whose tombstone has another etag | `conflict` | `{"version": v, "etag": e}` of the tombstone | no |
 | `if_absent` over a live row | `exists` | `{"version": v, "content_hash": h, "etag": e}` | no |
 | A value that is no etag | `invalid` | none | no |
 | A mount whose storage issues no etag | `unsupported` | none | no |
 
-The detail of the first four is `"the etag required is not the etag of what is stored"`. Every stale row of a batch is listed, and the batch fails whole.
+The detail of the first four is `"the etag required is not the etag of what is stored"`. Every stale row of a batch is listed, and the batch fails whole. Decision 19 gives the one constructor.
+
+This spec adds no error kind. A session answers with its own two in place of this `conflict` only where it filled the precondition in, and those carry no version: spec 3, decision 12 (The two refusals are `vfs.conflict.changed` and `vfs.conflict.unread`, and neither carries a version). A precondition the caller stated is answered here, with the version and the etag.
 
 The contract row of `conflict` in `KIND_CONTRACTS` reads: phrase `Conflict`, retry class `refresh`, hint `"Read the entry again, then retry; a change that requires an etag takes the one that read returns."`, and `path` means `"the entry whose state is not the one the call expected"`.
 
@@ -362,7 +383,7 @@ Reason for one answer: a digest cannot say who minted it, and nothing needs it t
 1. Every row it returns with a version carries an etag of the public shape.
 2. Two of its rows carry equal etags when, and only when, they are the same entry at the same version.
 3. No etag of another storage equals one of its own, short of a collision.
-4. It honours `if_matches` inside the transaction that changes the row, with the answers of decisions 9 and 12.
+4. It honours `if_matches`, the mark included, inside the transaction that changes the row, with the answers of decisions 9, 12, 17 and 18.
 
 `DatabaseStorage` declares it on every dialect. `SQLiteStorage`, `PostgresStorage` and `InMemoryStorage` are that class. The in-memory storage has a mount identity of its own for each object, so its etags end with it. A dialect on the generic floor mints and honours as the two engines do, since nothing here is engine-specific. No engine leg tests the floor.
 
@@ -372,9 +393,9 @@ Reason: a precondition that a storage silently dropped would be a write the call
 
 ### 14. The four public faces, the parameter table and the seam carry the same names
 
-- `AsyncVirtualFileSystem`, `VirtualFileSystem`, `AsyncSession` and `Session` each carry `if_match` and `if_matches` on `write`, `edit`, `delete` and `move`, keyword-only. The session faces take no `authority`, and pass both through unchanged, as they pass every argument today. What a session fills in is spec 3's.
-- `PARAMS` gains the two names on the four verbs and loses the two version names on `write`. The signature drift test and the count of integer channels follow: 11, where 12 were.
-- `Etag` and `EtagMint` are exported from `vfs`. `Etag` sits on the Entry reference page beside `ContentHash`, and `EtagMint` on the Storage page under "Writing a Storage Backend".
+- `AsyncVirtualFileSystem`, `VirtualFileSystem`, `AsyncSession` and `Session` each carry `if_match` and `if_matches` on `write`, `edit`, `delete`, `move` and `restore`, keyword-only. The two session classes keep their names under spec 2, decision 3 (The handle holds seven values, and only its current turn ever changes). They take no `authority`. A precondition a caller states through a session reaches storage unchanged, and what a session fills in where the caller states none is spec 3, decision 9 (A session fills in the precondition and, when strict, refuses a change to what it was not shown).
+- `PARAMS` gains the two names on the five verbs and loses the two version names on `write`. The signature drift test and the count of integer channels follow: 11, where 12 were.
+- `Etag`, `EtagMint` and `ABSENT` are exported from `vfs`. `Etag` sits on the Entry reference page beside `ContentHash`, and `EtagMint` on the Storage page under "Writing a Storage Backend".
 - The glossary gains **Etag**: "A short value on a row that names one entry at one version. A change can require it."
 
 Reason: a name that differs between two faces is found by the caller who crosses from one to the other. The parity tests exist to make that impossible.
@@ -393,12 +414,67 @@ Reason: Article 1 allows five first-class things. A sixth would be the most expe
 
 ### 16. Four landings, in this order
 
-1. The etag on every row: `etag.py`, `ULIDBytes`, the mint at each site, the trait, the merge rule, the exports, and `etag` beside `version` in the `data` of `conflict` and `exists`. No argument changes.
-2. `write` takes `if_match` and `if_matches`, and `if_version` and `if_versions` leave, in one landing.
+1. The etag on every row: `etag.py`, `ULIDBytes`, the mint at each site, the trait, the merge rule, the exports, the constructor of decision 19, and `etag` beside `version` in the `data` of `conflict` and `exists`. No argument changes.
+2. `write` takes `if_match` and `if_matches` with the mark of decision 18, and `if_version` and `if_versions` leave, in one landing.
 3. `edit` takes them.
-4. `delete` and `move` take them, and the constitution, the roadmap rows and the guide's sentence change.
+4. `delete`, `move` and `restore` take them, and the constitution, the roadmap rows and the guide's sentence change.
+
+Spec 5's first landing needs the first of these, for the mint. Spec 5's fourth carried `if_match` on `restore` only if no landing here did, and the fourth here does.
 
 Reason: each leaves the tree green and is of use alone. The first lets a caller see what it would require. The second swaps the precondition in one step, so at no commit does `write` have two or none.
+
+### 17. `restore` takes `if_match` and `if_matches`, and they name the tombstone
+
+```python
+async def restore(self, path=None, observations=None, *,
+                  if_match: Etag | None = None, if_matches: Mapping[str, Etag] | None = None,
+                  authority: Authority | None = None) -> Result: ...
+```
+
+The seam's `restore` takes `if_matches: Mapping[Path, Etag] | None`, under the rules of decisions 6, 8 and 13.
+
+- The precondition holds when the tombstone the restore would clear has the etag given. It is judged after the ladder has found a deleted root with live parents and after the caller's permit, and before the row is claimed.
+- Every earlier answer of the ladder stands, with or without a precondition: no row is `not_found`, a live row is `exists`, a row inside a deleted tree is `not_found` naming its root, and a deleted parent is `not_found` there.
+- A mismatch is `conflict` with the tombstone's version and etag, and nothing is restored. A batch with one stale key restores nothing.
+- The claim that follows already compares both: `entry_id = ? AND version = ? AND deleted_at IS NOT NULL` on SQLite, and the same three terms over a `VALUES` join on Postgres. No term and no statement is added.
+- A rival that revives the row inside the window moves its version. The claim matches no row, the verb runs again, and the answer is `exists`.
+
+A tombstone's etag is the one its row carries in the trash view. The row a `delete` returns carries the etag of the row before the delete (decision 4), which is the tombstone's only for a row deleted beneath a directory. A storage that reports its changes gives the tombstone's own, as spec 5, decision 2 does.
+
+This reverses the line of round one that left `restore` with no precondition.
+
+Reason: spec 5, decision 7 (An entry is put back only while it is as the session's last change left it) shows the case. A session deletes a file, another caller restores it, edits it and deletes it again, and a restore with no precondition brings back the other caller's edit as the session's file. The tombstone's version tells the two deletes apart, and the claim already carries it.
+
+### 18. The mark `ABSENT`, in place of an etag, requires that the path holds no live row
+
+```python
+# src/vfs/etag.py
+ABSENT: Final = "absent"      # no etag has this shape, and it is plain JSON
+```
+
+`if_match` is typed `Etag | Literal["absent"] | None`, and a value of `if_matches` `Etag | Literal["absent"]`.
+
+- **On `write`,** the entry at a marked path only creates. A live occupant, a file or a directory, is `exists` with the occupant's version, hash and etag. A tombstone counts as absent and is revived. This is `if_absent` for one entry, so one batch can require an etag at some paths, nothing at others, and leave the rest plain.
+- **On the single form of `write`,** `if_match=ABSENT` is `if_absent=True` under another spelling. It exists so that a saved precondition has one shape for every path.
+- **On `edit`, `delete` and `move`,** a live row at a marked path is `conflict` with its version and etag. With no live row there the verb goes on and answers what it answers for such a path, which is `not_found`.
+- **On `restore`,** the mark is lawful and adds nothing: the ladder already answers a live row `exists`. It is admitted so that one mapping serves every verb.
+- **`if_absent=True`** stays, applies to every entry, and is still refused beside `if_match` and `if_matches`.
+- **Rights.** A call is judged at `add`, as a create-only write is today, when `if_absent=True` or every file entry of the call carries the mark. Any other call is judged at the verb's own rungs.
+- **A create that loses its name to a rival.** A marked entry answers `exists` and never lands on the rival's row. An unmarked one lands on it, as today. `StagedEntry` gains `exclusive: bool`, read where the call-wide flag is read today.
+- **Statements.** The files of one depth are inserted in at most two groups, marked and unmarked, where they are one group today. A batch that mixes the two issues at most one more insert for each depth it creates at. A batch of one kind issues what it issues today.
+
+Reason: two specs need it and neither can do without soundly. Spec 3, decision 9 writes a strict session's batch of read and unread paths, and without the mark it is two calls, the second of which can fail after the first has landed. Spec 7, decision 22 carries out a saved batch in which the preview found some paths empty, and without the mark those paths are not guarded at all. Reason for a word and not `*`: in HTTP `If-Match: *` means that something is there, which is the opposite.
+
+### 19. One constructor makes the refusal of a failed precondition, for a storage and for the kernel alike
+
+```python
+# src/vfs/results/envelope.py, beside already_exists and wrong_kind; exported from vfs.results
+def stale_etag(path: Path, version: int, etag: Etag) -> ResultError: ...
+```
+
+It returns `classified(ErrorKind.conflict, path, detail="the etag required is not the etag of what is stored", data={"version": version, "etag": etag})`, which is not retryable. The plan, the three ladders and the lost-guard probe call it. It replaces `stale_version` of `staging.py`, and decision 7's sentence that `stale_version` becomes `stale_etag` there now reads: it moves here.
+
+Reason: spec 7, decision 13 (The preview is computed once, as the caller, for seven verbs, and every part of it is bounded) refuses a step whose own `if_match` is already stale before it stores a job, from rows a `stat` returned. That refusal must be the one a storage would give, word for word and key for key, and one function is how two places stay the same.
 
 ## Cost
 
@@ -412,6 +488,10 @@ Costed against the reference deployment in the working agreement.
 
 **Per batch, 100 a night.** A 10,000-entry write with a key for every row mints 20,000 etags, about 25 ms of a call measured at 1.3 s. The keys never enter a statement, so the statement count is the count without keys and no chunk changes size. The mapping holds 10,000 paths and 10,000 twenty-character values. A batch with one stale key writes nothing.
 
+**The mark.** A batch that mixes marked and unmarked creates issues at most one more insert for each depth it creates at, bounded by the depth of its deepest path and not by its size. No other batch changes.
+
+**A restore.** No statement, as a delete: 6 at the seam with and without the precondition.
+
 **Per corpus.** Nothing. There is no column, no backfill and no pass.
 
 **Per lock.** None is taken and none is held longer. The comparison is made in Python between two statements the call already issues, inside the transaction it already holds. No reader waits on anything new.
@@ -424,18 +504,19 @@ Costed against the reference deployment in the working agreement.
 
 ## Left as it is
 
-- **`copy`, `mkdir`, `restore`, `sweep`, `mkedge` and `rmedge` take no precondition.** A copy changes no source and replaces no destination. `mkdir` and `restore` land only on a free path. `sweep` runs retention or destroys a subtree named whole, and no caller is known that reads before it.
+- **`copy`, `mkdir`, `sweep`, `mkedge` and `rmedge` take no precondition.** A copy changes no source and replaces no destination. `mkdir` lands only on a free path. `sweep` runs retention or destroys a subtree named whole, and no caller is known that reads before it. Specs 3 and 7 pass none on `copy` and `mkdir` either (spec 3, decision 9; spec 7, decision 22).
 - **A read that returns nothing when an etag still holds.** The etag is what such a read would take. No caller for it is known.
 - **`entry_id` on `stat`.** The kernel plan lists it as not built. No precondition needs it now.
 - **A precondition on the body's hash.** The earlier decision stands.
 - **A request key, and a change that lands exactly once.**
-- **The parent's new etag on the result of a change.** A change that adds or removes a child moves its parent's version and reports the child alone. A caller that holds the parent's etag from before its own change reads the parent again before it requires it.
+- **The parent's new etag on the result of a change.** A change that adds or removes a child moves its parent's version and reports the child alone. A caller that holds the parent's etag from before its own change reads the parent again before it requires it. A session requires nothing of a directory, by spec 3, decision 11.
+- **A value on a row that names its entry alone.** No row says which entry it is apart from its version. Two rows are known to be one entry only when their etags are equal. "Needs no other spec meets yet" says who asked and what it would cost.
 - **`etag` in the default text of a listing.** It is in the row and not in the default projection, as `version` is.
 - **The shell's host.** It keeps its pair of version and hash. An etag is that pair in one value, and the host can hold it when it is next changed.
 - **A copy of a database.** A file copy or a dump restored elsewhere carries the mount identity and every entry id with it. Etags minted against one are honoured by the other wherever their versions line up. Telling two copies apart is a change to provisioning.
-- **Version rows.** No verb serves them yet. When one does, a version row's etag by the rule of decision 1 is the etag the entry had at that version.
-- **The kinds a session answers with, `vfs.conflict.unread` and `vfs.conflict.changed`.** They are spec 3's.
-- **Create-only rows and required rows in one call.** `if_absent` applies to every entry of its call, as landed.
+- **Version rows.** No verb serves them. The one seam that reads an old body is spec 5, decision 5 (A rollback reads the files through two storage methods, `find_entries` and `read_versions`, and no public verb is added). It takes a version number, kept beside the etag by whoever asks.
+- **The kinds a session answers with, `vfs.conflict.unread` and `vfs.conflict.changed`.** They are spec 3, decision 12's.
+- **A directory entry of a batch under the mark.** A key names a file of `entries`, so a directory entry is made or left as a plain write leaves it. `mkdir` without `exist_ok` is the create-only form for a directory.
 
 ## Tests
 
@@ -462,13 +543,13 @@ Each is written and seen failing before the code. Counts are of statements recor
 `tests/test_params.py`:
 
 - The drift test passes with the new names. `test_every_int_channel_enforces_the_shared_ceiling` counts 11.
-- `test_garbage_classifies_invalid_with_zero_dispatch` gains one case for each rule of rows 1 to 5 of decision 8, on each of the four verbs where the rule applies: 0 storage calls each.
+- `test_garbage_classifies_invalid_with_zero_dispatch` gains one case for each rule of rows 1 to 5 of decision 8, on each of the five verbs where the rule applies: 0 storage calls each.
 - `if_version` and `if_versions` are in no signature of the four faces and not in `PARAMS`.
 
 `tests/base/test_dispatch.py`:
 
-- `test_if_match_reaches_the_storage_keyed_by_its_own_path`, one case for each of the four verbs: the recorder storage receives one key, with the mount's prefix off.
-- `test_if_matches_go_to_the_mount_of_each_key`, for `write`, `edit`, `delete` and `move`.
+- `test_if_match_reaches_the_storage_keyed_by_its_own_path`, one case for each of the five verbs: the recorder storage receives one key, with the mount's prefix off.
+- `test_if_matches_go_to_the_mount_of_each_key`, for `write`, `edit`, `delete`, `move` and `restore`.
 - `test_a_key_that_names_no_target_of_the_call_is_invalid` and `test_if_matches_that_names_one_path_twice_is_invalid`: 0 storage calls.
 - `test_a_mount_whose_storage_issues_no_etag_refuses_a_required_change`: `unsupported` at the mount's path, 0 storage calls, and the same call without `if_match` reaches the storage once.
 - `test_a_call_that_requires_nothing_passes_no_if_matches`: the recorder receives no such argument.
@@ -491,6 +572,12 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_move_requires_its_source`: a stale source is `conflict`, the source is still at its path and the destination is empty; a matching one moves, and the result's etag differs from the one required; an occupied destination is `exists` with or without `if_match`.
 - `test_an_exists_names_the_etag_of_what_is_there`.
 - `test_the_storage_declares_the_etag_trait`.
+- `test_a_required_etag_over_a_directory_is_conflict`: a `write` and an `edit` that require a file's etag at a path a directory now holds each answer 1 `conflict`; the same `write` with no etag answers `wrong_kind`.
+- `test_a_restore_requires_its_tombstone`: the etag the trash view shows restores the file; the etag the delete's row carried is `conflict` with the tombstone's version and etag, and the row stays deleted; a file deleted, restored, edited and deleted again by another caller is `conflict` for the etag of the first tombstone; a live row is `exists` and a missing one `not_found`, with or without the argument; a batch with one stale key restores 0 rows.
+- `test_the_mark_creates_and_never_replaces`: in one batch of three files, one with an etag, one with the mark and one plain, all three land when the first matches and the second path is empty; with the second path occupied the batch writes 0 rows and answers 1 `exists` with the occupant's version, hash and etag; a tombstone at the marked path is revived.
+- `test_the_mark_on_a_change_of_what_is_there`: `edit`, `delete` and `move` with the mark over a live row each answer `conflict` with its version and etag, and over an empty path each answer `not_found`.
+- `test_twenty_marked_creates_of_one_path_land_once`: 1 success and 19 `exists`, in batches that each also replace a file of their own.
+- `test_a_call_of_marked_entries_alone_is_judged_at_add`: a caller who holds `add` creates through the mark, hears `exists` over another's file, and is `permission_denied` when one entry of the call is unmarked and lands on another's file.
 
 `tests/storage/database/test_writes.py`, class `TestRequiredEtag` in place of `TestExpectedVersion`, on a SQLite file at the seam as the system actor:
 
@@ -504,7 +591,9 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 - `test_a_required_etag_adds_no_statement`, in `test_trash.py` over a delete of a file, a cascading delete of a directory and a delete of an empty directory without cascade, and in `test_topology.py` over a move of a file within one directory: the list of statement verbs with `if_matches` equals the list without, on twin fixtures. The counts are 4, 5, 6 and 16.
 - `test_a_stale_etag_issues_no_mutation_statement`, over the same four: 0 statements that begin `INSERT`, `UPDATE` or `DELETE`.
-- `test_a_ten_thousand_target_delete_with_a_key_for_every_row_adds_no_statement`. Marked `slow`.
+- `test_a_ten_thousand_target_delete_with_a_key_for_every_row_adds_no_statement`. Marked `slow`. The same for an `edit` of 10,000 rows, in `test_writes.py`. These are the sizes spec 7, decision 22 carries.
+- `test_a_restore_that_requires_an_etag_adds_no_statement`, in `test_trash.py`: the list of statement verbs equals the list without, and counts 6; a stale one issues 0 mutation statements.
+- `test_a_batch_that_mixes_marked_and_plain_creates_issues_one_more_insert`, in `test_writes.py`: a batch of 100 marked and 100 unmarked new files in one directory issues 2 inserts on `vfs_entries`, where 200 of one kind issue 1.
 
 `tests/storage/database/test_reads.py`:
 
@@ -519,6 +608,10 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 - `test_two_storage_objects_over_one_database_mint_one_etag`: two storages opened on one SQLite file return 1 distinct etag for one row, and a storage on another file returns another for a file at the same path and version.
 
+`tests/results/test_results.py`:
+
+- `test_stale_etag_is_the_refusal_a_storage_gives`: the error `stale_etag` builds equals, field for field, the one a stale `write` returns from the database storage.
+
 `tests/test_sync.py`: the twin tests pass with the new arguments on both synchronous faces.
 
 Every test that passes `if_version` or `if_versions` is rewritten to read the row and pass its etag: 66 uses in `tests/test_params.py`, `tests/base/test_dispatch.py`, `tests/support/storage_contract.py`, `tests/storage/database/test_writes.py` and `tests/storage/database/test_races.py`. The recorder storage in `tests/support/base_doubles.py` declares the trait. A test that compares a whole row gains the field.
@@ -532,7 +625,7 @@ In:
 - `src/vfs/params.py`, `src/vfs/base.py`, `src/vfs/session.py`, `src/vfs/sync.py`, `src/vfs/sync_session.py`.
 - `src/vfs/storage/protocol.py` (the seam, the trait vocabulary).
 - `src/vfs/storage/backends/database/`: `engine.py` (the mint, built at first touch), `backend.py` (the trait, the arguments), `reads.py`, `listings.py`, `grep.py`, `search.py`, `traverse.py` (the id and the mint on each row), `staging.py`, `writes.py` (the plan's comparison, the rows of a result, the `data` of two refusals), `serialized.py`, `trash.py`, `topology.py` (the comparison in each ladder, the rows of a result).
-- `src/vfs/results/envelope.py` (the merge rule), `src/vfs/results/kinds.py` (the words of `conflict`).
+- `src/vfs/results/envelope.py` (the merge rule, `stale_etag`), `src/vfs/results/__init__.py`, `src/vfs/results/kinds.py` (the words of `conflict`).
 - The tests above, and the entries of `tests/lint/allowlist.py` for each module that grows.
 - The docs below.
 
@@ -543,52 +636,75 @@ The landings are decision 16's four. Each is green under `scripts/ci.sh` and `sc
 ## What the docs must say
 
 - A row carries an etag wherever it carries a version. An etag names one file or directory at one version. It is compared and never taken apart.
-- `if_match` is how a caller that reads, changes and writes back avoids replacing a change, or a file, it never saw. It works on `write`, `edit`, `delete` and `move`. `if_matches` is the same for a batch.
+- `if_match` is how a caller that reads, changes and writes back avoids replacing a change, or a file, it never saw. It works on `write`, `edit`, `delete`, `move` and `restore`. `if_matches` is the same for a batch.
+- `ABSENT` in place of an etag requires that nothing is at the path. In a batch write it makes one entry create-only.
+- A restore that requires an etag requires the deleted row's, which the trash view shows.
 - A `conflict` names the version and the etag that are there now. Read the file again before sending them back.
 - An etag changes when the row changes, and stays the same when a directory above it is moved, deleted or restored.
 - A directory's etag changes when something is added to it, removed from it or renamed in it, and not when something deeper changes.
 - A storage that issues no etag refuses a change that requires one.
 
-Pages, each changed: the docstrings of `write`, `edit`, `delete` and `move` on `AsyncVirtualFileSystem`, which are the reference pages of the four faces; the `Observation` docstring, with `Etag` on `documentation/reference/python-api/entry.md` and a line on `index.md`; the `ErrorKind` docstring for the `data` of `conflict` and `exists`; `documentation/reference/python-api/storage.md` for the trait, its four promises and `EtagMint`; `documentation/reference/glossary.json` and `glossary.md` for the term; `context/standards/constitution.md`, Articles 1.3 and 1.5; `context/standards/roadmap.md`, the rows of stories K2 and K10 that name `if_version`; `documentation/how-to/keep-a-session-for-each-conversation.md`, the one sentence named below.
+Pages, each changed: the docstrings of `write`, `edit`, `delete`, `move` and `restore` on `AsyncVirtualFileSystem`, which are the reference pages of the four faces; the `Observation` docstring, with `Etag` on `documentation/reference/python-api/entry.md` and a line on `index.md`; the `ErrorKind` docstring for the `data` of `conflict` and `exists`; `documentation/reference/python-api/storage.md` for the trait, its four promises and `EtagMint`; `documentation/reference/glossary.json` and `glossary.md` for the term; `context/standards/constitution.md`, Articles 1.3 and 1.5; `context/standards/roadmap.md`, the rows of stories K2 and K10 that name `if_version`; `documentation/how-to/keep-a-session-for-each-conversation.md`, the one sentence named below.
 
 ## Earlier decisions this reverses
 
 - `agents/2026-11-20-write-takes-preconditions-and-an-append/`, decision 1: `if_version` and `if_versions` leave. Its reason, that a version is the one coordinate every reader holds, now holds of the etag. Its decisions 4 to 6 stand with the etag in the version's place. Its decision 10 gains `etag` in the `data` of `conflict` and `exists`. Its line under "Left as it is" that `edit`, `delete` and `move` take no expected version no longer holds. Its decision 11, no hash precondition, stands.
 - The same spec's rule that a write which lost its guard reports the version of the row it probed: where that row has moved away, the refusal now carries no `data`.
+- The same spec's decision 2, that one call cannot mix create-only rows with plain rows: the mark of decision 18 lets it. And its table's row for a live directory under an expected version, `wrong_kind`: under a required etag it is `conflict`.
 - The spec merged from pull request 42, decision 2, in four places. The storage mints, where the router did. An etag from another mount is `conflict` from the storage, where it was `invalid` before any storage was called. A delete of a directory without cascade compares the entry and the version, where it compared the entry alone. The batch forms of `edit`, `delete` and `move` take `if_matches`, where only `write` did. Its sentence that `if_match` is exclusive with `if_version`, and its decision 4's sentence that an explicit `if_version` reaches storage unchanged, have nothing left to speak of.
 - `context/standards/constitution.md`, Article 1.5, third bullet: reworded as decision 15 gives it.
 - `context/standards/roadmap.md`, story K10: it stamped the `entry_id`, the version and the hash, and filled in `if_version`. The etag is the stamp, and `if_match` is what is filled in.
 
 ## Choices for the owner
 
-Each is decided above. The decision stands until it is ruled on.
+Each is decided above. The decision stands until it is ruled on. One choice of round one is ruled and is gone from the list: an etag cannot be taken apart, for all nine specs.
 
-1. **`if_version` and `if_versions` leave** (decision 7). The other choice keeps them beside `if_match`, exclusive with it, with the four unsound cases written into the docstring.
-2. **A delete of a directory without cascade compares the entry and the version** (decision 10). The other choice is the merged spec's, the entry alone, at the price of an etag in two halves and a second hash on every row.
+1. **`if_version` and `if_versions` leave** (decision 7). The other choice keeps them beside `if_match`, exclusive with it, with the four unsound cases written into the docstring. Spec 3's Builds on and spec 6's `WriteStep` still name them, from the code as it stands.
+2. **A directory is matched by its entry and its version on every verb** (decision 10). The other choice is the merged spec's, the entry alone on a delete without cascade, at the price of an etag in two halves. Specs 3 and 5 pass no precondition there, so neither asks for it.
 3. **An etag from another mount is `conflict`, answered by the storage** (decision 12). The other choice puts a mount tag in clear at the front of the etag and refuses a foreign one `invalid` at the mount.
 4. **Every listing row carries the etag** (decision 4), at 1.1 µs and 30 bytes a row. The other choice carries it only where `columns=` names it, and a session then reads each row again before a change.
-5. **The batch forms of `edit`, `delete` and `move` take `if_matches`** (decision 6). The other choice refuses a precondition on them.
-6. **The etag is a digest that cannot be taken apart** (decision 2). The other choice is a token that holds the id and the version, 40 characters, which another spec could read a version from.
-7. **A `conflict` carries the etag that is there now** (decision 12). The other choice carries the version alone, so that no caller can send the etag back unread.
+5. **The batch forms of `edit`, `delete`, `move` and `restore` take `if_matches`** (decisions 6 and 17). The other choice refuses a precondition on them.
+6. **A `conflict` carries the etag that is there now** (decision 12). The other choice carries the version alone, so that no caller can send the etag back unread. A session's own two refusals carry neither.
+7. **A required etag met by a directory is `conflict`** (decision 9). The other choice keeps `wrong_kind`, as an expected version has it today.
+8. **`ABSENT` is a second spelling of `if_absent=True` on a single write** (decision 18). The other choice removes `if_absent` and leaves the mark as the one spelling, which changes the shell's host and spec 3, decision 9.
+9. **No row names its entry apart from its version** ("Left as it is"). The other choice adds a second twenty-character field to every row, minted at version 0, at about 0.9 µs and 30 bytes a row more.
 
 ## Where this spec disagrees with the overview or the guides
 
 - The overview: nothing.
 - `documentation/how-to/keep-a-session-for-each-conversation.md`, line 258, says a call made on the file system guards a write only when the expected version is passed. Proposed: it guards a change only when the expected etag is passed, as `if_match=`. The evidence is "The problem": a version passed that way guards nothing in four cases, and decision 7 removes the argument.
 - `documentation/how-to/interrupt-a-job-and-ask-a-person.md`: nothing. Its refusal of a step whose file changed is the `conflict` of decision 12.
+- What a call returns: nothing. Every call this spec changes is a verb, and returns a `Result` as it does today.
+
+## Needs no other spec meets yet
+
+This spec needs nothing of another spec.
+
+Needs other specs state on this one, and what meets each:
+
+- Spec 3, Builds on, items 1, 2, 3 and 6: decisions 1, 4, 6 and 9. Item 4, a marker for "must be absent": decision 18.
+- Spec 5, Builds on: `restore` with `if_match` and `if_matches`: decision 17. Its use of `EtagMint.mint(entry_key, 0)`: decision 2.
+- Spec 7, Builds on: the etag on rows, the single and the batch precondition, and an etag that never names two versions of one entry: decisions 1, 2 and 6. A mark for "this path must hold nothing": decision 18. One constructor for the refusal: decision 19. Whether a directory's etag moves when its children change: decision 10, it does for direct children and for nothing deeper. Up to 10,000 paths on a resume: decision 9 and the pins under "Tests", no statement grows.
+- Spec 8, Builds on: `etag` as a column a read can name. It is on every row with a version and need not be named: decision 1.
+
+Two needs are not met, and will not be here:
+
+- **Spec 3, Builds on, item 5, and spec 8, Builds on: a function that takes an etag apart into an entry key and a version, and one that puts them back.** The reconciliation rules that no spec reads anything out of an etag, and a digest gives nothing back, to a storage as little as to the kernel. What serves in its place: the version is on the same row as the etag and is kept beside it; a stamp or a journal entry keeps the etag whole and passes it back whole; an old body is read by spec 5, decision 5's seam from a path and a version number.
+- **What spec 3 used the entry key for is then not met by anything: knowing that two rows shown at different times are one entry.** Spec 3, decision 5 (One stamp per path is current, and a new one replaces it unless it is the same file at the same or a lower version) and decision 10 (An append is never held to a stamp, and moves one only when it landed directly on it) both compare entries. With an etag and a version alone, two rows are known to be one entry only when their etags are equal. Spec 3 should meet this itself, with a rule that needs no entry: a stamp is replaced by any later row whose etag differs, and an append moves a stamp only when the storage's report of the change, spec 5, decision 2's `etag_before`, equals the stamp. If that cannot work, the decision this spec would need is: "Every row that carries an etag carries `entry`, twenty characters minted at version 0, equal for two rows exactly when they are one entry of one mount", which is choice 9 above and costs every row a second mint.
 
 ## Not checked
 
-- Postgres. No server was run. The Postgres guards were compiled from the builders, and the rival cases of decision 9 are read from the code and the landed spec. `ULIDBytes` was run on SQLite alone; on Postgres the driver hands back a UUID object whose `bytes` are taken, which is read and not run.
-- The generic floor.
-- The costs. They are a bench on one machine against in-memory SQLite. The share of a call they are on Postgres, where a row costs more to fetch, was not measured.
+- Postgres. No server was available. To run on the Postgres leg, with the `db_test` skill: the contract class `TestEtag`; `tests/storage/database/test_races.py::test_a_rival_inside_the_window_refuses_a_required_change`, which shows that a rival's commit inside the window ends in `conflict` by either road at REPEATABLE READ; `tests/models/test_rows.py::test_the_id_reads_as_bytes_and_as_text_alike`, which shows that `ULIDBytes` over the native `uuid` column hands back the same 16 bytes as the text form; and `test_twenty_marked_creates_of_one_path_land_once`, which shows the mark under `ON CONFLICT`. The Postgres guards in this spec were compiled from the builders and not sent to a server.
+- The generic floor. No leg runs it.
+- The costs. They are a bench on one machine against in-memory SQLite. To size them on Postgres: time a 10,000-row `glob` with and without the mint on a server.
 - The mean number of rows a read returns at the reference deployment. The 50 is an assumption.
 - How many existing tests compare a whole row or a rendered table of every field, and so gain the new field.
 - That the list of sites that build a row with a version is complete. It was made by a search for the constructors. The contract row of 17 calls is what catches a site that was missed.
 - Whether a rendering pass moves a version. Decision 3 says only that an etag stays where the version does.
-- The other eight specs. None was seen. Spec 3 may still pass `if_match` on a delete of a directory without cascade, or name `if_version`, and spec 5 may want a version read from an etag. Decisions 7 and 10 and choice 6 are where those meet this spec.
+- The mark's second insert group was read from the arbitration code and not run. The count of 2 inserts is the test's to show.
+- The other eight specs were read as they stood on disk while their writers were revising them. Spec 3 still described an etag in two parts, and spec 6's `WriteStep` still listed `if_version`. Each citation here gives the heading as well as the number for that reason.
 - A database copied by file or by dump, mounted beside its original.
 
 ## One line
 
-Every row a caller may read says which entry it is and at what version in twenty characters, and a write, an edit, a delete or a move that passes them back changes that row or nothing.
+Every row a caller may read says which entry it is and at what version in twenty characters, and a write, an edit, a delete, a move or a restore that passes them back changes that row or nothing.
