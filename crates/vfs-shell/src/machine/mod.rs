@@ -85,6 +85,9 @@ impl Default for Limits {
 pub enum ProgramKind {
     /// The crate's own implementation, run inside the machine over requests.
     Library,
+    /// A program the host resolves at each start: it runs it, refuses it, or hands it back
+    /// to the library's program of that name. `type` and `command -v` name it as a program.
+    Host,
 }
 
 /// Everything a line starts with.

@@ -12,7 +12,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use shell::host::{MemoryHost, Outcome};
-use shell::machine::{Config, Fatal, Limits, Machine, Reply, Request, Status};
+use shell::machine::{Config, Fatal, Limits, Machine, ProgramKind, Reply, Request, Status};
 use shell::syntax::{ParseError, ParseLimits, parse};
 
 fn world() -> MemoryHost {
@@ -332,6 +332,32 @@ fn a_name_the_host_resolves_runs_as_the_host_answers() {
             .count(),
         4
     );
+}
+
+#[test]
+fn a_name_the_host_starts_is_a_program_to_type_and_is_asked_of_the_host_each_time() {
+    let line =
+        "type grep; command -v grep; grep -c a a.txt; grep -c o b.txt; type shout; shout; echo $?";
+    let mut host = world();
+    host.add_program("shout", shout);
+    host.hand_back_program("grep");
+    let mut config = config(&host, Limits::default());
+    config.programs.retain(|(name, _)| name != "grep");
+    config.programs.push(("grep".to_owned(), ProgramKind::Host));
+    config
+        .programs
+        .push(("shout".to_owned(), ProgramKind::Host));
+    let outcome = host.run(line, config);
+    assert_eq!(
+        String::from_utf8_lossy(&outcome.stdout),
+        "grep is /usr/bin/grep\n/usr/bin/grep\n4\n2\nshout is /usr/bin/shout\n3\n"
+    );
+    let starts = outcome
+        .requests
+        .iter()
+        .filter(|r| r.contains("Start"))
+        .count();
+    assert_eq!(starts, 3, "each start of a host-started name asks the host");
 }
 
 // ---------------------------------------------------------------------------

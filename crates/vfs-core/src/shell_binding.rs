@@ -65,9 +65,10 @@ pub struct ShellMachine {
 impl ShellMachine {
     /// Parse `source` and make a machine ready to run it. A line that does not
     /// parse raises `ValueError(kind, message, line, column)`; `fuel` is the
-    /// line's instructions and `deadline` the seconds it may run in all.
+    /// line's instructions and `deadline` the seconds it may run in all; `host_programs` are
+    /// the program names the host resolves at each start, as `programs` are the library's.
     #[new]
-    #[pyo3(signature = (source, *, env, cwd, name, args, stdin, programs, pid, limits=None, fuel=None, deadline=None))]
+    #[pyo3(signature = (source, *, env, cwd, name, args, stdin, programs, pid, host_programs=Vec::new(), limits=None, fuel=None, deadline=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -79,6 +80,7 @@ impl ShellMachine {
         stdin: Vec<u8>,
         programs: Vec<String>,
         pid: u32,
+        host_programs: Vec<String>,
         limits: Option<std::collections::HashMap<String, u64>>,
         fuel: Option<u64>,
         deadline: Option<f64>,
@@ -92,6 +94,7 @@ impl ShellMachine {
             programs: programs
                 .into_iter()
                 .map(|p| (p, ProgramKind::Library))
+                .chain(host_programs.into_iter().map(|p| (p, ProgramKind::Host)))
                 .collect(),
             pid,
             limits: limits_from(limits.as_ref()),

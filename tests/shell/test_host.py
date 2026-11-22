@@ -90,9 +90,17 @@ async def _seeded(seed: bool) -> AsyncVirtualFileSystem:
             if path.is_dir():
                 ok(await fs.mkdir(target, parents=True, authority=SYSTEM))
             else:
-                ok(await fs.write(path=target, data=path.read_bytes(), parents=True, authority=SYSTEM))
+                ok(await fs.write(path=target, **_as_written(path.read_bytes()), parents=True, authority=SYSTEM))
     ok(await fs.grant("/", "agent", "read_write", authority=SYSTEM))
     return fs
+
+
+def _as_written(body: bytes) -> dict[str, Any]:
+    """A body as the shell writes it: text when it is UTF-8, bytes when not."""
+    try:
+        return {"content": body.decode()}
+    except UnicodeDecodeError:
+        return {"data": body}
 
 
 AGENT = Authority.of(Principal("agent"))
@@ -147,7 +155,7 @@ async def test_every_request_reaches_a_public_verb_with_the_admitted_authority(m
 
     async def counting(self: Any, op: str, args: dict[str, Any]) -> tuple[str, object]:
         nonlocal answered
-        answered += 1
+        answered += op not in ("start", "feed")
         return await real_answer(self, op, args)
 
     monkeypatch.setattr(host_module._Host, "answer", counting)
@@ -158,7 +166,7 @@ async def test_every_request_reaches_a_public_verb_with_the_admitted_authority(m
     result = await run_line(fs, line, AGENT, cwd="/work", env=ENVIRONMENT)
     assert result.exit_code == 0, result.stderr
     assert answered > 10
-    assert len(calls) == answered, "one public verb for each request"
+    assert len(calls) == answered, "one public verb for each request that is no program's start or feed"
     assert {who for _, who in calls} == {AGENT}
     assert {verb for verb, _ in calls} >= {"read", "stat", "ls", "write", "mkdir", "delete", "copy", "move"}
 
@@ -288,12 +296,14 @@ async def test_search_is_the_search_verb_called_as_the_caller(monkeypatch: pytes
     result = await fs.cli("search nothing-here; echo $?; search", authority=ADA)
     assert calls == [("nothing-here", ADA)]
     assert result.stdout == "1\n"
-    assert "usage: search" in result.stderr
+    assert "Usage: search" in result.stderr
+    assert result.exit_code == 2
 
 
-async def test_a_limit_that_is_no_ascii_number_is_a_query_word() -> None:
+async def test_a_limit_that_is_no_ascii_number_is_a_misuse() -> None:
     result = await AsyncVirtualFileSystem().cli("search -n \u00b2 alpha; echo $?", authority=ADA)
-    assert result.stdout == "1\n"
+    assert result.stdout == "2\n"
+    assert result.stderr.startswith("search: invalid limit: \u2018\u00b2\u2019\n")
 
 
 async def test_the_bodies_a_line_holds_give_way_to_the_one_it_reads(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -375,8 +385,8 @@ async def test_bodies_whose_readers_stopped_early_are_bounded(monkeypatch: pytes
 async def test_a_refused_search_reads_as_its_message_and_is_kept_as_a_warning() -> None:
     fs = AsyncVirtualFileSystem()
     result = await fs.cli("search alpha /no/such/root; echo $?", authority=ADA)
-    assert result.stdout.endswith("1\n")
-    assert result.stderr.startswith("search: ")
+    assert result.stdout.endswith("2\n")
+    assert result.stderr.startswith("search: /no")
     assert [e.severity for e in result.errors] == [Severity.warning]
 
 

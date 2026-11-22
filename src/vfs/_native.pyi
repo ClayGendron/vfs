@@ -84,6 +84,7 @@ class ShellMachine:
         stdin: bytes,
         programs: list[str],
         pid: int,
+        host_programs: list[str] = ...,
         limits: dict[str, int] | None = None,
         fuel: int | None = None,
         deadline: float | None = None,
