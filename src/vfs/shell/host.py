@@ -87,8 +87,9 @@ READING_BYTES: Final = 128 << 20
 held until the open reads its end; past this, the body read least recently gives way, since a reader
 may stop early, and its open reads it again only at the version it first saw."""
 
-_BODY: Final = frozenset({"content", "data"})
-"""The columns a read asks for: a bytes body comes back only when ``data`` is named."""
+_BODY: Final = frozenset({"content", "data", "content_hash"})
+"""The columns a read asks for: a bytes body comes back only when ``data`` is named, and the hash
+tells two files at one version apart."""
 
 _HOST_ERROR: Final[dict[str, str]] = {
     ErrorKind.not_found: "not_found",
@@ -296,10 +297,13 @@ def _ended(reason: str) -> ResultError:
 
 
 class _Seen(NamedTuple):
-    """The version of a file an open saw at its first read."""
+    """The body an open saw at its first read: its path, its version and the hash of its bytes.
+    A version alone does not name a file, since a file moved in, copied in or written new can
+    stand at a path at the version another had."""
 
     path: str
     version: int | None
+    content_hash: str | None
 
 
 class _Host:
@@ -376,12 +380,12 @@ class _Host:
                 self._close(opened)
                 return refusal
             row = result.observations[0]
-            if seen is not None and seen.version != row.version:
+            if seen is not None and (seen.version, seen.content_hash) != (row.version, row.content_hash):
                 self._close(opened)
                 self.keep(classified(ErrorKind.conflict, Path(path), detail="the file changed while it was open"))
                 return "error", "invalid"
             if seen is None:
-                seen = _Seen(path, row.version)
+                seen = _Seen(path, row.version, row.content_hash)
                 self._opens[opened] = seen
                 self._sharers[seen] = self._sharers.get(seen, 0) + 1
             self._held -= len(self._bodies.pop(seen, b""))

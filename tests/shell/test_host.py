@@ -424,6 +424,34 @@ async def test_two_opens_of_one_file_each_keep_the_version_they_saw(monkeypatch:
     assert reads == ["/w/a", "/w/a"]
 
 
+async def test_an_open_never_reads_on_in_another_file_at_its_version() -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.mkdir("/w", authority=SYSTEM))
+    ok(await fs.write(path="/w/p", content="P\n" * 100_000, authority=SYSTEM))
+    ok(await fs.write(path="/w/q", content="Q\n" * 100_000, authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+    line = "{ read -r x; mv /w/p /w/old; cp /w/q /w/p; cat /w/p > /dev/null; grep -c Q; } < /w/p"
+    result = await fs.cli(line, authority=ADA)
+    assert result.stdout == "0\n", "the open of p reads on in p's body, though q now stands at p at p's version"
+
+
+async def test_a_body_given_way_is_not_read_again_from_another_file_at_its_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host_module, "READING_BYTES", 150_000)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.mkdir("/w", authority=SYSTEM))
+    ok(await fs.write(path="/w/p", content="P\n" * 50_000, authority=SYSTEM))
+    ok(await fs.write(path="/w/q", content="Q\n" * 50_000, authority=SYSTEM))
+    ok(await fs.write(path="/w/b", content="b" * 100_000, authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+    line = "{ read -r x <&3; read -r -n 1 y <&4; mv /w/p /w/old; cp /w/q /w/p; grep -c Q <&3; } 3</w/p 4</w/b"
+    result = await fs.cli(line, authority=ADA)
+    assert "Q" not in result.stdout
+    assert result.stdout in ("0\n", "")
+    assert [str(error.kind) for error in result.errors] == ["vfs.conflict"]
+
+
 async def test_two_opens_of_one_version_share_one_body_past_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(host_module, "READING_BYTES", 150_000)
     fs = AsyncVirtualFileSystem()
