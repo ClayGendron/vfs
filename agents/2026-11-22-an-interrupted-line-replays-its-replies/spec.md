@@ -1,6 +1,6 @@
 # An interrupted line is saved as its inputs and its replies, and replays them when it is resumed
 
-A draft, written on 2026-11-22. It is not reviewed, and nothing is built. It is spec 8 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps, and it rests on that page, on the two guides under `documentation/how-to/`, and on the tree at `6dae6a1d` on the branch `a-job-is-interrupted-and-resumed`. Every fact marked "Run" below was run that day. The extension installed in the checkout was older than the source (it did not take `host_programs`), so the probes ran against a build of the working tree made in the session's scratch directory, with wasmtime 51.0.0. The first draft was written without sight of the other eight specs. A second pass, the same day, read all eight and took every name another spec owns from that spec. Each is cited by its number and its heading, because the other eight were being revised during that pass. What no other spec provides yet is listed under "Needs no other spec meets yet".
+A draft, written on 2026-11-22. It is not reviewed, and nothing is built. It is spec 8 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps, and it rests on that page, on the two guides under `documentation/how-to/`, and on the tree at `6dae6a1d` on the branch `a-job-is-interrupted-and-resumed`. Every fact marked "Run" below was run that day. The extension installed in the checkout was older than the source (it did not take `host_programs`), so the probes ran against a build of the working tree made in the session's scratch directory, with wasmtime 51.0.0. The first draft was written without sight of the other eight specs. A second pass, the same day, read all eight and took every name another spec owns from that spec. A third pass read them again as committed at `7c383f32`, where every owner's names are final, met what the other specs still asked of this one, and checked each citation, by number and by heading, against its owner's text.
 
 ## The outcome wanted
 
@@ -16,24 +16,28 @@ Each of the other eight specs is drafted and not built.
   - decision 9, "The store is used through `query` and `commit`, and a failure is one exception";
   - decision 12, "A batch of rows is written in chunked statements through four helpers": `insert_rows`;
   - decision 17, "Expired records are removed by a counted sweep in bounded chunks, and a record past its expiry reads as absent before it is swept": `register_sweeper`;
+  - decision 26, "A table that expires with its dependents is swept by one ready-made sweeper": `expiry_sweeper`, and `delete_where` of decision 25;
   - decision 6, "A root in memory keeps its records in a second database in memory";
   - decision 22, "The interface is private, and this is all of it", and its eight rules, which decision 9 here follows one by one.
-- **Spec 1, a row carries an etag.** Decision 4, "Each verb fills the etag on the rows it already returns": a `read` row carries `etag` beside `version` and `content_hash`. Decision 2, "An etag is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version": an etag is compared and never taken apart, so decision 7 keeps the version beside it.
+- **Spec 1, a row carries an etag.** Decision 1, "Every row that carries a version carries an etag, and the storage mints it", and decision 4, "Each verb fills the etag on the rows it already returns": a `read` row carries `etag` beside `version` and `content_hash`, and the host need not name it. Decision 2, "An etag is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version": an etag is compared and never taken apart, so decision 7 keeps the version beside it.
 - **Spec 2, a session is stored.** Decision 13, "`vfs_sessions` holds one row per session, under a key that is never used twice": a line's job names its session by `session_key`, on spec 7's row. This spec's own table names no session.
 - **Spec 3, the session remembers what it read.**
   - decision 16, "A bare line is a strict session of its own, and it is never stored": the line session and its table in memory;
   - decision 17, "The shell's host sends what a line is shown and what it changes through the guarded router, and its probes through the kernel";
   - decision 18, "A writer that spans chunks carries the etag its last chunk left": the host's writer mapping, which decision 28 rebuilds;
-  - decision 19, "Both faces and both stores share one implementation": the table's interface of look up, show and change, which decision 28 replays through.
+  - decision 19, "Both faces and both stores share one implementation": the table's interface of look up, show and change, which decision 28 replays through;
+  - decision 22, "What a table is shown is plain JSON, and a guarded router is made from a session key and a turn number alone": `look_up`, `show`, `change`, `after_write`, `after_remove` and `GuardedRouter.for_job`. It is the text this spec asked for.
+  - By ruling 2 of the third round this spec writes no statement against `vfs_session_stamps`. It reaches a stored session's stamps only through `GuardedRouter.for_job`.
 - **Spec 4, a session works in turns.** Decision 10, "The shell state is stored on the turn row when a line ends having changed it, and a line starts from the nearest state at or before its turn": nothing is stored when a line is interrupted and saved as a job, and a resumed line stores its state when it ends, in the turn it started in. Its `run_line_from` and `ShellState` are the start state the line record keeps. Decision 12, "`rewind(before=turn)` removes that turn and every later one, with their stamps, and cancels their waiting jobs, in one transaction": the pages of a cancelled job go with it by decision 9 here.
 - **Spec 5, a rewind puts a session's files back.** Decision 5, "A rollback reads the files through two storage methods, `find_entries` and `read_versions`, and no public verb is added", and its first landing, which is the seam alone. By ruling 8 of the reconciliation there is one seam that reads an old body, and spec 5 owns it: `SupportsVersions`, `read_versions`, `VersionTarget` and the trait `versions`. Decision 8 here uses them and adds no seam.
 - **Spec 6, a policy judges each step.**
   - decision 6, "`via` is the line that made the step, and the line itself is not a step": `Line(text, cwd)` and `decisions.in_line`;
   - decision 9, "A file system keeps its policies in the order they were added, and a change is seen by the next step": `decisions.guarded`, the test with no I/O that decision 4 asks once;
   - decision 14, "A denial refuses the whole step under one new kind, `vfs.permission_denied.policy`": inside a line a policy's denial prints `Permission denied`;
-  - decision 21, "A step turns into JSON and back into an equal step, and has one canonical form".
+  - decision 21, "A step turns into JSON and back into an equal step, and has one canonical form";
+  - decision 23, "A step class need not be a verb's: `RewindStep` is one, and a step that is carried out by many calls is judged once": `decisions.within`, inside which spec 7 dispatches a saved step.
 - **Spec 7, a job is interrupted and resumed.** It owns the record, the states and the claim, and this spec uses them by their names:
-  - decision 4, "`vfs_jobs` holds one row per stored job, and `vfs_job_pages` holds what does not fit in the row": the `kind` `line`, the saved part, `JOB_INLINE_BYTES`;
+  - decision 4, "`vfs_jobs` holds one row per stored job, and `vfs_job_pages` holds what does not fit in the row": the `kind` `line`, the `caller` column, the saved part, `JOB_INLINE_BYTES`;
   - decision 5, "A job is in one of four states, and every change of state is one conditional update on its revision": `interrupted`, `running`, `finished`, `cancelled`;
   - decision 6, "The job is committed before the interrupted result is returned";
   - decision 9, "An interrupt's id is derived from the job, the place, the raiser and a count, and an answer is used only for the question it answered": the place;
@@ -41,11 +45,11 @@ Each of the other eight specs is drafted and not built.
   - decision 16, "`resume(job_id, answer, *, authority)` is the only public call that answers, and it returns the result the caller's call would have returned", and decision 17, "A job may be resumed by the system authority, and by an authority that holds `read_write` on every path the step names";
   - decision 20, "A resume runs the policies again with the answers the job has, and the run ends in one of seven ways";
   - decision 21, "Exactly one resume carries a job on, and the loser is refused with the job's state", decision 22, "The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`", and decision 23, "A claim is a lease of five minutes, and a job left running past it is carried on again under the same guard";
-  - decision 24, "A finished or cancelled job answers `resume` with its result again until it lapses, and the stored result is bounded": `JOB_RESULT_BYTES`;
+  - decision 24, "A finished or cancelled job answers `resume` with its result again until it lapses, and the stored result is bounded": a kind encodes the result that is stored and sets its bound;
   - decision 26, "The same step made again by the same caller while its job waits joins that job";
   - decision 27, "A denial and a cancel are the kinds `vfs.interrupt.denied` and `vfs.interrupt.cancelled`, and their words name the principal that answered by its name", and decision 29, "`Cancel(reason=None)` answers any interrupt and ends the job, and nothing the job did is undone";
   - decision 34, "A resumed job stays in its turn, and what it writes is remembered by its session", and decision 36, "A waiting job lapses `job_lifetime` after it stopped, 24 hours by default, and the sweep removes it";
-  - decision 37, "A line's job uses the same record, states and claim, and spec 8 supplies what is saved and how it is carried on": `store_job`, `load_job`, `stop_again`, `claim`, `finish`, `cancel`, and a kind as one object. Decision 27 here is that object.
+  - decision 37, "A line's job uses the same record, states and claim, and spec 8 supplies what is saved and how it is carried on": `store_job`, `load_job`, `stop_again`, `claim`, `finish`, `cancel`, and a kind as one object. Decision 27 here is that object. The five things this spec asked of spec 7 in the second round are in its decisions 37, 20, 16, 22 and 24 as committed.
 - **`agents/2026-11-21-the-shell-crosses-its-boundary-in-binary/spec.md`.** Drafted. It changes the wire and pins the toolchain. The journal holds the replies as the Python host gives them, so the wire's change does not change it.
 - **`agents/2026-11-21-a-line-has-a-verb-budget-and-cli-tightens-it/spec.md`.** Drafted. Its verb budget is counted inside the machine, so decision 23 covers it with no change.
 - **`agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md`.** Drafted. Its decision 2 serves `date` and its kin through `value`, which decision 11 journals.
@@ -135,7 +139,7 @@ Reason: Article 1 of the constitution allows five first-class things and gives e
 
 ### 3. The line record holds everything the machine is started with
 
-The saved part of a line's job is the document spec 7's decision 4 defines for a step, for the step the line is stopped before: its format number, the caller's authority in full, that step as spec 6 writes it, and the etags its preview saw. It gains one key, `line`, whose value is the line record:
+The saved part of a line's job is the document spec 7's decision 4 defines: its format number, the step the line is stopped before as `step.to_payload()` writes it, the etags that step's preview saw, and the kind's own document. For a line that document is the line record:
 
 | Field | Holds |
 |---|---|
@@ -147,12 +151,15 @@ The saved part of a line's job is the document spec 7's decision 4 defines for a
 | `name`, `args`, `pid` | `$0`, the arguments, and `$$` |
 | `limits`, `fuel` | the budgets as the call gave them, or null |
 | `stdin_bytes` | the length of the line's standard input |
+| `strict` | the `strict` of the handle the line ran through, or null for a bare line, which is always strict |
 | `stopped` | the position, key, name and digest of the request the line stopped at, and the place of the step |
 | `stops` | how many times the line has stopped |
 | `entries`, `bytes`, `pages` | the journal's counters: its next position, its size, and its next page |
 | `evidence`, `unkept` | the refusals the host had kept, at most 100, and the count past 100 |
 
-- The session and the turn are `session_key` and `turn_number` on the job row (spec 7, decision 4). `cwd` and `env` are the `ShellState` the line started from, which for a line of a stored session is the one spec 4's decision 10 read.
+- The caller's authority is the `caller` column of the job row, and the session and the turn are its `session_key` and `turn_number` (spec 7, decision 4). `cwd` and `env` are the `ShellState` the line started from, which for a line of a stored session is the one spec 4's decision 10 read.
+- `strict` is saved because a handle's `strict` is stored nowhere else (spec 2, decision 4, "`strict` and `policies` belong to the handle and are never stored"), and a resumed line must refuse what its first run would have refused. It is the text spec 3 asked of this decision.
+- The saved part is written again at each stop, with the record's counters and the new stopped step.
 - Standard input is not in the record. It is the journal's first entry, at position 0, when it is not empty.
 - The two program lists are not in the record. The build fingerprint covers them.
 - The deadline is not in the record. Decision 23 says why.
@@ -211,7 +218,7 @@ Reason: the machine reads each reply to decide its next step, so each must be gi
 
 ### 7. A read is journaled as a reference to the body it saw, and the body is read again on replay
 
-- The host asks `read` for `etag` and `version` beside the columns it asks for today. The body an open saw is named by its path, its etag, its version and its content hash. An etag cannot be taken apart (spec 1, decision 2), so the version is kept beside it.
+- The host takes `etag` and `version` from the row its `read` returns. Spec 1's decision 1 puts the etag on every row with a version, so no column is added to what the host asks for. The body an open saw is named by its path, its etag, its version and its content hash. An etag cannot be taken apart (spec 1, decision 2), so the version is kept beside it.
 - Each `read` entry of that open holds the etag, the version and the hash. The path, the offset and the length are in the request.
 - On replay the host fetches the body by decision 8, once for each open, and cuts each slice from it. The body is held under `READING_BYTES` as a live body is.
 - The path asked at the resume is where the line itself left the file: the host follows the line's own journaled moves, of the file or of a directory above it, from the path the read named. A file the line deleted is still at its path, as a tombstone.
@@ -262,10 +269,10 @@ By the eight rules of spec 0's decision 22:
 2. Its statements are in a new module, `vfs.kernel_store.replies`.
 3. No read verb writes to it, so nothing is written behind.
 4. It stores no time. Its rows go when their job's `expires_at`, read against `store.now()`, has passed.
-5. Pages are written with `insert_rows`, inside the `commit` that writes the job row.
+5. Pages are written with `insert_rows`, on the `Transaction` of the `commit` that writes the job row. The kind hands the rows to spec 7's `store_job` or `stop_again`, which write them there (spec 7, decision 37).
 6. A page is not a record beside a change to a file, so neither of spec 0's two forms applies. It is written in the `commit` that stores the job (spec 7, decision 6), before the call returns.
 7. It has no kind written behind.
-8. It has a sweeper, registered before spec 7's so that a job's pages go before its row. Each call issues one statement of fixed binds: `DELETE FROM vfs_job_replies WHERE (job_id, page) IN (SELECT r.job_id, r.page FROM vfs_job_replies AS r LEFT JOIN vfs_jobs AS j ON j.job_id = r.job_id WHERE j.job_id IS NULL OR j.expires_at <= :now LIMIT :limit)`. It removes the pages of a lapsed job and of a job whose row is gone.
+8. Its rows go by two sweepers, each of at most `limit` rows a call. `vfs_job_replies.job_id` joins the `dependents` of the `expiry_sweeper` spec 7 registers for `vfs_jobs` (spec 0, decision 26, and spec 7, decision 36), so a lapsed job's pages go before its row. Pages whose job row is already gone are removed by a second sweeper this spec registers: `delete_where` on the table's primary key, with `job_id NOT IN (SELECT job_id FROM vfs_jobs)` as its `where`. This is the text spec 0 asked of this decision, in place of the first draft's statement, which removed any number of rows in one call.
 
 - A resume reads a job's pages with one statement, in a `query`: `WHERE job_id = :id AND page < :pages ORDER BY page`.
 - When a line finishes, its pages are removed by one statement, `DELETE FROM vfs_job_replies WHERE job_id = :id`, in a `commit` after spec 7's `finish`. A process that dies between the two leaves pages the sweeper removes.
@@ -305,8 +312,8 @@ Reason: the probes found the order equal in 36 replays and 52 resumes under one 
 
 - The binding exports `SHELL_FINGERPRINT`: a SHA-256, in hex, of the module's bytes, the version of wasmtime it was built with, and the binding's default `FUEL`, `FUEL_SLICE` and `MODULE_MEMORY_BYTES`. The build script takes the wasmtime version from the lock file.
 - `line_fingerprint()` is the SHA-256 of `JOURNAL_FORMAT`, `SHELL_FINGERPRINT`, the sorted names of the library's programs and the sorted names of `PROGRAMS`. It is the `build` field of the line record.
-- The line's kind compares the record's `build` and `format` with its own when it decodes the saved part, which `resume` does before it judges or claims (spec 7, decision 16, step 6). When either differs, the resume returns one `vfs.conflict`, not retryable, with the detail "the shell is not the build that stopped this line, so the line cannot be carried on from where it stopped; resume it from a process that runs that build, or cancel the job". The job is left `interrupted` and nothing is recorded.
-- That a kind's decode may refuse is asked of spec 7 under "Needs no other spec meets yet". Until it is met the same check runs first when the kind carries the job on, and the job is finished with the conflict.
+- The line's kind compares the record's `build` and `format` with its own when it decodes the saved part, which `resume` does before it judges or claims (spec 7, decision 16, step 6). When either differs, the resume returns one `vfs.conflict`, not retryable, with the detail "the shell is not the build that stopped this line, so the line cannot be carried on from where it stopped; resume it from a process that runs that build, or cancel the job". Its `data` is `{"vfs.line": {"reason": "build"}}`, and it names no path. The job is left `interrupted` and nothing is recorded.
+- That a kind's decode may refuse, with nothing claimed and nothing recorded, is spec 7's decision 16, step 6.
 - The package's version is not in the build fingerprint.
 - `JOURNAL_FORMAT` is raised by hand when the journal's encoding or the host's replay of an entry changes.
 
@@ -314,7 +321,7 @@ Reason: a new module, a new runtime or a new program table can walk another line
 
 ### 14. A resume starts a fresh machine and a fresh host, and answers from the journal until it runs out
 
-The step loop is the one `run_line` has, entered inside `decisions.in_line(Line(line, cwd))` with the record's text and directory, so every step of the resumed line carries the `via` its first run carried (spec 6, decision 6). While the journal has an entry for the next position, the host answers from it:
+The step loop is the one `run_line` has. The resumed line runs inside `decisions.in_line(Line(text, cwd))`, built from the line record of decision 3, so every step it makes live carries the same `via` as in its first run (spec 6, decision 6). This is the text spec 6 asked of this decision. While the journal has an entry for the next position, the host answers from it:
 
 | Entry | What the host does |
 |---|---|
@@ -323,8 +330,8 @@ The step loop is the one `run_line` has, entered inside `decisions.in_line(Line(
 | `read`, `error` | Closes the open and gives the error, as a live refusal does. |
 | `start`, `started` | Puts the program's writes where its feeds will take them, and answers `started`. |
 | `feed` | Takes the next write, as a live feed does. |
-| `write` | Gives the reply, and moves the writer mapping of spec 3's decision 18 as the first run's reply moved it, with the journaled etag. |
-| `move`, `remove` | Gives the reply, and drops from that mapping what an accepted one drops. |
+| `write` | Gives the reply. For an accepted one it calls spec 3's `after_write(path, mode, etag)` with the journaled etag, which moves the writer mapping as the first run moved it. |
+| `move`, `remove` | Gives the reply. For an accepted one it calls spec 3's `after_remove(path)`. |
 | anything else | Gives the reply as it is kept. |
 
 - No verb is called through the line's routers. No policy is asked. No stamp is stored. No clock is read. The only calls on a mount are decision 8's fetches.
@@ -341,8 +348,9 @@ Reason: this is Temporal's replay, with the journal as the history. Running the 
 - The request asked when the journal ends is compared with `stopped` in the same way.
 - A line that ends, or asks nothing, with entries left is a mismatch at the first entry not reached.
 - A mismatch returns one `vfs.conflict`, not retryable. Its detail is "the line did not ask what it asked before: at step N it asked `write` at `0.1#3`, and its journal holds `read` at `0#2`; nothing more was run". Its `data` is `{"vfs.line": {"reason": "diverged", "position": N, "asked": {…}, "journal": {…}}}`.
-- A body that decision 8 cannot find, or whose hash is another, returns one `vfs.conflict` at the file's path, with "the line read this file at a version that can no longer be read, so the line cannot be carried on from where it stopped", and the reason `version`.
-- No kind is added. `vfs.conflict` is the kind that exists today.
+- A body that decision 8 cannot find, or whose hash is another, returns one `vfs.conflict` at the file's path, with "the line read this file at a version that can no longer be read, so the line cannot be carried on from where it stopped". Its `data` is `{"vfs.line": {"reason": "version", "position": N}}`.
+- No kind is added. `vfs.conflict` is the kind that exists today, and the six kinds the nine specs add are owned by specs 3, 6 and 7.
+- Every `vfs.conflict` renders with that kind's standing hint and retry class after its detail: "Re-read the entry and retry with its current version. (retry: refresh)" (run, `spec8_probe_words.py`). For these refusals the hint is wrong advice. Their reader is the host that called `resume`, never an agent, and the detail says what to do. A child kind with a hint of its own would read right, and is a choice for the owner.
 
 What can cause a mismatch: a new module, runtime or program table, which decision 13 refuses first; a changed input, which decision 3 rules out by reading every input from the record; and a fault in the machine that makes a walk depend on something outside its replies. The check is for the third.
 
@@ -363,16 +371,17 @@ Reason: both refusals of decision 15 are permanent. A journal that diverges will
 
 The first draft made the stopped step again as a public verb, after the replay. Spec 7's `resume` judges the saved step first, with the answer, before any job is carried on (its decision 20). So the order is: judge, claim, walk. The seven outcomes of that decision, for a line:
 
-| The run reports | What happens to a line |
+| The verdict, in spec 7's words | What happens to a line |
 |---|---|
-| The answer does not fit its schema | As for a step: the job is unchanged, and the result is `vfs.invalid`. |
-| A stop, after or before the answer was used | As for a step: `stop_again`, with the new interrupt. The line is not walked and no page is written. This is a step that two policies each ask a person about. |
-| Allow, after the answer was used | The job is claimed. The line is walked, and at the stopped place the step is carried out by spec 7's dispatch (its decision 22), through the line's guarded router. Its reply is journaled and the line goes on. |
-| A denial by an answer | The job is claimed. The line is walked, and at the stopped place the step's result is the `vfs.interrupt.denied` refusal. The command fails, by decision 18, and the line goes on. |
-| A denial by a policy | The job is claimed. The line is walked, and the step's result is spec 6's `vfs.permission_denied.policy` refusal. The command prints `Permission denied` and the line goes on. |
-| Allow, and the answer was never used | The job is claimed. The line is walked, and the step's result is spec 7's `vfs.conflict` for an answer nobody asked for. The step is not run. The command fails, by decision 18, and the line goes on. |
+| `unfit`: the answer does not fit its schema | As for a step: the job is unchanged, and the result is `vfs.invalid`. |
+| `stopped`, after or before the answer was used | As for a step: `stop_again`, with the new interrupt. The line is not walked and no page is written. This is a step that two policies each ask a person about. |
+| Nothing refused or stopped, and the answer was used | The job is claimed. The line is walked, and at the stopped place the step is carried out by spec 7's dispatch (its decision 22): the step's public verb, called through the line's guarded router, inside `decisions.within(fs)`, with the etags the preview saw. Its reply is journaled and the line goes on. |
+| A `Refusal` whose `answered` is set: a denial by an answer | The job is claimed. The line is walked, and at the stopped place the step's result is the `vfs.interrupt.denied` refusal. The command fails, by decision 18, and the line goes on. |
+| Any other `Refusal`: a denial by a policy | The job is claimed. The line is walked, and the step's result is spec 6's `vfs.permission_denied.policy` refusal. The command fails, by decision 18, and the line goes on. |
+| Nothing refused or stopped, and the answer was never used | The job is claimed. The line is walked, and the step's result is spec 7's `vfs.conflict` for an answer nobody asked for. The step is not run. The command fails, by decision 18, and the line goes on. |
 
-- In the last three rows spec 7's decision 20 finishes a job of one step. Its decision 29 leaves a denial inside a line to this spec, and the claim in those rows is asked of spec 7 under "Needs no other spec meets yet".
+- In the last three rows a job of one step is finished. For a line, spec 7's decision 20 claims the job and hands the refusal to the line's kind, under the words "A line's step that is refused does not finish the line".
+- **A stop under a turn that has no row.** Spec 7 stores no job as waiting under a turn a rewind removed, and the verb then returns the `vfs.interrupt.cancelled` refusal (its decision 5). A line whose verb returns that refusal ends there, as a cancelled line ends: status 130, the entry as its error, and what the line had printed. The step is not run.
 - **How the outcome is delivered.** The resumed host knows the stopped place. For each verb call it is about to make it computes the place. The call at the stopped place, when its step has the canonical form of the saved step (spec 6, decision 21), is answered with the outcome and makes no second call. Every other call is made live.
 - **A step that is carried out and refused all the same**, by a right taken away or by a file changed since the preview, fails its command as any refused verb does, and the line goes on.
 - **`cmd || fallback`** runs the fallback after a denial, and `set -e` ends the line as it does for any failed command.
@@ -387,7 +396,8 @@ Reason: one judging of a stopped step, in one place, is spec 7's, and a line mus
 - The words are the entry's message, an em dash, and its hint as the renderer composes it (spec 7, decision 27): `Denied by <name> — This step needed approval, and <name> denied it. Reason: <reason>`. They hold no path and no retry class.
 - So `rm` prints `rm: cannot remove '/contracts/acme.md': Denied by <name> — …` and exits 1. A redirection prints `bash: line 1: /contracts/acme.md: Denied by <name> — …` and its command exits 1. `sed -i` exits 4 and `ls` exits 2, as each does for `Permission denied` today.
 - A host program prints the same words through the road it has, `name: path: reason`, and exits 1.
-- The refusals the host words are named in one table in `host.py`, `WORDED_REFUSALS`. This spec puts two in it, the two a resume itself makes: `vfs.interrupt.denied`, and spec 7's `vfs.conflict` for an answer nobody asked for, whose `data` names its job. Every other kind keeps the code it maps to, which for `vfs.permission_denied.policy` is `permission_denied`, by spec 6's decision 14. Spec 6 may add its kind to the table, and its command then prints the policy's reason with nothing else here changed.
+- The refusals the host words are named in one table in `host.py`, `WORDED_REFUSALS`. It holds three: `vfs.interrupt.denied`; `vfs.permission_denied.policy`; and spec 7's `vfs.conflict` for an answer nobody asked for, whose `data` names its job. Every other kind keeps the code it maps to.
+- For `vfs.permission_denied.policy` the words are the message of the fact: `Refused by a policy: <reason> (policy <name>)`. So a command a policy denied prints the policy's reason, at a first call and at a resume alike, and exits as it does for `Permission denied`. This is the text spec 6 asked of this decision, and it takes the place of the `permission_denied` row spec 6's decision 14 gives `_HOST_ERROR` until this lands.
 - The fact is kept among the line's warnings, as every refusal inside a line is.
 
 Reason: the guide says a denied command prints that the principal denied it, and that a denial is not a missing right. The machine's eight texts cannot say so. One new reply is the smallest change that can.
@@ -429,6 +439,7 @@ Every result of a line is a `LineResult`, whose `ops` is `("cli",)`, from `cli` 
 | The resumed line stopped again | false | true | 126 | empty | the same, for the new step |
 | The resumed line ended | as for any line | false | the line's | everything from the line's first command | the line's warnings, from before and after every stop |
 | The line was cancelled | false | false | 130 | empty | spec 7's one entry of kind `vfs.interrupt.cancelled` |
+| The line reached a stop under a turn a rewind removed | false | false | 130 | what the line had printed | that same entry, then the line's warnings |
 | The resume could not replay | false | false | 2 | empty | the one conflict |
 | The answer did not fit, or the caller may not resume | false | false | 2 | empty | spec 7's refusal |
 
@@ -436,7 +447,8 @@ Every result of a line is a `LineResult`, whose `ops` is `("cli",)`, from `cli` 
 - `job` is the line's `Job` on every row, with `kind` `line`, and `verb` and `path` those of the step the line is stopped before.
 - The text of an interrupted result prints no output and the one entry, in spec 7's words. It names no job and no resume.
 - A resumed result is not a tail. A host hands it to its agent as the answer to the line.
-- **The stored copy.** A finished line stores its result for a second `resume`, as spec 7's decision 24 has it, under `JOB_RESULT_BYTES`. A result over that bound is stored without `stdout` and `stderr`: its exit status, its statuses, its errors, and one warning of kind `vfs.budget_exhausted.truncated` that says the output of this line is not kept and how many bytes it was. The first `resume` returns the whole result, from memory.
+- The words of an interrupted line's entry end "so this command was not run. The commands before it in the line ran. Do not run the line again or make the change another way." They are spec 7's (its decision 15).
+- **The stored copy.** A finished line stores its result for a second `resume`. A kind sets the bound of what it stores (spec 7, decision 24), and the line's kind stores the `LineResult` whole: it is bounded by the line's own output budget of 16 MiB, and it is paged as any part over `JOB_INLINE_BYTES` is. A second `resume` returns the same output the first did.
 
 Reason: the guide says the result of a resume is the one the call would have returned, and that an agent only ever sees that one. Output given once, by the result that ends the line, cannot be shown twice. 126 is the shell's status for a command that was found and could not be run, which is what "not approved" means to whoever reads it. A cancel walks nothing, so it has no output to give.
 
@@ -453,8 +465,8 @@ Reason: a budget that is a count is a function of the line, so it needs no savin
 
 ### 24. A resumed line runs as its caller, in the session and turn it started in, and its stamps cross the stop
 
-- Every verb after the replay is called with the authority the saved part holds, judged as it stands at the resume.
-- A line run through a stored session has `session_key` and `turn_number` on its job. The resumed host is given that session's guarded router, for that turn, in whichever process resumes it (spec 7, decision 34). Its stamps were stored as it read, and are there.
+- Every verb after the replay is called with the authority the job's `caller` column holds, judged as it stands at the resume.
+- A line run through a stored session has `session_key` and `turn_number` on its job. The resumed host runs through `GuardedRouter.for_job(fs, session_key, turn_number, authority, strict)` (spec 3, decision 22), with the `strict` the line record kept, in whichever process resumes it. Its stamps were stored as it read, and are there.
 - A line run with no session has a line session (spec 3, decision 16). Spec 3 never stores it. Decision 28 journals what it was shown and rebuilds it at the resume.
 - A replayed read is no call of a verb, so it stores no stamp.
 - A stopped line changes none of its session's shell state. The resumed line stores its state when it ends, in the turn it started in (spec 4, decision 10).
@@ -495,24 +507,25 @@ Reason: each leaves the tree green. The first needs nothing from the other eight
 - **How a stop reaches it.** `run_line` sets one context variable, `journal.running`, to the line that is running, for the length of the line: its journal, its inputs and the place of the verb call the host is making. It is set beside `decisions.in_line`. A verb whose judging reports a stop reads it. When a line is running, the job that is stored is of the kind `line`, its place is the place read there, and its `fingerprint` is decision 25's.
 - **The first stop** is spec 7's `store_job`, with the pages in the same `commit`. **A later stop** of a resumed line is its `stop_again`, with the new pages in the same `commit`.
 - The verb returns spec 7's interrupted result to the host. The host ends the step loop and `run_line` returns the `LineResult` of decision 22.
-- That `store_job` and `stop_again` take a kind's rows and a running line's place is asked of spec 7 under "Needs no other spec meets yet".
+- That `store_job` and `stop_again` take a running line's place, its kind's fingerprint and its kind's rows is spec 7's decision 37, under the words "A stop inside a running line".
+- The kind also makes the `LineResult` each call returns, from the entry spec 7 built, by decision 22 here (spec 7, decision 16).
 
 Reason: spec 7's decision 37 gives the record, the states and the claim to every kind, so `resume`, `jobs`, a session's calls and the sweep need no second road for a line. A context variable is how spec 6 already tells a verb that a line made it.
 
 ### 28. What a bare line was shown is journaled with each entry, and the replay shows it again
 
 - A line session's table is in memory and is never stored (spec 3, decision 16). At a stop it would be lost, and the resumed line's first write to a file it had read would be refused as unread.
-- While a bare line records, the host wraps the line session's table in one that notes each `show` and each `change` the guarded router makes on it, through the interface of spec 3's decision 19. The notes made while a request is answered are that entry's `stamps`: for each, which of the two it was, and the stamp's fields as spec 3's decision 4 has them.
+- While a bare line records, the host wraps the line session's table in one that notes each `show(stamps)` and each `change(stamps)` the guarded router makes on it. A stamp there is a triple of a path, a kind and an etag or none, all strings (spec 3, decision 22). The notes made while a request is answered are that entry's `stamps`: for each, which of the two calls it was, and its triples.
 - On replay, each entry's `stamps` are made again on a fresh table, in order. When the journal ends the table holds what it held at the stop.
 - A line run through a stored session journals no `stamps`. Its stamps are rows of `vfs_session_stamps` already.
 - A listing stamps at most 1,024 rows (spec 3, decision 3), so an entry's `stamps` are bounded by that, and they count toward `JOURNAL_BYTES`.
-- The writer mapping of spec 3's decision 18 is rebuilt for both kinds of line, by decision 14, from the etag each `write` entry keeps.
+- The writer mapping of spec 3's decision 18 is rebuilt for both kinds of line, by decision 14, through spec 3's `after_write` and `after_remove`, from the etag each `write` entry keeps.
 
 Reason: the stamps of a bare line are a function of the results its verbs returned, and those results are not kept. Journaling what the table was shown, and nothing else, rebuilds the table by the one interface spec 3 gives it, with no stamp rule written twice.
 
 ### 29. A line claimed a second time is not walked again
 
-- Spec 7's lease lets a job left `running` be claimed again after 300 seconds, and a job of one step is then carried out again under its etag guard (its decision 23). A line has no such guard: an append made after the stop would be made twice.
+- Spec 7's lease lets a job left `running` be claimed again after 300 seconds, and a job of one step is then carried out again under its etag guard (its decision 23). A line has no such guard: an append made after the stop would be made twice. Spec 7 states the same rule from its side, under the words "A line cannot".
 - When the line's kind is handed a job whose `attempts` is more than one, it walks nothing. It finishes the job with a `LineResult` of status 1 and one `vfs.conflict`, with `data` holding the job id and `in_doubt: true`, and the detail: an earlier resume of this line stopped before it recorded its result, so the line may have run past the step it was stopped at; nothing was run again; read the files before running the line again.
 - This is what a resumed line gets when its process died, or its caller was cancelled, after the claim.
 
@@ -536,7 +549,7 @@ Costed against the reference deployment in the working agreement.
 
 **The day.** How many lines are stopped is an assumption: no measurement exists. At one line in a hundred of the agent calls, 1,500 stops a day write about 6 MB, and each is removed when its line ends. The table holds the pages of the jobs that wait or were cancelled, for at most the job lifetime of 24 hours.
 
-**The sweep.** One statement of two binds for each call of the sweeper. Its subquery reads `vfs_job_replies`, which holds at most about 22 rows for a job.
+**The sweep.** One `delete_where` more in each call of spec 7's `expiry_sweeper`, and one in each call of the orphan sweeper. Each binds the same few values at any size and removes at most `limit` rows. A job has at most about 22 pages.
 
 **Per lock.** A stop inserts rows under one job's id and holds them for the length of a commit. No reader waits on them, and no other job touches them. On SQLite the kernel's store is its own file, and a stop is one small transaction on its one writer. `read_versions` is a plain read.
 
@@ -599,7 +612,9 @@ In the crates:
 - `test_a_version_that_is_gone_ends_the_job`: the file is deleted and swept; one `vfs.conflict` at its path; the job is `finished`; 0 changes; a second `resume` returns the same result with 0 writes.
 - `test_a_resume_under_another_build_is_refused_before_the_claim`: with `line_fingerprint` patched, one `vfs.conflict`, 0 writes on the kernel's store, the job still `interrupted`.
 - `test_a_denial_fails_one_command_and_the_line_goes_on`: the statuses of decision 18; the words on standard error; `cmd || fallback` runs the fallback; one warning of kind `vfs.interrupt.denied`; `success` true; the job `finished`.
-- `test_a_policy_that_now_denies_fails_the_command_and_the_line_goes_on`: `Permission denied` on standard error, one warning of kind `vfs.permission_denied.policy`.
+- `test_a_policy_that_now_denies_fails_the_command_and_the_line_goes_on`: `Refused by a policy: <reason> (policy <name>)` on standard error once, status 1, one warning of kind `vfs.permission_denied.policy`. The same for a policy that denies at a first call, with no job stored: 0 rows in `vfs_jobs`.
+- `test_a_resumed_line_of_a_session_keeps_its_strict`: a line run through a handle with `strict=False`, stopped and resumed, removes a file it was not shown; the same line through a strict handle is refused as unread. Counted: the file's presence, and the exit status.
+- `test_a_stop_under_a_removed_turn_ends_the_line`: a rewind removes the line's turn between two stops; the resumed line's next stop returns status 130 and one entry of kind `vfs.interrupt.cancelled`, with the output so far, and the step's file at its old version.
 - `test_an_answer_nobody_asks_for_fails_the_command_and_the_step_is_not_run`: the policy is removed before the resume; the step's file is at its old version; the line's later command ran.
 - `test_a_cancel_ends_the_job_and_walks_nothing`: status 130, kind `vfs.interrupt.cancelled`, empty output, 0 machines started, the next command's file absent.
 - `test_a_value_replays_as_given`: with `_value` spied, a line that prints the time, stops, and prints it again calls it twice in all, and the resumed output holds the first value.
@@ -614,8 +629,9 @@ In the crates:
 - `test_a_stopped_host_program_changes_once`: `edit` under a policy; after the approval the file is one version on.
 - `test_a_line_made_again_joins_its_job_at_the_stop`: 1 row in `vfs_jobs`, the same job id on both results, and 0 statements on the kernel's store before the second run's stop.
 - `test_a_line_claimed_a_second_time_is_not_walked`: a job left `running` with its lease ended; the resume starts 0 machines, calls 0 verbs, and returns one `vfs.conflict` with `in_doubt` true.
-- `test_a_large_result_is_stored_without_its_output`: a line that prints 2 MiB; the first `resume` returns it whole; the second returns status and errors and one `vfs.budget_exhausted.truncated` warning.
-- `test_the_sweeper_takes_a_lapsed_jobs_pages_before_its_row`: after the clock passes `expires_at`, one pass leaves 0 rows in both tables; and pages whose job row was removed by hand are taken too.
+- `test_a_large_result_is_stored_whole`: a line that prints 2 MiB; the first and the second `resume` return equal `stdout`; the result is 2 or more rows of `vfs_job_pages` with the part `result`.
+- `test_the_sweep_takes_a_lapsed_jobs_pages_before_its_row`: after the clock passes `expires_at`, one pass leaves 0 rows in `vfs_jobs`, `vfs_job_pages` and `vfs_job_replies`; with the limit at 3 and a job of 5 pages, the first call removes 3 pages and no job row.
+- `test_the_orphan_sweeper_takes_pages_whose_job_is_gone`: pages whose job row was removed by hand are taken, at most `limit` a call.
 - `test_a_line_of_10_000_requests_stops_in_one_insert`: a loop of 10,000 `stat` requests and then a stop issues 1 `INSERT` into `vfs_job_replies`, of 2 rows at most. Marked `slow`.
 - `test_another_process_resumes_the_line`: two kernels over one SQLite file, and the synchronous face; equal output.
 
@@ -644,7 +660,7 @@ The landings are decision 26's three. Each is green alone.
 - VFS keeps the line's text, its standard input, its environment and its replies while the job waits. A file's content is not copied: the line's reads are kept as pointers to the versions it read. A host that puts a secret in a line's text or environment has it stored for the job's lifetime.
 - A resume is refused with a conflict, and nothing is run, when the shell is another build. The job still waits: resume it from a process of the first build, or cancel it.
 - A resume ends the job with a conflict, and nothing is run, when the line no longer asks what it asked, or when a file the line read was deleted and swept or was moved by another caller.
-- A denied command prints who denied it and exits as it does for `Permission denied`.
+- A denied command prints who denied it and exits as it does for `Permission denied`. A command a policy refused prints the policy's reason and its name.
 - A cancelled line returns status 130 and no output. What it did before it stopped stands.
 - A resumed line whose process died is not carried on again. Its job ends with a conflict that says the line may have run past its stop.
 - A line that was given more than 16 MiB of replies that have no stored version cannot be stopped. A step of it that needs a person ends the line.
@@ -681,6 +697,9 @@ Each is decided above, and is listed here because it is the owner's to change.
 9. **A line made again runs again and joins at its stop** (decision 25). The other answer looks for a waiting job when a line starts, at one statement a line.
 10. **A resumed line whose process died is ended, not walked again** (decision 29).
 11. **Inside a line, an answer nobody asks for fails its command and the line goes on** (decision 17). The other answer ends the line there, as it ends a job of one step.
+12. **A command a policy refused prints the policy's reason** (decision 18). The other answer is spec 6's first one, `Permission denied`, with the reason kept only as a warning on the result.
+13. **A finished line's result is stored whole, up to its 16 MiB of output** (decision 22). The other answer stores a second copy without its output.
+14. **A resume that cannot replay is refused with plain `vfs.conflict`** (decisions 13, 15 and 29), whose standing hint tells the reader to read the entry again and retry. The other answer is one child kind, `vfs.conflict.line`, with a hint of its own. No kind is added meanwhile, since the reconciliation closed the list of kinds.
 
 ## Where this spec disagrees with the overview or the guides
 
@@ -694,22 +713,37 @@ The first draft's point about the words "so nothing was changed" is settled by t
 
 ## Needs no other spec meets yet
 
-Each names the spec that should meet it and the text its decision would need.
+Nothing.
 
-1. **Spec 7, decision 37, "A line's job uses the same record, states and claim, and spec 8 supplies what is saved and how it is carried on".** "When a line is running (`journal.running` is set), a stop is stored as a job of the kind `line`. `store_job` and `stop_again` take the place of the step from the running line, take the fingerprint from its kind, and write the rows the kind hands them for `vfs_job_replies` in the same `commit` as the job row."
-2. **Spec 7, decision 20, "A resume runs the policies again with the answers the job has, and the run ends in one of seven ways".** "For a job of the kind `line`, a denial by an answer, a denial by a policy, and an allow whose answer was never used do not finish the job. The job is claimed as an allow claims it, with the answer recorded by the same rule, and the refusal is handed to the kind as the result of the stopped step."
-3. **Spec 7, decision 16, step 6.** "A kind's decode may refuse. `resume` then returns that refusal, claims nothing and records nothing." Without it, decision 13's check runs after the claim and ends the job.
-4. **Spec 7, decision 22, "The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`".** "The dispatch takes the router it calls. For a line the kind passes the line's guarded router, so that the step's result refreshes the line's stamps and its writer mapping."
-5. **Spec 7, decisions 16, 24 and 29.** "A kind makes the result `resume` and the first call return from the entry this spec built, and encodes the result that is stored. For a line it is a `LineResult`, by spec 8's decision 22."
-6. **Spec 3, decision 16, "A bare line is a strict session of its own, and it is never stored", and decision 19.** "The table's `show` and `change` take values that turn into JSON and back, so that spec 8 can journal what a line session was shown and show it again to a fresh table when the line is resumed." And, for a line of a stored session: "A guarded router is made from a session key and a turn number alone, with no handle in memory", which spec 7's decision 34 also needs.
+The six needs of the second round are met, each read in its owner's text at `7c383f32`:
 
-What the other specs ask of this one is met. Spec 5 asks that each `read` entry hold the row's version beside its etag and its hash, and that the body be fetched by its `read_versions` as the system authority: decisions 7 and 8. Spec 6 asks that a step a replayed line makes carry the same `via` as the first run: decision 14. Spec 6 also asks that the reply `denied` be able to carry a policy's reason: decision 18 keeps the kinds it words in one table that spec 6 may add its kind to. Spec 7's decision 37 asks for the fingerprint over the line's inputs, the place of a step, and the registration of `vfs_job_replies` with the sweep: decisions 25, 19 and 9. Spec 4's decision 12 leaves the pages of a cancelled job to this spec's rule: decision 9. Spec 5 asks that this spec build on its landing: decision 8.
+| What was asked | Met by |
+|---|---|
+| A stop inside a running line is stored as a job of the kind `line`, with the kind's rows in the same `commit` | Spec 7, decision 37, "A stop inside a running line" |
+| For a line, a denial or an answer nobody asks for claims the job and does not finish it | Spec 7, decision 20, "A line's step that is refused does not finish the line" |
+| A kind's decode may refuse before the claim | Spec 7, decision 16, step 6 |
+| The dispatch takes the router it calls | Spec 7, decision 22, "The dispatch takes the router it calls" |
+| A kind makes the result a call returns and encodes the one that is stored | Spec 7, decisions 16 and 24 |
+| A table's `show` and `change` take JSON, and a guarded router is made from a session key and a turn number alone | Spec 3, decision 22 |
+
+What the other specs asked of this one in their own lists, and where each is met:
+
+| Asked by | What | Met by |
+|---|---|---|
+| Spec 0, item 3 | The orphan statement removed any number of rows in one call | Decision 9, rule 8: a dependent of spec 7's `expiry_sweeper`, and a second sweeper by `delete_where` |
+| Spec 3, item 3 | The line record keeps `strict` | Decision 3, and decision 24 |
+| Spec 5, item 3 | The target is the path, the version and the etag; the trait `versions`; spec 5's first landing | Decisions 8 and 26, which already read so |
+| Spec 6, item 4 | The resumed line runs inside `decisions.in_line(Line(text, cwd))` | Decision 14 |
+| Spec 6, item 5 | The host gives `denied` for `vfs.permission_denied.policy`, with the message of the fact | Decision 18 |
+| Spec 7, decision 24 | A line's result is stored whole | Decision 22, which no longer cuts the stored copy |
+| Spec 7, decision 5 | A stop under a turn with no row returns the cancelled refusal | Decision 17: the line ends there |
+Spec 7's decision 37 also asks for the fingerprint over the line's inputs and the place of a step: decisions 25 and 19. Spec 4's decision 12 leaves the pages of a cancelled job to this spec's rule: decision 9.
 
 ## Not checked
 
-- **The other eight specs were read once, while each was being revised.** Every name taken from them is as it stood then. Spec 7 had not yet taken in the reconciliation when it was read.
-- **Any engine but SQLite in memory.** No statement here was run on Postgres, and the kernel's store does not exist yet. To run: `tests/shell/test_line_jobs.py` on the Postgres leg, above all the sweeper's statement with its row-value `IN` and its `LIMIT` in a subquery.
-- **Spec 5's `read_versions`.** No line of it exists. Spec 5 was revised during the second pass to serve this use, and its text was read once after that. A row whose body is kept outside `vfs_content` was not read.
+- **The other eight specs were read at `7c383f32`, in the parts that name this spec or that this spec cites.** No spec was read whole in the third pass. An owner may still have changed what a decision says in that pass, though not a name.
+- **Any engine but SQLite in memory.** No statement here was run on Postgres, and the kernel's store does not exist yet. To run: `tests/shell/test_line_jobs.py` on the Postgres leg, above all the orphan sweeper's `NOT IN` under `delete_where`.
+- **Spec 5's `read_versions`.** No line of it exists. A row whose body is kept outside `vfs_content` was not read.
 - **Spec 3's guarded router and spec 7's record.** Neither exists, so no probe ran through them. The probes drove today's host, with a stand-in for a stop.
 - **Fuel across builds.** Fuel was equal across runs of one build on one machine. Whether two CPU architectures, or two builds of one wasmtime version, count the same fuel was not run. If they do not, a resume across them is refused by decision 15, not by decision 13.
 - **The sizes of entries and of stamps.** They are computed from the encoding, not measured.

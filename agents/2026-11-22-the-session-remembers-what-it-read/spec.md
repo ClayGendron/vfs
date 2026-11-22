@@ -1,6 +1,6 @@
 # The session remembers what it read, and refuses a change to a file that moved on
 
-A draft, written on 2026-11-22 and reconciled the same day with the other eight specs of the overview. It is not reviewed, and nothing is built. It replaces, at this path, the spec merged from pull request 42, whose decisions 1 and 2 (the etag and `if_match`) moved to spec 1 and whose decisions 3 to 9 are rewritten here. It rests on the map of the nine specs (`agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md`), the guide `documentation/how-to/keep-a-session-for-each-conversation.md`, five of the session studies under `agents/2026-11-22-a-session-is-stored-named-and-forked/research/` (`coding-agent-sessions.md`, `chat-protocols.md`, `langgraph-threads.md`, `framework-session-stores.md`, `history.md`), the log cost study (`agents/2026-11-21-what-a-log-row-per-call-costs/research.md`), the rulings at the end of `agents/2026-11-22-shell-review/reviews/verification.md`, and five scripts run on 2026-11-22 at `6dae6a1d` and `59946f0d`, cited below as runs 1 to 5. The other eight specs were read in the working tree on 2026-11-22, some at `59946f0d` and some part-way through their own second round. Each is cited by its number, its decision and that decision's heading, because they were being revised at the same time.
+A draft, written on 2026-11-22 and reconciled the same day with the other eight specs of the overview, in two further rounds, the last against their text at `7c383f32`. It is not reviewed, and nothing is built. It replaces, at this path, the spec merged from pull request 42, whose decisions 1 and 2 (the etag and `if_match`) moved to spec 1 and whose decisions 3 to 9 are rewritten here. It rests on the map of the nine specs (`agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md`), the guide `documentation/how-to/keep-a-session-for-each-conversation.md`, five of the session studies under `agents/2026-11-22-a-session-is-stored-named-and-forked/research/` (`coding-agent-sessions.md`, `chat-protocols.md`, `langgraph-threads.md`, `framework-session-stores.md`, `history.md`), the log cost study (`agents/2026-11-21-what-a-log-row-per-call-costs/research.md`), the rulings at the end of `agents/2026-11-22-shell-review/reviews/verification.md`, and five scripts run on 2026-11-22 at `6dae6a1d` and `59946f0d`, cited below as runs 1 to 5. The other eight specs were read in the working tree on 2026-11-22, some at `59946f0d` and some part-way through their own second round. Each is cited by its number, its decision and that decision's heading, because they were being revised at the same time.
 
 ## The outcome wanted
 
@@ -188,7 +188,7 @@ Three things follow.
 - **A rewind is exact.** The guide's two cases hold (run 5). A file read in `msg_4` and again in `msg_5` keeps its `msg_4` row, and is still read after a rewind. A file read in `msg_4` and changed in `msg_5` goes back to its `msg_4` row, which no longer matches the file, so a change is refused until it is read again.
 - **A handle in an earlier turn is filed where spec 4 says.** Its stamp is a row of its own turn, and a later rewind that keeps that turn keeps the stamp.
 
-No counter orders two stamps of one path. An etag cannot be taken apart, a version orders one entry and not two entries that stood at one path, and a number from the store would cost a read a statement. So this spec's kind carries no `newest`, against rule 7 of spec 0's decision 22, and keeps its order another way: a change reads what still waits in the buffer and withdraws it before it records (decision 8). "Needs no other spec meets yet" lists this.
+No counter orders two stamps of one path. An etag cannot be taken apart, a version orders one entry and not two entries that stood at one path, and a number from the store would cost a read a statement. So this spec's kind carries no `newest`, and keeps its order the other way rule 7 of spec 0's decision 22 admits for a kind with no counter: a change reads what still waits in the buffer and withdraws it before it records (decision 8).
 
 Reason: the rule that the last arrival wins has no state a stamp can be stuck behind. The rule that a higher version wins was run in the first draft and is refused here: after one file leaves a path and another comes to stand there at a lower version, every read of the new file would lose to the old stamp, and no read would clear the refusal.
 
@@ -254,13 +254,15 @@ Reason: a change needs the stamp of each path it names and nothing else, so its 
 
 `STAMPS` is a `BehindKind` named `stamps`, whose `write` is `write_stamps` and whose `key` is `("owner_key", "id", "path")`. That key is coarser than the statement's conflict key, since it leaves the turn out. So a later stamp of one path replaces a waiting one whatever turn each handle is in, and no flush holds two rows of one conflict key.
 
-**What is kept in memory.** A handle keeps no stamp, and nothing beyond spec 2's seven values. The store's buffer holds the rows that wait, at most `BEHIND_CAPACITY`. The kernel keeps the small table of decision 15, which counts bytes and holds no stamp.
+**What is kept in memory.** A handle keeps no stamp, and nothing beyond spec 2's seven values. A handle keeps the owner key and the id and never the session key. Each store and each lookup of a stamp gets the key from spec 2's `resolve` or `find`, in the transaction that uses it. The store's buffer holds the rows that wait, at most `BEHIND_CAPACITY`. The kernel keeps the small table of decision 15, which counts bytes and holds no stamp.
 
 **What another process sees.** The store. Inside the window it lacks the stamp. A change through it is refused as unread, or as changed when an older stamp is there. It is never let through. One read through that process clears it.
 
 **How wide the window is.** One flush. The store's task flushes as soon as it is free, with no count to reach and no timer, so the window is the time of one transaction on the kernel store. A process that is stopped or frozen before that flush never closes it.
 
-**How a host closes it.** A process that lives needs no call: the flush runs by itself, and `close` flushes what is left. Spec 0's `drain` is private, and this spec adds no public name for it, since the overview's list holds none. A host whose process is frozen or killed as soon as it answers can lose that request's last reads, as the guide says.
+**How a host closes it.** A process that lives needs no call: the flush runs by itself. No public call flushes the writer, by ruling 4 of the last round. `close` flushes it (spec 0, decision 19). So a host whose process ends after each request closes the file system before the process ends, and what its sessions were shown is then stored. A host whose process is frozen or killed with no chance to close can lose that request's last reads, as the guide says. The sentence the guide needs is under "What the docs must say".
+
+**A read that a policy stops** is spec 7's. It has read nothing, so it leaves no stamp, and its job is stored with `commit` (spec 7, decision 6, The job is committed before the interrupted result is returned). That is the one statement a read verb can issue on the kernel store, and it is not this spec's.
 
 **A stamp lost** in a crash, or dropped from a full buffer, is the same case with no end: the session forgets that one read. The failure is a refusal that one read clears.
 
@@ -507,7 +509,9 @@ Reason: decision 10 leaves an append unguarded, so the guard of a continuing chu
 
 The rules live once, in `GuardedRouter` in `src/vfs/stamps.py`. A handle makes one for each call from the values spec 2 gives it, a line holds one, and the synchronous `Session` wraps `AsyncSession` as it does today. The stored stamps and the line's table sit behind one small interface: look up, show, change. The parity test covers `strict=` and the two refusals on the synchronous face.
 
-This spec adds no public call. Every verb through a session returns a `Result`, as ruling 5 of the reconciliation has it.
+This spec adds no public call. Every verb through a session returns a `Result`, as ruling 5 of the reconciliation has it. Its public surface is the two members of `ErrorKind`, which `vfs` already exports, the meaning it gives `strict`, and what a session's verbs and `cli` now do.
+
+The constants are module constants and no call takes one as an argument. `LISTING_STAMP_ROWS`, `SESSION_STAMP_BYTES`, `STAMP_ROW_BYTES`, `STAMP_TRIM_BYTES`, `STAMP_COUNTED_SESSIONS` and `LINE_STAMP_BYTES` are in `vfs.stamps`. `WRITING_BYTES` is in `vfs.shell.host`, beside `READING_BYTES`. None is exported from `vfs`.
 
 Reason: a rule written twice drifts, and the synchronous twin already wraps the asynchronous session for that reason.
 
@@ -522,11 +526,11 @@ Reason: the first is of use alone, since it closes the shell's unguarded write-b
 
 ### 21. Other specs reach the stamps through six functions of one module
 
-All are in `src/vfs/kernel_store/stamps.py`, and take the `Transaction` of a `commit`, a `query` or a `record_after` their caller holds.
+All are in `src/vfs/kernel_store/stamps.py`, and take the `Transaction` of a `commit`, a `query` or a `record_after` their caller holds. No other spec writes a statement of its own against `vfs_session_stamps`, by ruling 2 of the last round: specs 4, 5 and 8 call these six.
 
 | Function | Who calls it | What it does |
 |---|---|---|
-| `remove_stamps(transaction, session_key, limit) -> int` | Spec 2's reclaim of a removed session, as a member of `SESSION_CHILDREN` | Deletes at most `limit` rows of the key and returns the count, by `store.delete_where` on the three key columns with `session_key = :k` as its `where`. |
+| `remove_stamps(transaction, session_key, limit) -> int` | Spec 2's reclaim of a removed session, as a member of `SESSION_CHILDREN`, whose shape spec 2 writes `(session, session_key, limit) -> int` | Deletes at most `limit` rows of `vfs_session_stamps` for one `session_key`, in one statement of a fixed shape, and returns the count. The statement is `store.delete_where` on the three key columns with `session_key = :k` as its `where`. |
 | `remove_stamps_from(transaction, session_key, number) -> int` | Step R3 of spec 4's rewind | `DELETE FROM vfs_session_stamps WHERE session_key = :k AND turn_number >= :n`. Every stamp of the session whose turn number is `n` or more goes, live or dead. Two binds. |
 | `copy_stamps(transaction, source_key, new_key, number) -> int` | The fork's copy of stamps in spec 4's decision 17, its step F6 | `INSERT INTO vfs_session_stamps (session_key, path, turn_number, kind, etag) SELECT :new, path, turn_number, kind, etag FROM vfs_session_stamps s WHERE s.session_key = :src AND s.turn_number < :n AND EXISTS (<the turn's row>)`. Every stamp of the source whose turn number is below the fork point and whose turn is live is copied as it is, with its turn number. Three binds. |
 | `current_stamps(transaction, session_key, paths, turn_number=None)` | Step 2 of decision 8, and spec 5's decision 14 (After a rollback the session remembers a put-back file as the state it saw) | Decision 7. Spec 5 compares the etag it returns with the state its rollback put back. |
@@ -550,7 +554,7 @@ Spec 8 journals what a bare line's table was shown and shows it again when the l
 - **The writer mapping moves by one pure rule.** `after_write(path, mode, etag)` is decision 18's rule for an accepted write, and `after_remove(path)` its rule for an accepted remove or move. Spec 8's replay calls them with the etag each journaled `write` kept (its decision 14), and the mapping is rebuilt for a bare line and for a line of a stored session alike.
 - **`GuardedRouter.for_job(fs, session_key, turn_number, authority, strict)`** makes a guarded router with no handle. Its stamps are the stored session's, looked up and written by `session_key`, with no `resolve`. A line of a stored session that is resumed can run through one. Spec 7 takes another road to the same end for a single step: its resume reads the session's id by the job's key, makes a handle with `strict=False` and puts it in the job's turn (its decision 34). That handle makes its guarded router as any handle does.
 
-`strict` is the handle's and is stored nowhere, by spec 2's decision 4. A resumed line of a stored session needs the value its handle had. "Needs no other spec meets yet" asks spec 8 to save it with the line's record. A single step needs none: its `unread` refusal was judged when the call was made, as spec 7's decision 34 says.
+`strict` is the handle's and is stored nowhere, by spec 2's decision 4. A resumed line of a stored session needs the value its handle had. Spec 8 saves it in the line record (its decision 3, The line record holds everything the machine is started with) and passes it to `for_job`. A single step needs none: its `unread` refusal was judged when the call was made, as spec 7's decision 34 says.
 
 Reason: spec 8's decision 24 needs a bare line that read a file, stopped and then wrote it back to be guarded still, and not refused as unread. Rebuilding the table through its own interface means no stamp rule is written twice.
 
@@ -693,6 +697,7 @@ Out: everything under "Left as it is", and what the other eight specs own.
 - Making a file and appending to one need no read.
 - A listing counts for the directory listed and for its first rows, 1,024 stamps in all.
 - A read costs the same with a session as without.
+- For a host whose process ends after each request, the guide gains this sentence in step 3, after "a second read": "If your process ends after each request, close the file system before it ends, and what the session has seen is stored first."
 - A refusal is the same however often the call is sent. A tool wrapper that sees `vfs.conflict.changed` or `vfs.conflict.unread` reads the file and returns it with the refusal.
 - A shell line with no session guards itself for the line and stores nothing. It refuses to remove, move or overwrite a file it was not shown. A test such as `[ -f f ]` is not a read.
 - `strict=False` protects only what the session still remembers.
@@ -720,7 +725,7 @@ Each is decided above, and stands until it is ruled on.
 7. **The session rules hold for the system authority.**
 8. **The stamp that arrives last wins.** Two shows of one file from two processes can leave the older in front, at the cost of one refusal. The other choice needs a counter that a read would have to fetch.
 9. **A mount that issues no etag is outside the guard,** and not refused.
-10. **No public call waits for a session's stamps.** A process frozen as soon as it answers can lose its last reads, at the cost of a refusal. The other choice is a new public name, which the overview's list does not hold and spec 0 leaves to this spec.
+10. **No public call flushes the writer.** `close` flushes it, and a host whose process ends after each request closes the file system first. A process frozen with no chance to close can lose its last reads, at the cost of a refusal. The other choice is a new public name, which the overview's list does not hold.
 
 ## Where this spec disagrees with the overview or the guides
 
@@ -733,25 +738,41 @@ With `documentation/how-to/keep-a-session-for-each-conversation.md`:
 3. **The hint of "Not read yet" says "Read it first".** A directory cannot be read (run 2: `wrong_kind`). Proposed hint: "This file has not been read in this conversation, so nothing was changed. Read it first, or list it if it is a directory, then make the change." This spec keeps the guide's words until that is ruled on.
 4. **"the session forgets the files it has gone longest without touching."** True by turn. Inside one turn no order is stored, and rows go in path order. Proposed: "the session forgets what it was shown in its earliest turns first."
 
-The first draft's point about a drain is withdrawn. The guide already says that a process which stops straight after a read forgets that one read, and decision 8 adds no call.
+5. **Step 3 says nothing to a host whose process ends after each request.** Proposed, after "the worst that follows is a "Not read yet" refusal and a second read.": "If your process ends after each request, close the file system before it ends, and what the session has seen is stored first." Evidence: decision 8, and spec 0's decision 19.
+6. **"A shell line run with `fs.cli(...)` and no session guards itself for the length of the line, so a command that reads a file and writes it back is still protected."** True, and it leaves out the other half of the guard. Proposed: add "It also refuses to remove, move or overwrite a file the line has not read or listed." Evidence: decision 16.
 
 ## Needs no other spec meets yet
 
-1. **Spec 0, decision 22, rule 7, and decision 24: a kind written both behind and synchronously passes `newest`.** This spec's `stamps` kind is written both ways and carries none, because no counter orders two stamps of one path (decision 5 here). Text needed in the rule: "or, where its rows have no counter, the spec reads `waiting_behind` before its synchronous write and calls `discard_behind` for the keys it writes, and states what a row of the flush in flight can then do." Decision 8 here states it: one refusal that one read clears.
-2. **Spec 4, decisions 12 and 17: the columns of `vfs_session_stamps`.** Its R3 and F6 are written with `session`, `turn`, `entry` and `version`, the columns of this spec's first draft. Ruling 3 ended `entry` and `version`, and spec 0's ninth point names a session by `session_key`. Text needed for R3: "`remove_stamps_from(transaction, :k, :n)`, which is `DELETE FROM vfs_session_stamps WHERE session_key = :k AND turn_number >= :n`." For F6: "`copy_stamps(transaction, :src, :new, :n)`, which is `INSERT INTO vfs_session_stamps (session_key, path, turn_number, kind, etag) SELECT :new, path, turn_number, kind, etag FROM vfs_session_stamps s WHERE s.session_key = :src AND s.turn_number < :n AND EXISTS (SELECT 1 FROM vfs_session_turns t WHERE t.session_key = s.session_key AND t.number = s.turn_number)`."
-3. **Spec 8, decision 3 (the line record): the `strict` of the handle a line ran through.** A resumed line of a stored session must refuse as its first run would have. Text needed: "The line record keeps `strict`, the value of the handle the line ran through, and the resumed line's guarded router is made with it."
-4. **Spec 5, decision 14: the function it calls.** It reads a session's current stamps by "the statement of spec 3's decision 7" and stores by "the statement of spec 3's decision 6". Text needed: "It calls `current_stamps(transaction, session_key, paths)` and, for each path whose current stamp is a file stamp with the etag named, `write_stamps` with the new etag", both of decision 21 here.
+One item is open. Three others of the round before were read again in the last round, in the owners' text as it was being revised, and are met.
 
-What other specs need of this one, and where it is met:
+1. **Spec 4, decisions 12 and 17: the columns of `vfs_session_stamps`.** Its R3 and F6 are written with `session`, `turn`, `entry` and `version`, the columns of this spec's first draft. Ruling 3 ended `entry` and `version`, and spec 0's ninth point names a session by `session_key`. Text needed for R3: "`remove_stamps_from(transaction, :k, :n)`, which is `DELETE FROM vfs_session_stamps WHERE session_key = :k AND turn_number >= :n`." For F6: "`copy_stamps(transaction, :src, :new, :n)`, which is `INSERT INTO vfs_session_stamps (session_key, path, turn_number, kind, etag) SELECT :new, path, turn_number, kind, etag FROM vfs_session_stamps s WHERE s.session_key = :src AND s.turn_number < :n AND EXISTS (SELECT 1 FROM vfs_session_turns t WHERE t.session_key = s.session_key AND t.number = s.turn_number)`." What is missing: when this was last read, R3 and F6 were still statements of spec 4's own, with the old columns. Ruling 2 of the last round decides it: spec 4 calls the two functions.
 
-- Spec 0: no table kept beside the buffer, and `waiting_behind` then the store at step 2, `discard_behind` at step 7. Decision 8. A public name for a drain, if one is wanted. None is: choice 10.
-- Spec 1: nothing is asked. Its note that this spec might still pass `if_match` for a directory or name `if_version` is answered by decisions 11 and 9.
-- Spec 2: `remove_stamps(transaction, session_key, limit) -> int`, in `SESSION_CHILDREN`. Decision 21. No copy of the session key on a handle. Decision 8. A guard of its own for a line run by a caller that owns no session. Decision 16.
-- Spec 4: the current stamp is the row of the highest live turn (decision 7); the lookup also says whether the handle's turn is live, and a dead one is refused in spec 4's words (decisions 7 and 8); a session's stamps are put behind with `scope=ref.scope` (decision 8); what a rewind removes and a fork copies (decision 21). Its one need of spec 4 that spec 4 does not meet, a turn fixed for a handle with none, is accepted as spec 4's decision 7 states it (decision 14 here).
-- Spec 5: a file stamp keeps the etag it was made from (decision 4). `current_stamps` (decisions 7 and 21). The guarded router and step 7 of decision 8, under those names.
+Met, and no longer listed:
+
+- **Spec 0: a kind written both behind and synchronously, with no counter.** Rule 7 of its decision 22 and its decision 24 now admit such a kind, where the spec reads `waiting_behind` before its synchronous write and calls `discard_behind` for the keys it writes. Decision 8 here does both.
+- **Spec 8: the `strict` of the handle a line ran through.** Its line record now keeps `strict`, null for a bare line, in its decision 3, and its decision 24 makes the resumed router with it.
+- **Spec 5: the functions its decision 14 calls.** It now calls `current_stamps` and `write_stamps`, and writes no statement against the table.
+
+What other specs asked of this one in their own lists at `7c383f32`, and where each is met:
+
+- **Spec 0, item 4:** no table kept beside the buffer; `waiting_behind` and then the store at step 2, `discard_behind` at step 7. Met by decision 8, in those calls. Its note that a flush after a declared delay is met by a flush with no delay is taken: decision 8 states the window as one flush.
+- **Spec 0, item 5:** a public name for a drain, if one is wanted. None is added, by ruling 4 of the last round. Decision 8 gives the host's way, `close`, and the guide's sentence is under "What the docs must say". It stays choice 10.
+- **Spec 1, its two needs it does not meet:** a function that takes an etag apart, and a way to know that two rows are one entry. Neither is needed any longer. Decision 4 keeps the etag whole. Decision 5 replaces a stamp by any later one, with no comparison of entries. Decision 10 moves a stamp after an append only when spec 5's `etag_before` equals it. These are the rules spec 1 proposes.
+- **Spec 2, item 1:** `remove_stamps(session, session_key, limit) -> int` deletes at most `limit` rows of `vfs_session_stamps` for one `session_key`, in one statement of a fixed shape, returns the count, and joins `SESSION_CHILDREN`. Met by decision 21, under that name and shape.
+- **Spec 2, item 2:** a handle keeps the owner key and the id and never the session key, and each store and each lookup gets the key from `resolve` or `find` in the transaction that uses it. Met by decision 8, in those words, and the cost is counted for every change.
+- **Spec 4, item 1:** the current stamp is the row of the highest live turn, with the outer row and the `max` both filtered by spec 4's predicate. Met by decision 7. Ruling 6 of the last round confirms it.
+- **Spec 4, item 2:** the lookup also says whether the handle's turn is live, and a dead one is refused `vfs.not_found` with spec 4's words and nothing dispatched. Met by decision 7 and step 3 of decision 8.
+- **Spec 4, item 3:** a session's stamps are put behind with the scope of its owner key and id. Met by decision 8, as spec 2's `ref.scope`.
+- **Spec 4, its unmet need of this spec's first draft:** a turn fixed for a handle with none. Spec 4 does not meet it and says why. This spec accepts the case as spec 4's decision 7 states it (decision 14 here).
+- **Spec 5, item 1:** a file stamp keeps the etag it was made from, and `current_stamps(session, session_key, paths)` returns each path's kind and, for a file, that etag. Met by decisions 4, 7 and 21. The guarded router and step 7 of decision 8 keep those names.
+- **Spec 8, item 6:** `show` and `change` take values that turn into JSON and back, and a guarded router is made from a session key and a turn number alone. Met by decision 22.
+
+What other specs ask of this one under their "Builds on":
+
+- Spec 2: a guard of its own for a line run by a caller that owns no session. Decision 16.
 - Spec 6: the two refusals judged before a policy wherever the storage is not needed. Decision 12: `unread` for `edit`, `delete` and `move`, at step 3 of decision 8. The other cases are the storage's own answer, or spec 7's at its preview.
 - Spec 7: stamps written for a session and a turn with no handle of the first process. Decision 22. The `unread` refusal judged before any policy. Decision 12.
-- Spec 8: `show` and `change` take values that turn into JSON and back, and a guarded router is made from a session key and a turn number alone. Decision 22.
+- Spec 8: the line session and its table, the two routers, the writer mapping and the table's interface, its decisions 16 to 19 as cited. Decisions 16 to 19 and 22 here.
 
 ## Not checked
 

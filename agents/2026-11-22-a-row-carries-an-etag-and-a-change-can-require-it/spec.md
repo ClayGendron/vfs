@@ -1,6 +1,6 @@
 # A row carries an etag, and a change can require it
 
-A draft, written on 2026-11-22. It is not reviewed, and nothing is built. It is spec 1 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It lifts decisions 1 and 2 out of the spec merged from pull request 42, `agents/2026-11-22-the-session-remembers-what-it-read/spec.md`, and makes them a kernel spec of their own that needs no session. It rests on the landed spec `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, whose preconditions it extends, and on the verification record `agents/2026-11-22-shell-review/reviews/verification.md`, whose four cases it ran again. Every fact about the code was read on the branch `a-job-is-interrupted-and-resumed` at `6dae6a1d`, whose kernel and storage files are those of `dev` at `5a823ea`, and the facts a decision rests on were run that day. The probes sit outside the repository. It was reconciled the same day with the other eight specs as they stood on disk: decisions 17 to 19 are that round's, and so are the changes to decisions 2, 6, 8, 9, 12, 14 and 16 that each says it carries.
+A draft, written on 2026-11-22. It is not reviewed, and nothing is built. It is spec 1 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It lifts decisions 1 and 2 out of the spec merged from pull request 42, `agents/2026-11-22-the-session-remembers-what-it-read/spec.md`, and makes them a kernel spec of their own that needs no session. It rests on the landed spec `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, whose preconditions it extends, and on the verification record `agents/2026-11-22-shell-review/reviews/verification.md`, whose four cases it ran again. Every fact about the code was read on the branch `a-job-is-interrupted-and-resumed` at `6dae6a1d`, whose kernel and storage files are those of `dev` at `5a823ea`, and the facts a decision rests on were run that day. The probes sit outside the repository. It was reconciled the same day with the other eight specs as they stood on disk: decisions 17 to 19 are that round's, and so are the changes to decisions 2, 6, 8, 9, 12, 14 and 16 that each says it carries. A third round, against the other eight at `7c383f32` and after, renamed nothing here and closed every need another spec had stated on this one.
 
 ## The outcome wanted
 
@@ -22,7 +22,7 @@ The check costs no statement, and a read pays no statement for the etag.
 - `agents/2026-11-22-a-session-is-stored-named-and-forked/research/history.md`, lineage 4: the entity tag and `If-Match` of HTTP, and the lost update they were made for. Its lesson is that the record of what was read is a validator checked at write time, safe to copy, safe to lose and safe to send with the request.
 - It needs nothing from specs 0 and 2 to 8. It keeps no record, so it uses none of the forms of spec 0, decision 22 (The interface is private, and this is all of it). It adds no error kind.
 - Built on by, each drafted and read on 2026-11-22:
-  - Spec 3, decision 9 (A session fills in the precondition and, when strict, refuses a change to what it was not shown), which passes `if_match`, `if_matches` and the mark of decision 18; decision 11 (A directory takes no precondition, and being shown it is enough), which agrees with decision 10 here; decision 12 (The two refusals are `vfs.conflict.changed` and `vfs.conflict.unread`, and neither carries a version), which answers in place of this spec's `conflict` only where the session filled the precondition in; and decision 18 (A writer that spans chunks carries the etag its last chunk left), which states `if_match` on an append.
+  - Spec 3, decision 9 (A session fills in the precondition and, when strict, refuses a change to what it was not shown), which passes `if_match`, `if_matches` and the mark of decision 18; decision 11 (A directory takes no precondition, and being shown it is enough), which agrees with decision 10 here; decision 12 (The two refusals are `vfs.conflict.changed` and `vfs.conflict.unread`, and neither carries a version), which answers in place of this spec's `conflict` only where the session filled the precondition in; decision 18 (A writer that spans chunks carries the etag its last chunk left), which states `if_match` on an append; and decision 23 (A mount that issues no etag is outside the guard), which rests on decision 13 here.
   - Spec 5, decision 2 (A storage reports every entry row a mutation changed, and what the row was before), which uses `EtagMint`, and decision 7 (An entry is put back only while it is as the session's last change left it), which needs decision 17 here.
   - Spec 6, decision 2 (Each verb has one step class, and that class is the one description of the verb's arguments), whose classes are written from the parameter table as this spec leaves it.
   - Spec 7, decision 13 (The preview is computed once, as the caller, for seven verbs, and every part of it is bounded), which needs decision 19 here, and decision 22 (The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`), which needs decisions 6 and 18.
@@ -394,9 +394,9 @@ Reason: a precondition that a storage silently dropped would be a write the call
 ### 14. The four public faces, the parameter table and the seam carry the same names
 
 - `AsyncVirtualFileSystem`, `VirtualFileSystem`, `AsyncSession` and `Session` each carry `if_match` and `if_matches` on `write`, `edit`, `delete`, `move` and `restore`, keyword-only. The two session classes keep their names under spec 2, decision 3 (The handle holds seven values, and only its current turn ever changes). They take no `authority`. A precondition a caller states through a session reaches storage unchanged, and what a session fills in where the caller states none is spec 3, decision 9 (A session fills in the precondition and, when strict, refuses a change to what it was not shown).
-- `PARAMS` gains the two names on the five verbs and loses the two version names on `write`. The signature drift test and the count of integer channels follow: 11, where 12 were.
+- `PARAMS` gains the two names on the five verbs and loses the two version names on `write`: ten rows join and two leave, so a table of 142 rows holds 150. The signature drift test and the count of integer channels follow: 11, where 12 were.
 - `Etag`, `EtagMint` and `ABSENT` are exported from `vfs`. `Etag` sits on the Entry reference page beside `ContentHash`, and `EtagMint` on the Storage page under "Writing a Storage Backend".
-- The glossary gains **Etag**: "A short value on a row that names one entry at one version. A change can require it."
+- The glossary gains **Etag**: "A short value on a row that names one entry at one version, which a change can require."
 
 Reason: a name that differs between two faces is found by the caller who crosses from one to the other. The parity tests exist to make that impossible.
 
@@ -510,7 +510,7 @@ Costed against the reference deployment in the working agreement.
 - **A precondition on the body's hash.** The earlier decision stands.
 - **A request key, and a change that lands exactly once.**
 - **The parent's new etag on the result of a change.** A change that adds or removes a child moves its parent's version and reports the child alone. A caller that holds the parent's etag from before its own change reads the parent again before it requires it. A session requires nothing of a directory, by spec 3, decision 11.
-- **A value on a row that names its entry alone.** No row says which entry it is apart from its version. Two rows are known to be one entry only when their etags are equal. "Needs no other spec meets yet" says who asked and what it would cost.
+- **A value on a row that names its entry alone.** No row says which entry it is apart from its version. Two rows are known to be one entry only when their etags are equal. No spec asks for more: spec 3, decision 5 (One stamp per path is current, and the stamp that arrives last is the current one) orders stamps by arrival, and its decision 10 (An append is never held to a stamp, and moves one only when it landed directly on it) compares a stamp with the etag before a change, which spec 5, decision 2 reports.
 - **`etag` in the default text of a listing.** It is in the row and not in the default projection, as `version` is.
 - **The shell's host.** It keeps its pair of version and hash. An etag is that pair in one value, and the host can hold it when it is next changed.
 - **A copy of a database.** A file copy or a dump restored elsewhere carries the mount identity and every entry id with it. Etags minted against one are honoured by the other wherever their versions line up. Telling two copies apart is a change to provisioning.
@@ -657,9 +657,9 @@ Pages, each changed: the docstrings of `write`, `edit`, `delete`, `move` and `re
 
 ## Choices for the owner
 
-Each is decided above. The decision stands until it is ruled on. One choice of round one is ruled and is gone from the list: an etag cannot be taken apart, for all nine specs.
+Each is decided above. The decision stands until it is ruled on. One choice of round one is ruled and is gone from the list: an etag cannot be taken apart, for all nine specs. One of round two is gone because nobody asks for it now: a field on every row that names its entry alone.
 
-1. **`if_version` and `if_versions` leave** (decision 7). The other choice keeps them beside `if_match`, exclusive with it, with the four unsound cases written into the docstring. Spec 3's Builds on and spec 6's `WriteStep` still name them, from the code as it stands.
+1. **`if_version` and `if_versions` leave** (decision 7). The other choice keeps them beside `if_match`, exclusive with it, with the four unsound cases written into the docstring. Specs 3 and 6 have taken the decision: spec 3's Builds on, and spec 6, decision 2, whose step classes carry `if_match` and `if_matches` once this spec has landed.
 2. **A directory is matched by its entry and its version on every verb** (decision 10). The other choice is the merged spec's, the entry alone on a delete without cascade, at the price of an etag in two halves. Specs 3 and 5 pass no precondition there, so neither asks for it.
 3. **An etag from another mount is `conflict`, answered by the storage** (decision 12). The other choice puts a mount tag in clear at the front of the etag and refuses a foreign one `invalid` at the mount.
 4. **Every listing row carries the etag** (decision 4), at 1.1 µs and 30 bytes a row. The other choice carries it only where `columns=` names it, and a session then reads each row again before a change.
@@ -667,7 +667,6 @@ Each is decided above. The decision stands until it is ruled on. One choice of r
 6. **A `conflict` carries the etag that is there now** (decision 12). The other choice carries the version alone, so that no caller can send the etag back unread. A session's own two refusals carry neither.
 7. **A required etag met by a directory is `conflict`** (decision 9). The other choice keeps `wrong_kind`, as an expected version has it today.
 8. **`ABSENT` is a second spelling of `if_absent=True` on a single write** (decision 18). The other choice removes `if_absent` and leaves the mark as the one spelling, which changes the shell's host and spec 3, decision 9.
-9. **No row names its entry apart from its version** ("Left as it is"). The other choice adds a second twenty-character field to every row, minted at version 0, at about 0.9 µs and 30 bytes a row more.
 
 ## Where this spec disagrees with the overview or the guides
 
@@ -678,19 +677,19 @@ Each is decided above. The decision stands until it is ruled on. One choice of r
 
 ## Needs no other spec meets yet
 
-This spec needs nothing of another spec.
+Nothing. This spec needs nothing of another spec, and no item of another spec's list is addressed to it.
 
-Needs other specs state on this one, and what meets each:
+What the other specs take from this one, read at their text after round two, and where each is decided:
 
-- Spec 3, Builds on, items 1, 2, 3 and 6: decisions 1, 4, 6 and 9. Item 4, a marker for "must be absent": decision 18.
-- Spec 5, Builds on: `restore` with `if_match` and `if_matches`: decision 17. Its use of `EtagMint.mint(entry_key, 0)`: decision 2.
-- Spec 7, Builds on: the etag on rows, the single and the batch precondition, and an etag that never names two versions of one entry: decisions 1, 2 and 6. A mark for "this path must hold nothing": decision 18. One constructor for the refusal: decision 19. Whether a directory's etag moves when its children change: decision 10, it does for direct children and for nothing deeper. Up to 10,000 paths on a resume: decision 9 and the pins under "Tests", no statement grows.
-- Spec 8, Builds on: `etag` as a column a read can name. It is on every row with a version and need not be named: decision 1.
+- Spec 3, Builds on: the etag on every row, decisions 1 and 4; the form, decision 2; `if_match` and `if_matches`, decision 6; `if_version` gone, decision 7; the answers, decisions 9 and 12; the trait, decision 13; the mark, decision 18; a directory, decision 10. Its own list says of this spec that nothing is asked.
+- Spec 5, Builds on: `restore` with `if_match` and `if_matches`, decision 17; `EtagMint.mint(entry_key, 0)`, decision 2.
+- Spec 6, decision 2: the parameter table as decisions 6, 7, 14 and 17 leave it.
+- Spec 7, decisions 13 and 22: `stale_etag`, decision 19; `if_match`, `if_matches` and `ABSENT`, decisions 6 and 18; what a directory's etag guards, decision 10; a mount with no etag, decision 13.
+- Spec 8, decision 7: `etag` beside `version` on a `read` row, decisions 1 and 4.
 
-Two needs are not met, and will not be here:
+Two needs of round two are closed by their askers. Specs 3 and 8 no longer ask for a function that takes an etag apart: each keeps the version beside the etag. Spec 3 no longer compares entries: its decision 5 lets the stamp that arrives last be the current one, and its decision 10 takes the etag before a change from spec 5, decision 2.
 
-- **Spec 3, Builds on, item 5, and spec 8, Builds on: a function that takes an etag apart into an entry key and a version, and one that puts them back.** The reconciliation rules that no spec reads anything out of an etag, and a digest gives nothing back, to a storage as little as to the kernel. What serves in its place: the version is on the same row as the etag and is kept beside it; a stamp or a journal entry keeps the etag whole and passes it back whole; an old body is read by spec 5, decision 5's seam from a path and a version number.
-- **What spec 3 used the entry key for is then not met by anything: knowing that two rows shown at different times are one entry.** Spec 3, decision 5 (One stamp per path is current, and a new one replaces it unless it is the same file at the same or a lower version) and decision 10 (An append is never held to a stamp, and moves one only when it landed directly on it) both compare entries. With an etag and a version alone, two rows are known to be one entry only when their etags are equal. Spec 3 should meet this itself, with a rule that needs no entry: a stamp is replaced by any later row whose etag differs, and an append moves a stamp only when the storage's report of the change, spec 5, decision 2's `etag_before`, equals the stamp. If that cannot work, the decision this spec would need is: "Every row that carries an etag carries `entry`, twenty characters minted at version 0, equal for two rows exactly when they are one entry of one mount", which is choice 9 above and costs every row a second mint.
+One count in another spec follows from decision 17 here and was written before it. Spec 6, decision 2 has the parameter table at 148 rows once this spec has landed, from eight rows joining four verbs. `restore` gains two more, so the table holds 150.
 
 ## Not checked
 
@@ -702,7 +701,7 @@ Two needs are not met, and will not be here:
 - That the list of sites that build a row with a version is complete. It was made by a search for the constructors. The contract row of 17 calls is what catches a site that was missed.
 - Whether a rendering pass moves a version. Decision 3 says only that an etag stays where the version does.
 - The mark's second insert group was read from the arbitration code and not run. The count of 2 inserts is the test's to show.
-- The other eight specs were read as they stood on disk while their writers were revising them. Spec 3 still described an etag in two parts, and spec 6's `WriteStep` still listed `if_version`. Each citation here gives the heading as well as the number for that reason.
+- The other eight specs were read at `7c383f32` and as they stood on disk in round three, while their writers were revising them. Every decision cited here was found under the number and the heading given. A later change of a heading is not seen.
 - A database copied by file or by dump, mounted beside its original.
 
 ## One line

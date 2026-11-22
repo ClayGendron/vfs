@@ -1,6 +1,6 @@
 # A session is stored under its owner and its id
 
-A draft, written on 2026-11-22. It is not reviewed and nothing is built. It is spec 2 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps, and it rests on that overview, on the guide `documentation/how-to/keep-a-session-for-each-conversation.md`, on the seven studies under `research/` in this directory, and on the code as read at commit `6dae6a1d`. Four probes were run that day against that tree, `spec2_probe1.py` to `spec2_probe4.py` under the session scratchpad's `specs/` directory. What each showed is written beside the claim it supports, because a scratchpad does not last. It was then revised, the same day, against the other eight drafts and the rulings of the round that reconciled them. A name another spec owns is written as that spec has it and cited by its number and heading.
+A draft, written on 2026-11-22. It is not reviewed and nothing is built. It is spec 2 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps, and it rests on that overview, on the guide `documentation/how-to/keep-a-session-for-each-conversation.md`, on the seven studies under `research/` in this directory, and on the code as read at commit `6dae6a1d`. Four probes were run that day against that tree, `spec2_probe1.py` to `spec2_probe4.py` under the session scratchpad's `specs/` directory. What each showed is written beside the claim it supports, because a scratchpad does not last. It was then revised twice, the same day, against the other eight drafts and the rulings of the two rounds that reconciled them. A name another spec owns is written as that spec has it at commit `7c383f32`, where every name was frozen, and is cited by its number and heading.
 
 ## The outcome wanted
 
@@ -11,18 +11,18 @@ A host asks for a session with `fs.session(authority, id)`, in any process, and 
 - **The overview, the two guides under `documentation/how-to/`, and the seven studies under `research/`: written.** The guides describe an API that is not built.
 - **Spec 0, `2026-11-22-the-kernel-keeps-records-of-its-own`: drafted.** It owns the kernel store, `KernelStore`, whose whole interface is its decision 22 ("The interface is private, and this is all of it"). This spec follows that decision's eight rules, and uses these parts.
   - The table `vfs_sessions` is added to `build_kernel_tables` in `src/vfs/models/kernel_rows.py`, and the landing adds one to `KERNEL_FORMAT_VERSION` (its decision 8, "The tables are made at the store's first use, and a store of another format is refused").
-  - `query` for a read and `commit` for a write, with `KernelStoreUnavailable` as the one failure (its decision 9, "The store is used through `query` and `commit`, and a failure is one exception"). A `commit` begins as a writer on SQLite. On Postgres the store runs at READ COMMITTED (its decision 5, "On Postgres the place is the mount's database and schema, on a pool of the store's own").
-  - `upsert_rows`, `key_chunks`, `membership_budget` and `parameter_budget` for a statement over many rows (its decision 12, "A batch of rows is written in chunked statements through four helpers").
-  - `register_behind`, `put_behind` with a `scope`, and `drain` (its decisions 13 and 16). There is no call that drops one scope's rows, so a removal drains first (decision 22 here).
-  - `register_sweeper` and `sweep` (its decision 17, "Expired records are removed by a counted sweep in bounded chunks, and a record past its expiry reads as absent before it is swept").
+  - `query` for a read and `commit` for a write, each handing its function a `Transaction`, with `KernelStoreUnavailable` as the one failure (its decision 9, "The store is used through `query` and `commit`, and a failure is one exception"). A `commit` begins as a writer on SQLite. On Postgres the store runs at READ COMMITTED (its decision 5, "On Postgres the place is the mount's database and schema, on a pool of the store's own").
+  - `upsert_rows` and `key_chunks(pairs, width=2)` for a statement over many rows (its decision 12, "A batch of rows is written in chunked statements through four helpers").
+  - `register_behind`, `put_behind` with a `scope`, and `drain` (its decisions 13 and 16), and `discard_behind`, `transaction.info` and the order of the kinds (its decision 24, "A caller can read and withdraw what waits in the buffer, and a deferred task is a kind").
+  - `register_sweeper` and `sweep` (its decision 17, "Expired records are removed by a counted sweep in bounded chunks, and a record past its expiry reads as absent before it is swept"). This spec registers two sweepers of its own, as its decision 26 notes.
   - `store.now()` for every time, and `store.clock` for a test (its decision 18).
   - `store.engine` for a test's statement listener.
   - On SQLite the store is a file of its own in WAL (its decision 4), so a `query` does not wait on the store's writer.
-- **Spec 3, the stamps: drafted.** It makes the row through `resolve` (decision 14 here). Its bare line is a session that is never stored (its decision 16, "A bare line is a strict session of its own, and it is never stored"), which is what a caller that owns no session gets. One need of this spec is not met yet, and is listed under "Needs no other spec meets yet".
-- **Spec 4, turns, rewind and fork: drafted.** Taken: `turn_counter`, which its `start_turn` adds to (its decision 4, "`start_turn` stores the turn at once, takes its number from the session's counter, and returns the turn id"); `remove_turns` (its decision 2, "`vfs_session_turns` holds one row per turn"); a fork that copies its rows and reads nothing through its parent (its decisions 17 and 19); `fork(id)` refused with `vfs.exists` when the owner has the id (its decision 16); a record that names a turn with no row is dead (its decision 8, "A removed turn's number is never used again, and a record that names it is dead"); and the `turn` and `parent` properties it adds to the handle (its decisions 6 and 19). Decision 27 here gives it the function its fork needs.
+- **Spec 3, the stamps: drafted.** It makes the row through `resolve` and reads through `find` (decision 14 here), and its handle keeps no session key (its decision 8, "A read writes its stamps behind, and a change writes them with the change"). Taken: `remove_stamps(transaction, session_key, limit) -> int` (its decision 21, "Other specs reach the stamps through six functions of one module"), which joins `SESSION_CHILDREN`, and the kinds `STAMPS` and `STAMP_TRIMS`, registered before this spec's own. Its bare line is a session that is never stored (its decision 16, "A bare line is a strict session of its own, and it is never stored"), which is what a caller that owns no session gets.
+- **Spec 4, turns, rewind and fork: drafted.** Taken: `remove_turns(session, session_key, limit) -> int` (its decision 2, "`vfs_session_turns` holds one row per turn"), which joins `SESSION_CHILDREN`; a fork that copies its rows and reads nothing through its parent (its decisions 17 and 19); `fork(id)` refused with `vfs.exists` when the owner has the id (its decision 16); a record that names a turn with no row is dead (its decision 8, "A removed turn's number is never used again, and a record that names it is dead"); and the `turn` and `parent` properties it adds to the handle (its decisions 6 and 19). At `7c383f32` its statements write `vfs_sessions` under the column names of this spec's first draft. The last round's first ruling has it adopt the columns of decision 13 here, and "Needs no other spec meets yet" gives the mapping. Decision 27 here gives it the function its fork needs.
 - **Spec 5, the change records: drafted.** Taken: `remove_changes(session, session_key, limit) -> int` (its decision 16, "A rewind of the memory alone removes no change row, and a fork copies none"), which joins `SESSION_CHILDREN`.
-- **Spec 6, policies: drafted.** Taken: `Policy`, `PolicySet` and `decisions.with_policies` (its decision 17, "A session's policies are asked after the file system's and can only add"), and the `TypeError` for an item that is no policy (its decision 9).
-- **Spec 7, jobs: drafted.** Taken: `vfs_jobs.session_key` (its decision 4); `cancel_session_jobs(store, session_key, *, from_turn=None, reason)` (its decision 35, "A session's delete, its expiry and a rewind cancel its waiting jobs through one call, and a fork takes none"); and `Principal.name` (its decision 28), which the owner key does not read. It uses `owner_key` for every caller, the anonymous one included (its decision 7).
+- **Spec 6, policies: drafted.** Taken: `Policy`, `PolicySet`, `decisions.policy_set(policies, beside=registry)` and `decisions.with_policies` (its decision 17, "A session's policies are asked after the file system's and can only add"), and the `TypeError` for an item that is no policy (its decision 9).
+- **Spec 7, jobs: drafted.** Taken: `vfs_jobs.session_key` (its decision 4); `cancel_session_jobs(transaction, session_key, *, from_turn=None, reason)` (its decision 35, "A session's delete, its expiry and a rewind cancel its waiting jobs through one call, and a fork takes none"); and `Principal.name` (its decision 28), which the owner key does not read. It uses `owner_key` for every caller, the anonymous one included (its decision 7).
 - **Specs 1 and 8: drafted.** Nothing is taken from either, and neither asks anything of this spec.
 - **`context/specifications/archive/070-principal-scoped-sessions/spec.md`: landed 2026-09-06.** Its decision 4 stands. Its decision 5 is reversed in part (see "Earlier decisions this reverses").
 - **The retired record `context/decisions/063-a-session-never-widens-itself.md`,** read with `git show 3667fec2^:context/decisions/063-a-session-never-widens-itself.md`. Its rules 1, 2 and 4 bind and are kept by decisions 4 and 5.
@@ -111,13 +111,16 @@ It is a plain method on both faces, never a coroutine, as `mounts()` is. `Virtua
 - `authority=None` is resolved once, here, by `caller_for(authority, default_authority, op="session")`: the kernel's `default_authority`, or else the anonymous authority, which decision 7 refuses.
 - `id=None` makes an id here, by decision 11.
 - A value of the wrong type raises `TypeError`: "authority must be an Authority, got <type>", "a session id is a str, got <type>", "strict must be a bool, got <type>". An item of `policies` that is no policy raises spec 6's `TypeError` (its decision 9).
+- `policies` is annotated `Iterable[object]` at this spec's first landing, where no `Policy` exists yet, and `Iterable[Policy]` from spec 6's landing, as its decision 17 says.
 - An unlawful id (decision 10) and an anonymous authority (decision 7) raise `ValidationError`, which carries a `Result` with one fact of the kind `vfs.invalid`, as `MountError` carries one.
 
 A refusal here is raised, not returned, because the call returns a handle and has no `Result` to give back. Every one of these is a mistake in the host's code, as a bad `Principal` is.
 
 Reason: ruling 10 of the overview. A handle that costs nothing can be asked for at the top of every request.
 
-### 3. The handle holds seven values, and only its current turn ever changes
+### 3. The handle holds eight values, and only its current turn ever changes
+
+The heading said seven until spec 4 asked for the eighth, `_parent`.
 
 | Slot | Public as | What it is |
 |---|---|---|
@@ -128,6 +131,9 @@ Reason: ruling 10 of the overview. A handle that costs nothing can be asked for 
 | `_strict` | `strict` | decision 4 |
 | `_policies` | `policies` | decision 4 |
 | `_turn` | `turn` | the current turn, which spec 4 adds and its `start_turn` sets (its decision 6, "The turn is on the handle, and the store holds no current turn") |
+| `_parent` | `parent` | the id of the session a `fork` made this handle from, fixed when the handle is made, and `None` on a handle from `fs.session`; spec 4 adds it (its decision 19, "A fork records its parent and its fork point, and nothing reads through them") |
+
+The first six are this spec's. A handle from `fs.session` is made with `_turn` and `_parent` both `None`.
 
 - The classes keep their names: `AsyncSession` on the kernel and `Session` on the synchronous face, exported from `vfs`. The guides already use both.
 - No method replaces `authority`, `id`, `strict` or `policies`. A host that wants other values asks for another handle.
@@ -144,7 +150,7 @@ Reason: a handle that holds nothing the store does not can be dropped at any mom
 `strict` is read by spec 3 and `policies` by spec 6. This spec carries them. Each call is judged by the values of the handle it came through.
 
 - Nothing about either is written to `vfs_sessions`. A policy is a function and cannot be stored, by ruling 2 of the overview. A stored `strict` would make two handles with different values a conflict that some rule must settle, and there is no such conflict when each handle answers for itself.
-- The handle builds a `PolicySet` from what it was given, once, through spec 6's constructor, and keeps it. That constructor raises the `TypeError` and the `ValueError` of spec 6's decisions 9 and 17. Each verb the handle forwards runs inside `decisions.with_policies(that_set)`. A handle given none enters nothing. The one line in each verb lands with whichever of the two specs is built second.
+- The handle builds a `PolicySet` from what it was given, once, through spec 6's `decisions.policy_set(policies, beside=registry)`, and keeps it. That function does no I/O, and raises the `TypeError` and the `ValueError` of spec 6's decisions 9 and 17. Each verb the handle forwards runs inside `decisions.with_policies(that_set)`. A handle given none enters nothing. The one line in each verb lands with whichever of the two specs is built second.
 - `session.policies` returns the set's policies as a tuple, in order, as `fs.policies()` does for the file system's.
 - A session's policies are added to the file system's and can only ask for more review. The handle offers no way to take one away.
 - Until spec 6 lands, a non-empty `policies` raises `ValueError`: "policies are not served yet". Spec 6 removes that line. A host that asked for review must never be given silence.
@@ -276,8 +282,8 @@ Reason: with an owner in the key and nothing to compare, the two verbs would dif
 | `subjects` | text, not null | the subjects' distinct `sub` values, sorted, as a JSON array |
 | `parent_id` | `BytewiseString(255)`, null | the id of the session this one was forked from; spec 4, decision 19 |
 | `fork_before` | `BytewiseString(1020)`, null | the turn id the fork was given as `before`; 1,020 is spec 4's `MAX_TURN_ID_BYTES` |
-| `fork_number` | `BigInteger`, null | the fork point, a turn number; null for a session that is no fork |
-| `turn_counter` | `BigInteger`, not null, default 0 | the last turn number handed out; spec 4's `start_turn` adds to it |
+| `fork_number` | `BigInteger`, null | the fork point: every turn the fork took from its parent is numbered below it, and no turn need hold this number; null for a session that is no fork |
+| `turn_counter` | `BigInteger`, not null, default 0 | the last turn number handed out; spec 4's `start_turn` adds to it, through spec 0's `next_number`; a fork's row starts it at the fork point less one |
 | `created_at` | timestamp with zone, not null | for display |
 | `last_used_at` | timestamp with zone, not null | decision 17 |
 | `expires_at` | timestamp with zone, not null | decision 18 |
@@ -288,7 +294,8 @@ Indexes: a unique constraint `uq_vfs_sessions_name` on `(owner_key, id)`; `ix_vf
 - **The key is never reused.** A row written behind for a removed session must never land on another session. Run on SQLite 3.50.4: the row with the highest key was deleted, and the next row took a higher key.
 - **Both engines treat `NULL` ids as distinct** in the unique constraint, so any number of markers share an owner. Run on SQLite. On Postgres it is the documented default and was not run.
 - **The three lineage columns are spec 4's to fill,** through decision 27. They are a record of where a session came from, and nothing reads through them. `parent_id` may name an id that has since been used for a new session, as spec 4's decision 19 says.
-- **A turn number is the fork point,** because a turn's id can be used again after a rewind and its number cannot.
+- **A turn number is the fork point,** because a turn's id can be used again after a rewind and its number cannot. `fork_before` keeps the id the host gave beside it, for display alone. A fork with no `before` has a `fork_number` one above its source's counter and a null `fork_before`.
+- **These are the columns, and none is renamed.** The first draft had `last_turn`, `turn_count`, `parent_key` and `fork_turn`. They are `turn_counter`, no column, no column and `fork_number`: the count of turns is read from `vfs_session_turns` (decision 20), and no key of a parent is kept, because nothing reads through lineage and a key that points at a reclaimed marker says nothing a display needs.
 - **`turn_counter` is a counter in spec 0's sense** (its decision 11, "A counter is a column that one statement adds to and returns"). It is not the number of turns: a rewind removes turns and never lowers it.
 - **`actor` and `subjects` are unindexed text,** so a long name fails no length check.
 - The table holds four columns the overview's row for it does not list: `actor`, `subjects`, `fork_before` and `removed_at`.
@@ -310,24 +317,30 @@ class SessionRef(NamedTuple):
     def scope(self) -> tuple[str, str]: ...        # (owner_key, id), the scope of decision 17
 
 async def resolve(
-    store: KernelStore, session: AsyncSession, refs: Sequence[SessionRef], *, create: bool, lifetime: timedelta
+    store: KernelStore, transaction: Transaction, refs: Sequence[SessionRef], *,
+    create: bool, lifetime: timedelta, touch: bool = False,
 ) -> dict[tuple[str, str], int]: ...
 
-async def find(store: KernelStore, session: AsyncSession, ref: SessionRef) -> int | None: ...
+async def find(store: KernelStore, transaction: Transaction, ref: SessionRef) -> int | None: ...
 ```
 
-Here `session` is the SQLAlchemy session that `store.commit` or `store.query` hands its function. `resolve` returns each session's key by `(owner_key, id)`. A session with no row is left out of the answer when `create` is false, and gets a row when it is true. `resolve` may write, so it runs inside a `commit`. `find` is one `SELECT` that writes nothing, for a `query`: it returns the key of a row that has not expired, or `None`.
+`transaction` is spec 0's `Transaction`, the one `store.commit` or `store.query` hands its function. `resolve` returns each session's key by `(owner_key, id)`. A session with no row is left out of the answer when `create` is false, and gets a row when it is true.
 
-The steps of `resolve`, with `refs` made distinct first and `now` read once from `store.now()`:
+- **With `create` true, or `touch` true, `resolve` may write,** and runs inside a `commit`. With both false it issues its read and nothing else, so it is safe inside a `query`, where SQLite refuses a read that turns into a write.
+- **`find` is one `SELECT` that writes nothing.** It returns the key of a row that has not expired, or `None`. It is `resolve` of one ref with both flags false, under a name that says so.
+- **`resolve` keeps the keys it found in `transaction.info`,** for the length of the transaction. A flush that names one session in two kinds reads it once, and a `commit` in which two specs' functions resolve one session reads it once. A retry starts a new transaction with an empty `info`, as spec 0's decision 24 says.
 
-1. **Read.** One `SELECT session_key, last_used_at, expires_at` by membership of the pair `(owner_key, id)`. The refs are cut at half of `store.membership_budget`, since a pair is two binds.
+The steps of `resolve`, with `refs` made distinct first, those already in `transaction.info` taken from it, and `now` read once from `store.now()`:
+
+1. **Read.** One `SELECT session_key, last_used_at, expires_at` by membership of the pair `(owner_key, id)`, cut by `store.key_chunks(pairs, width=2)`, since a pair is two binds.
 2. **Replace what expired.** A row whose `expires_at` is at or before `now` is removed by decision 22's first step when `create` is true, and is then absent. When `create` is false it is treated as absent and left for the sweep.
-3. **Create.** With `create` true, `store.upsert_rows(session, sessions, rows, key=("owner_key", "id"), update=())` for the absent. An empty `update` makes it `ON CONFLICT DO NOTHING`, and the helper cuts the rows under the parameter budget at seven values a row.
+3. **Create.** With `create` true, `store.upsert_rows(transaction, sessions, rows, key=("owner_key", "id"), update=())` for the absent. An empty `update` makes it `ON CONFLICT DO NOTHING`, and the helper cuts the rows under the parameter budget at seven values a row.
 4. **Read again** the refs step 3 was given, which holds the rows it made and the rows a rival made first (decision 15).
-5. **Touch.** One `UPDATE` of `last_used_at` and `expires_at` for the rows decision 17 finds due, by `session_key`, cut by `store.key_chunks`.
+5. **Touch.** With `create` or `touch` true, one `UPDATE` of `last_used_at` and `expires_at` for the rows decision 17 finds due, by `session_key`, cut by `store.key_chunks`.
 
 | Case | Statements |
 |---|---|
+| the session was resolved earlier in this transaction | 0 |
 | the row is there and was used in the last five minutes | 1 |
 | the row is there and a touch is due | 2 |
 | the row is absent and `create` is false | 1 |
@@ -341,14 +354,14 @@ Who calls it:
 | Spec | For | Call |
 |---|---|---|
 | 3 | a stamp written behind, in its kind's `write`; the stamps a change leaves, at step 7 of its decision 8 ("A read writes its stamps behind, and a change writes them with the change") | `resolve(create=True)` |
-| 3 | the stamps it reads before a change, at step 2 of that decision | `find`; no row means no stamp |
-| 4 | `start_turn`, at S2 of its decision 4, and `make_first_turn` | `resolve(create=True)` |
-| 4 | `rewind` and `turns` | `find` |
-| 4 | `fork` | `find` for the source, and decision 27's `make_fork` for the new row |
+| 3 | the stamps it reads before a change, at step 2 of that decision, and its trim | `find`; no row means no stamp |
+| 4 | `start_turn`, in the `commit` of its decision 4, and a first turn made for a handle with none | `resolve(create=True)` |
+| 4 | `rewind` and `turns` | `find`, or `resolve(create=False)`, which is the same read |
+| 4 | `fork` | `resolve(create=False)` for the source, and decision 27's `make_fork` for the new row |
 | 5 | its change rows, inside `store.record_after` (its decision 4, "A session writes its change rows after the change commits, by spec 0's record-after form, before the verb returns") | `resolve(create=True)` |
 | 7 | a job stored for a call made through a handle (its decision 7) | `resolve(create=True)` |
-| 7 | `session.jobs` and `session.resume` (its decision 32) | `find`; no row means no job |
-| this spec | a use, in its kind's `write` (decision 17) | `resolve(create=False)` |
+| 7 | `session.jobs` and `session.resume` (its decision 32) | `resolve(create=False)`; no row means no job |
+| this spec | a use, in its kind's `write` (decision 17) | `resolve(create=False, touch=True)` |
 
 Reason: one seam for four kinds of record means one place where a session comes to exist, and one statement in the common case.
 
@@ -382,15 +395,15 @@ store.put_behind(SESSION_USE, [{"owner_key": ..., "id": ..., "actor": ..., "subj
 
 When a call through a handle returns, the handle puts one row of this kind behind. `put_behind` is a plain function that sends nothing and waits for nothing. The kind is keyed by the session's name, so the buffer holds one use per session however many calls it made.
 
-- **The kind's `write`** is `resolve(create=False)` over the rows of one flush. So **a use alone never makes a row**. A session that has stored nothing has nothing to expire.
-- **The kernel registers the kind when it is built,** with its `session_lifetime` bound into `write`, and before any kind of another spec, since kinds are written in the order they were registered.
+- **The kind's `write`** is `resolve(create=False, touch=True)` over the rows of one flush. So **a use alone never makes a row**. A session that has stored nothing has nothing to expire.
+- **The kernel registers the kind when it is built,** with its `session_lifetime` bound into `write`, and after every kind that makes rows. Kinds are written in the order they were registered, and spec 0's decision 24 fixes that order: spec 3's `STAMPS`, spec 3's `STAMP_TRIMS`, then `SESSION_USE`. Each kind's `write` calls `resolve` before it writes, on the flush's one transaction. By the time the use is written, a session whose stamps rode the same flush is already in `transaction.info`, so the use resolves only the sessions the flush has not yet resolved.
 - **The scope** is `ref.scope`. Spec 3 puts a session's stamps behind under the same scope, so one `drain(ref.scope)` waits for everything of one session.
 - **This kind is only ever written behind.** A use that is dropped errs toward an earlier expiry of a session nobody then used, which is spec 0's test for a record that may be dropped (its decision 14).
 
 A touch is due when the stored `last_used_at` is more than `SESSION_TOUCH_SLACK: Final = timedelta(minutes=5)` before `now`. The age is read from the row in step 1 of `resolve`, so no process keeps a table of what it touched. The touch sets `last_used_at = now` and `expires_at = now + lifetime + SESSION_TOUCH_SLACK`.
 
 - A `resolve` with `create` true, such as a turn being started, touches by the same rule.
-- `exists()`, `fs.sessions`, `find` and the sweep are not uses. Asking whether a session exists does not keep it alive.
+- `exists()`, `fs.sessions`, `find`, a `resolve` with both flags false and the sweep are not uses. Asking whether a session exists does not keep it alive.
 - `last_used_at` may be up to five minutes behind the true last use. It is for display and for expiry, and is never an order.
 
 Reason: the overview's bar that a read adds no synchronous statement, which spec 0 holds by making `put_behind` a read verb's whole dealing with the store. The slack bounds the updates of one row to 12 an hour however many calls a session makes.
@@ -489,28 +502,34 @@ Reason: on a handle that carries every file verb, a second meaning for `delete` 
 
 A removal is `fs.remove_session`, or an expiry met by `resolve` or by the sweep. It has two steps.
 
-**Step 1, one `commit`.** Find the row. `UPDATE vfs_sessions SET id = NULL, removed_at = :now WHERE session_key = :k AND removed_at IS NULL`. Then, in the same transaction, spec 7's `cancel_session_jobs(session, session_key, reason=...)`, with the reason "the session was deleted" or "the session expired", the two its decision 35 lists.
+**Step 1, one `commit`.** Find the row. `UPDATE vfs_sessions SET id = NULL, removed_at = :now WHERE session_key = :k AND removed_at IS NULL`. Then, in the same transaction, spec 7's `cancel_session_jobs(transaction, session_key, reason=...)`, with the reason "the session was deleted" or "the session expired", the two its decision 35 lists.
 
 From that commit the name is free. `exists()` is false, the session is in no listing, and the next record for that owner and id makes a new row with a new key. The old row is a marker.
 
-**Step 2, bounded chunks.** For the marker's key, each function in `SESSION_CHILDREN` deletes its rows, at most `SESSION_RECLAIM_CHUNK: Final = 5_000` to a `commit`, until it returns fewer than it was asked for. Then spec 4's `remove_turns(session, [session_key])` removes the session's turns in one ranged statement, last, because a stamp and a change row name a turn. Then the marker itself is deleted.
+**Step 2, bounded chunks.** For the marker's key, each function in `SESSION_CHILDREN`, in order, deletes its rows, at most `SESSION_RECLAIM_CHUNK: Final = 5_000` to a `commit`, until it returns fewer than it was asked for. Then the marker itself is deleted.
+
+```python
+SESSION_CHILDREN: tuple[Callable[[Transaction, int, int], Awaitable[int]], ...]   # (transaction, session_key, limit) -> rows deleted
+```
 
 What each spec's records end by:
 
 | Spec | Rows | Call | Step |
 |---|---|---|---|
-| 7 | the session's waiting jobs in `vfs_jobs` | `cancel_session_jobs(session, session_key, reason=...)`, its decision 35 | 1 |
-| 3 | `vfs_session_stamps` | a function of the shape `(session, session_key, limit) -> int`, which it has not named yet; see "Needs no other spec meets yet" | 2, in `SESSION_CHILDREN` |
-| 5 | `vfs_session_changes` | `remove_changes(session, session_key, limit) -> int`, its decision 16 | 2, in `SESSION_CHILDREN` |
-| 4 | `vfs_session_turns` | `remove_turns(session, [session_key])`, its decision 2 | 2, after the children |
+| 7 | the session's waiting jobs in `vfs_jobs` | `cancel_session_jobs(transaction, session_key, reason=...)`, its decision 35 | 1 |
+| 3 | `vfs_session_stamps` | `remove_stamps(transaction, session_key, limit) -> int`, its decision 21 | 2, first in `SESSION_CHILDREN` |
+| 5 | `vfs_session_changes` | `remove_changes(session, session_key, limit) -> int`, its decision 16, whose first argument is the transaction | 2, second |
+| 4 | `vfs_session_turns` | `remove_turns(session, session_key, limit) -> int`, its decision 2, whose first argument is the transaction | 2, last, because a stamp and a change row name a turn |
 | 8 | `vfs_job_replies` | none of this spec's; a journal goes with its job | |
 
-`SESSION_CHILDREN` is one tuple the kernel holds. It is empty at this spec's landing, and each of specs 3 and 5 adds its function in its own landing.
+`SESSION_CHILDREN` is one tuple the kernel holds. It is empty at this spec's landing. Each of specs 3, 5 and 4 adds its function in its own landing, at its place in the order above.
 
-- **`fs.remove_session` runs both steps.** Before step 1 it awaits `store.drain(ref.scope)`, so that what this process has put behind for the session is written and then removed with the rest. If step 2 fails or the call is cancelled, the removal has still happened, the answer is still `True`, one `WARNING` is logged on `vfs.kernel_store`, and the sweep finishes the work.
+- **`fs.remove_session` runs both steps.** Before step 1 it withdraws what this process has queued for the session: `store.discard_behind(kind, scope=ref.scope)` for each kind in the kernel's tuple of kinds, which are this spec's `SESSION_USE` and spec 3's `STAMPS` and `STAMP_TRIMS`. A row of a flush in flight is not withdrawn, by spec 0's decision 24, so it then awaits `store.drain(ref.scope)`, and that row is written and removed with the rest. If step 2 fails or the call is cancelled, the removal has still happened, the answer is still `True`, one `WARNING` is logged on `vfs.kernel_store`, and the sweep finishes the work.
 - **`resolve` runs step 1 only,** for a row it finds expired, and leaves step 2 to the sweep. A call that happens to arrive on day 31 does not pay for the reclaim.
-- **The sweep** is one sweeper, `store.register_sweeper("sessions", sweep_sessions)`, of spec 0's shape: it is handed the store, a session, the pass's `now` and a `limit`, and it works in the one `commit` it is given. It first reads up to `SESSION_SWEEP_BATCH: Final = 100` keys whose `expires_at` has passed, by the index, and runs step 1 for them. It then reads markers by their index, oldest key first, and runs step 2 for each until it has removed `limit` rows. It returns the rows it removed, child rows and markers together. A marker is deleted only when its dependents are gone, which is spec 0's rule for a parent.
-- **A crash between the steps loses nothing.** The marker is in the store, and its index is how the sweep finds it. No pass scans the table.
+- **The sweep is two sweepers,** each a `Sweeper` of spec 0's decision 17, registered with `register_sweeper` in this order. Each call is one transaction, is handed a `limit`, and returns a count. Spec 0's pass calls a sweeper again until it returns 0 or eight calls have run.
+  - `"sessions_expired"` reads up to `SESSION_SWEEP_BATCH: Final = 100` keys whose `expires_at` has passed and that are no marker, by the index, oldest first, and never more than `limit`. It runs step 1 for them, and returns how many it marked.
+  - `"sessions_removed"` reads markers by their index, lowest key first, and runs step 2 for each, spending at most `limit` rows across the children. A marker whose children each returned fewer rows than asked is deleted and counted. It returns the rows it removed, child rows and markers together. A marker is deleted only when its dependents are gone, which is spec 0's rule for a parent.
+- **A crash between the steps loses nothing.** The marker is in the store, and its index is how the sweep finds it. No sweeper scans the table.
 
 What goes with a session, and what does not:
 
@@ -526,7 +545,7 @@ What goes with a session, and what does not:
 
 No name is kept reserved after a removal. One studied project reserves every branch name for ever (`research/framework-session-stores.md`, section 4). There the name was the only identity. Here the key is, and the owner who removed a session is the only caller who can ever say its name again.
 
-**A late record.** A read in another process may have a stamp in that process's buffer when the session is removed. Its flush resolves by owner and id, finds no row, and makes the row again. This is the ruling spec 3 asks for. Whether the stamp is then stored is spec 3's and spec 4's rule: a stamp whose turn has no row stores nothing (spec 4, decision 8), and a stamp from a handle with no turn is filed under a first turn made for it. Either way the new session holds at most what that one read saw, and it authorizes nothing: a stamp is checked against the file when a change is made. Within one process the drain makes a removal exact.
+**A late record.** A read in another process may have a stamp in that process's buffer when the session is removed. Its flush resolves by owner and id, finds no row, and makes the row again. This is the ruling spec 3 asks for. Whether the stamp is then stored is spec 3's and spec 4's rule: a stamp whose turn has no row stores nothing (spec 4, decision 8), and a stamp from a handle with no turn is filed under a first turn made for it. Either way the new session holds at most what that one read saw, and it authorizes nothing: a stamp is checked against the file when a change is made. Within one process the withdrawal and the drain make a removal exact.
 
 Reason: a removal that waits for every row holds a writer for as long as the session was long. Freeing the name in one commit is what the caller asked for, and the chunk size is spec 0's `SWEEP_CHUNK`, which the log cost study measured at 21 ms on SQLite and 67 ms on Postgres at the median.
 
@@ -584,18 +603,18 @@ Reason: the first is of use alone, since it removes a lifecycle that did nothing
 
 ```python
 async def make_fork(
-    store: KernelStore, session: AsyncSession, ref: SessionRef, *,
+    store: KernelStore, transaction: Transaction, ref: SessionRef, *,
     parent_id: str, fork_before: str | None, fork_number: int, turn_counter: int, lifetime: timedelta,
 ) -> int | None: ...
 
-async def read_session(store: KernelStore, session: AsyncSession, ref: SessionRef) -> SessionInfo | None: ...
+async def read_session(store: KernelStore, transaction: Transaction, ref: SessionRef) -> SessionInfo | None: ...
 ```
 
-`make_fork` is the statement F2 of spec 4's decision 17 ("A fork copies the turns below the fork point, their stamps and their shell state, in statements with a fixed number of binds"). It runs inside spec 4's `commit`.
+`make_fork` makes the new session's row for spec 4's fork, in the one `commit` of its decision 17 ("A fork copies the turns below the fork point, their stamps and their shell state, in statements with a fixed number of binds"). It is the one way a row gets lineage, and it takes the place of a `resolve` of the new ref followed by an update that sets the lineage: the insert below is that pair in one statement, and it cannot land on a row that is in use.
 
 1. A row under the ref that has expired is removed by decision 22's first step.
-2. One `INSERT ... ON CONFLICT (owner_key, id) DO NOTHING RETURNING session_key`, of one row and so of a fixed number of binds, with the three lineage columns and `turn_counter` as given. Spec 4 passes the fork point less one.
-3. It returns the new key. When the insert returned no row the owner has the id, and it returns `None`. It never adopts the row that is there.
+2. One `INSERT ... ON CONFLICT (owner_key, id) DO NOTHING RETURNING session_key`, of one row and so of a fixed number of binds, with the three lineage columns and `turn_counter` as given. Spec 4 passes the fork point as `fork_number` and the fork point less one as `turn_counter`, so the fork's first new turn takes the fork point's number or a higher one and never a copied turn's.
+3. It returns the new key, and puts it in `transaction.info` as `resolve` does. When the insert returned no row the owner has the id, and it returns `None`. It never adopts the row that is there.
 
 Spec 4 turns `None` into its refusal `vfs.exists`, and reads the lineage that refusal carries with `read_session`, one `SELECT` that returns the row as a `SessionInfo`.
 
@@ -625,7 +644,7 @@ Reason: the reconciling round's rule for what a call returns. A `Result` from `r
 
 Costed against the reference deployment in the working agreement. Its callers start 2 to 5 agent sessions a person a day, so about 3,500 new sessions a day, and with a 30-day lifetime about 105,000 rows at the centre and 150,000 at five a day. That count is an estimate from those figures.
 
-**Per verb call, about 150,000 a day.** Asking for a handle issues no statement. A call through a handle adds no synchronous statement from this spec: it calls `put_behind` once. Behind the call, the use kind issues one `SELECT` a flush for all the sessions the flush names, however many calls they made. A flush takes at most 1,024 rows, so at most 1,024 sessions and 2,048 binds. A touch is at most one `UPDATE` a flush, and at most 12 an hour for any one row. The bound over a day is the number of calls, 150,000, reached only if every call is more than five minutes after the last on its session.
+**Per verb call, about 150,000 a day.** Asking for a handle issues no statement. A call through a handle adds no synchronous statement from this spec: it calls `put_behind` once. Behind the call, a flush reads each session it names once, whichever kinds name it: one `SELECT` for the sessions whose stamps ride the flush, and one more for those named by a use alone. A flush takes at most 1,024 rows, so at most 1,024 sessions and 2,048 binds. A touch is at most one `UPDATE` a flush, and at most 12 an hour for any one row. The bound over a day is the number of calls, 150,000, reached only if every call is more than five minutes after the last on its session.
 
 **Per file write, about 1,050,000 a day.** A write through a session resolves the session once a call, not once a file, so that specs 3 and 5 can write their rows: one read by a unique index, inside the `commit` they already open. The 50,000 single-file writes a day add at most 50,000 such reads. The nightly batch is 100 calls and adds 100.
 
@@ -633,7 +652,7 @@ Costed against the reference deployment in the working agreement. Its callers st
 
 **Per batch.** One `resolve` for a 10,000-entry call. Its statement does not grow with the entries. The removal of a session that made such a call reclaims its 10,000 change records in 3 calls of `remove_changes`: two chunks, and one that finds none.
 
-**Per corpus.** The sweep reads expired rows and markers by their indexes, never the table. At a steady state about 3,500 sessions expire a day. One call of the sweeper marks at most 100, and a pass is due every 1,024 writes of a process, so a deployment that makes 150,000 calls a day runs well over the 35 calls a day that needs. An expired row that no pass has reached yet reads as absent anyway.
+**Per corpus.** The sweep reads expired rows and markers by their indexes, never the table. At a steady state about 3,500 sessions expire a day. One call of `sessions_expired` marks at most 100, a pass calls it up to eight times, and a pass is due every 1,024 writes of a process, so a deployment that makes 150,000 calls a day runs well over the 35 calls a day that needs. An expired row that no pass has reached yet reads as absent anyway.
 
 **Per lock.**
 
@@ -649,7 +668,7 @@ No table lock is taken. No read of a file waits on any of this, because on SQLit
 
 **Size.** A row is 13 columns and three indexes, and holds the 64-character key twice. It was not measured. By the log study's 572 to 620 bytes for a 15-column row with two indexes, about 450 bytes is the estimate, and 150,000 rows about 70 MB.
 
-**Memory.** The store's buffer holds one use per session it has not flushed. A handle holds seven references.
+**Memory.** The store's buffer holds one use per session it has not flushed. A handle holds eight references.
 
 ## Left as it is
 
@@ -699,7 +718,10 @@ The row, second landing, in `tests/test_sessions.py`, on a SQLite file and on th
 - `test_eight_first_writes_at_once_leave_one_row`: 8 concurrent `commit` calls of `resolve` leave 1 row and return 1 distinct key.
 - `test_a_use_inside_five_minutes_updates_nothing`: with the clock stepped 4 minutes past the row's `last_used_at`, 0 `UPDATE` statements; stepped 6 minutes, 1, and `expires_at` is `now` plus the lifetime plus five minutes.
 - `test_resolve_of_10_000_sessions_stays_inside_the_budget`: with `membership_budget` narrowed to 1,000 and `parameter_budget` to 3,500, 10,000 new refs issue 20 reads of 500 pairs, 20 inserts of 500 rows and 20 second reads, 60 statements, leave 10,000 rows, and no statement carries more than 3,500 binds. Marked `slow`.
-- `test_find_writes_nothing`: `find` inside a `query` issues 1 `SELECT`, and the row's `last_used_at` is unchanged with the clock an hour on.
+- `test_find_writes_nothing`: `find` inside a `query` issues 1 `SELECT`, and the row's `last_used_at` is unchanged with the clock an hour on. The same for `resolve(create=False)`; with `touch=True` in a `commit` it issues 2 and the row moves.
+- `test_a_session_is_read_once_in_a_transaction`: two `resolve` calls for one ref in one `commit` issue 1 statement, and the same two in two commits issue 2.
+- `test_a_flush_reads_each_session_once`: with a stand-in kind registered before `SESSION_USE` that resolves with `create=True`, one flush that carries a row of each kind for one session issues 1 read of `vfs_sessions`.
+- `test_removal_withdraws_what_waits`: with the store's task held, 3 reads through a handle and then `fs.remove_session`: `discard_behind` returns 1 for `SESSION_USE`, and once the task runs the table holds 0 rows.
 - `test_exists_is_false_then_true_then_false`: false on a new handle with 1 statement; true after a `resolve(create=True)`; false after `fs.remove_session`; and no call of `exists` changed `last_used_at`.
 - `test_another_owner_sees_nothing`: two authorities resolve the same id. 2 rows. Each one's `exists()` is true, each one's `fs.sessions` holds 1 row, and `fs.remove_session` by one returns `True` and leaves the other's row.
 - `test_a_listing_is_a_page`: 250 sessions of one owner; `fs.sessions(a)` returns 100 rows in id order with `next_after` set, and three calls return 250 distinct ids and end with `next_after` `None`. Each call issues 1 statement.
@@ -710,7 +732,8 @@ The row, second landing, in `tests/test_sessions.py`, on a SQLite file and on th
 - `test_removal_reclaims_in_chunks`: with one child function over a test table of 12,000 rows for the session, step 2 calls it 3 times, no call deletes more than 5,000 rows, and then 1 statement deletes the marker.
 - `test_a_crash_between_the_steps_is_finished_by_the_sweep`: step 1 alone leaves 1 marker; `store.sweep()` leaves 0 rows and returns 1.
 - `test_an_expired_session_is_gone_at_once`: with the clock stepped past `expires_at`, `exists()` is false, the listing holds 0 rows, `find` returns `None`, and `resolve(create=True)` returns a new key and leaves 1 marker.
-- `test_the_sweeper_marks_no_more_than_a_batch`: with 250 expired rows, one call of the sweeper leaves 100 markers and 150 expired rows.
+- `test_the_sweeper_marks_no_more_than_a_batch`: with 250 expired rows, one call of `sessions_expired` returns 100 and leaves 100 markers and 150 expired rows; `store.sweep()` then calls it 3 more times, which return 100, 50 and 0, and calls `sessions_removed` until 0 rows are left.
+- `test_the_two_sweepers_are_registered_in_order`: the store's sweepers hold `sessions_expired` before `sessions_removed`. 2 names, in that order.
 - `test_a_fork_row_refuses_an_id_the_owner_has`: `make_fork` returns a key and stores the three lineage columns and the counter it was given; a second `make_fork` to the same ref returns `None` and changes 0 rows; a `make_fork` over an expired row returns a key and leaves 1 marker. `read_session` returns the lineage.
 - `test_a_fork_outlives_its_parent`: a row whose `parent_id` names a removed session is unchanged by both steps.
 - `test_session_lifetime_is_a_positive_timedelta`: `timedelta(0)`, a negative one, `30` and `None` each raise `ValueError`.
@@ -744,7 +767,7 @@ In, first landing: `src/vfs/session.py`, `src/vfs/sync_session.py`, `src/vfs/bas
 | `docs/reference/glossary.md:51` | the new entry, without "Closed is final" |
 | `docs/how-to/share-a-folder-with-grants.md:131` | the new hint |
 
-In, second landing: `vfs_sessions` in `src/vfs/models/kernel_rows.py`, with `KERNEL_FORMAT_VERSION` raised by one; a new module `src/vfs/kernel_store/sessions.py` holding every statement of this spec, as spec 0's second rule requires: `resolve`, `find`, `make_fork`, `read_session`, the listing, the two steps of removal, the use kind and the sweeper; `SessionInfo` and `SessionPage` in `src/vfs/session_records.py`, exported from `vfs`; `session_lifetime` on both constructors; `sessions` and `remove_session` on both file systems and in `MANAGEMENT_METHODS` (`src/vfs/ops.py:110`), whose docstring gains "or the kernel's own records"; `exists` on both handles; the registration of the kind and the sweeper where the kernel builds its store.
+In, second landing: `vfs_sessions` in `src/vfs/models/kernel_rows.py`, with `KERNEL_FORMAT_VERSION` raised by one; a new module `src/vfs/kernel_store/sessions.py` holding every statement of this spec, as spec 0's second rule requires: `resolve`, `find`, `make_fork`, `read_session`, the listing, the two steps of removal, the use kind and the two sweepers; `SessionInfo` and `SessionPage` in `src/vfs/session_records.py`, exported from `vfs`; `session_lifetime` on both constructors; `sessions` and `remove_session` on both file systems and in `MANAGEMENT_METHODS` (`src/vfs/ops.py:110`), whose docstring gains "or the kernel's own records"; `exists` on both handles; the registration of the kind and the sweeper where the kernel builds its store.
 
 `src/vfs/base.py` changes length in both landings, and its entry in `MODULE_LINE_BASELINE` is set to the new count each time.
 
@@ -809,7 +832,7 @@ The guide `keep-a-session-for-each-conversation.md` changes in five places. Four
 1. **`fs.sessions(authority=None)` takes `after=` and `limit=` and returns a page.** The overview's signature has neither. Article 2 of the constitution requires them. The guide's sentence should read: "`fs.sessions(scout_is)` lists the sessions Scout owns, a page of 100 at a time, with each one's id, parent, number of turns and time of last use."
 2. **The guide says an id is "a string of 1 to 255 characters".** It should say "1 to 255 visible ASCII characters, kept exactly as given".
 3. **The guide does not say that an anonymous caller owns no session.** Its section "Who Owns a Session" should gain: "A caller with no name owns no session, and asking for one is an error. Give each caller a principal of its own."
-4. **The guide's section on a chat framework does not say what a new member does.** It should gain the first two sentences of decision 9.
+4. **The guide's section on a chat framework does not say what a new member does.** After "A request handler therefore begins with two lines: ..." it should gain: "When the people an agent acts for change, as when someone joins a group chat, the authority changes, and `fs.session(authority, session_id)` is then a new and empty session. The earlier one stays with the earlier authority."
 5. **The interrupt guide says "a session opened on it"** in its last section. Nothing is opened: "a session asked for from it".
 6. **`vfs_sessions` has four columns the overview's row does not list:** `actor`, `subjects`, `fork_before` and `removed_at`. The table's owner fixes its columns, so this is stated and is not a departure.
 
@@ -817,11 +840,22 @@ The first draft's disagreement over `session.delete()` is settled by the reconci
 
 ## Needs no other spec meets yet
 
-1. **Spec 3: a function that ends a session's stamps.** Its Builds on asks that a removal and an expiry remove its rows, and names no call. The text its spec would need, as an item of its decision 15 or a decision of its own: "`remove_stamps(session, session_key, limit) -> int` deletes at most `limit` rows of `vfs_session_stamps` for one `session_key`, in one statement of a fixed shape, and returns the count. It joins spec 2's `SESSION_CHILDREN`." Until it does, a removed session's stamps stay under a key nothing can reach.
-2. **Spec 3: no copy of the session key.** Its decision 8 has a handle keep its address, and its Terms add the surrogate key "once known". The text it would need: "A handle keeps the owner key and the id and never the session key. Each store and each lookup of a stamp gets the key from spec 2's `resolve` or `find`, in the transaction that uses it." Its cost line "a handle's first change also runs spec 2's statement once" then reads "every change".
-3. **Spec 4: an expired row reads as absent.** S1 of its decision 4 and F1 of its decision 17 find a session by `owner_key` and `id` in statements of their own, with no test of `expires_at`. The text it would need in each: "The session is found through spec 2's `resolve` or `find`, or the statement carries `AND s.expires_at > :now`, so that an expired session is never given a turn or forked."
-4. **Spec 4: the count of turns in the listing.** The text it would need under its decision 2: "The landing that makes `vfs_session_turns` adds the count of a session's turns to the listing statement of spec 2's decision 20."
-5. **Spec 7: the first argument of `cancel_session_jobs`.** Its decision 35 takes "the kernel store, or a transaction of it that the caller has open". Decision 22 here calls it inside a `commit` already open. The text it would need: "Called with the SQLAlchemy session of an open `commit`, it issues its one update in that transaction and opens none."
+Read against the other eight as they stand at `7c383f32`. Two items are still open, both for spec 4, and both are what the last round's first ruling has it do.
+
+1. **Spec 4: the columns of `vfs_sessions`.** Its decisions 4, 12, 17 and 19 write `last_turn`, `turn_count`, `parent_key` and `fork_turn`, the names of this spec's first draft. The table has none of them. What is missing is the change of its statements to these: `turn_counter` for `last_turn`, as the counter its `next_number` adds to; `fork_number` for `fork_turn`, holding the fork point `n` and not `n - 1`; `fork_before`, the turn id it was given; no `parent_key`; and no statement that writes a count of turns. The text its decision 17 would need: "The new row is made by spec 2's `make_fork(store, transaction, new_ref, parent_id=<the source's id>, fork_before=<before, or None>, fork_number=n, turn_counter=n - 1, lifetime=...)`, which returns `None` when the owner has the id, and decision 16's refusal is raised then. No statement here writes `vfs_sessions` but `next_number` on `turn_counter`."
+2. **Spec 4: the count of turns in the listing.** It keeps a `turn_count` column in step, which this table does not have. The text its decision 2 would need in its place: "The landing that makes `vfs_session_turns` adds the count of a session's turns to the listing statement of spec 2's decision 20, as the scalar subquery that decision gives."
+
+Met since the last round, and no longer listed: `remove_stamps` in `SESSION_CHILDREN`, and a handle that keeps no session key (spec 3, decisions 21 and 8); an expired session that reads as absent to `start_turn` and to `fork` (spec 4, decisions 4 and 17, by `s.expires_at > :now` and by `resolve`); and the first argument of `cancel_session_jobs` (spec 7, decision 35).
+
+What other specs ask of this one, and where it is met:
+
+- **Spec 0, item 1: `resolve` and the flush.** `resolve` keeps what it found in `transaction.info`, each kind's `write` calls it before it writes, and the use is registered after every kind that makes rows and resolves only what the flush has not. Decisions 14 and 17, in those words.
+- **Spec 0, item 2: the sweep and the two controls.** Two sweepers, each one transaction, each returning a count, called again until 0. A removal calls `discard_behind(kind, scope=ref.scope)` and then `drain(ref.scope)`. Decision 22.
+- **Spec 3: its waiting stamps withdrawn on a removal.** `discard_behind` for each kind in the kernel's tuple, `STAMPS` among them. Decision 22.
+- **Spec 4, item 5: the slot `_parent`.** Decision 3, which now counts eight values.
+- **Spec 4, item 6: what the fork point's column holds.** Met under the column's own name, and not as asked. The item quotes `fork_turn`, which this table does not have. The column is `fork_number`, and it holds the fork point itself: every turn the fork took is numbered below it, and no turn need hold that number. The fork point less one is what `turn_counter` starts at. Decisions 13 and 27.
+- **Spec 6: the handle's `PolicySet`.** Built once by `decisions.policy_set`, kept, and entered around each verb. Decision 4.
+- **Spec 7: `owner_key` for every caller, and no key on a handle.** Decisions 6 and 16. Its `session.jobs` and `session.resume` resolve with `create=False`, which decision 14 makes a read that writes nothing.
 
 ## Not checked
 
@@ -829,7 +863,7 @@ The first draft's disagreement over `session.delete()` is settled by the reconci
 - **How SQLAlchemy renders the membership test over a pair** on each dialect. On SQLite the form `(owner_key, id) IN (VALUES (?, ?), ...)` was run by hand and returned the two rows that were there.
 - **The size of a row.** It is an estimate by comparison.
 - **The count of live sessions.** It is worked from the reference deployment's sessions a day, and nothing measures how many conversations keep one id.
-- **The other eight specs as they are now.** Each was read once in this round, while its writer was revising it. Every name taken from them is as it stood then.
+- **The other eight specs after `7c383f32`.** Every name taken from them is as it stands at that commit, where names were frozen. What each says after its own last revision was not read, and spec 4's adoption of this table's columns in particular is asked for and not seen.
 - **Whether `exception_for_kind` maps every kind `KernelStoreUnavailable` can carry to `VFSError`.** Its table and its fallback were read for the family `vfs.unavailable` (`src/vfs/exceptions.py:68-100`), not run.
 
 ## One line

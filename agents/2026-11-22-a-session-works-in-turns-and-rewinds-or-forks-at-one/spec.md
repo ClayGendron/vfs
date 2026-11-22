@@ -1,6 +1,6 @@
 # A session works in turns, and is rewound or forked at one
 
-This is a draft, written on 2026-11-22 and reconciled the same day with the other eight specs that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It is not reviewed, and nothing in it is built. It is spec 4 of the nine. It rests on that overview, on steps 4, 5 and 6 of `documentation/how-to/keep-a-session-for-each-conversation.md`, on the seven studies under `agents/2026-11-22-a-session-is-stored-named-and-forked/research/`, and on the code at `59946f0d`, read and probed on 2026-11-22. Another spec's decision is cited by its number and its heading, as each stood in its first draft.
+This is a draft, written on 2026-11-22 and reconciled twice the same day with the other eight specs that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It is not reviewed, and nothing in it is built. It is spec 4 of the nine. It rests on that overview, on steps 4, 5 and 6 of `documentation/how-to/keep-a-session-for-each-conversation.md`, on the seven studies under `agents/2026-11-22-a-session-is-stored-named-and-forked/research/`, and on the code at `59946f0d`, read and probed on 2026-11-22. Another spec's decision is cited by its number and its heading. Every table, column and function another spec owns is written under the name its owner gives it at `7c383f32`.
 
 ## The outcome wanted
 
@@ -21,46 +21,48 @@ Each entry gives the state of what is built on, then what this spec takes from i
 
 - **Spec 0, the kernel keeps records of its own.** Drafted.
   - `KernelStore`, by its decision 22 (The interface is private, and this is all of it), and the eight rules that decision gives a spec that keeps a record. Decision 24 here says which form each write of this spec uses.
-  - `query` and `commit`, by its decision 9 (The store is used through `query` and `commit`, and a failure is one exception). A `commit` begins as a writer on SQLite and runs at READ COMMITTED on Postgres, which decision 4 here needs.
+  - `query`, `commit` and `Transaction`, by its decision 9 (The store is used through `query` and `commit`, and a failure is one exception). A `commit` begins as a writer on SQLite and runs at READ COMMITTED on Postgres, which decision 4 here needs.
   - `record_after`, by its decision 10 (A record that goes with a change is written in a transaction of the store's own, after the change or before it, and never inside it).
-  - `next_number`, by its decision 11 (A counter is a column that one statement adds to and returns).
-  - Its decision 12 (A batch of rows is written in chunked statements through four helpers) allows any other statement that binds a fixed number of parameters. The ranged `DELETE` and the `INSERT ... SELECT` of decisions 12 and 17 here are of that kind.
+  - `next_number`, by its decision 11 (A counter is a column that one statement adds to and returns). That decision names S3 of decision 4 here as this statement.
+  - A statement of fixed binds is within the interface, by its decision 25 (A statement of a spec's own is within the interface when its binds are fixed or its rows are cut by the store's budgets). The ranged `DELETE` of decision 12 and the `INSERT ... SELECT` of decision 17 here are of that kind, and several specs' functions run in one `commit`.
   - `drain`, by its decision 16 (`drain` waits for the records of one scope). `rewind` and `fork` call it first.
   - `store.now()`, by its decision 18 (Every time comes from one clock that a test replaces).
   - `build_kernel_tables` and `KERNEL_FORMAT_VERSION`, by its decision 8 (The tables are made at the store's first use, and a store of another format is refused).
   - `store.engine`, for a test's `before_cursor_execute` listener.
 - **Spec 2, a session is stored, named and forked.** Drafted.
-  - `session_key`, and the columns `last_turn`, `turn_count`, `parent_key`, `parent_id` and `fork_turn` of `vfs_sessions`, by its decision 13 (`vfs_sessions` holds one row per session, under a key that is never used twice). That spec asks this one to maintain those five, and decisions 4, 12, 17 and 19 do.
-  - `resolve` and `SessionRef`, by its decision 14 (The row is first written by the first record that needs it, through one function, `resolve`).
+  - `vfs_sessions` and its columns `session_key`, `owner_key`, `id`, `expires_at`, `turn_counter`, `parent_id`, `fork_before` and `fork_number`, by its decision 13 (`vfs_sessions` holds one row per session, under a key that is never used twice). The last four are this spec's to fill, and decisions 4 and 17 do.
+  - `SessionRef`, its `scope`, `resolve` and `find`, by its decision 14 (The row is first written by the first record that needs it, through one function, `resolve`).
+  - `make_fork` and `read_session`, by its decision 27 (A fork's row is made by one function, which refuses an id the owner already has).
   - A handle keeps no copy of the key, by its decision 16 (A handle keeps no copy of the row, so every record names its session by owner and id). Every statement here finds the key again.
   - The handle's slots, with `_turn` for this spec, by its decision 3 (The handle holds seven values, and only its current turn ever changes).
-  - The rule for a session id and the generator of one, by its decisions 10 (An id is 1 to 255 visible ASCII characters, kept exactly as given) and 11 (A generated id is `ses_` and 26 characters from 128 random bits). `fork` uses both, and decision 3 here takes the first for a turn id.
+  - `check_session_id` and `new_session_id`, by its decisions 10 (An id is 1 to 255 visible ASCII characters, kept exactly as given) and 11 (A generated id is `ses_` and 26 characters from 128 random bits). `fork` uses both, and decision 3 here takes the first rule for a turn id.
   - Who owns a session, by its decisions 7 (An anonymous authority owns no session) and 8 (The system authority owns sessions as one owner, and lists every owner's).
   - `SESSION_CHILDREN` and `SESSION_RECLAIM_CHUNK`, by its decision 22 (Removal frees the id in one commit and reclaims the rest in bounded chunks). `remove_turns` of decision 2 here joins that tuple.
-  - A session is removed with `fs.remove_session(authority, id)`, by ruling 4 of the reconciliation, and it expires by that spec's decision 18.
-  - What a management call does on a closed file system, by its decision 24 (After its file system is closed, a handle answers as the file system does).
-  - `builtins-ignorelist = ["id"]` in `pyproject.toml`, in that spec's first landing, by ruling 9. Run on 2026-11-22: `def start_turn(id: ...)` fails `ruff check --select A` without it.
+  - The count of a session's turns in `fs.sessions`, a subquery over this spec's table, by its decision 20 (`fs.sessions(authority=None, *, after=None, limit=None)` returns one bounded page).
+  - What a management call returns and raises, and what it does on a closed file system, by its decisions 28 (The calls over the row return plain values and raise a classified error) and 24 (After its file system is closed, a handle answers as the file system does).
+  - `builtins-ignorelist = ["id"]` in `pyproject.toml`, in that spec's first landing. Run on 2026-11-22: `def start_turn(id: ...)` fails `ruff check --select A` without it.
 - **Spec 3, the session remembers what it read.** Drafted.
-  - `vfs_session_stamps` and its columns `session`, `path` and `turn`, by its decision 4 (The table is `vfs_session_stamps`, one row per session, path and turn).
-  - Its liveness test, by its decision 6 (A stamp is stored by one statement shape, and a row whose session or turn is gone stores nothing). That spec asks this one for the turn form of the test, and decision 8 here gives it.
-  - The guarded router and the order of a change, by its decision 8 (A read writes its stamps behind, and a change writes them with the change).
-  - Its rule for a rewind and a fork, items 4 and 5 of what its "Builds on" asks of this spec: a rewind to before turn `n` removes every stamp of the session whose `turn` is `n` or more, with this process's waiting rows for those turns; a fork copies every stamp whose `turn` is below the fork point. Decisions 12 and 17 here issue exactly those.
-  - The bound on that copy, by its decision 15 (A session's stamps are bounded at 16 MiB, and the earliest turns go first).
+  - `vfs_session_stamps` is that spec's, and this spec writes no statement against it. It calls two of the six functions of its decision 21 (Other specs reach the stamps through six functions of one module): `remove_stamps_from` and `copy_stamps`.
+  - The current stamp is the row of the highest live turn, and the lookup says whether a handle's turn is live, by its decision 7 (The current stamp is read in one keyed statement).
+  - A change through a handle whose turn is dead is refused in this spec's words, and a session's stamps are put behind with `scope=ref.scope`, by its decision 8 (A read writes its stamps behind, and a change writes them with the change).
+  - A stamp of a dead turn stores nothing, by its decision 6 (A stamp is stored by one statement shape, and a row whose session or turn is gone stores nothing).
+  - The bound on a fork's copy, by its decision 15 (A session's stamps are bounded at 16 MiB, and the earliest turns go first).
   - The two refusals, `vfs.conflict.changed` and `vfs.conflict.unread`, by its decision 12. The tests here name them.
   - `Session.cli` runs through the session's guarded router, by its decisions 16 and 17. Decision 10 here adds the shell state to that call.
-- **Spec 5, a rewind puts a session's files back.** Drafted, with this spec's first draft read.
+- **Spec 5, a rewind puts a session's files back.** Drafted.
   - `files=` and `preview=` on `rewind`, by its decisions 6 (A rewind with files walks the session's change rows newest first and undoes each one) and 12 (A preview returns the same report and changes nothing).
   - The field `files` of `Rewind`, by its decision 11 (The report is a `Result` on a new field of `Rewind`).
   - The order of the file step and the memory, by its decision 10 (A rollback puts back what it can and reports the rest, and only a failure stops the memory from being rewound).
-  - `RewindStep`, by its decision 13 (A rewind with files is one step to the policies and one job to an interrupt) and ruling 7.
+  - `RewindStep`, by its decision 13 (A rewind with files is one step to the policies and one job to an interrupt).
   - Step R4 of decision 12 here issues no statement, and a fork copies no change row, by its decision 16 (A rewind of the memory alone removes no change row, and a fork copies none).
   - Its change rows name a turn by `turn_number`, and use `make_first_turn` of decision 7 here, by its decision 4.
 - **Spec 6, a policy judges each step.** Drafted. None of this spec's four calls is a step. A handle `fork` returns carries the source handle's policies.
 - **Spec 7, a job is interrupted and resumed.** Drafted.
-  - `cancel_session_jobs(store, session_key, *, from_turn, reason)`, by its decision 35 (A session's delete, its expiry and a rewind cancel its waiting jobs through one call, and a fork takes none).
-  - A job row carries `session_key`, `turn_number` and `turn_id`, by its decisions 4 and 7.
-  - A resumed job stays in its turn with no handle in memory, by its decision 34 (A resumed job stays in its turn, and what it writes is remembered by its session). So this spec offers no way to put a handle in a stored turn.
-- **Spec 8, an interrupted line replays its replies.** Drafted. Its line record holds the directory and the environment a line started with (its decision 3), and a stopped line changes none of its session's shell state (its decision 24). Decision 10 here stores the state when a line ends and never when it stops, which is what that spec asks.
+  - `cancel_session_jobs(transaction, session_key, *, from_turn, reason)`, by its decision 35 (A session's delete, its expiry and a rewind cancel its waiting jobs through one call, and a fork takes none).
+  - A job is never stored as waiting under a turn that has no row, by its decision 5 (A job is in one of four states, and every change of state is one conditional update on its revision).
+  - A job row carries `session_key` and `turn_number`, by its decisions 4 and 7.
+  - Its resume puts a handle in the job's turn with `_at_turn` of decision 25 here, by its decision 34 (A resumed job stays in its turn, and what it writes is remembered by its session).
+- **Spec 8, an interrupted line replays its replies.** Drafted. Its line record holds the `ShellState` a line started from (its decision 3), and a stopped line changes none of its session's shell state (its decision 24). Decision 10 here stores the state when a line ends and never when it stops.
 - **The shell speaks bash.** Built, pull request 37. A line runs in a machine that is given a directory and an environment, and reports output and a status.
 - **The shell acts as bash where it refused.** Drafted, at `agents/2026-11-22-the-shell-acts-as-bash-where-it-refused/spec.md`. Its line 69 gives `history` bash's non-interactive answer, which is nothing printed and status 0. Decision 9 agrees with it.
 - **The shell's module crosses its boundary in binary.** Drafted. It rewrites `crates/vfs-shell-wasm/src/wire.rs`, which decision 10 also changes. Whichever lands second carries the end state across the new wire.
@@ -69,6 +71,7 @@ Each entry gives the state of what is built on, then what this spec takes from i
 ## Terms
 
 - **Kernel store.** Where the kernel keeps its own records. In code it is spec 0's `KernelStore`.
+- **Transaction.** The object a `query`, a `commit` or a `record_after` hands its function. Spec 0 names it.
 - **Session.** VFS's side of one conversation, stored under its owner and its id.
 - **Owner key.** The key spec 2 derives from the authority that owns a session.
 - **Session key.** The integer `session_key` of a session's row in `vfs_sessions`. It is never used twice.
@@ -76,7 +79,7 @@ Each entry gives the state of what is built on, then what this spec takes from i
 - **Turn.** One message from the user and everything done in answer to it. A turn partitions a session's records.
 - **Turn id.** The name the host gives a turn. It is unique within one session.
 - **Turn number.** An integer the store gives a turn when it is made. Numbers rise in the order turns are made. They may skip.
-- **Counter.** The column `last_turn` on the session's row. A turn's number is the counter after one is added to it.
+- **Counter.** The column `turn_counter` on the session's row. A turn's number is the counter after one is added to it.
 - **Started handle.** A handle on which `start_turn` has returned. It holds a turn id and a turn number.
 - **Latest turn.** The turn of a session with the greatest number.
 - **Live and dead.** A turn is live while it has a row. A record that names a turn number with no row is dead.
@@ -90,7 +93,7 @@ Each entry gives the state of what is built on, then what this spec takes from i
 
 ## What the code does today
 
-Read and run on 2026-11-22. The shell facts were run again at `59946f0d` after the extension was rebuilt, with lines that read a file. The scripts are `probe_shell2.py` and `probe_turns2.py` in the session's scratch directory.
+Read and run on 2026-11-22. The shell facts were run at `59946f0d` after the extension was rebuilt, with lines that read a file. The scripts are `probe_shell2.py` and `probe_turns.py` in the session's scratch directory.
 
 | Fact | How it is known |
 |---|---|
@@ -110,20 +113,18 @@ Read and run on 2026-11-22. The shell facts were run again at `59946f0d` after t
 | `UPDATE ... RETURNING` is already issued on both engines. | Read, `src/vfs/storage/backends/database/writes.py:981`. |
 | The in-memory storage is the SQLite storage over a private database. | Read, `src/vfs/storage/backends/memory.py:1`. |
 
-The statements of decisions 4, 10, 12 and 17 were run on a SQLite file, with SQLAlchemy Core, on SQLite 3.50.4, against a stand-in for `vfs_sessions` with spec 2's column names. "Turn statements" are those that name `vfs_session_turns`, `last_turn` or `turn_count`. A stand-in read and insert took the place of `resolve`.
+The statements of decisions 4, 10, 12 and 17 were run on a SQLite file, with SQLAlchemy Core, on SQLite 3.50.4, against a stand-in for `vfs_sessions` that held `turn_counter`. "Turn statements" are those that name `vfs_session_turns` or `turn_counter`. Spec 2's `resolve`, `find` and `make_fork` were not in the run.
 
 | Fact | Count |
 |---|---|
-| `start_turn` of a new id | 4 turn statements: one read, then the counter, the insert and the count in one transaction |
+| `start_turn` of a new id | 3 turn statements: one read, then the counter and the insert in one transaction |
 | `start_turn` of an id the session has | 1 statement, a read |
-| 32 threads start 16 ids, each id twice at once | 16 turns made, 16 distinct numbers, each id answered with one number to both callers, 2 numbers skipped, and `turn_count` equal to the rows |
+| 32 threads start 16 ids, each id twice at once | 16 turns made, 16 distinct numbers, each id answered with one number to both callers, and 2 numbers skipped |
 | The read of the shell state | 1 statement, served by the partial index |
-| A rewind's transaction | 3 turn statements: the turn's number, the removal with 2 binds, and the count |
-| The same id started again after a rewind | a new turn with a number above every earlier one |
-| A fork's transaction | 4 turn statements: the turn's number, the lineage, the copy with 3 binds, and the count |
+| A rewind's removal of turns | 1 statement with 2 binds |
+| The same id started again after the rewind | a new turn, numbered 20 where the removed one was 12 |
 | A fork's copy of 100,000 turns | 1 statement with 3 binds |
-| A second fork to the same id | the lineage update changes no row |
-| The first new turn of a fork whose `fork_turn` is 4 | numbered 5 |
+| A second session row under an id the owner has | refused by the unique constraint |
 
 ## The problem
 
@@ -148,7 +149,7 @@ Reason: Article 1 of the constitution allows five first-class things and gives e
 turns = Table(
     "vfs_session_turns",
     metadata,
-    Column("session_key", BigInteger, primary_key=True),
+    Column("session_key", <the type of vfs_sessions.session_key>, primary_key=True),
     Column("number", BigInteger, primary_key=True),
     Column("turn_id", BytewiseString(TURN_ID_MAX), nullable=False),
     Column("shell_state", LargeBinary, nullable=True),
@@ -165,14 +166,15 @@ Index(
 ```
 
 - The table joins `build_kernel_tables` in `src/vfs/models/kernel_rows.py`, and its landing adds one to `KERNEL_FORMAT_VERSION`. Its statements are in a new module, `src/vfs/kernel_store/turns.py`.
-- `session_key` is spec 2's 64-bit key. A turn is named everywhere by that key and its `number`.
+- `session_key` is spec 2's key. A turn is named everywhere by that key and its `number`. Other tables call the number `turn_number`.
 - The primary key is `(session_key, number)`. It serves every range this spec reads, removes or copies.
 - The unique constraint on `(session_key, turn_id)` is what makes one id one turn.
 - `turn_id` is compared byte for byte. `BytewiseString` pins `COLLATE "C"` on Postgres, and SQLite's default is bytewise already. `TURN_ID_MAX` is 255.
 - `shell_state` is null while no line of the turn has changed the state. Decision 10 says what it holds.
 - `started_at` is `store.now()` when the turn was made. It is shown by `turns()`. Nothing orders by it and nothing compares it.
 - There is no foreign key. No table in the tree has one.
-- The table has no expiry of its own and so no sweeper. Its rows go with their session. `remove_turns(session, session_key, limit) -> int` deletes at most `limit` turns of one key and returns the count: `DELETE FROM vfs_session_turns WHERE session_key = :k AND number IN (SELECT number FROM vfs_session_turns WHERE session_key = :k ORDER BY number LIMIT :limit)`. It joins spec 2's `SESSION_CHILDREN`, and is called with `SESSION_RECLAIM_CHUNK`.
+- The table has no expiry of its own and so no sweeper. Its rows go with their session. `remove_turns(transaction, session_key, limit) -> int` deletes at most `limit` turns of one key and returns the count: `DELETE FROM vfs_session_turns WHERE session_key = :k AND number IN (SELECT number FROM vfs_session_turns WHERE session_key = :k ORDER BY number LIMIT :limit)`. It is the last member of spec 2's `SESSION_CHILDREN`, after the stamps and the change rows, and is called with `SESSION_RECLAIM_CHUNK`. Any order would be safe, because a record whose turn has no row is dead.
+- The landing that makes this table adds the count of a session's turns to the listing statement of spec 2's decision 20, as that decision writes it: `(SELECT count(*) FROM vfs_session_turns t WHERE t.session_key = s.session_key)`. The counter is not that count. A rewind removes rows and never lowers the counter.
 - A row holds no count of stamps, changes or jobs. Those tables name the turn. The turn does not name them.
 - A session has no cap on its turns. A row is at most 255 bytes of id, and holds a state only when a line changed it. Nothing prunes a live session's turns. They go with the session, which expires 30 days after its last use. The direction, if a session of very many turns is ever measured to matter, is to fold turns older than a declared age into one row. It is not built.
 
@@ -180,14 +182,14 @@ Reason: the overview gives this table four things to hold, and an order must be 
 
 ### 3. A turn id is 1 to 255 characters with no control character, and VFS makes one when none is given
 
-The first draft admitted any character that is not a control character. The rule is now spec 2's rule for a session id, so that the guide's one sentence about an id is true of both.
+The first draft admitted any character that is not a control character. The rule is spec 2's rule for a session id, so that the guide's one sentence about an id is true of both.
 
 - A turn id is a `str` of 1 to 255 visible ASCII characters, `0x21` to `0x7E`: spec 2, decision 10 (An id is 1 to 255 visible ASCII characters, kept exactly as given). It holds no space, no control character and nothing outside ASCII.
 - An id is compared exactly. It is not trimmed, folded or normalized.
 - An id need only differ from the other turns of the same session.
-- Any other value is refused with `vfs.invalid` before any statement runs. The detail is `a turn id is a string of 1 to 255 visible ASCII characters`.
+- Any other string is refused with `vfs.invalid` before any statement runs. The detail is `a turn id is a string of 1 to 255 visible ASCII characters`. A value that is no `str` raises `TypeError`, as a session id's does.
 - With no id, VFS makes one: `turn_` followed by 8 characters drawn with `secrets.choice` from `0123456789ABCDEFGHJKMNPQRSTVWXYZ`. That is 40 random bits.
-- A made id that the session already has is found by decision 4's insert, which then inserts no row. A new id is made and the insert runs again, up to `TURN_ID_ATTEMPTS`, which is 4. After that the call raises `vfs.internal`.
+- A made id that the session already has is found by decision 4's insert, which then inserts no row. A new id is made and the insert runs again, up to `TURN_ID_ATTEMPTS`, which is 4. After that the call raises `vfs.internal`, with the detail `no unused turn id was made in 4 tries`.
 - An id VFS made is an id like any other. The host passes it back to carry the turn on.
 
 Reason: the ids come from other systems. Vercel's `generateId` makes 16 alphanumerics, AG-UI and LangGraph make UUIDs, and message ids read `msg_...` (`chat-protocols.md`, section 1). The rule admits all of them, and one rule for both ids is one thing to learn. A made id is random because a name made from a clock collided within one second in the OpenAI Agents SDK (`framework-session-stores.md`, section 4). It is short because the unique constraint, not its length, keeps it unique.
@@ -208,23 +210,21 @@ JOIN vfs_session_turns t ON t.session_key = s.session_key AND t.turn_id = :t
 WHERE s.owner_key = :o AND s.id = :i AND s.expires_at > :now
 
 -- one commit
--- S2  resolve(session, [ref], create=True, ...) gives the session key :k, making the row when there is none
--- S3  store.next_number(session, vfs_sessions.last_turn, session_key = :k) gives :n
+-- S2  resolve(store, transaction, [ref], create=True, lifetime=...) gives the session key :k, making the row when there is none
+-- S3  store.next_number(transaction, vfs_sessions.turn_counter, session_key = :k) gives :n
 -- S4
 INSERT INTO vfs_session_turns (session_key, number, turn_id, started_at)
 SELECT :k, :n, :t, :now
 WHERE NOT EXISTS (SELECT 1 FROM vfs_session_turns WHERE session_key = :k AND turn_id = :t)
--- S5, only when S4 inserted a row
-UPDATE vfs_sessions SET turn_count = turn_count + 1 WHERE session_key = :k
--- S6, only when S4 inserted no row
+-- S5, only when S4 inserted no row
 SELECT number FROM vfs_session_turns WHERE session_key = :k AND turn_id = :t
 ```
 
+- S1 carries `s.expires_at > :now`, so an expired session is never given a turn it already had. S2 is spec 2's `resolve`, which replaces an expired row.
 - When S1 finds the turn, the call returns. Nothing is written.
 - With a made id, S1 is not issued, and S4 is the check that the id is new.
 - Otherwise S3 takes the number. The update locks the session's row, so two processes that start turns in one session run S3 one after the other, and each reads a different counter.
-- S4 inserts the turn unless the session has the id by then. The loser of a race inserts nothing, reads the winner's number with S6, and is in the winner's turn. Its own number is skipped.
-- S5 keeps `turn_count` equal to the session's rows. It runs only for a turn that was made.
+- S4 inserts the turn unless the session has the id by then. The loser of a race inserts nothing, reads the winner's number with S5, and is in the winner's turn. Its own number is skipped.
 - The handle then holds the id and the number, and no key. `start_turn` returns the id.
 - The turn is stored when `start_turn` returns. A turn in which nothing else happens still has its row.
 - `resolve` refreshes the session's time of last use by its own rule (spec 2, decision 17).
@@ -233,18 +233,18 @@ The cases:
 
 - **Two processes, two ids.** Two turns, two numbers. Which is lower is the order of their S3.
 - **Two processes, one id.** One turn. Both return the id, and both handles hold the same number.
-- **A crash or a cancel inside the commit.** The transaction is rolled back. The counter, the count and the table are as they were.
-- **Postgres.** A `commit` runs at READ COMMITTED, so the second transaction's S4 takes its snapshot after it has waited for the first to commit, and sees the first's row. The unique constraint is the backstop: an `IntegrityError` on it is read as "the session has this turn", and S6 runs.
+- **A crash or a cancel inside the commit.** The transaction is rolled back. The counter and the table are as they were.
+- **Postgres.** A `commit` runs at READ COMMITTED, so the second transaction's S4 takes its snapshot after it has waited for the first to commit, and sees the first's row. The unique constraint is the backstop: an `IntegrityError` on it is read as "the session has this turn", and S5 runs.
 - **The in-memory store.** One connection, and every transaction takes its turn on it.
 - **The synchronous face.** `Session.start_turn` is the twin, through the management hop.
 - **The system authority and an anonymous caller.** The system authority owns sessions and starts turns in them. An anonymous authority owns no session, so no handle exists to call this on (spec 2, decisions 7 and 8). `start_turn` judges no right to any file.
 
-Reason: a number from a clock or from `max(number) + 1` can be taken twice. A counter updated under the row's lock cannot. A skipped number costs nothing, because a number is an order and never a count, and the count is a column of its own.
+Reason: a number from a clock or from `max(number) + 1` can be taken twice. A counter updated under the row's lock cannot. A skipped number costs nothing, because a number is an order and never a count.
 
 ### 5. Starting a turn the session already has carries it on, and a removed turn starts again as a new one
 
 - `start_turn` with an id the session has makes no second turn. It is one read, at any number of calls, from any process.
-- This holds for an earlier turn too. With `msg_4` and `msg_5` stored, `start_turn("msg_4")` puts the handle in `msg_4`. Nothing is removed, and `msg_5` stays. What the handle then records names `msg_4`'s number. Where a stamp of an earlier turn lands when a later turn already holds the path is spec 3's decision 5 (One stamp per path is current, and a new one replaces it unless it is the same file at the same or a lower version).
+- This holds for an earlier turn too. With `msg_4` and `msg_5` stored, `start_turn("msg_4")` puts the handle in `msg_4`. Nothing is removed, and `msg_5` stays. What the handle then records names `msg_4`'s number. A stamp it leaves is a row of `msg_4`, by spec 3's decision 5 (One stamp per path is current, and the stamp that arrives last is the current one).
 - After `rewind(before="msg_5")`, `start_turn("msg_5")` finds no such turn and makes one, with a number above every number the session has given out.
 - `start_turn` never rewinds. No call of VFS infers an edit from the ids it is shown.
 
@@ -256,7 +256,7 @@ Reason: a turn often spans several requests, and a request is sometimes sent twi
 - The handle holds the turn's id and its number in `_turn`, the slot spec 2's decision 3 leaves for it.
 - Two handles of one session hold their own turns. One may be in `msg_4` while another is in `msg_5`.
 - A call takes the handle's turn when the call begins. A `start_turn` on the same handle part-way through a long call does not move that call.
-- The session's row has no column for a current turn. `last_turn` is the last number handed out, and names no turn a handle is in.
+- The session's row has no column for a current turn. `turn_counter` is the last number handed out, and names no turn a handle is in.
 - This is the one fact a handle holds that the store does not: which of the session's turns this request is working in.
 
 Reason: two requests on one session must not fight over a pointer. A stored pointer would be written by every `start_turn` and read by every call. A resumed job would then file its work under whichever turn was current, not the one it started in. A second device would move the first one's records to its own message. The request already knows its message, so the request carries it. The OpenAI Agents SDK kept its current branch in one object's memory and no parent on the row, and a new process was back on `main` (`framework-session-stores.md`, section 4). Here the lineage is on the row, and what stays in memory is only what each request is told again.
@@ -270,8 +270,8 @@ Reason: two requests on one session must not fight over a pointer. A stored poin
   (SELECT max(number) FROM vfs_session_turns WHERE session_key = :k)
   ```
 
-- When the session has no turn, that subquery is null and the writing statement inserts nothing. The writer then calls `make_first_turn(session, session_key) -> int` and writes again. `make_first_turn` is S3, S4 and S5 with a made id, and its insert is guarded by "the session has no turn", so two writers make one first turn.
-- A record that also shows the turn's id, as a job's row does, calls `latest_turn(session, session_key) -> Turn | None`, one read by the primary key.
+- When the session has no turn, that subquery is null and the writing statement inserts nothing. The writer then calls `make_first_turn(store, transaction, session_key) -> int` and writes again. `make_first_turn` is S3 and S4 with a made id, and its insert is guarded by "the session has no turn", so two writers make one first turn. It returns the number of the session's first turn, whichever writer made it.
+- A writer that cannot put a subquery inside its insert reads the number first, in the same transaction, with `latest_turn(transaction, session_key) -> Turn | None`, one read by the primary key. Spec 5's change rows do so (its decision 4).
 - The handle stays without a turn. Its next record is filed under whatever turn is latest then.
 - The first turn VFS makes has a made id. The host learns it from `turns()`.
 
@@ -279,8 +279,8 @@ The cases:
 
 - **A read through such a handle.** The stamp is written behind and is filed at the flush. No statement runs during the read.
 - **A turn starts between the read and the flush.** The stamp is filed under the newer turn. A rewind to before that turn then forgets the read. The cost is one refusal as unread and a second read.
-- **A rewind lands between the read and the flush, in another process.** The stamp is filed under the latest turn that is left, and the session remembers one read the rewound conversation no longer holds. Spec 3 asks this spec to close that case. It is not closed, and "Needs no other spec meets yet" says why. In the process that rewinds it cannot happen, because a rewind drains first.
-- **A change, a line or an interrupted job.** Each writes its record with the change, so the subquery runs in that statement.
+- **A rewind lands between the read and the flush, in another process.** The stamp is filed under the latest turn that is left, and the session remembers one read the rewound conversation no longer holds. Spec 3 accepts this case as stated here (its decision 14, Stamps meet per path, and no order of arrival can let a stale write through). The etag of that stamp is still checked at the write, so no other caller's change is overwritten. In the process that rewinds it cannot happen, because a rewind drains first. A host that starts a turn on every request never meets it, since a started handle's late stamp is dead.
+- **A change, a line or an interrupted job.** Each writes its record with the change, so the turn is found in that transaction.
 
 Reason: the guide promises that calls made before any turn is started go into the session's latest turn, or into a first turn VFS makes. Looking the turn up on the first call would put a synchronous statement on a read. Resolving at the write keeps the read free.
 
@@ -293,12 +293,13 @@ Reason: the guide promises that calls made before any turn is started go into th
   EXISTS (SELECT 1 FROM vfs_session_turns t WHERE t.session_key = :k AND t.number = :n)
   ```
 
-- This is the turn form of the liveness test that spec 3's decision 6 asks this spec for. A stamp of a dead turn stores nothing.
-- A dead stamp is never honoured. A dead change row belongs to no live turn. Spec 5 still selects it by its number when a later rewind's range covers it (its decision 6), which is safe because the number belongs to nothing else.
-- A dead record is removed by the next rewind whose range covers its number, and with its session. No sweep looks for dead records.
+- A stamp of a dead turn stores nothing, and a stamp of a dead turn that was stored all the same is never the current one: spec 3, decisions 6 and 7.
+- A job is never stored as waiting under a dead turn: spec 7, decision 5.
+- A dead change row belongs to no live turn. Spec 5 still selects it by its number when a later rewind's range covers it (its decision 6), which is safe because the number belongs to nothing else.
+- A dead stamp is removed by the next rewind whose range covers its number, by spec 3's trim, and with its session. No sweep of this spec looks for dead records.
 - The same holds after a session is removed and its id used again. The new session has a new key, and the old handle's turn number has no row under it.
 - A read through a handle whose turn was removed is served. Its stamp is dead.
-- A change through a handle whose turn was removed is refused with `vfs.not_found`, and nothing is dispatched. The detail is `turn 'msg_5' was removed by a rewind; nothing was changed`. The check is one more selected column on the statement spec 3 issues at step 2 of a change. Where spec 3 issues none for a call, that call is not checked.
+- A change through a handle whose turn was removed is refused with `vfs.not_found`, and nothing is dispatched. The detail is `turn 'msg_5' was removed by a rewind; nothing was changed`. The check is the column `live.ok` of the statement spec 3 issues at step 2 of a change, and the refusal is step 3 of its decision 8. A call whose every path had a stamp still waiting issues no statement, and is not checked.
 - A handle with no turn has no turn to check. Its records go to the latest live turn, by decision 7.
 
 Reason: a rewind cannot wait for every process. A stamp that another process put behind before the rewind arrives after it, and a call that was running goes on recording. Were the number used again, that late record would belong to a new turn. Because it is not, a late record belongs to nothing. The refusal of a change exists because the alternative misleads: with its stamps dead, a strict session would refuse the change as unread, the agent would read again, and that stamp would be dead too. opencode's refusals that hid the cause produced "up to 295 consecutive failures" (`coding-agent-sessions.md`, section 7).
@@ -365,7 +366,7 @@ Reason: the overview puts the state on the turn row, as it was when the turn end
 ### 11. The kept variables are bounded by `SHELL_ENV_BYTES`, and two lines at once leave the state of the one that ends last
 
 - `SHELL_ENV_BYTES` is 32,768. It counts the bytes of the `env` object as decision 10 encodes it.
-- When a line ends with more exported than that, the stored state is the line's new directory with the variables the line started with. The result carries one warning of kind `vfs.budget_exhausted.truncated`. Its detail gives the bytes and the bound, and says that the directory was kept and the variables were not.
+- When a line ends with more exported than that, the stored state is the line's new directory with the variables the line started with. The result carries one warning of kind `vfs.budget_exhausted.truncated`. Its detail is `the line exported <n> bytes of variables and a session keeps 32768; the directory was kept and the variables were not`.
 - The directory is a path, so it is at most `MAX_PATH_LENGTH` bytes, which is 1,024 (`src/vfs/paths.py:41`). A stored state is therefore at most `SHELL_ENV_BYTES` and one encoded path.
 - **Two lines at once in one turn.** Each starts from the state stored when it started. Each stores its own end state when it ends, if it changed anything. The state left is the state of the line that ended last, whole. The two are not merged.
 - A line that changed nothing never overwrites the state another line stored.
@@ -390,25 +391,25 @@ class Rewind(NamedTuple):
 In order:
 
 1. The id is checked by decision 3.
-2. `store.drain` is awaited for the session's scope, so that this process's own stamps of the removed turns are stored and then removed.
-3. R1, in a `query`: `resolve(session, [ref], create=False, ...)`, then `SELECT number FROM vfs_session_turns WHERE session_key = :k AND turn_id = :t`. It gives the session key and the number `n` of the turn, or decision 14's refusal.
-4. One `commit` on the kernel store. It finds the key again, and then:
+2. `store.drain(ref.scope)` is awaited, so that this process's own stamps of the removed turns are stored and then removed.
+3. R1, in a `query`: spec 2's `find(store, transaction, ref)`, then `SELECT number FROM vfs_session_turns WHERE session_key = :k AND turn_id = :t`. It gives the session key and the number `n` of the turn, or decision 14's refusal.
+4. One `commit` on the kernel store. It finds the key again with `find`, and then:
 
    | Step | Table | What happens | Owner |
    |---|---|---|---|
-   | R2 | `vfs_jobs` | `cancel_session_jobs(session, :k, from_turn=:n, reason=REWIND_CANCEL_REASON)` | spec 7, decision 35 |
-   | R3 | `vfs_session_stamps` | `DELETE FROM vfs_session_stamps WHERE session = :k AND turn >= :n`, with this process's waiting rows for those turns | spec 3, item 4 of what it asks of this spec |
+   | R2 | `vfs_jobs` | `cancel_session_jobs(transaction, :k, from_turn=:n, reason=REWIND_CANCEL_REASON)` | spec 7, decision 35 |
+   | R3 | `vfs_session_stamps` | `remove_stamps_from(transaction, :k, :n)` | spec 3, decision 21 |
    | R4 | `vfs_session_changes` | No statement | spec 5, decision 16 |
    | R5 | `vfs_session_turns` | `DELETE FROM vfs_session_turns WHERE session_key = :k AND number >= :n` | this spec |
-   | R6 | `vfs_sessions` | `UPDATE vfs_sessions SET turn_count = turn_count - :removed WHERE session_key = :k`, when R5 removed a row | this spec |
 
 5. If the handle's own turn was removed, the handle has no turn.
 6. The call returns a `Rewind`. `turns` is R5's row count and `jobs` is R2's count.
 
-- Steps R2 to R6 are one function, `rewind_turns(session, session_key, n) -> tuple[int, int]`. Spec 5's resumed rollback calls it with the key and the number its job saved (its decision 13).
+- Steps R2 to R5 are one function, `rewind_turns(transaction, session_key, n) -> tuple[int, int]`. Spec 5's resumed rollback calls it with the key and the number its job saved (its decision 13).
 - `REWIND_CANCEL_REASON` is `The session was rewound to before the turn this job was made in.` A job cancelled this way reads "Cancelled by the system", by spec 7's decision 35.
-- R6 is the last statement, so the session's row is locked for the commit alone. `last_turn`, the owner and the lineage are not written.
+- `vfs_sessions` is not written. The session's row stays, with its counter, its owner and its lineage.
 - `vfs_job_replies` is spec 8's, and goes with its job by spec 8's rule.
+- R3 removes every stamp of the session whose turn number is `n` or more, live or dead. This spec writes no statement of its own against that table.
 - Every statement names the session key and a number. None takes a bind for a row.
 
 Reason: ruling 13 says a rewind restores what earlier turns saw. With a stamp row for each turn that saw a path, removing the rows of the removed turns leaves the earlier turn's stamp, and nothing is rebuilt. One transaction means no reader ever sees a turn without its stamps or stamps without their turn.
@@ -444,10 +445,10 @@ VFS keeps no record that a call is running, so a rewind has nothing to wait on a
 | A call of a kept turn is running | Nothing changes for it. Its stamps are filed under its turn and stay. |
 | A job of a removed turn is waiting | It is cancelled in R2. A later `resume` of it answers that it was cancelled. |
 | A job of a kept turn is waiting | It stays waiting. When it is resumed it runs in its turn, and what it records stays. |
-| A job of a removed turn is `running` | It is not touched and finishes, by spec 7's decision 35. If it then stops at an interrupt, it is stored as waiting under a dead turn. "Needs no other spec meets yet" has the rule this needs. |
-| Two rewinds at once | Both return. The turns left are those before the earlier of the two points. Each reports the rows its own statements removed, and each lowers `turn_count` by its own. |
+| A job of a removed turn is `running` | It is not touched and finishes. If it stops at an interrupt again, it is not stored as waiting: it ends cancelled, with `REWIND_CANCEL_REASON`, by spec 7's decision 5. |
+| Two rewinds at once | Both return. The turns left are those before the earlier of the two points. Each reports the rows its own statements removed. |
 | A second rewind whose turn the first has removed | It is refused by decision 14 if it reads after the first commits. Otherwise it removes what is left of its range, which may be nothing. |
-| A rewind to before the first turn | Every turn is removed. The session's row stays, with `turn_count` 0. The shell is at `/` with `ENVIRONMENT`. The session has no stamp. The next record makes a first turn, by decision 7. |
+| A rewind to before the first turn | Every turn is removed. The session's row stays. The shell is at `/` with `ENVIRONMENT`. The session has no stamp. The next record makes a first turn, by decision 7. |
 | A `start_turn` of a new id at the same time | If it commits first, its turn is in the range and is removed. If it commits second, its turn is kept. |
 
 Reason: the reference deployment refuses a design that makes a call wait on a person's act. A claim written by every call so that a rewind could wait would be a write on every read. The guide tells a host to run one turn of a conversation at a time. Where it does not, each case above ends in a state the next call can read truthfully.
@@ -458,13 +459,13 @@ Reason: the reference deployment refuses a design that makes a call wait on a pe
 async def fork(self, id: str | None = None, *, before: str | None = None) -> AsyncSession: ...
 ```
 
-- `id` is checked as `fs.session` checks it, and raises what it raises: spec 2, decision 10. With no id, spec 2's `new_session_id` makes one.
+- `id` is checked by spec 2's `check_session_id`, which raises `ValidationError` with `vfs.invalid`, and `TypeError` for a value that is no `str`. With no id, spec 2's `new_session_id` makes one.
 - The new session has the owner of the source. There is no fork to another owner.
-- **An id is in use** when the owner's row for it has handed out a turn number or has a parent: `last_turn > 0` or `parent_id` is not null. A row that only `resolve` made holds nothing, and a fork takes it.
-- **An id in use is refused** with `vfs.exists`, raised as `WriteConflictError`, and nothing is copied. The detail is `session 'conv_456' already exists; nothing was copied`. Its `data` is `{"parent": ..., "fork_turn": ...}` of the session that is there, so a host that lost the reply to its own fork can recognise it.
-- `id` equal to the source's own id is refused with `vfs.invalid`.
+- **An id the owner already has is refused** with `vfs.exists`, raised as `WriteConflictError`, and nothing is copied. An id is had when a row for it is stored and has not expired, whatever that row holds. The row is made by spec 2's `make_fork`, which never adopts a row that is there (its decision 27).
+- The detail is `session 'conv_456' already exists; nothing was copied`. Its `data` is `{"parent": ..., "fork_before": ...}` of the session that is there, read with spec 2's `read_session`, so a host that lost the reply to its own fork can recognise it.
+- `id` equal to the source's own id is refused with `vfs.invalid`. The detail is `a session is not forked onto its own id`.
 - The same id under another owner is no conflict.
-- `before` names a turn of the source. A turn the source has not is refused as decision 14 refuses it, and no session is made.
+- `before` names a turn of the source. A turn the source has not is refused as decision 14 refuses it, with the detail `session 'conv_123' has no turn 'msg_9'; nothing was forked`, and no session is made.
 - `before` leaves the named turn out, as a rewind does. There is no argument that keeps it. A fork that keeps every turn passes no `before`.
 - The call returns a handle to the new session, made as `fs.session` makes one. It carries the source handle's authority, `strict` and policies. It has no turn.
 
@@ -472,37 +473,31 @@ Reason: a branch in a chat application is a new conversation with a new id, and 
 
 ### 17. A fork copies the turns below the fork point, their stamps and their shell state, in statements with a fixed number of binds
 
-In order: the checks, `store.drain` for the source session's scope, then one `commit`.
+In order: the checks, `store.drain(ref.scope)` for the source session, then one `commit`.
 
 ```sql
--- F1  resolve(session, [source ref], create=False, ...) gives :src, or nothing
--- F2  the fork point :n
+-- F1  find(store, transaction, source ref) gives :src, or nothing; then the fork point :n
 SELECT number FROM vfs_session_turns WHERE session_key = :src AND turn_id = :before   -- with before
-SELECT last_turn + 1 FROM vfs_sessions WHERE session_key = :src                       -- without
--- F3  resolve(session, [new ref], create=True, ...) gives :new
--- F4  the lineage, and the test that the id is not in use
-UPDATE vfs_sessions
-SET parent_key = :src, parent_id = :source_id, fork_turn = :n - 1, last_turn = :n - 1
-WHERE session_key = :new AND last_turn = 0 AND parent_id IS NULL
+SELECT turn_counter + 1 FROM vfs_sessions WHERE session_key = :src                    -- without
+-- F2  make_fork(store, transaction, new ref, parent_id=:source_id, fork_before=:before,
+--               fork_number=:n, turn_counter=:n - 1, lifetime=...) gives :new, or None
+-- F3  only when F2 gave None: read_session(store, transaction, new ref), and decision 16's refusal
+-- F4  vfs_session_changes: no statement
 -- F5
 INSERT INTO vfs_session_turns (session_key, number, turn_id, shell_state, started_at)
 SELECT :new, number, turn_id, shell_state, started_at
 FROM vfs_session_turns WHERE session_key = :src AND number < :n
--- F6
-INSERT INTO vfs_session_stamps (session, path, turn, kind, entry, version)
-SELECT :new, path, turn, kind, entry, version
-FROM vfs_session_stamps WHERE session = :src AND turn < :n
--- F7
-UPDATE vfs_sessions SET turn_count = :copied WHERE session_key = :new
+-- F6  copy_stamps(transaction, :src, :new, :n)
 ```
 
-- The fork point `n` is the number of the turn `before` names. With no `before` it is the source's `last_turn` plus one, so every turn is copied. A source with no row gives `n = 1`.
-- F4 changes no row when the id is in use. The function then raises decision 16's refusal, and the `commit` is rolled back.
-- A copied turn keeps its id and its number. A stamp therefore copies as it is. F6 is spec 3's rule and spec 3's columns.
-- `fork_turn` and the new session's `last_turn` are both `n - 1`. Every turn the fork took is numbered at or below `fork_turn`, and its first new turn is numbered `n` or above.
-- `turn_count` is F5's row count.
+- F1 finds the source through spec 2's `find`, so an expired session is never forked.
+- The fork point `n` is the number of the turn `before` names. With no `before` it is the source's `turn_counter` plus one, so every turn is copied. A source with no row gives `n = 1`.
+- F2 is spec 2's `make_fork`. It writes `parent_id`, `fork_before`, `fork_number` and `turn_counter` on the new row, in one insert.
+- F3 raises inside the function the `commit` was given, so the `commit` is rolled back.
+- A copied turn keeps its id and its number. A stamp therefore copies as it is. F6 is spec 3's function, and copies every stamp of the source whose turn number is below `n` and whose turn is live.
+- The new session's counter starts at `n - 1`. Its first new turn is numbered `n` or above, so it never takes a number of a copied turn.
 - The shell state is copied with the rows, by decision 10.
-- A source that has stored nothing gives an empty new session, with `parent_id` recorded and `parent_key` null. F5 and F6 are not issued.
+- A source that has stored nothing gives an empty new session, with its parent recorded. F5 and F6 are not issued.
 - F5 has three binds at any number of turns. No row comes into Python.
 - **The bound on the copy.** F5 copies one row for each turn below the fork point. F6 copies at most the 16 MiB spec 3's decision 15 lets one session hold. The number of turns has no cap, by decision 2, and "Cost" gives what a copy of 100,000 turns holds.
 - **A crash or a cancel.** The transaction is rolled back, and the new id has no session.
@@ -527,14 +522,14 @@ Reason: "A fork() in the road" finds that a fork must say, resource by resource,
 
 ### 19. A fork records its parent and its fork point, and nothing reads through them
 
-- The new row holds `parent_key`, the source's key; `parent_id`, the source's id; and `fork_turn`, by decision 17. They are spec 2's columns, written once, by F4.
-- The fork point is a number and not a turn id, because an id can be used again after a rewind and a number cannot. This is spec 2's ruling in its decision 13, and the first draft's `fork_before` column is gone.
+- The new row holds `parent_id`, the source's id; `fork_before`, the turn id given as `before`, or null; and `fork_number`, the fork point. They are spec 2's columns, written once, by `make_fork`.
+- `fork_number` is what the copy used. `fork_before` is for display: a turn's id can be used again after a rewind, and its number cannot.
 - Lineage is a record of where a session came from. No lookup of a stamp, a turn or a state follows it.
 - **A fork of a fork.** Its parent is the session it was forked from, not the first ancestor. Its copied turns include those its parent had copied, under the same numbers.
-- **Removing or expiring the parent** changes nothing in the fork. The fork has its own rows. `parent_key` then points at no row, and `parent_id` still shows the name, which may since have been used for a new session: spec 2, decision 22.
+- **Removing or expiring the parent** changes nothing in the fork. The fork has its own rows. `parent_id` still shows the name, which may since have been used for a new session: spec 2, decision 22.
 - **Removing the fork** changes nothing in the parent.
 - `session.parent` is a property that does no I/O. On the handle `fork` returns it is the source's id. On every other handle it is `None`. It is fixed when the handle is made, as `id` is, and it is never a copy of the row. The handle gains one slot for it, `_parent`.
-- The stored lineage of every session of an owner is `SessionInfo.parent`, in `fs.sessions` (spec 2, decision 20).
+- The stored lineage of every session of an owner is `SessionInfo.parent` and `SessionInfo.fork_before`, in `fs.sessions` (spec 2, decision 20).
 
 Reason: opencode keeps a fork's lineage apart from a child's and does not carry a delete into forks. Codex refuses to delete a source that forks still read from (`coding-agent-sessions.md`, sections 3 and 4). A copy needs neither rule. A handle is made with no I/O and keeps no copy of its row, so the only parent a handle can truthfully hold is the one its own `fork` call just recorded, and the listing is the stored read.
 
@@ -550,18 +545,18 @@ class Turn(NamedTuple):
 ```
 
 - The turns come oldest first, by number.
-- `limit` is from 1 to `TURNS_PAGE_MAX`, which is 1,000. `TURNS_PAGE` is 100. Any other value is refused with `vfs.invalid`.
+- `limit` is from 1 to `TURNS_PAGE_MAX`, which is 1,000. `TURNS_PAGE` is 100. Any other value is refused with `vfs.invalid`, with the detail `limit is a whole number from 1 to 1000`.
 - `after` is a turn id. The page holds the turns numbered above it. The next page is asked for with the last row's id. A page shorter than `limit` is the last.
-- An `after` that is no turn of the session is refused with `vfs.not_found`. That is a turn a rewind removed between two pages, and the host starts again.
+- An `after` that is no turn of the session is refused with `vfs.not_found`, with the detail `session 'conv_123' has no turn 'msg_9'; nothing was listed`. That is a turn a rewind removed between two pages, and the host starts again.
 - A session that has stored nothing gives `()`.
 - One statement in a `query`, joined to the session's row by owner key and id with its expiry, which fetches at most `limit` rows. It is not a use of the session.
-- The name is on the overview's list of public names, by ruling 10.
+- The name is on the overview's list of public names, by ruling 10 of the first reconciliation.
 
 Reason: the host maps its own message ids by supplying them, so it needs no listing for that. It needs one for the turn VFS made. Calls made before any `start_turn` go into a first turn with a made id, and without a listing the host could never name that turn to rewind before it. Article 2 of the constitution refuses a design that makes a caller guess.
 
 ### 21. `start_turn`, `rewind`, `fork` and `turns` return plain values and raise a refusal
 
-This is ruling 5 of the reconciliation: a call that manages the kernel's own records returns a plain value and raises a classified error, and a call that carries out, previews or reports file-system work returns a `Result`.
+This is ruling 5 of the first reconciliation: a call that manages the kernel's own records returns a plain value and raises a classified error, and a call that carries out, previews or reports file-system work returns a `Result`.
 
 - `start_turn` returns a `str`, `turns` a tuple of `Turn`, and `fork` a handle.
 - `rewind` returns a `Rewind`. Its counts are plain values. Its file report, `Rewind.files`, is a `Result`, and is spec 5's.
@@ -570,18 +565,20 @@ This is ruling 5 of the reconciliation: a call that manages the kernel's own rec
 |---|---|---|
 | A turn id that breaks decision 3 | `vfs.invalid` | `ValidationError` |
 | `limit` out of range, or `fork` to the source's own id | `vfs.invalid` | `ValidationError` |
+| A session id given to `fork` that breaks spec 2's rule | `vfs.invalid` | `ValidationError`, from `check_session_id` |
 | `rewind`, `fork` or `turns` naming a turn the session has not | `vfs.not_found` | `NotFoundError` |
-| `fork` to an id in use | `vfs.exists` | `WriteConflictError` |
+| `fork` to an id the owner has | `vfs.exists` | `WriteConflictError` |
 | A made turn id that collided four times | `vfs.internal` | `VFSError` |
-| A kernel store that cannot be reached | the kind of `KernelStoreUnavailable.error` | `exception_for_kind` of it, which is `VFSError` |
-| A session id given to `fork` that breaks spec 2's rule | none | `TypeError` or `ValueError`, as `fs.session` raises |
-| A closed file system | none | `ValueError` on the kernel and `RuntimeError` on the synchronous face, as spec 2's decision 24 has for `exists` |
+| A kernel store that cannot be reached, a closed file system included | the kind of `KernelStoreUnavailable.error` | `exception_for_kind` of it, which is `VFSError` |
+| A value of the wrong type | none | `TypeError` |
+| A closed synchronous facade | none | `RuntimeError`, from the management hop, as today |
 
-- Each classified exception carries a `Result` with the one fact, as `MountError` does.
-- No new kind is added. Ruling 6 lists the kinds the nine add, and none is this spec's.
+- Each classified exception carries a `Result` with the one fact, as `MountError` does. This is what spec 2's decision 28 has for its own calls.
+- No new kind is added.
 - One refusal is not raised. A change through a handle whose turn was removed, in decision 8, is a verb's refusal and is in that verb's `Result`.
 - None of the four is a step. No policy of spec 6 is asked about `start_turn`, `turns`, `fork` or a rewind of the memory. A rewind with files is spec 5's `RewindStep`.
-- `start` joins the verbs of `documentation/maintainers/how-we-name.md`: "The thing begins, or is carried on when it already has begun, and nothing must be closed", with `start_turn()` as its example. `rewind` and `fork` are bare verbs. `turns` is a plural noun. This spec's first landing carries that line, beside spec 2's amendment of the same page.
+- The four join `MANAGEMENT_METHODS`.
+- `start` joins the verbs of `documentation/maintainers/how-we-name.md`: "The thing begins, or is carried on when it already has begun, and nothing must be closed", with `start_turn()` as its example. `rewind` and `fork` are bare verbs. `turns` is a plural noun. This spec's first landing carries that line, as spec 2's decision 25 expects.
 
 Checked against the management methods as they are today: `add_mount` returns nothing and raises, and `grants` and `set_posture` return a `Result`. These four are of the first kind, so nothing departs from the ruling.
 
@@ -602,19 +599,19 @@ Reason: `start_turn` returns an id and `fork` returns a handle, so neither has a
 | LangGraph | `thread_id` | an id the application gives the run and keeps with its checkpoint | the application goes back to that checkpoint |
 | Its own | the conversation's id | the user message's id | the application's own edit path runs |
 
-The table is a contract of VFS in this sense: given the calls each row implies, the session holds the turns the row implies. The tests replay each row as a list of requests and count the turns. The AG-UI row is settled by the reconciliation: its turn id is the user message's id.
+The table is a contract of VFS in this sense: given the calls each row implies, the session holds the turns the row implies. The tests replay each row as a list of requests and count the turns. The AG-UI row is settled by the first reconciliation: its turn id is the user message's id.
 
 Reason: every studied protocol carries a conversation id and a message id, and none carries an edit (`chat-protocols.md`, section 6). AG-UI's `runId` is new for every run, and one message's work spans several runs when a tool's result or an answer to an interrupt comes back as a new run. A turn named by `runId` would be a turn for each of them, and no later request names the first.
 
 ### 23. The work is five landings, each green
 
-1. The table, `start_turn`, `turn`, `turns`, `make_first_turn`, `remove_turns` and decision 8's predicate. After spec 0's third landing and spec 2's second.
+1. The table, `start_turn`, `turn`, `turns`, `make_first_turn`, `latest_turn`, `remove_turns`, `_at_turn`, decision 8's predicate, and the count of turns in spec 2's listing. After spec 0's third landing and spec 2's second.
 2. The shell state: the machine's report, the read and the write. After spec 3's second landing, which gives `Session.cli` its guarded router.
 3. `rewind(before=)`, with R3 and without R2. After spec 3's second landing.
 4. `fork` and `parent`. After spec 3's second landing.
 5. The rule for jobs: R2, and the fork's test that jobs stay behind. With spec 7's landing of its job record or after it, whichever is later.
 
-Spec 5's third landing needs the first of these, and its fourth needs the third. `files=` and `preview=` arrive with spec 5's fourth landing.
+Spec 5's third landing needs the first of these, and its fourth needs the third. `files=` and `preview=` arrive with spec 5's fourth landing. Spec 3's statements gain their join to turns when the first of these lands, as its decision 20 says.
 
 Reason: each landing is of use alone and leaves the tree green. Between landings 3 and 5 a rewind cancels no job, and until spec 7 lands there is no stored job to cancel.
 
@@ -622,21 +619,34 @@ Reason: each landing is of use alone and leaves the tree green. Between landings
 
 | Write | Form | Why |
 |---|---|---|
-| A new turn: S2 to S6 | `commit` | It goes with no change of a file. A store that cannot be written raises, and no turn is started. |
+| A new turn: S2 to S5 | `commit` | It goes with no change of a file. A store that cannot be written raises, and no turn is started. |
 | The shell state at a line's end | `record_after` | It follows a line that has already run. A failure is a warning on the line's result, and a cancelled caller still has the state stored. |
-| A rewind: R2 to R6 | `commit` | It is the kernel's own records alone. |
-| A fork: F1 to F7 | `commit` | The same. |
+| A rewind: R2 to R5 | `commit` | It is the kernel's own records alone. |
+| A fork: F1 to F6 | `commit` | The same. |
 | `make_first_turn` | Inside the `commit`, the `record_after` or the flush of the record that needs it | It is called by the writer of a stamp, a change row, a job or a shell state. |
 | `remove_turns` | Inside spec 2's reclaim `commit` | It is one of `SESSION_CHILDREN`. |
 
 - Every read is a `query`: S1, R1, the read of the shell state and `turns()`.
 - This spec registers no kind with `register_behind` and puts nothing behind. A turn is never dropped, so by spec 0's decision 14 it may not be written behind.
 - It registers no sweeper, since its table has no expiry of its own.
-- The function a `commit` is given runs again from its first statement on a retry. Each function here reads everything from its arguments and its session, and none keeps a count from an earlier try.
-- Every stored time is `store.now()`, and every read through `vfs_sessions` filters on `expires_at`.
-- The statements that are not spec 0's helpers each bind a fixed number of parameters.
+- The function a `commit` is given runs again from its first statement on a retry. Each function here reads everything from its arguments and its transaction, and none keeps a count from an earlier try.
+- Every stored time is `store.now()`, and every read through `vfs_sessions` filters on `expires_at` or goes through spec 2's `find`.
+- The statements that are not spec 0's helpers each bind a fixed number of parameters, which spec 0's decision 25 admits.
 
-Reason: ruling 1 of the reconciliation asks every spec that keeps a record to say which of spec 0's forms each write uses. A turn row is the thing other records hang on, so it is committed before the call that made it returns.
+Reason: every spec that keeps a record says which of spec 0's forms each write uses. A turn row is the thing other records hang on, so it is committed before the call that made it returns.
+
+### 25. A handle is put in a stored turn with no I/O by `_at_turn`
+
+```python
+def _at_turn(self, turn_id: str, number: int) -> None: ...
+```
+
+- It sets the handle's turn to that id and number, and reads nothing. It is a plain method of `AsyncSession`, private to the package, and the synchronous `Session` has no twin of it.
+- Spec 7's resume is its one caller. It reads the turn's id and number from its job's row and from `vfs_session_turns`, makes a handle for the job's session, and puts it in the job's turn, so the resumed step is recorded where the call was made (spec 7, decision 34).
+- It does not check that the turn is live. A job whose turn was removed is ended by spec 7's decision 5 before any handle is made for it, and a change through a handle in a dead turn is refused by decision 8.
+- No public name is added. A host puts a handle in a turn with `start_turn`.
+
+Reason: a job is carried on by a process that never held the first handle, and its turn is already known from its row. A `start_turn` there would be a read for a fact in hand, and would make the turn again if a rewind had removed it.
 
 ## Cost
 
@@ -644,7 +654,7 @@ Costed against the reference deployment in the working agreement. One multiplier
 
 **Per verb call, about 150,000 a day.** This spec adds no statement to any verb, read or write. The turn's number is an integer on the handle. A read through a handle with no turn adds none either, by decision 7.
 
-**Per turn, about 15,000 a day.** A new turn is one read, then `resolve`, the counter, the insert and the count in one transaction: 5 statements when the session's row is there and was used in the last five minutes, and 6 on a session's first record. That is about 75,000 statements and 15,000 small transactions a day.
+**Per turn, about 15,000 a day.** A new turn is one read, then `resolve`, the counter and the insert in one transaction: 4 statements when the session's row is there and was used in the last five minutes, and 6 on a session's first record, by spec 2's table of `resolve`. That is about 60,000 statements and 15,000 small transactions a day.
 
 **Per request.** A request that carries a turn on is one read. If every one of the 150,000 calls were its own request, that is 135,000 reads a day, about 5 a second over the working day and about 20 at the peak, each a probe of two unique indexes.
 
@@ -654,7 +664,7 @@ Costed against the reference deployment in the working agreement. One multiplier
 
 **Per batch.** A 10,000-entry write through a session issues no statement of this spec. Specs 3 and 5 each write their own records, with one turn number for the whole batch.
 
-**Per rewind and per fork.** Each is a person's act. No measurement of how often a user edits or branches exists, and the rate is an assumption. A rewind is one read of two statements, `resolve` and the turn's number, and then one transaction: `resolve`, the cancel, the two removals and the count. A fork is one transaction: two calls of `resolve`, the fork point, the lineage, two copies and the count. No statement of either takes a bind for a row.
+**Per rewind and per fork.** Each is a person's act. No measurement of how often a user edits or branches exists, and the rate is an assumption. A rewind is one read of two statements, `find` and the turn's number, and then one transaction of four: `find`, the cancel, the removal of stamps and the removal of turns. A fork is one transaction of five: `find`, the fork point, `make_fork` and the two copies. No statement of either takes a bind for a row.
 
 **Rows.** 15,000 turn rows a day. A session expires 30 days after its last use, so at least 30 days of turns are live: 450,000 rows or more, each about 100 bytes and its two index entries. A conversation that is used every day keeps all of its rows.
 
@@ -662,16 +672,16 @@ Costed against the reference deployment in the working agreement. One multiplier
 
 | Lock | Held for | Who waits | Who does not |
 |---|---|---|---|
-| The session's own row, taken by S3 | S3, S4, S5 and the commit | Another new turn in the same session, and any write of spec 2 to that row, a touch included | Every read. Every verb call. Every other session. A `start_turn` that carries a turn on. |
-| The session's own row, taken by R6 or F7 | The commit | The same callers | The same |
-| The new session's row, taken by F4 | The fork's copies and the commit | A second fork to the same id, and a record that makes that id's row at the same moment | Everything else. The id is not yet a session any handle uses. |
+| The session's own row, taken by S3 | S3, S4 and the commit | Another new turn in the same session, and any write of spec 2 to that row, a touch included | Every read. Every verb call. Every other session. A `start_turn` that carries a turn on. |
+| The new session's row, inserted by F2 | The fork's copies and the commit | A second fork to the same id, and a record that makes that id's row at the same moment | Everything else. The id is not yet a session any handle uses. |
 | The rows a rewind removes | The rewind's transaction | A flush that writes a stamp of a removed turn of that one session | Everything else |
 | The SQLite kernel store's one writer | Each transaction of this spec | Every other writer of the kernel store: a new turn, a flush of stamps, a change row, a saved job | Every read of every kind. Every write to a mount, which is another file. Nobody waits on Postgres. |
 
 - No lock of this spec is held for a batch's body, an index pass or a person's pause. No table lock is taken.
 - No read verb waits on any of them, on either engine.
-- On SQLite the longest hold is a fork or a rewind of a long session. Measured on a SQLite file, as research and not as a test: a copy of 100,000 turns took 0.09 seconds and their removal 0.07. The copy and the removal of stamps are bounded by spec 3's 16 MiB and were not timed.
-- S3 is the first statement after `resolve`, so the row is held for two more statements and the commit. The insert cannot come first, because it needs the number.
+- A rewind and a fork of a source write no row of `vfs_sessions` that a handle uses, so neither holds the source session's row.
+- On SQLite the longest hold is a fork or a rewind of a long session. Measured on a SQLite file, as research and not as a test: a copy of 100,000 turns took 0.09 seconds and their removal 0.07. The copy and the removal of stamps are bounded by spec 3's 16 MiB, and spec 3 costs them.
+- S3 is the first statement after `resolve`, so the row is held for one more statement and the commit. The insert cannot come first, because it needs the number.
 
 **What grows.** The rows a fork copies and a rewind removes grow with the turns of the one session. The statements do not: each has a fixed text and a fixed number of binds. Nothing declared bounds a session's turns, and decision 2 says so with its direction.
 
@@ -688,29 +698,32 @@ Costed against the reference deployment in the working agreement. One multiplier
 - **`OLDPWD`.** The machine does not export it, so `cd -` as a line's first command answers as bash does when `OLDPWD` is not set. Exporting it on `cd` is bash parity and belongs to the shell's own specs.
 - **A line with no session.** `fs.cli` starts at `/` and keeps nothing. Spec 3's line session stores nothing either.
 - **The rendered hint of `vfs.not_found`.** It speaks of a path. Decision 8's refusal reaches an agent only when a host goes on using a handle after rewinding its turn.
-- **A listing newest first,** and the fork point in `SessionInfo`.
+- **A listing newest first,** and the fork point's number in `SessionInfo`.
 - **Turns over MCP.**
 
 ## Tests
 
-Each is written and seen failing before the code. A count is of statements recorded by a `before_cursor_execute` listener on `store.engine`, leaving out `BEGIN`, `COMMIT`, `PRAGMA`, `SAVEPOINT`, `RELEASE` and `ROLLBACK`. "Turn statements" are those whose text names `vfs_session_turns`, `last_turn` or `turn_count`. No test reads a clock. Unless a test says otherwise it runs on the in-memory store, on a SQLite file and on the Postgres leg.
+Each is written and seen failing before the code. A count is of statements recorded by a `before_cursor_execute` listener on `store.engine`, leaving out `BEGIN`, `COMMIT`, `PRAGMA`, `SAVEPOINT`, `RELEASE` and `ROLLBACK`. "Turn statements" are those whose text names `vfs_session_turns` or `turn_counter`. No test reads a clock. Unless a test says otherwise it runs on the in-memory store, on a SQLite file and on the Postgres leg.
 
 `tests/session/test_turns.py`:
 
-- `test_start_turn_stores_one_turn_and_returns_its_id`: 4 turn statements, 1 row, `last_turn` and `turn_count` are 1, and the return value equals `session.turn`.
+- `test_start_turn_stores_one_turn_and_returns_its_id`: 3 turn statements, 1 row, `turn_counter` is 1, and the return value equals `session.turn`.
 - `test_starting_a_turn_the_session_has_carries_it_on`: the second start is 1 statement and writes none. The table still has 1 row. The same from a second file system over the same database.
-- `test_a_made_id_is_turn_and_eight_characters`: the id matches `^turn_[0-9A-HJKMNP-TV-Z]{8}$`. With the generator patched to repeat an id the session has once, 2 inserts run and 1 turn is made. Patched to repeat it always, the call raises after 4 inserts, and the counter, the count and the table are unchanged.
-- `test_two_file_systems_never_take_one_number`: two file systems over one database, 32 starts of 16 ids at once. 16 rows, 16 distinct numbers, `turn_count` 16, and each id answered with one number to both callers. On a SQLite file and the Postgres leg.
-- `test_a_turn_id_is_checked_before_any_statement`, parametrized: `""`, 256 characters, an id with a space, with a NUL, with a newline, `café`, an `int` and `bytes` each raise `ValidationError` at 0 statements. 255 characters, a UUID, 16 alphanumerics and `msg_01` are each accepted.
+- `test_a_made_id_is_turn_and_eight_characters`: the id matches `^turn_[0-9A-HJKMNP-TV-Z]{8}$`. With the generator patched to repeat an id the session has once, 2 inserts run and 1 turn is made. Patched to repeat it always, the call raises after 4 inserts, and the counter and the table are unchanged.
+- `test_two_file_systems_never_take_one_number`: two file systems over one database, 32 starts of 16 ids at once. 16 rows, 16 distinct numbers, and each id answered with one number to both callers. On a SQLite file and the Postgres leg.
+- `test_a_turn_id_is_checked_before_any_statement`, parametrized: `""`, 256 characters, an id with a space, with a NUL, with a newline and `café` each raise `ValidationError` at 0 statements. An `int` and `bytes` each raise `TypeError`. 255 characters, a UUID, 16 alphanumerics and `msg_01` are each accepted.
 - `test_the_turn_is_on_the_handle`: two handles of one session start two turns and each reports its own. A third handle reports `None`. No column of `vfs_sessions` names a turn a handle is in.
 - `test_a_handle_keeps_no_session_key`: a session is removed with `fs.remove_session` and its id used again. A handle made before the removal starts a turn, and the turn is a row of the new key.
+- `test_an_expired_session_is_given_no_old_turn`: with the clock stepped past the session's expiry, a start of an id the old row had makes a turn numbered 1 under a new key.
 - `test_an_earlier_turn_started_again_is_carried_on`: with `msg_4` and `msg_5`, a start of `msg_4` leaves 2 rows with their numbers, and the handle is in `msg_4`.
 - `test_a_read_through_a_session_issues_no_turn_statement`, parametrized over `read`, `stat`, `ls`, `tree`, `glob`, `grep` and `search`, with a started handle and with one that has no turn: 0 turn statements before the flush.
 - `test_a_ten_thousand_entry_write_issues_no_turn_statement`: 0 turn statements. Marked `slow`.
 - `test_a_handle_with_no_turn_files_under_the_latest`: a line through such a handle stores its state on the latest turn's row. On a session with no turn, 1 turn with a made id is made, and a second such line makes no second.
-- `test_two_writers_make_one_first_turn`: two file systems, two lines at once on a session with no turn. 1 row, and `turn_count` 1.
+- `test_two_writers_make_one_first_turn`: two file systems, two lines at once on a session with no turn. 1 row.
 - `test_turns_lists_a_page_at_a_time`: 250 turns at `limit=100` come as pages of 100, 100 and 50, oldest first, each turn once, each page 1 statement that fetches at most 100 rows. An `after` that is no turn raises `NotFoundError`. `limit=0` and `limit=1001` raise `ValidationError`. A session that stored nothing gives `()`.
+- `test_the_listing_counts_a_sessions_turns`: after 3 starts and a rewind that removes 1, the session's row in `fs.sessions` has `turns == 2`, and `turn_counter` is 3.
 - `test_remove_turns_removes_a_chunk`: 12,000 turns and a limit of 5,000 are removed in calls that return 5,000, 5,000 and 2,000, each 1 statement with 3 binds. Marked `slow`. `test_a_removed_session_has_no_turn_row`: after `fs.remove_session` and one sweep, 0 rows carry the old key.
+- `test_at_turn_reads_nothing`: `_at_turn` issues 0 statements, and `session.turn` is the id given.
 - `test_a_store_that_cannot_be_reached_raises`: `start_turn`, `turns`, `rewind` and `fork` each raise a `VFSError` whose result holds a `vfs.unavailable` fact.
 
 `tests/session/test_shell_state.py`:
@@ -730,11 +743,11 @@ Each is written and seen failing before the code. A count is of statements recor
 `tests/session/test_rewind.py`:
 
 - `test_the_guides_rewind`: the guide's steps 4 and 5. The rewind returns `Rewind(before="msg_5", turns=1, jobs=0, files=None)`. An edit of the file read in both turns goes through with no read. An edit of the file changed in `msg_5` is refused `vfs.conflict.changed`. `pwd` prints `/`. The file still holds the edit, and 0 statements ran on the mount's engine during the rewind.
-- `test_a_rewind_is_one_read_and_one_transaction`: 3 turn statements, the turn's number, the removal and the count. The removal has 2 binds. The same at 10,000 turns, marked `slow`. `turn_count` equals the rows left.
+- `test_a_rewind_is_one_read_and_one_transaction`: 2 turn statements, the turn's number and the removal. The removal has 2 binds. The same at 10,000 turns, marked `slow`. No statement of the rewind writes `vfs_sessions`.
 - `test_a_turn_the_session_has_not_is_refused`: `NotFoundError` whose message holds the turn id, 0 writes. The same for a session that stored nothing, and for a turn an earlier rewind removed.
 - `test_a_removed_turn_starts_again_as_a_new_turn`: its number is above every number given before.
-- `test_a_rewind_to_before_the_first_turn`: 0 turns are left, `turn_count` is 0, the session still exists, a line starts at `/`, and the next line makes 1 new first turn.
-- `test_two_rewinds_at_once`: with a seam between the read and the transaction, both return, the turns left are those before the earlier point, the two counts sum to the turns removed, and `turn_count` equals the rows left.
+- `test_a_rewind_to_before_the_first_turn`: 0 turns are left, the session still exists, a line starts at `/`, and the next line makes 1 new first turn.
+- `test_two_rewinds_at_once`: with a seam between the read and the transaction, both return, the turns left are those before the earlier point, and the two counts sum to the turns removed.
 - `test_a_handle_in_a_removed_turn`: its edit fails with `vfs.not_found` naming the turn, at 0 mutation statements on the mount. Its read is served. A later handle's edit of the file it read is refused `vfs.conflict.unread`. The handle that asked for the rewind reports `turn is None`.
 - `test_a_stamp_that_arrives_after_the_rewind_is_dead`: a second file system reads in `msg_5` through a started handle and holds its flush, the first rewinds, the second flushes. The stamp table holds 0 rows of the removed turn, and an edit of that file is refused `vfs.conflict.unread`.
 - Landing 5: `test_a_waiting_job_of_a_removed_turn_is_cancelled`, with the reason of decision 12 and `jobs == 1`. `test_a_waiting_job_of_a_kept_turn_stays`, resumed afterwards, with its write remembered. `test_a_running_job_of_a_removed_turn_finishes`.
@@ -742,9 +755,9 @@ Each is written and seen failing before the code. A count is of statements recor
 `tests/session/test_fork.py`:
 
 - `test_the_guides_fork`: `branch.id` and `branch.parent` are `conv_456` and `conv_123`. The branch edits a file the parent read with no read of its own. The parent's next edit of that file is refused `vfs.conflict.changed`. `pwd` in the branch prints the parent's directory, and an exported variable is there. The `fs.sessions` row of the branch has `parent == "conv_123"`.
-- `test_a_fork_before_a_turn_holds_the_turns_below_it`: `turns()` of the fork is the source's below the point, with the same ids and numbers, and `turn_count` equals them. A file read only in a later turn is unread in the fork. The fork's next turn is numbered above `fork_turn`.
+- `test_a_fork_before_a_turn_holds_the_turns_below_it`: `turns()` of the fork is the source's below the point, with the same ids and numbers. A file read only in a later turn is unread in the fork. The fork's next turn is numbered at or above the fork point. The `fs.sessions` row has the `fork_before` given.
 - `test_a_fork_copies_turns_in_one_statement`: 1 insert into `vfs_session_turns` with 3 binds, at 10 turns and at 10,000, marked `slow`.
-- `test_an_id_in_use_is_refused`: `WriteConflictError` of kind `vfs.exists` with the `data` of decision 16, and the source and the existing session are unchanged, rows counted. The source's own id raises `ValidationError`. The same id under another owner forks. An id whose row holds no turn and no parent is taken.
+- `test_an_id_the_owner_has_is_refused`: `WriteConflictError` of kind `vfs.exists` with the `data` of decision 16, and the source and the existing session are unchanged, rows counted. The same for an id whose row holds no turn. The source's own id raises `ValidationError`. The same id under another owner forks.
 - `test_a_turn_the_source_has_not_is_refused`: `NotFoundError`, and the new id has no session.
 - `test_a_fork_of_a_session_that_stored_nothing`: an empty session whose `parent_id` is recorded.
 - `test_a_fork_of_a_fork`: its parent is the session it was forked from, and its turns include the first session's.
@@ -764,7 +777,7 @@ Each is written and seen failing before the code. A count is of statements recor
 - `test_no_start_rewinds`: a start of an earlier id, and a start of a new id while later turns exist, each remove 0 rows.
 - `test_a_branch_is_one_fork`.
 
-`tests/test_sync.py`: `start_turn`, `turns`, `rewind` and `fork` each have a twin, and the pinned count at line 254 rises by four on top of what specs 2, 3 and 7 add. `turn` and `parent` are properties of both faces.
+`tests/test_sync.py`: `start_turn`, `turns`, `rewind` and `fork` each have a twin, and the pinned count at line 254 rises by four on top of what specs 2, 3 and 7 add. `turn` and `parent` are properties of both faces. `_at_turn` is private and has no twin.
 
 ## Scope
 
@@ -773,16 +786,17 @@ In:
 - `src/vfs/kernel_store/turns.py`, new: the statements, `make_first_turn`, `latest_turn`, `rewind_turns` and `remove_turns`.
 - `src/vfs/turns.py`, new: the constants, `Turn`, `Rewind`, the id check and the generator. It issues no statement.
 - `src/vfs/models/kernel_rows.py`: the table of decision 2, and one added to `KERNEL_FORMAT_VERSION`.
-- `src/vfs/session.py` and `src/vfs/sync_session.py`: `start_turn`, `turn`, `turns`, `rewind`, `fork`, `parent`, and `cli` with `cwd=None`.
+- `src/vfs/session.py` and `src/vfs/sync_session.py`: `start_turn`, `turn`, `turns`, `rewind`, `fork`, `parent`, `_at_turn`, and `cli` with `cwd=None`.
+- The listing statement of spec 2's `fs.sessions`: its count of turns.
 - `src/vfs/shell/host.py`: `ShellState`, `SHELL_ENV_BYTES`, and `run_line_from`.
 - `crates/vfs-shell/src/machine/mod.rs`, `crates/vfs-shell-wasm/src/wire.rs`, `crates/vfs-core/src/shell_binding.rs` and `src/vfs/_native.pyi`: the end state. After a Rust edit the extension is built again.
 - `src/vfs/__init__.py`: `Turn` and `Rewind`.
 - The tests above, and `tests/lint/allowlist.py` where a module on the size list grows.
 - The docs below.
 
-Out: everything under "Left as it is", and the definition of every table but `vfs_session_turns`. This spec writes five columns of `vfs_sessions` and issues two statements on `vfs_session_stamps`, each as its owner rules.
+Out: everything under "Left as it is", and the definition of every table but `vfs_session_turns`. This spec fills four columns of `vfs_sessions` through spec 2's functions and spec 0's counter, and reaches `vfs_session_stamps` through spec 3's functions alone.
 
-Files that another spec also changes, each of which must name this one: `session.py`, `sync_session.py` and `tests/test_sync.py` (specs 2, 3, 5 and 7); `kernel_rows.py` (specs 0, 2, 3, 5 and 7); `shell/host.py` (specs 3 and 8); `wire.rs` and `shell_binding.rs` (the binary boundary, and `agents/2026-11-22-shell-wire-and-instance-lifecycle`); `how-we-name.md` (spec 2); the session guide (specs 2, 3, 5 and 7).
+Files that another spec also changes, each of which must name this one: `session.py`, `sync_session.py` and `tests/test_sync.py` (specs 2, 3, 5 and 7); `kernel_rows.py` (specs 0, 2, 3, 5 and 7); `shell/host.py` (specs 3 and 8); `wire.rs` and `shell_binding.rs` (the binary boundary, and `agents/2026-11-22-shell-wire-and-instance-lifecycle`); `how-we-name.md` (spec 2); `src/vfs/turns.py` (spec 5, for `Rewind.files`); the session guide (specs 2, 3, 5 and 7).
 
 The landings are decision 23's five. Each runs `scripts/ci.sh`, `scripts/docs.sh check` and the Postgres leg before its pull request. Landing 2 also runs `cargo test -p vfs-core` and the shell crate's tests.
 
@@ -806,7 +820,8 @@ Pages, each changed: the session guide's steps 4, 5 and 6 and its table of chat 
 - `Session.cli(line, *, cwd="/")`, as built: the default becomes `None`, which means the session's own directory.
 - The docstring of `src/vfs/session.py`, "A session holds exactly one authority and its own lifecycle, nothing more": a handle also holds its turn. Spec 2 reverses the rest of that sentence.
 - `documentation/maintainers/how-we-name.md`, the list of verbs: `start` is added.
-- This spec's own first draft, in four places: a turn id admitted any character that is no control character, and now follows the session id's rule (decision 3); the handle kept the session's key, and now keeps none (decisions 4 and 10); the fork point was also stored as a turn id, and is now a number alone (decision 19); `parent` was learned from the row, and is now fixed when the handle is made (decision 19).
+- This spec's own first draft, in three places: a turn id admitted any character that is no control character, and now follows the session id's rule (decision 3); the handle kept the session's key, and now keeps none (decisions 4 and 10); `parent` was learned from the row, and is now fixed when the handle is made (decision 19).
+- This spec's second draft, in two places: it kept a count of turns on the session's row, and the listing now counts the rows (decision 2); it wrote its own statements against `vfs_session_stamps`, and now calls spec 3's functions (decisions 12 and 17).
 
 ## Choices for the owner
 
@@ -816,7 +831,7 @@ Each is decided above and stands until it is ruled on.
 2. **The shell keeps the directory and the exported variables only.** Decision 9. The other choice keeps every variable and every function, which is what one long-lived bash would do and not what a new process does.
 3. **`SHELL_ENV_BYTES` is 32,768.** Decision 11.
 4. **A rewind cannot be undone.** Decision 13. The other choice hides removed turns and adds a filter to every read of a stamp.
-5. **A fork to an id in use is refused, and a repeated fork is not answered with the first.** Decision 16.
+5. **A fork to an id the owner has is refused, and a repeated fork is not answered with the first.** Decision 16.
 6. **`parent` is on the handle a fork returns and on no other.** Decision 19. The other choice drops it from the handle and leaves the listing as the one read.
 7. **A change through a handle whose turn was removed is refused, and a read is served.** Decision 8.
 8. **A turn id follows the session id's rule.** Decision 3. The other choice admits spaces and characters outside ASCII in a turn id alone.
@@ -824,29 +839,37 @@ Each is decided above and stands until it is ruled on.
 
 ## Where this spec disagrees with the overview or the guides
 
-1. **The overview gives spec 2 the amendment of `how-we-name.md` for `session` alone.** Change proposed: this spec's first landing adds `start` to that page's verbs. Evidence: `documentation/maintainers/how-we-name.md:29` lists four verbs, `start_turn` is fixed by ruling 12, and spec 2's decision 25 adds no verb.
+1. **The overview gives spec 2 the amendment of `how-we-name.md` for `session` alone.** Change proposed: this spec's first landing adds `start` to that page's verbs. Evidence: `documentation/maintainers/how-we-name.md:29` lists four verbs, `start_turn` is fixed by ruling 12, and spec 2's decision 25 leaves the line to this spec.
 2. **The guide says a handle's `turn` holds the id of the turn the handle is in.** Change proposed: add "or `None` before a turn is started on it". Evidence: a handle is made with no I/O and a read may issue no statement, so a handle cannot know the latest turn (decisions 6 and 7).
 3. **The guide's Step 6 reads `branch.parent` with no word on other handles.** Change proposed: add "A handle asked for later with `fs.session` does not carry it; `fs.sessions` lists each session's parent." Evidence: a handle keeps no copy of its row, by spec 2's decision 16.
-
-Three points of the first draft are settled by the reconciliation and are gone from this list: `session.turns()` is on the overview's list of names (ruling 10), the argument `id` is allowed by spec 2's first landing (ruling 9), and AG-UI's turn id is the user message's id.
+4. **The guide says an id is "a string of 1 to 255 characters".** Change proposed: "1 to 255 visible ASCII characters, with no space". Evidence: spec 2's decision 10, which decision 3 here takes for a turn id.
 
 ## Needs no other spec meets yet
 
-1. **Spec 3, decision 7 (The current stamp is read in one keyed statement).** It reads the row of the highest turn and does not ask whether that turn is live. On Postgres a flush and a rewind that overlap can leave one stamp of a removed turn: the flush's liveness test sees the turn before the rewind commits, and the rewind's R3 does not see the flush's row. The decision would need: "The current stamp of a path is the row of the highest turn that has a row in `vfs_session_turns`. Both the outer row and the `max` are filtered by spec 4's predicate, `EXISTS (SELECT 1 FROM vfs_session_turns t WHERE t.session_key = s.session AND t.number = s.turn)`."
-2. **Spec 3, decision 8 (A read writes its stamps behind, and a change writes them with the change), step 2.** Decision 8 here refuses a change through a handle whose turn was removed. The step would need: "For a started handle the lookup also selects spec 4's predicate for the handle's turn. When it is false the call is refused `vfs.not_found`, with the detail `turn '<id>' was removed by a rewind; nothing was changed`, and nothing is dispatched."
-3. **Spec 3, the scope of its rows written behind.** `rewind` and `fork` drain one session. Its decision 8 would need: "A session's stamps are put behind with `scope=(owner_key, id)`, so `store.drain((owner_key, id))` waits for that session's rows alone."
-4. **Spec 7, decision 5 (A job is in one of four states, and every change of state is one conditional update on its revision).** A job of a removed turn that is `running` can stop again and wait under a dead turn. The decision would need: "The insert that stores a job, and the update from `running` to `interrupted`, carry spec 4's predicate for the job's `session_key` and `turn_number`. A job whose turn has no row is not stored as waiting: it ends `cancelled`, with the reason `cancel_session_jobs` is given by a rewind."
-5. **Spec 2, decision 3 (The handle holds seven values, and only its current turn ever changes).** Decision 19 here adds a slot. The decision would need: "`_parent`, public as `parent`: the id of the session a `fork` made this handle from, fixed when the handle is made, and `None` on a handle from `fs.session`. The handle holds eight values."
-6. **Spec 2, decision 13 (`vfs_sessions` holds one row per session, under a key that is never used twice), the row for `fork_turn`.** It reads "the number of the last turn the fork took from its parent". Decision 17 here writes `n - 1`, which may be a number no turn holds. The row would need: "every turn the fork took from its parent is numbered at or below it".
+Four needs of the last round are met and are gone from this list. Spec 3's decision 7 reads the current stamp from live turns alone. Its decision 8 refuses a change through a handle whose turn is dead, in this spec's words, and puts a session's stamps behind with `scope=ref.scope`. Spec 7's decision 5 stores no job as waiting under a dead turn. The wording of a fork point column is moot, since the columns are spec 2's own.
 
-One need that another spec states on this one is not met. Spec 3 asks, in item 2 of what its "Builds on" asks of spec 4, that the turn number of a handle with no turn be fixed before its stamp is stored, so that a rewind between a read and its flush cannot leave the stamp in the latest kept turn. It is not met, because such a handle has made no statement and a read may make none, so nothing the handle holds says where the session stood when the read was made. Decision 7 states the case and its cost: one read that the session remembers and the rewound conversation does not, only from a handle that started no turn, only in another process than the one that rewinds, and only inside one flush. The etag of that stamp is still checked at the write, so no other caller's change is ever overwritten. A host that starts a turn on every request never meets it, since a started handle's late stamp is dead.
+Still open, each with what is missing:
+
+1. **Spec 2, decision 3 (The handle holds seven values, and only its current turn ever changes).** Decision 19 here adds a slot. Missing: a row of that table, "`_parent`, public as `parent`: the id of the session a `fork` made this handle from, fixed when the handle is made, and `None` on a handle from `fs.session`", and the count eight.
+2. **Spec 2, decision 22 (Removal frees the id in one commit and reclaims the rest in bounded chunks).** It calls `remove_turns(session, [session_key])`, in one ranged statement, after the children. Decision 2 here gives `remove_turns(transaction, session_key, limit) -> int`, of the shape of `remove_stamps` and `remove_changes`. Missing: "`remove_turns` is the last member of `SESSION_CHILDREN`, and is called as the others are".
+3. **Spec 2, decision 13, the row for `fork_before`.** It gives the column 1,020 bytes and names `MAX_TURN_ID_BYTES`. A turn id is at most 255 bytes, and the constant is `TURN_ID_MAX`. Missing: that name in the row. The wider column holds every lawful value, so nothing breaks meanwhile.
+
+Needs other specs state on this one, and where each is met:
+
+- Spec 2: an expired session is never given a turn or forked. Decisions 4 and 17: S1 carries `s.expires_at > :now`, and R1, F1 and the commits go through `find` or `resolve`.
+- Spec 2: the count of turns in the listing. Decision 2, and landing 1 of decision 23.
+- Spec 3: the calls on its table. Decisions 12 and 17 call `remove_stamps_from` and `copy_stamps`, and no statement of this spec names `vfs_session_stamps`.
+- Spec 7: `_at_turn`. Decision 25.
+- Spec 5: `rewind_turns`, `make_first_turn` and `Rewind` in `src/vfs/turns.py`. Decisions 12 and 7, and "Scope".
+- Spec 8: `ShellState` and `run_line_from`, and no state stored when a line stops. Decision 10.
+
+One need is not met, and its asker accepts that. Spec 3 asked that the turn number of a handle with no turn be fixed before its stamp is stored. A read may issue no statement, so nothing such a handle holds says where the session stood when the read was made. Decision 7 states the case and its cost, and spec 3's decision 14 takes it as stated.
 
 ## Not checked
 
-- **Postgres.** No server was available. To run on the Postgres leg: `test_two_file_systems_never_take_one_number`, for the counter and the guarded insert at READ COMMITTED; `test_two_rewinds_at_once`; `test_a_stamp_that_arrives_after_the_rewind_is_dead` with the flush and the rewind overlapping, which is item 1 above; and the creation of the partial index `ix_vfs_session_turns_state`.
-- **The other eight specs as they stand after their own reconciliation.** Each was read in its first draft. A decision cited here by number and heading may have moved.
-- **`resolve` as written by spec 2.** The probe used a stand-in read and insert. The statement counts under "Cost" add spec 2's own table of counts to the four turn statements that were run.
-- **F6 and R3 against spec 3's table.** They are written from its decision 4's columns and were not run.
+- **Postgres.** No server was available. To run on the Postgres leg: `test_two_file_systems_never_take_one_number`, for the counter and the guarded insert at READ COMMITTED; `test_two_rewinds_at_once`; `test_a_stamp_that_arrives_after_the_rewind_is_dead` with the flush and the rewind overlapping, where spec 3's `current_stamps` must return no row of the removed turn; and the creation of the partial index `ix_vfs_session_turns_state`.
+- **Spec 2's and spec 3's functions.** `resolve`, `find`, `make_fork`, `read_session`, `remove_stamps_from` and `copy_stamps` were read and not run. The statement counts under "Cost" add spec 2's own table of counts to the turn statements that were run.
+- **The other eight specs as they stand after this round.** Each was read while it was being revised under the freeze. A decision cited here by number and heading may have gained text.
 - That bash run on a line prints nothing for `history`, and that bash exports `OLDPWD` after `cd`. The first is taken from the draft named under "Builds on". Neither was run against bash.
 - What the machine's report of its end state adds to a line's `fuel_used`. `tests/shell/test_host.py:738` reads that figure.
 - How often a user edits, regenerates or branches, and what share of calls are lines.
