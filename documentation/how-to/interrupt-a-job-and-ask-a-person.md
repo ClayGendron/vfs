@@ -80,10 +80,11 @@ The `system` authority stands for your own application code. No policy is applie
 
 ## Step 3: Make a Call That Is Interrupted
 
-Open a session for Scout, and have Scout change the contract.
+Ask for a session for Scout, and have Scout read the contract and change it. Scout reads first because a session refuses to change a file its agent has not read, as [Keep a Session for Each Conversation](keep-a-session-for-each-conversation.md) explains.
 
 ```python
-scout = fs.open_session(Authority.of(Principal("scout")))
+scout = fs.session(Authority.of(Principal("scout")), "conv_123")
+scout.read("/contracts/acme.md")
 
 result = scout.edit("/contracts/acme.md", old="30 days", new="90 days")
 result.success, result.interrupted
@@ -181,7 +182,7 @@ The principal's `name` is a label for people and agents to read. VFS uses it whe
 
 The answer must fit the interrupt's schema. One that does not is refused with the reason, nothing is recorded, and the job stays interrupted, so the person can answer again. The answer is bound to this job's interrupt and to nothing else, not even an identical edit Scout might make tomorrow.
 
-**An agent cannot resume a job.** `resume` is a method of the file system your application holds. It is not on a session, it is not a shell command, and it is never offered to an agent as a tool.
+**An agent cannot resume a job.** `resume` is a method of the file system and of a session, both of which your application holds. It is not a shell command, and it is never offered to an agent as a tool. On a session it is `scout.resume(True, authority=ada)`, which resumes the job that session has waiting; [Keep a Session for Each Conversation](keep-a-session-for-each-conversation.md#step-7-resume-a-job-through-its-session) shows it.
 
 Resuming does not make a new call. **It carries out the step that was saved, exactly as it was when Ada saw it.** Four rules keep that safe.
 
@@ -442,13 +443,14 @@ Give it the folders that matter. Over a whole file system it asks too often, and
 A session can carry policies of its own, which is how one application runs a careful agent beside a free one.
 
 ```python
-careful = fs.open_session(
+careful = fs.session(
     Authority.of(Principal("scout")),
+    "conv_124",
     policies=[policies.review(paths=["/"])],
 )
 ```
 
-A session's policies are added to the file system's, and asked after them. **A session can ask for more review. It can never ask for less.**
+A session's policies are added to the file system's, and asked after them. A policy is code, so it is not stored with the session: pass the policies each time you ask for it. **A session can ask for more review. It can never ask for less.**
 
 ## The System Authority Is Never Interrupted
 

@@ -33,7 +33,7 @@
       "groups": [
         {
           "title": null,
-          "pages": ["/how-to/load-a-folder-of-files", "/how-to/interrupt-a-job-and-ask-a-person"]
+          "pages": ["/how-to/load-a-folder-of-files", "/how-to/keep-a-session-for-each-conversation", "/how-to/interrupt-a-job-and-ask-a-person"]
         }
       ]
     },
