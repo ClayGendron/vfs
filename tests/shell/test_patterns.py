@@ -114,6 +114,8 @@ def test_a_pattern_with_no_operator_keeps_its_text() -> None:
         ("beta|gamma", True),
         ("pipe", False),
         ("TIME", False),
+        ("kmalloc", False),
+        ("LAKE", False),
         ("[a-c]x", False),
         ("\u00e9t\u00e9", False),
     ],

@@ -143,6 +143,7 @@ LIBRARY_GREP = (
     "grep -rw 'a.b' src",
     "grep -ri 'été' docs",
     "grep -ri INTRO docs",
+    "grep -ri KEY src",
     "grep -ri '[a-c]lpha' docs",
     "grep -r alpha - < docs/a.md",
     "grep -rf docs/a.md docs",

@@ -37,8 +37,8 @@ _ERE_ESCAPABLE: Final = frozenset("\\.[]()*+?{}|^$")
 _BRE_ESCAPABLE: Final = frozenset("\\.[]*^$/")
 """Characters a basic pattern may escape to mean themselves."""
 
-_UNFOLDED: Final = frozenset("iI[")
-"""What keeps an ASCII pattern from ``-i``: the letter glibc folds with the dotless i (U+0131), and a bracket."""
+_UNFOLDED: Final = frozenset("iIkK[")
+"""What keeps an ASCII pattern from ``-i``: the two letters the two sides fold apart, and a bracket."""
 
 
 class Translated(NamedTuple):
@@ -68,9 +68,10 @@ def verb_regex(pattern: str, dialect: Dialect) -> Translated | None:
 def case_folds_alike(pattern: str) -> bool:
     """Whether ``-i`` over ``pattern`` folds each letter as glibc's ``towlower`` and the verb both do.
 
-    The two fold every ASCII letter alike, ``k`` with the Kelvin sign and ``s`` with the long s (U+017F)
-    included, except ``i``, which glibc also folds with the dotless i (U+0131). So a pattern is
-    served under ``-i`` when it is ASCII and holds no ``i`` and no bracket, whose range may.
+    The two fold every ASCII letter alike, ``s`` with the long s (U+017F) included, except two:
+    glibc also folds ``i`` with the dotless i (U+0131), and the verb also folds ``k`` with the
+    Kelvin sign (U+212A). So a pattern is served under ``-i`` when it is ASCII and holds neither
+    letter and no bracket, whose range may.
     """
     return pattern.isascii() and not (_UNFOLDED & set(pattern))
 
