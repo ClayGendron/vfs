@@ -1,6 +1,6 @@
 # The shell serves grep, find and the verbs with no Unix name from the indexed verbs
 
-A draft, written on 2026-11-21 from the structural review of the shell (`agents/2026-11-21-the-shell-speaks-bash/reviews/structural-review.md`, finding 2) and the shell's `progress.md`. Amended and built on 2026-11-22 on the branch `the-shell-serves-the-indexed-verbs`, with the decisions below. Two departures from GNU are left for a ruling, under "Choices to confirm".
+A draft, written on 2026-11-21 from the structural review of the shell (`agents/2026-11-21-the-shell-speaks-bash/reviews/structural-review.md`, finding 2) and the shell's `progress.md`. Amended and built on 2026-11-22 on the branch `the-shell-serves-the-indexed-verbs`, with the decisions below. Two departures from GNU and the use of `allow_scan` were ruled the same day, under "Choices ruled".
 
 Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is frozen, not in the `0.1.0` gate after it. Ruled the same day: `grep`, `glob`, `search` and `traverse` are in the shell, look and feel like bash, and call the public verbs. The shell is no platform for other hosts and is not a package of its own, so the machine and the wire may change for vfs's needs.
 
@@ -57,7 +57,10 @@ The vfs host, its program table and pattern translation, the machine's program k
 
 Reviewed before landing in [the code review](../../context/reviews/2026-11-22-the-shell-serves-the-indexed-verbs-code-review.md): four Highs and four Mediums found and closed, standing verdict "Lands" on `e18ae69`.
 
-## Choices to confirm
+## Choices ruled
+
+Ruled on 2026-11-22: each of the three stands as recommended below. The silence over an unreadable file and the bytes body are departures from GNU, stated in `src/vfs/shell/programs.py` and on the reference page, and `allow_scan` stays on every served `grep`.
+
 
 1. **A file the caller may list but not read.** A served `grep -r` leaves it out without a word, and `-c` counts it 0, where GNU prints `Permission denied` and exits 2. Telling an unreadable file from one with no match needs a read of every file, or a rights query no public verb offers. Recommended: keep the silence. The names are listable anyway, and at the reference deployment one line per unreadable file is noise. The alternative is a verb or a `grep` row that names the files it skipped for rights, and the shell printing GNU's line for each.
 2. **A body stored as bytes.** A served `grep -r` never matches one, where GNU matches its raw bytes and prints `Binary file ... matches`. A UTF-8 text file a caller wrote with `data=` is invisible to it until it is rendered. Recommended: keep it, since a file the shell writes is text when it is UTF-8, and record it as a departure. The alternative is a `grep` verb that also matches a bytes body raw, which is a change to the verb for every caller.
