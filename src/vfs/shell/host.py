@@ -28,7 +28,7 @@ import asyncio
 import random
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from pydantic import Field
 
@@ -295,15 +295,23 @@ def _ended(reason: str) -> ResultError:
     return classified(ErrorKind.internal, detail=reason)
 
 
+class _Seen(NamedTuple):
+    """The version of a file an open saw at its first read."""
+
+    path: str
+    version: int | None
+
+
 class _Host:
     """One line's answers: each request a public verb called as the line's authority."""
 
     def __init__(self, fs: Router, authority: Authority) -> None:
         self._fs = fs
         self._authority = authority
-        self._bodies: dict[str, bytes] = {}
+        self._bodies: dict[_Seen, bytes] = {}
         self._held = 0
-        self._versions: dict[str, int | None] = {}
+        self._opens: dict[str, _Seen] = {}
+        self._sharers: dict[_Seen, int] = {}
         self._running: dict[str, list[tuple[bytes, bytes, int | None]]] = {}
         self._facts: dict[tuple[str, str | None, str], ResultError] = {}
         self._unkept = 0
@@ -357,34 +365,50 @@ class _Host:
     async def _read(self, path: str, opened: str, offset: int, length: int) -> tuple[str, object]:
         """A slice of the body the open named ``opened`` saw. Its first read is a ``read`` of the
         whole body, judged as the caller; a later one reads it again only if it gave way, and
-        refuses it if the file has moved to another version since."""
-        body = self._bodies.pop(opened, None)
+        refuses it if the file has moved to another version since. Opens that saw one version of
+        one file share its body."""
+        seen = self._opens.get(opened)
+        body = None if seen is None else self._bodies.pop(seen, None)
         if body is None:
             result = await self._fs.read(path, columns=_BODY, authority=self._authority)
             refusal = self._refusal(result)
             if refusal is not None:
-                self._versions.pop(opened, None)
+                self._close(opened)
                 return refusal
             row = result.observations[0]
-            if opened in self._versions and self._versions[opened] != row.version:
-                del self._versions[opened]
+            if seen is not None and seen.version != row.version:
+                self._close(opened)
                 self.keep(classified(ErrorKind.conflict, Path(path), detail="the file changed while it was open"))
                 return "error", "invalid"
-            self._versions[opened] = row.version
+            if seen is None:
+                seen = _Seen(path, row.version)
+                self._opens[opened] = seen
+                self._sharers[seen] = self._sharers.get(seen, 0) + 1
+            self._held -= len(self._bodies.pop(seen, b""))
             body = row.data if row.data is not None else (row.content or "").encode()
         else:
             self._held -= len(body)
         end = offset + length
         if end >= len(body):
-            self._versions.pop(opened, None)
-        else:
-            self._hold(opened, body)
+            self._close(opened)
+        if seen in self._sharers:
+            self._hold(seen, body)
         return "data", (body[offset:end], end >= len(body))
 
-    def _hold(self, opened: str, body: bytes) -> None:
-        """Keep ``body`` for the open it belongs to, last in line. Past ``READING_BYTES`` the bodies
+    def _close(self, opened: str) -> None:
+        """Forget the open named ``opened``, and the body it saw once no other open shares it."""
+        seen = self._opens.pop(opened, None)
+        if seen is None:
+            return
+        self._sharers[seen] -= 1
+        if not self._sharers[seen]:
+            del self._sharers[seen]
+            self._held -= len(self._bodies.pop(seen, b""))
+
+    def _hold(self, seen: _Seen, body: bytes) -> None:
+        """Keep ``body`` for the opens that saw it, last in line. Past ``READING_BYTES`` the bodies
         read least recently give way, never this one; their opens keep the version they saw."""
-        self._bodies[opened] = body
+        self._bodies[seen] = body
         self._held += len(body)
         while self._held > READING_BYTES and len(self._bodies) > 1:
             self._held -= len(self._bodies.pop(next(iter(self._bodies))))

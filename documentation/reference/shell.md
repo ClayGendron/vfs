@@ -113,6 +113,12 @@ vfs runs these programs itself. Each is one call of its verb, as the caller. Eac
 
 `glob`, `search` and `traverse` print absolute paths, and exit 0 when they print something, 1 when they find nothing and 2 on trouble, as `grep` does.
 
+### `rm` and `sed`
+
+`rm` refuses an empty operand as a missing file, and an operand whose last component is `.` or `..` with `refusing to remove '.' or '..' directory`, before it looks anything up, as GNU rm does; with `-f` the empty operand is silent, and the `.` and `..` refusals are not. So `X=; rm -rf "$X"` removes nothing. `-i` asks before each removal and `-I` once, for more than three operands or any recursion; the question goes to standard error and the answer is one line of standard input, yes when it begins with `y` or `Y`. The last of `-f`, `-i` and `-I` wins. `rm -ri` removes each entry alone, deepest first, so a directory that still holds a kept child, or one that arrived meanwhile, fails `Directory not empty` and survives; when descent into a directory is declined, no directory above it is asked about.
+
+`sed --sandbox` refuses `e`, `r`, `R`, `w`, `W` and the `w` and `e` flags of `s` when the script compiles, before any file is read or written. It applies to the whole script wherever the option stands, where GNU sed exempts an `-e` that comes before it. `sed -i` replaces a file only when its edit ends at its last line or at `q` or `Q`; a fault discards the edit and leaves the file as it was. A refused backup or replacement stops that edit and every later one, with status 4.
+
 ### Other names
 
 The interpreter asks vfs for every other name, and vfs answers in one of two ways:

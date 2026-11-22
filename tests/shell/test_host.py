@@ -406,6 +406,83 @@ async def test_a_body_given_way_is_read_again_only_at_the_version_its_open_saw(m
     assert [str(error.kind) for error in result.errors] == ["vfs.conflict"]
 
 
+async def test_two_opens_of_one_file_each_keep_the_version_they_saw(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.mkdir("/w", authority=SYSTEM))
+    lines = 30_000
+    ok(await fs.write(path="/w/a", content="".join(f"A{n:07}\n" for n in range(lines)), authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+
+    async def rewrite(n: int) -> None:
+        if n == 1:
+            ok(await fs.write(path="/w/a", content="".join(f"B{n:07}\n" for n in range(lines)), authority=SYSTEM))
+
+    reads = _counted_reads(monkeypatch, fs, rewrite)
+    line = "{ read -r x <&3; read -r y <&4; echo $y; grep -c ^A <&3; } 3</w/a 4</w/a"
+    result = await fs.cli(line, authority=ADA)
+    assert result.stdout == f"B0000000\n{lines - 1}\n"
+    assert reads == ["/w/a", "/w/a"]
+
+
+async def test_two_opens_of_one_version_share_one_body_past_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "READING_BYTES", 150_000)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/a.txt", content="a\n" * 100_000, authority=SYSTEM))
+    reads = _counted_reads(monkeypatch, fs)
+    line = "while read -r x <&3 && read -r y <&4; do :; done 3</a.txt 4</a.txt; echo done"
+    result = await fs.cli(line, authority=ADA)
+    assert result.stdout == "done\n"
+    assert reads == ["/a.txt", "/a.txt"], "readers in step of one file read it once each, never again"
+
+
+async def test_a_body_larger_than_the_budget_is_read_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "READING_BYTES", 1000)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/big.bin", content="y" * 300_000, authority=SYSTEM))
+    reads = _counted_reads(monkeypatch, fs)
+    result = await fs.cli("wc -c < /big.bin", authority=ADA)
+    assert result.stdout == "300000\n"
+    assert reads == ["/big.bin"], "the body being read never gives way to itself"
+
+
+async def test_a_body_read_to_its_end_is_let_go(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/big.bin", content="y" * 300_000, authority=SYSTEM))
+    held: list[int] = []
+    real_read = host_module._Host._read
+
+    async def counted(self: Any, *args: Any) -> tuple[str, object]:
+        reply = await real_read(self, *args)
+        held.append(self._held)
+        return reply
+
+    monkeypatch.setattr(host_module._Host, "_read", counted)
+    result = await fs.cli("cat /big.bin | wc -c", authority=ADA)
+    assert result.stdout == "300000\n"
+    assert held[0] == 300_000
+    assert held[-1] == 0
+
+
+async def test_rm_ri_keeps_a_directory_a_child_arrived_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/w/d/x.txt", content="x\n", parents=True, authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+    real_ls = fs.ls
+
+    async def arriving(*args: Any, **kwargs: Any) -> Result:
+        result = await real_ls(*args, **kwargs)
+        if (args[0] if args else kwargs.get("path")) == "/w/d":
+            ok(await fs.write(path="/w/d/new.txt", content="new\n", authority=SYSTEM))
+        return result
+
+    monkeypatch.setattr(fs, "ls", arriving)
+    result = await fs.cli("rm -ri /w/d; echo st=$?", stdin=b"y\ny\ny\n", authority=ADA)
+    assert result.stdout == "st=1\n"
+    assert result.stderr.endswith("rm: cannot remove '/w/d': Directory not empty\n")
+    assert (await fs.read("/w/d/new.txt", authority=SYSTEM)).success
+    assert not (await fs.read("/w/d/x.txt", authority=SYSTEM)).success
+
+
 async def test_bodies_whose_readers_stopped_early_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(host_module, "READING_BYTES", 250_000)
     fs = AsyncVirtualFileSystem()
