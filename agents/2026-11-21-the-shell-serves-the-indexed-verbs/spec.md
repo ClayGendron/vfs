@@ -53,6 +53,10 @@ Each was shown by a script that ran, on SQLite, at the branch's base `cbda272`.
 
 The vfs host, its program table and pattern translation, the machine's program kinds, the wire and the binding.
 
+## Review
+
+Reviewed before landing in [the code review](../../context/reviews/2026-11-22-the-shell-serves-the-indexed-verbs-code-review.md): four Highs and four Mediums found and closed, standing verdict "Lands" on `e18ae69`.
+
 ## Choices to confirm
 
 1. **A file the caller may list but not read.** A served `grep -r` leaves it out without a word, and `-c` counts it 0, where GNU prints `Permission denied` and exits 2. Telling an unreadable file from one with no match needs a read of every file, or a rights query no public verb offers. Recommended: keep the silence. The names are listable anyway, and at the reference deployment one line per unreadable file is noise. The alternative is a verb or a `grep` row that names the files it skipped for rights, and the shell printing GNU's line for each.
