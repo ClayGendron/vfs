@@ -41,11 +41,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
     from vfs.authority import Authority
-    from vfs.ops import GrepOutputMode, Rung
+    from vfs.ops import CaseMode, GrepOutputMode, Rung
     from vfs.paths import ObjectKind
     from vfs.results import Result, ResultError
     from vfs.shell.patterns import Dialect, Translated
-    from vfs.shell.verbs import Router
 
 MUTATING: Final = frozenset({"grant", "revoke", "edit", "mkedge", "rmedge"})
 """The programs that change bodies or rights, so a line forgets the bodies it holds before one runs."""
@@ -136,6 +135,98 @@ _UNIX_ERRORS: Final[dict[str, str]] = {
 """The ``strerror`` text a refusal reads as, by its kind."""
 
 _LEVELS: Final = frozenset(rung for rung in RUNGS if rung != "none")
+
+
+class Router(Protocol):
+    """The verbs a line can reach, each called with the caller's authority.
+
+    The router (:class:`~vfs.AsyncVirtualFileSystem`) is one; the shell names only the verbs, so it
+    sits beneath the router and imports nothing above it.
+    """
+
+    async def read(self, path: str, /, *, columns: frozenset[str], authority: Authority | None) -> Result: ...
+
+    async def stat(self, path: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def ls(self, path: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def glob(
+        self,
+        pattern: str,
+        /,
+        *,
+        paths: tuple[str, ...],
+        kind: ObjectKind | None,
+        max_count: int | None,
+        authority: Authority | None,
+    ) -> Result: ...
+
+    async def grep(
+        self,
+        pattern: str,
+        /,
+        *,
+        paths: tuple[str, ...],
+        globs: tuple[str, ...],
+        globs_not: tuple[str, ...],
+        case_mode: CaseMode,
+        fixed_strings: bool,
+        word_regexp: bool,
+        output_mode: GrepOutputMode,
+        allow_scan: bool,
+        authority: Authority | None,
+    ) -> Result: ...
+
+    async def search(
+        self, query: str, /, *, limit: int, paths: tuple[str, ...], authority: Authority | None
+    ) -> Result: ...
+
+    async def traverse(
+        self,
+        method: str,
+        path: str | None = ...,
+        observations: list[Observation] | None = ...,
+        *,
+        depth: int | None,
+        edge_types: tuple[str, ...],
+        edge_types_not: tuple[str, ...],
+        minimal: bool,
+        limit: int | None,
+        authority: Authority | None,
+    ) -> Result: ...
+
+    async def write(
+        self,
+        *,
+        path: str,
+        authority: Authority | None,
+        content: str | None = ...,
+        data: bytes | None = ...,
+        if_absent: bool = ...,
+        append: bool = ...,
+    ) -> Result: ...
+
+    async def edit(
+        self, path: str, old: str, new: str, /, *, replace_all: bool, authority: Authority | None
+    ) -> Result: ...
+
+    async def mkdir(self, path: str, /, *, parents: bool, exist_ok: bool, authority: Authority | None) -> Result: ...
+
+    async def delete(self, path: str, /, *, cascade: bool, authority: Authority | None) -> Result: ...
+
+    async def copy(self, src: str, dest: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def move(self, src: str, dest: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def mkedge(self, *, source: str, target: str, edge_type: str, authority: Authority | None) -> Result: ...
+
+    async def rmedge(self, *, source: str, target: str, edge_type: str, authority: Authority | None) -> Result: ...
+
+    async def grant(self, path: str, principal: str, level: Rung, /, *, authority: Authority | None) -> Result: ...
+
+    async def revoke(self, path: str, principal: str, /, *, authority: Authority | None) -> Result: ...
+
+    async def grants(self, path: str, /, *, authority: Authority | None) -> Result: ...
 
 
 class Ran(NamedTuple):
@@ -861,9 +952,7 @@ def _reason(fact: ResultError) -> str:
     if fact.path is not None and fact.kind in _UNIX_ERRORS:
         return _UNIX_ERRORS[fact.kind]
     contract = KIND_CONTRACTS.get(fact.kind)
-    if contract is not None and fact.message.startswith(f"{contract.phrase}: "):
-        return fact.message[len(contract.phrase) + 2 :]
-    return fact.message
+    return fact.message.removeprefix(f"{contract.phrase}: " if contract is not None else "")
 
 
 def _under(root: str, path: str) -> bool:

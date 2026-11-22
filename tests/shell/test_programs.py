@@ -10,6 +10,8 @@ import pytest
 
 from vfs import AsyncVirtualFileSystem
 from vfs.authority import Authority, Principal
+from vfs.results import ErrorKind, Result, classified
+from vfs.results.kinds import Severity
 from vfs.shell import host as host_module
 from vfs.shell import programs as programs_module
 from vfs.shell import run_line
@@ -19,8 +21,6 @@ from .test_host import AGENT, _cases, _known_failures, _seeded, _stream, ok
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from vfs.results import Result
 
 SYSTEM = Authority.system()
 ADA = Authority.of(Principal("ada"))
@@ -101,6 +101,8 @@ SERVED_GREP = (
     "grep -rG 'in\\(it\\|t\\)' src",
     "grep -r '[0-9][0-9]*' data/numbers.txt",
     "grep -rl alpha docs | head -1",
+    "grep -r --color=never alpha docs",
+    "grep -r --regexp=alpha docs",
 )
 
 
@@ -135,6 +137,13 @@ LIBRARY_GREP = (
     "grep -r alpha - < docs/a.md",
     "grep -rf docs/a.md docs",
     "echo alpha | grep alpha",
+    "grep -r --include='*.md' alpha docs/a.md",
+    "grep -r --regexp alpha docs",
+    "grep -r --null alpha docs",
+    "grep -r alpha docs -e",
+    "grep -r",
+    "grep -r --include='*.{md}' alpha docs",
+    "grep -rc --include='*.md' alpha docs",
 )
 
 
@@ -319,6 +328,10 @@ LIBRARY_FIND = (
     "find . -name '*.md' -maxdepth 1",
     "find . -print0",
     "find . -bogus",
+    "find . -maxdepth x",
+    "find . -a -name '*.md'",
+    "find . -name '*.md' -a",
+    "find . -name",
 )
 
 
@@ -371,6 +384,10 @@ async def _graph() -> AsyncVirtualFileSystem:
         ("glob '*.md' /g", "glob", "/g/a.md\n/g/b.md\n/g/c.md\n/g/sub/d.md\n", 0),
         ("cd /g && glob -t d '*' .", "glob", "/g\n/g/sub\n", 0),
         ("glob -n 1 'a.*' /g", "glob", "/g/a.md\n", 0),
+        ("glob --type=f -- '*' /g/sub", "glob", "/g/sub/d.md\n", 0),
+        ("glob --type f '*' /g/sub", "glob", "/g/sub/d.md\n", 0),
+        ("traverse -d all outbound /g/a.md", "traverse", "/g/a.md\n/g/b.md\n/g/c.md\n", 0),
+        ("traverse meet /g/a.md /g/c.md", "traverse", "/g/a.md\n/g/c.md\n/g/b.md\n", 0),
         ("glob '*.py' /g", "glob", "", 1),
         ("traverse outbound /g/a.md", "traverse", "/g/a.md\n/g/b.md\n", 0),
         ("traverse -d 2 outbound /g/a.md", "traverse", "/g/a.md\n/g/b.md\n/g/c.md\n", 0),
@@ -414,6 +431,15 @@ TROUBLE = frozenset({"glob '*.md' /nope /g", "glob 'a**' /g"})
     [
         ("glob", "glob: missing pattern\n", 2),
         ("glob -t x '*'", "glob: invalid type: \u2018x\u2019\n", 2),
+        ("glob -n 0 '*'", "glob: invalid count: \u20180\u2019\n", 2),
+        ("glob '*' -t", "glob: option requires an argument -- 't'\n", 2),
+        ("glob '*' --type", "glob: option '--type' requires an argument\n", 2),
+        ("glob --bogus '*'", "glob: unrecognized option '--bogus'\n", 2),
+        ("edit --all=x /g/a.md a b", "edit: option '--all' doesn't allow an argument\n", 2),
+        ("edit /g a b", "edit: /g: Is a directory\n", 1),
+        ("traverse outbound", "traverse: missing start\n", 2),
+        ("traverse -n x outbound /g/a.md", "traverse: invalid limit: \u2018x\u2019\n", 2),
+        ("revoke /g bob extra", "revoke: extra operand \u2018extra\u2019\n", 2),
         ("glob -q '*'", "glob: invalid option -- 'q'\n", 2),
         ("glob '*.md' /nope /g", "glob: /nope: No such file or directory\n", 2),
         (
@@ -526,3 +552,37 @@ async def test_a_served_grep_leaves_out_a_file_the_caller_may_list_but_not_read(
     await fs.close()
     assert (served.stdout, served.stderr, served.exit_code) == ("/s/open.txt:alpha open\n", "", 0)
     assert (library.stderr, library.exit_code) == ("grep: /s/secret.txt: Permission denied\n", 2)
+
+
+def _truncating(fs: AsyncVirtualFileSystem, verb: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    original: Callable[..., Any] = getattr(fs, verb)
+
+    async def truncated(*args: Any, **kwargs: Any) -> Result:
+        answer = await original(*args, **kwargs)
+        cut = classified(ErrorKind.truncated, detail="the stage's time budget", severity=Severity.warning)
+        return answer.model_copy(update={"errors": [*answer.errors, cut]})
+
+    monkeypatch.setattr(fs, verb, truncated)
+
+
+@pytest.mark.parametrize(
+    ("line", "verb"),
+    [("grep -rn alpha docs", "grep"), ("grep -rc alpha docs", "glob"), ("find docs -name '*.md'", "glob")],
+)
+async def test_a_verb_answer_cut_short_hands_the_line_to_the_library(
+    monkeypatch: pytest.MonkeyPatch, line: str, verb: str
+) -> None:
+    want = await _library(monkeypatch, line, line.split()[0])
+    fs = await _world()
+    _truncating(fs, verb, monkeypatch)
+    result = await run_line(fs, line, AGENT, cwd="/work", env=ENVIRONMENT)
+    await fs.close()
+    assert (result.stdout, result.stderr, result.exit_code) == want
+
+
+async def test_grants_of_a_path_the_caller_cannot_see_reads_as_its_unix_error() -> None:
+    fs = await _graph()
+    ok(await fs.set_posture("/", "none", authority=SYSTEM))
+    result = await fs.cli("grants /g/a.md; echo $?", authority=Authority.of(Principal("grace")))
+    await fs.close()
+    assert (result.stdout, result.stderr) == ("1\n", "grants: /g/a.md: No such file or directory\n")

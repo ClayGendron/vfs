@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from vfs.authority import Authority
-    from vfs.shell.verbs import Router
+    from vfs.shell.programs import Router
 
 SHELL_NAME: Final = "bash"
 """``$0`` of every line, so its errors read as bash's do."""

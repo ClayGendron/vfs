@@ -58,7 +58,7 @@ def verb_regex(pattern: str, dialect: Dialect) -> Translated | None:
         return Translated("".join(_escaped(ch) for ch in pattern), pattern)
     reader = _Reader(pattern, extended=dialect == "extended")
     try:
-        regex = reader.alternation(top=True)
+        regex = reader.alternation()
     except _NotServedError:
         return None
     return Translated(regex, reader.literal())
@@ -142,15 +142,13 @@ class _Reader:
             return None
         return self._unescaped()
 
-    def alternation(self, *, top: bool) -> str:
+    def alternation(self) -> str:
         branches = [self.branch()]
         while self._at_bar():
             self.operators = True
             self.index += 1 if self.extended else 2
             branches.append(self.branch())
         if any(not branch for branch in branches) and len(branches) > 1:
-            raise _NotServedError
-        if top and self.index < len(self.text):
             raise _NotServedError
         return "|".join(branches)
 
@@ -219,7 +217,7 @@ class _Reader:
     def group(self, *, close: str) -> str:
         self.operators = True
         self.depth += 1
-        inner = self.alternation(top=False)
+        inner = self.alternation()
         if not inner or not self.text.startswith(close, self.index):
             raise _NotServedError
         self.index += len(close)
