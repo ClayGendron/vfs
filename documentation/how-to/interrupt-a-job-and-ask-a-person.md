@@ -184,7 +184,7 @@ Resuming does not make a new call. **It carries out the step that was saved, exa
 - **Your policies are asked again.** Each policy runs again with the answers the job has been given, so `require_approval` returns Ada's decision rather than interrupting a second time. A policy that now denies the step still denies it. So write a policy to reach the same point when it is asked twice about the same step.
 - **One resume wins.** If two processes resume the same job at once, one carries it on and the other is refused with the job's state. Resuming a job that has already finished returns its result again, and records nothing.
 
-## Step 6: Reject a Change
+## Step 6: Deny a Change
 
 Have Scout try to delete the contract, and this time have Ada say no, with a reason.
 
@@ -201,10 +201,39 @@ fs.resume(
 ```
 
 ```text
-ERROR /contracts/acme.md: Permission denied — This contract is still in force. (retry: never)
+ERROR /contracts/acme.md: Denied by a person — This step needed a person's approval, and ada denied it. Reason: This contract is still in force. (retry: never)
 ```
 
-`Approval` is the schema `require_approval` asks with. It accepts `True` or `False`, or an `Approval` with a reason. A step a person rejects is refused with the reason they gave, and Scout can read that reason and act on it.
+`Approval` is the schema `require_approval` asks with. It accepts `True` or `False`, or an `Approval` with a reason. Without a reason, the message ends after "ada denied it."
+
+**A denial is a person's decision, not a missing right, and the result says so.** Its kind is `vfs.person.denied`, not `vfs.permission_denied`. Scout had the right to delete the contract; a person who was asked said no. An agent that reads this result knows that a human decided, so it does not look for another way to make the same change, and the reason tells it why.
+
+## Cancel a Job
+
+A person can also stop the whole job rather than answer its interrupt. Resume the job with `Cancel`, whatever the interrupt's schema is.
+
+```python
+from vfs import Cancel
+
+result = scout.edit("/contracts/acme.md", old="30 days", new="45 days")
+
+fs.resume(result.job.id, Cancel(reason="We are renegotiating this contract."), authority=ada)
+```
+
+```text
+ERROR /contracts/acme.md: Cancelled by a person — This job was waiting for a person, and ada cancelled it. Reason: We are renegotiating this contract. (retry: never)
+```
+
+`Cancel()` with no reason cancels the job too, and the message ends after "ada cancelled it."
+
+A denial and a cancel differ in how much they stop. **A denial refuses one step, and the job carries on. A cancel ends the whole job where it stopped.** In a shell line, a denied step fails as a command fails and the line goes on to its next command, while a cancelled line runs nothing more. Either way, what the job did before it stopped stands: a cancel undoes nothing. Its kind is `vfs.person.cancelled`, and a job that is cancelled cannot be resumed again.
+
+| Kind | What happened | What it stops |
+|---|---|---|
+| `vfs.person.denied` | A step needed a person's approval, and the person said no | That step |
+| `vfs.person.cancelled` | A person cancelled the job while it waited | The whole job |
+
+Both kinds sit under `vfs.person`, the kinds that mean a person in the loop decided. Your application and your agent can match that prefix to tell a person's decision from a refusal by an access rule or a policy.
 
 ## Interrupt With Any Answer
 
@@ -285,7 +314,7 @@ result.success, fs.read("/notes.md", authority=system).one().content
 
 The line carried on where it stopped: the contract was replaced and the draft was removed. **Nothing ran twice.** The note was written once. VFS saved the line's text and every reply the line had been given up to the stop, and it resumed the line by running it again against those saved replies, without repeating any of the steps they stood for. If the shell has changed so that the line would no longer take the same path, the resume is refused with a conflict that says where it diverged, and nothing more is run.
 
-Had Ada said no, the `cat` command would have failed as a command fails in bash, and the line would have carried on. A line handles a rejection as it handles any failed command, so `cmd || fallback` works.
+Had Ada said no, the `cat` command would have failed as a command fails in bash, printing that a person denied it and her reason, and the line would have carried on. A line handles a denial as it handles any failed command, so `cmd || fallback` works. Had Ada cancelled the job, the line would have stopped there, and `rm /drafts/acme.md` would never have run.
 
 **A line can stop more than once.** If a later step also needs a person, the resumed line stops again before it, and `resume` returns an interrupted result for the same job. When two commands in a pipeline each need a person, the job stops for the first one, and for the second after it is resumed. The loop that handles every case is short.
 
@@ -356,7 +385,7 @@ Three rules make starting again safe.
 - **An answer is for the files the tool had read.** If `/reports/q3.md` changes while the job waits, Ada's answer is not used, and the job is interrupted again about the report as it now is.
 - **What a tool does outside VFS is yours to order.** VFS cannot see a request your tool makes to another service, so it cannot keep that request from running again. Put such code after the last `interrupt`, as `translate` puts its write.
 
-A tool fails as a program fails. When a person rejects its question, or the tool raises `ToolError`, the message goes to standard error and the status is 1, and the line treats it as any command that fails.
+A question has no "no": the person either answers it in the shape the schema asks for, or cancels the job with `Cancel`. A tool fails as a program fails. When it raises `ToolError`, the message goes to standard error and the status is 1, and the line treats it as any command that fails.
 
 ## Step 9: Have a Person Approve a Tool
 
@@ -441,7 +470,7 @@ A file system that keeps its files in memory keeps its jobs in memory too, and t
 
 A person may resume a job interrupted before a change when they have `write` access to every path the step names. A person may resume a job a tool interrupted when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may resume any job.
 
-A job that waits lapses 24 hours after it stopped. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, cancel it with `fs.cancel(job.id)`. A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
+A job that waits lapses 24 hours after it stopped. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, resume it with `Cancel`, as [Cancel a Job](#cancel-a-job) shows; your application can do that as the `system` authority when nobody is going to answer. A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
 
 ## Use It Inside a LangGraph Application
 
@@ -478,4 +507,4 @@ async def checksum(path: str) -> str:
 
 ## What to Remember
 
-Every call through VFS is a job, and every verb it carries out is a step. A policy, marked `@policy`, sees each step before it runs and allows it or denies it. A policy or a tool that needs a person awaits `interrupt` with a message and the schema of the answer it needs. VFS never asks and never waits: it stops the job before the step, saves it, and returns, and a job waits on one interrupt at a time. Your application asks the person, and `resume` records the answer and carries the job on, as its caller, against what the person saw, with nothing run twice.
+Every call through VFS is a job, and every verb it carries out is a step. A policy, marked `@policy`, sees each step before it runs and allows it or denies it. A policy or a tool that needs a person awaits `interrupt` with a message and the schema of the answer it needs. VFS never asks and never waits: it stops the job before the step, saves it, and returns, and a job waits on one interrupt at a time. Your application asks the person, and `resume` records the answer and carries the job on, as its caller, against what the person saw, with nothing run twice. A person can deny a step, which refuses that step, or cancel the job, which ends it; both are reported as a person's decision, under `vfs.person`, never as a missing right.
