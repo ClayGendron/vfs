@@ -252,7 +252,7 @@ pub fn unreported(hub: &HubRef) -> Vec<(String, HostError)> {
     refused
 }
 
-/// What the line says of a write vfs refused.
+/// What the line says of a write its host refused.
 pub fn refusal_text(lineno: u32, path: &str, error: HostError) -> String {
     format!("bash: line {lineno}: {path}: {}\n", error.message())
 }
