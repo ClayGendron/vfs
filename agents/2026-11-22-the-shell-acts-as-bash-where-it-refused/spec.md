@@ -37,7 +37,7 @@ Ruled on 2026-11-22: the shell acts just like Linux bash in every way it can. Th
    - It parses under the line's parse limits, charges the tree to counted memory, and counts one level of the `nesting` budget for each text nested inside another.
    - Its requests take the next ordinals of the current task, so request keys stay deterministic.
    - `source` reads its file with one `read` as the caller, and a refusal reads as bash's `No such file or directory` or `Permission denied`, with status 1.
-   - `bash -c` and `bash FILE` run the routine in a subshell.
+   - `bash -c` and `bash FILE` run the routine in a new shell that starts from the line's exported variables and exported functions, its working directory and its open descriptors, as a new bash process does, and not in a subshell.
    - A function defined inside the text outlives it, so a function carries the script its here-documents live in.
 3. **`trap` is a table of handlers on the shell.**
    - `EXIT` runs at the end of the line, at `exit`, at a `set -e` exit, and in each subshell that set its own.

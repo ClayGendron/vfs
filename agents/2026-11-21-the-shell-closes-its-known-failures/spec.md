@@ -17,6 +17,7 @@ Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is fro
 - 145 cases fail: most in `printf` (bash formats floats as `long double`), the parameter operators, `declare`, `mapfile` and redirections; four are finds under `tests/shell/cases/found/` (a backslash before a letter in a quoted default word, a variable inside an extglob group, a here-document ended by the end of input, a delimiter spelled as an expansion).
 - The parse depth of 200 counts each grammar rule a construct passes through, about six for one `$( )`, so 33 nested substitutions parse and 35 do not; bash runs 40.
 - Compound commands carry no span.
+- `break 0` and `continue 0` differ from bash in four forms: `select` neither counts as a loop for them nor takes their status; a count of 0 leaves every enclosing loop in bash and one here; `until true; break 0; do :; done` exits 1 in bash and 0 here; and outside a loop bash prints "only meaningful in a `for', `while', or `until' loop" and returns 0, where the shell prints "loop count out of range" and returns 1. The review of the shell, finding L15, holds the lines and the fix.
 - A here-document inside a command substitution inside a here-document is refused and listed in `tests/shell/deltas.txt` as deliberate, but it is a gap of the parser, and bash runs it.
 - The prior-art memo ran 468 Oils cases (363 agree, 39 differ, 66 skipped); the rate over the whole suite is not measured.
 

@@ -8,22 +8,23 @@ A draft, written on 2026-11-22 after the ruling that the shell acts just like Li
 
 ## Builds on
 
-- The files table in `src/vfs/models/rows.py`, which holds `owner_id`, `everyone_level`, `created_at`, `updated_at`, `size_bytes` and `kind` for each entry, and no mode bits.
+- The entries table (`vfs_entries`) in `src/vfs/models/rows.py`, which holds `owner_id`, `everyone_level`, `created_at`, `updated_at`, `size_bytes` and `kind` for each entry, and no mode bits.
 - The rights model: grants, postures and the ladder in `src/vfs/ops.py`, judged on every call.
 - `agents/2026-11-22-the-shell-acts-as-bash-where-it-refused/spec.md`, whose routine for running text under a name runs a script file.
-- `agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md`, which holds `ls -l`, `stat` and `chmod`.
+- `agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md`, which holds `ls -l` and `stat`; `chmod` is new here.
 
 ## The problem
 
 - `chmod` answers 127, `command not found`.
 - `./s.sh` answers 127 for a file that exists.
 - `test -x` is true only for a directory.
+- `test -w` is 0 for a file the caller may only read, and the write that follows is refused.
 - The roadmap (story F4.1) has `ls -l` print no mode bits.
 - "Write a script, `chmod +x` it, run it" is a common sequence for an agent, and every step of it fails today.
 
 ## Decisions
 
-1. **One bit is stored: `executable`, a boolean column on the files table, false by default.**
+1. **One bit is stored: `executable`, a boolean column on the entries table, false by default.**
    - `chmod +x` and `chmod -x` set and clear it, as an edit that needs the caller's write rights.
    - So do the numeric and symbolic forms that change only the user's `x` (`chmod 755`, `chmod u+x`).
    - `write`, `copy` and `move` carry the bit, and the batch verbs take it per entry.
@@ -39,9 +40,9 @@ A draft, written on 2026-11-22 after the ruling that the shell acts just like Li
    - the time from `updated_at`;
    - the size.
 
-   The columns stay where GNU puts them, so an agent that reads them by position reads them right.
+   The columns stay where GNU puts them, so an agent that reads them by position reads them right. This replaces the columns of the program-table spec's decision 5 and of the roadmap's F4.1.
 5. **`./s.sh`, or any path in command position:**
-   - with the bit set, it runs the file through the routine for running text under a name, in a subshell, when its first line is `#!/bin/bash`, `#!/usr/bin/env bash`, `#!/bin/sh` or there is no `#!` line;
+   - with the bit set, it runs the file through the routine for running text under a name, in a new shell that starts from the line's exported variables and exported functions, its working directory and its open descriptors, as a new bash process does, and not in a subshell, when its first line is `#!/bin/bash`, `#!/usr/bin/env bash`, `#!/bin/sh` or there is no `#!` line;
    - with any other interpreter, it fails with `bad interpreter: No such file or directory`, status 126;
    - without the bit, it fails with `Permission denied`, status 126.
 
@@ -53,11 +54,11 @@ A draft, written on 2026-11-22 after the ruling that the shell acts just like Li
 - `chmod +x s.sh && ./s.sh` runs it; `./s.sh` without the bit gives 126 and bash's message; a script with a foreign interpreter gives 126.
 - `test -w` matches the outcome of a `write` for a caller with `read` and a caller with `read_write`, on both engines.
 - `copy` and `move` carry the bit; a 10,000-entry batch write carries it per entry within the declared chunking budgets.
-- `chmod 600 f` succeeds and changes neither the bit nor any rights.
+- `chmod 600 f` on a file without the bit succeeds and changes nothing; on a file with it, it clears the bit and changes no rights.
 
 ## Scope
 
-- The files table and its migration on SQLite and Postgres.
+- The entries table and its migration on SQLite and Postgres.
 - The verbs that write a row.
 - The vfs host's `stat` answer, which gains the bits.
 - The shell's `test`, `ls -l`, `stat`, `find`, `chmod` and command lookup.
