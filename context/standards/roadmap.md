@@ -232,6 +232,8 @@ Counts to keep in view, 2026-11-22: 38 active specs under `context/specification
 7. The synchronous `Session` and `AsyncSession` share one stamp implementation; X1's parity test covers `strict=`; `strict` and `SESSION_STAMPS` join K9's frozen list.
 8. Stamps never cross the wire: `to_payload` of a session's `Result` carries no stamp; whether `serve()` keeps a bounded per-principal stamp table so agents over MCP get the same guard is D51.
 
+*State, 2026-11-22.* Not built. Its spec is [the session remembers what it read](../../agents/2026-11-22-the-session-remembers-what-it-read/spec.md), a draft that amends this story by rulings of 2026-11-22: a stamp is the entry id with the version, carried as an `etag` on each row and checked by a new `if_match=` on `write`, `edit`, `delete` and `move`, because a move that frees a path lets a different file stand at the version a caller saw; strict is on by default and refuses every change to an unread existing file except an append (criterion 4 and D50 are answered); the stamps are bounded by bytes, not by 4,096 entries; and a shell line run without a session is its own session. The shell's nine review contracts rely on it for every guarded write (`agents/2026-11-22-shell-review/reviews/verification.md`).
+
 ---
 
 ## 5. Domain B — Human in the loop: the action log, policy, preview, `pending`, the durable run
