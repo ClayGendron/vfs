@@ -11,9 +11,10 @@ The call fails only when the line could not run to its end as written.
 A line is parsed whole before anything runs, so a syntax error, a refused
 construct or a spent parse budget fails the call and touches nothing.
 
-The bodies the line reads are held for the rest of the line, so a file read
-in chunks is one ``read``; any write, move, copy or delete forgets them, and
-so does a program that changes bodies or rights.
+Each open of a file is one ``read`` of its whole body, judged as the caller
+at that moment, so a second ``cat`` of a file sees an edit or a revoke made in
+between. The body is held only while its open reads it, and every chunk of
+one open comes from the version that open saw.
 
 A program name the host resolves (:data:`vfs.shell.programs.PROGRAMS`) is
 asked of the host at each start: ``grep -r`` and ``find`` are served from the
@@ -27,15 +28,16 @@ import asyncio
 import random
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from pydantic import Field
 
 from vfs.deadline import Deadline
 from vfs.native import extension
 from vfs.offload import call_offloaded, offload_pool
+from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
-from vfs.shell.programs import MUTATING, PROGRAMS
+from vfs.shell.programs import PROGRAMS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -80,16 +82,14 @@ PID: Final = 1000
 
 _KIND_OF: Final[dict[str, str]] = {"directory": "directory"}
 
-BODY_CACHE_BYTES: Final = 64 << 20
-"""Bytes of file bodies no reader is inside that a line's host holds at once, as much as the machine
-itself may hold. The body a request reads is held whatever its size, since one ``read`` returns it whole."""
-
 READING_BYTES: Final = 128 << 20
-"""Bytes of bodies a reader is inside that the host holds at once, so two readers of large bodies each
-read theirs once; past it, the body read least recently gives way, since a reader may stop early."""
+"""Bytes of the bodies open files hold at once. Each open of a file is one ``read`` of its whole body,
+held until the open reads its end; past this, the body read least recently gives way, since a reader
+may stop early, and its open reads it again only at the version it first saw."""
 
-_BODY: Final = frozenset({"content", "data"})
-"""The columns a read asks for: a bytes body comes back only when ``data`` is named."""
+_BODY: Final = frozenset({"content", "data", "content_hash"})
+"""The columns a read asks for: a bytes body comes back only when ``data`` is named, and the hash
+tells two files at one version apart."""
 
 _HOST_ERROR: Final[dict[str, str]] = {
     ErrorKind.not_found: "not_found",
@@ -296,15 +296,26 @@ def _ended(reason: str) -> ResultError:
     return classified(ErrorKind.internal, detail=reason)
 
 
+class _Seen(NamedTuple):
+    """The body an open saw at its first read: its path, its version and the hash of its bytes.
+    A version alone does not name a file, since a file moved in, copied in or written new can
+    stand at a path at the version another had."""
+
+    path: str
+    version: int | None
+    content_hash: str | None
+
+
 class _Host:
     """One line's answers: each request a public verb called as the line's authority."""
 
     def __init__(self, fs: Router, authority: Authority) -> None:
         self._fs = fs
         self._authority = authority
-        self._bodies: dict[str, bytes] = {}
+        self._bodies: dict[_Seen, bytes] = {}
         self._held = 0
-        self._reading: dict[str, None] = {}
+        self._opens: dict[str, _Seen] = {}
+        self._sharers: dict[_Seen, int] = {}
         self._running: dict[str, list[tuple[bytes, bytes, int | None]]] = {}
         self._facts: dict[tuple[str, str | None, str], ResultError] = {}
         self._unkept = 0
@@ -342,7 +353,7 @@ class _Host:
     async def answer(self, op: str, args: dict[str, Any]) -> tuple[str, object]:
         """The reply to one request, as the machine reads it."""
         if op == "read":
-            return await self._read(args["path"], args["offset"], args["length"])
+            return await self._read(args["path"], args["open"], args["offset"], args["length"])
         if op == "stat":
             return await self._stat(args["path"])
         if op == "list":
@@ -353,47 +364,58 @@ class _Host:
             return await self._start(args)
         if op == "feed":
             return await self._feed(args)
-        self._forget()
         return await self._mutate(op, args)
 
-    def _forget(self) -> None:
-        """Forget every body the line holds, since what changes next may change one."""
-        self._bodies.clear()
-        self._held = 0
-        self._reading.clear()
-
-    async def _read(self, path: str, offset: int, length: int) -> tuple[str, object]:
-        body = self._bodies.get(path)
+    async def _read(self, path: str, opened: str, offset: int, length: int) -> tuple[str, object]:
+        """A slice of the body the open named ``opened`` saw. Its first read is a ``read`` of the
+        whole body, judged as the caller; a later one reads it again only if it gave way, and
+        refuses it if the file has moved to another version since. Opens that saw one version of
+        one file share its body."""
+        seen = self._opens.get(opened)
+        body = None if seen is None else self._bodies.pop(seen, None)
         if body is None:
             result = await self._fs.read(path, columns=_BODY, authority=self._authority)
             refusal = self._refusal(result)
             if refusal is not None:
+                self._close(opened)
                 return refusal
             row = result.observations[0]
+            if seen is not None and (seen.version, seen.content_hash) != (row.version, row.content_hash):
+                self._close(opened)
+                self.keep(classified(ErrorKind.conflict, Path(path), detail="the file changed while it was open"))
+                return "error", "invalid"
+            if seen is None:
+                seen = _Seen(path, row.version, row.content_hash)
+                self._opens[opened] = seen
+                self._sharers[seen] = self._sharers.get(seen, 0) + 1
+            self._held -= len(self._bodies.pop(seen, b""))
             body = row.data if row.data is not None else (row.content or "").encode()
-            self._hold(path, body)
+        else:
+            self._held -= len(body)
         end = offset + length
-        finished = end >= len(body)
-        self._reading.pop(path, None)
-        if not finished:
-            self._reading[path] = None
-        return "data", (body[offset:end], finished)
+        if end >= len(body):
+            self._close(opened)
+        if seen in self._sharers:
+            self._hold(seen, body)
+        return "data", (body[offset:end], end >= len(body))
 
-    def _hold(self, path: str, body: bytes) -> None:
-        """Keep ``body`` for the line. Bodies no reader is inside give way first, past
-        ``BODY_CACHE_BYTES``; then bodies a reader is inside, read least recently first, past
-        ``READING_BYTES``. The body kept now never gives way to itself."""
-        self._bodies[path] = body
+    def _close(self, opened: str) -> None:
+        """Forget the open named ``opened``, and the body it saw once no other open shares it."""
+        seen = self._opens.pop(opened, None)
+        if seen is None:
+            return
+        self._sharers[seen] -= 1
+        if not self._sharers[seen]:
+            del self._sharers[seen]
+            self._held -= len(self._bodies.pop(seen, b""))
+
+    def _hold(self, seen: _Seen, body: bytes) -> None:
+        """Keep ``body`` for the opens that saw it, last in line. Past ``READING_BYTES`` the bodies
+        read least recently give way, never this one; their opens keep the version they saw."""
+        self._bodies[seen] = body
         self._held += len(body)
-        for other in [held for held in self._bodies if held not in self._reading and held != path]:
-            if self._held <= BODY_CACHE_BYTES:
-                break
-            self._held -= len(self._bodies.pop(other))
-        for other in [held for held in self._reading if held != path]:
-            if self._held <= READING_BYTES:
-                break
-            self._held -= len(self._bodies.pop(other))
-            del self._reading[other]
+        while self._held > READING_BYTES and len(self._bodies) > 1:
+            self._held -= len(self._bodies.pop(next(iter(self._bodies))))
 
     async def _stat(self, path: str) -> tuple[str, object]:
         result = await self._fs.stat(path, authority=self._authority)
@@ -425,8 +447,6 @@ class _Host:
         program = PROGRAMS.get(name)
         if program is None:
             return "error", "not_found"
-        if name in MUTATING:
-            self._forget()
         ran = await program(self, list(args["args"]), args["cwd"])
         if ran is None:
             return "library", None

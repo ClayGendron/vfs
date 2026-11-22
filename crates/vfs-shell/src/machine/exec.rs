@@ -97,6 +97,15 @@ pub fn run_line(
             Err(Flow::Fatal(fatal)) => return Err(fatal),
         };
         flush_all(&mut sh).await?;
+        // A write refused only as the line ends fails the line, once it has been said.
+        let mut status = status;
+        for (path, error) in files::unreported(&sh.hub) {
+            let text = files::refusal_text(sh.lineno, &path, error);
+            if sh.error_text(&text).await.is_err() {
+                break;
+            }
+            status = 1;
+        }
         Ok(status & 0xff)
     })
 }
@@ -1929,13 +1938,16 @@ pub async fn read_whole(sh: &mut Shell, path: &str) -> Result<Result<Vec<u8>, Ho
     sync_path(sh, path).await?;
     let mut bytes = Vec::new();
     let mut offset = 0u64;
+    let mut open = None;
     loop {
         let key = sh.key();
+        let opened = open.get_or_insert_with(|| key.clone()).clone();
         let reply = io::host_call(
             &sh.hub,
             key,
             Request::Read {
                 path: path.to_owned(),
+                open: opened,
                 offset,
                 length: files::CHUNK as u64,
             },
@@ -1969,9 +1981,10 @@ pub async fn open_read(sh: &mut Shell, path: &str) -> Result<Result<Fd, HostErro
     let key = sh.key();
     let reply = io::host_call(
         &sh.hub,
-        key,
+        key.clone(),
         Request::Read {
             path: absolute.clone(),
+            open: key.clone(),
             offset: 0,
             length: files::CHUNK as u64,
         },
@@ -1979,7 +1992,7 @@ pub async fn open_read(sh: &mut Shell, path: &str) -> Result<Result<Fd, HostErro
     .await?;
     match reply {
         Reply::Data { bytes, eof } => Ok(Ok(Fd::FileIn(FileReader::new(
-            &sh.hub, absolute, bytes, eof,
+            &sh.hub, absolute, key, bytes, eof,
         )?))),
         Reply::Error(error) => Ok(Err(error)),
         _ => Ok(Err(HostError::Invalid)),
@@ -2363,13 +2376,8 @@ pub async fn restore(sh: &mut Shell, saved: Saved) -> Result<bool, Flow> {
             let failed = writer.borrow_mut().error.take();
             if let Some(error) = failed {
                 let path = writer.borrow().path.clone();
-                sh.error_text(&format!(
-                    "bash: line {}: {}: {}\n",
-                    sh.lineno,
-                    path,
-                    error.message()
-                ))
-                .await?;
+                sh.error_text(&files::refusal_text(sh.lineno, &path, error))
+                    .await?;
                 written = false;
             }
         }

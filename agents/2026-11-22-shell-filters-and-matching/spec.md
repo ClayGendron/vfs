@@ -2,6 +2,8 @@
 
 Draft implementation contract from the November 22, 2026 review of `cbda2721`.
 
+Verified against `dev` at `5a823ea` and amended on 2026-11-22 (`agents/2026-11-22-shell-review/reviews/verification.md`). Every problem reproduced, and problem 2 is wider than stated: any value of `GLOBIGNORE`, not only an empty one, forces `dotglob` on, so unsetting it or an explicit `shopt -u dotglob` after it is ignored. Decision 4 narrows. `grep` and `grep -v` already end a spent search with status 2, `sed` already faults, and `[[ =~ ]]` already returns 2; the gap is the glob consumers of `machine/pattern.rs`, which answer a miss that negation turns into a match: `[[ == ]]` and `!=`, `case`, `${x/...}`, `${x#...}` and pathname expansion. The partial best capture was not reproduced. Decision 4 is sequenced with `agents/2026-11-21-the-shell-matches-in-linear-time/`, whose greedy-star matcher removes most glob exhaustion and whose claim that both engines never answer a spent search as no match is false for `pattern.rs` today. Decision 1 needs the byte representation that the sed spec introduces, so it lands after that.
+
 ## The outcome wanted
 
 Filters preserve distinct records through redirection, and every pattern consumer receives a complete match decision or an explicit error.
@@ -30,7 +32,7 @@ flowchart TD
 ## The problem
 
 - Several filters decode input with replacement before comparing or emitting it. Byte-distinct records can become indistinguishable inside a pipeline.
-- Wildcard handling treats the presence of an empty GLOBIGNORE as sufficient to include hidden paths.
+- Wildcard handling turns `dotglob` on whenever GLOBIGNORE is set, to any value, and ignores a later unset or `shopt -u dotglob`.
 - The replacement path constructs default match options while other pattern consumers consult shell state.
 
 ## Decisions

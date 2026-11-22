@@ -286,12 +286,14 @@ pub fn encode_request(key: &RequestKey, request: &Request) -> String {
     match request {
         Request::Read {
             path,
+            open,
             offset,
             length,
         } => {
             format!(
-                "{{\"key\":{key},\"op\":\"read\",\"path\":{},\"offset\":{offset},\"length\":{length}}}",
-                quote(path)
+                "{{\"key\":{key},\"op\":\"read\",\"path\":{},\"open\":{},\"offset\":{offset},\"length\":{length}}}",
+                quote(path),
+                quote(&open.to_string())
             )
         }
         Request::Write { path, data, mode } => {
@@ -576,6 +578,7 @@ pub fn decode_request(item: &Json) -> Option<(RequestKey, Request)> {
     let request = match item.get("op")?.text()? {
         "read" => Request::Read {
             path: text("path")?,
+            open: parse_key(item.get("open")?.text()?)?,
             offset: item.u64_or("offset", 0),
             length: item.u64_or("length", 0),
         },

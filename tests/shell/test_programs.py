@@ -498,7 +498,7 @@ async def test_each_program_prints_its_help_and_exits_zero(name: str) -> None:
     assert result.stderr == ""
 
 
-async def test_a_program_that_changes_rights_or_bodies_forgets_the_bodies_the_line_holds() -> None:
+async def test_a_read_after_a_program_that_changes_a_body_sees_the_change() -> None:
     fs = await _graph()
     line = "cat /g/a.md; edit /g/a.md alpha omega; cat /g/a.md; grant /g/b.md ada read; cat /g/a.md"
     result = await fs.cli(line, authority=ADA)

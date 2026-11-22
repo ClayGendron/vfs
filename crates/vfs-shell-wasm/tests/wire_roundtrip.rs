@@ -17,6 +17,7 @@ fn every_request_reads_back_as_itself() {
     let requests = vec![
         Request::Read {
             path: "/a b".to_owned(),
+            open: key(4),
             offset: 3,
             length: 9,
         },

@@ -51,6 +51,11 @@ pub struct MemoryHost {
     pub read_chunk: Option<u64>,
     /// Answer each step's requests last first, to move arrival order.
     pub reverse_replies: bool,
+    /// Refuse the write to a path that has had this many writes before it, as a rights change
+    /// or another caller's file would: `("/f", 0)` refuses the first write to `/f`.
+    pub refuse_write: Option<(String, usize)>,
+    /// How many writes each path has been asked for.
+    writes: BTreeMap<String, usize>,
 }
 
 impl Default for MemoryHost {
@@ -72,6 +77,8 @@ impl MemoryHost {
             running: BTreeMap::new(),
             read_chunk: None,
             reverse_replies: false,
+            refuse_write: None,
+            writes: BTreeMap::new(),
         }
     }
 
@@ -108,6 +115,11 @@ impl MemoryHost {
         }
         self.nodes
             .insert(path.to_owned(), Node::File(bytes.to_vec()));
+    }
+
+    /// Whether anything, a file or a directory, stands at `path`.
+    pub fn exists(&self, path: &str) -> bool {
+        self.nodes.contains_key(path)
     }
 
     pub fn file(&self, path: &str) -> Option<&[u8]> {
@@ -284,6 +296,7 @@ impl MemoryHost {
                 path,
                 offset,
                 length,
+                ..
             } => match self.nodes.get(path) {
                 Some(Node::File(bytes)) => {
                     let start = usize::try_from(*offset)
@@ -301,6 +314,11 @@ impl MemoryHost {
                 None => Err(HostError::NotFound),
             },
             Request::Write { path, data, mode } => {
+                let before = self.writes.get(path).copied().unwrap_or(0);
+                self.writes.insert(path.clone(), before.saturating_add(1));
+                if self.refuse_write.as_ref() == Some(&(path.clone(), before)) {
+                    return Err(HostError::PermissionDenied);
+                }
                 self.parent_ok(path)?;
                 match (self.nodes.get_mut(path), mode) {
                     (Some(Node::Directory), _) => Err(HostError::IsADirectory),

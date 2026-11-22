@@ -291,25 +291,36 @@ pub fn describe(error: HostError) -> &'static str {
 }
 
 async fn run_sed(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
-    let needed = match sed::inputs(args) {
-        Ok(needed) => needed,
-        Err(output) => {
-            prog.out(&output.stdout).await?;
-            prog.sh.write_fd(2, &output.stderr).await?;
-            return Ok(output.status);
-        }
+    // The script is read and compiled first, so a script that is refused reads no operand.
+    let scripts = match sed::scripts(args) {
+        Ok(scripts) => scripts,
+        Err(output) => return sed_failed(prog, &output).await,
     };
     let mut stdin = Vec::new();
     let mut files = BTreeMap::new();
-    for name in needed {
+    for name in scripts {
         if name == "-" {
             stdin = prog.stdin_all().await?;
             continue;
         }
-        let content = match prog.stat(&name).await? {
-            Some((crate::machine::EntryKind::Directory, _)) => Err("Is a directory".to_owned()),
-            _ => prog.file(&name).await?.map_err(|e| describe(e).to_owned()),
-        };
+        let content = sed_input(prog, &name).await?;
+        files.insert(name, content);
+    }
+    let needed = match sed::inputs(args, &files, &stdin) {
+        Ok(needed) => needed,
+        Err(output) => return sed_failed(prog, &output).await,
+    };
+    for name in needed {
+        if name == "-" {
+            if stdin.is_empty() {
+                stdin = prog.stdin_all().await?;
+            }
+            continue;
+        }
+        if files.contains_key(&name) {
+            continue;
+        }
+        let content = sed_input(prog, &name).await?;
         files.insert(name, content);
     }
     let output = sed::run(args, &stdin, &files);
@@ -318,12 +329,38 @@ async fn run_sed(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
         prog.sh.write_fd(2, &output.stderr).await?;
     }
     let mut status = output.status;
-    for (path, data) in output.writes {
-        if let Err(error) = prog.write_file(&path, data).await? {
-            prog.err(&format!("couldn't open file {}: {}", path, describe(error)))
-                .await?;
+    // A refused backup or replacement stops that edit and every later one, as GNU sed exits there.
+    let mut stopped = false;
+    for write in output.writes {
+        if stopped && write.kind != sed::WriteKind::Script {
+            continue;
+        }
+        if let Err(error) = prog.write_file(&write.path, write.data).await? {
+            stopped |= write.kind != sed::WriteKind::Script;
+            let message = match &write.kind {
+                sed::WriteKind::Backup { source } => {
+                    format!("cannot rename {}: {}", source, describe(error))
+                }
+                _ => format!("couldn't open file {}: {}", write.path, describe(error)),
+            };
+            prog.err(&message).await?;
             status = 4;
         }
     }
     Ok(status)
+}
+
+/// What `sed` printed when its options or script were refused, and its status.
+async fn sed_failed(prog: &mut Prog<'_>, output: &sed::SedOutput) -> Result<i32, Flow> {
+    prog.out(&output.stdout).await?;
+    prog.sh.write_fd(2, &output.stderr).await?;
+    Ok(output.status)
+}
+
+/// One file `sed` reads, or the error text GNU sed prints for it.
+async fn sed_input(prog: &mut Prog<'_>, name: &str) -> Result<Result<Vec<u8>, String>, Flow> {
+    Ok(match prog.stat(name).await? {
+        Some((crate::machine::EntryKind::Directory, _)) => Err("Is a directory".to_owned()),
+        _ => prog.file(name).await?.map_err(|e| describe(e).to_owned()),
+    })
 }

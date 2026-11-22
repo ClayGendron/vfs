@@ -1,6 +1,6 @@
 # Two loop tests of a line's facts race its deadline
 
-A draft, written on 2026-11-22 from a run of `scripts/ci.sh` on the branch `the-shell-serves-the-indexed-verbs` at `e18ae69`. It is not reviewed, and nothing is built.
+A draft, written on 2026-11-22 from a run of `scripts/ci.sh` on the branch `the-shell-serves-the-indexed-verbs` at `e18ae69`. Built on 2026-11-22 on the branch `the-shell-review-specs-are-checked` by decision 1: the loops run 300 refusals, three times `LINE_FACTS`, after both tests ended at the deadline again under a loaded `scripts/ci.sh` at 20.8 and 21.7 seconds alone.
 
 ## The outcome wanted
 

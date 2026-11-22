@@ -53,6 +53,8 @@ pub struct Hub {
     pub probe: Option<Box<dyn FnMut() -> bool>>,
     /// The `PIPESTATUS` of each pipeline of the line's top level that ran, in order.
     pub statuses: Vec<Vec<i32>>,
+    /// Refused writes whose writer ended before anyone said so, with their paths, so the line can.
+    pub refusals: Vec<(String, super::HostError)>,
 }
 
 pub type HubRef = Rc<RefCell<Hub>>;
@@ -83,6 +85,7 @@ impl Hub {
             sub_depth: 0,
             probe: None,
             statuses: Vec::new(),
+            refusals: Vec::new(),
         }
     }
 

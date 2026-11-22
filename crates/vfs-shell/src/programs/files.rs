@@ -636,23 +636,59 @@ pub async fn mv(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
 // rm, mkdir, touch
 // ---------------------------------------------------------------------------
 
+/// When `rm` asks before it removes: never, before each entry (`-i`), or once (`-I`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ask {
+    Never,
+    Always,
+    Once,
+}
+
+/// What an interactive walk did with one entry and what lies beneath it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Walked {
+    Removed,
+    /// Kept because a question about it was declined.
+    Kept,
+    /// Kept because descent into it, or into a directory beneath it, was declined: GNU rm asks
+    /// about no directory above it.
+    Skipped,
+    Failed,
+}
+
 pub async fn rm(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
     let (options, operands) = split_args(args);
     let (mut force, mut recursive, mut verbose, mut empty_dirs) = (false, false, false, false);
+    let mut ask = Ask::Never;
     for option in &options {
         match option.as_str() {
-            "--force" => force = true,
+            "--force" => (force, ask) = (true, Ask::Never),
             "--recursive" => recursive = true,
             "--verbose" => verbose = true,
             "--dir" => empty_dirs = true,
+            "--interactive" | "--interactive=always" | "--interactive=yes" => {
+                (force, ask) = (false, Ask::Always);
+            }
+            "--interactive=once" => (force, ask) = (false, Ask::Once),
+            "--interactive=never" | "--interactive=no" | "--interactive=none" => ask = Ask::Never,
+            long if long.starts_with("--interactive=") => {
+                let value = long.trim_start_matches("--interactive=");
+                prog.err(&format!("invalid argument '{value}' for '--interactive'"))
+                    .await?;
+                prog.sh
+                    .error_text("Try 'rm --help' for more information.\n")
+                    .await?;
+                return Ok(1);
+            }
             _ => {
                 for flag in option.trim_start_matches('-').chars() {
                     match flag {
-                        'f' => force = true,
+                        'f' => (force, ask) = (true, Ask::Never),
                         'r' | 'R' => recursive = true,
                         'v' => verbose = true,
                         'd' => empty_dirs = true,
-                        'i' | 'I' => {}
+                        'i' => (force, ask) = (false, Ask::Always),
+                        'I' => (force, ask) = (false, Ask::Once),
                         other => {
                             prog.err(&format!("invalid option -- '{other}'")).await?;
                             prog.sh
@@ -675,9 +711,34 @@ pub async fn rm(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
             .await?;
         return Ok(1);
     }
+    if ask == Ask::Once && (recursive || operands.len() > 3) {
+        let count = operands.len();
+        let plural = if count == 1 { "" } else { "s" };
+        let how = if recursive { " recursively" } else { "" };
+        if !confirm(prog, &format!("rm: remove {count} argument{plural}{how}? ")).await? {
+            return Ok(0);
+        }
+    }
     let mut status = 0;
     for operand in operands {
-        let Some((kind, _)) = prog.stat(&operand).await? else {
+        // An empty operand names no file; resolved, it would name the working directory.
+        if operand.is_empty() {
+            if !force {
+                prog.err("cannot remove '': No such file or directory")
+                    .await?;
+                status = 1;
+            }
+            continue;
+        }
+        if let Some(shown) = dot_or_dot_dot(&operand) {
+            prog.err(&format!(
+                "refusing to remove '.' or '..' directory: skipping '{shown}'"
+            ))
+            .await?;
+            status = 1;
+            continue;
+        }
+        let Some((kind, size)) = prog.stat(&operand).await? else {
             if !force {
                 prog.err(&format!(
                     "cannot remove '{}': {}",
@@ -689,6 +750,12 @@ pub async fn rm(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
             }
             continue;
         };
+        if kind == EntryKind::Directory && recursive && ask == Ask::Always {
+            if walk(prog, operand, verbose).await? == Walked::Failed {
+                status = 1;
+            }
+            continue;
+        }
         if kind == EntryKind::Directory && !recursive {
             let empty = matches!(list(prog, &operand).await?, Ok(entries) if entries.is_empty());
             if !(empty_dirs && empty) {
@@ -698,26 +765,127 @@ pub async fn rm(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
                 continue;
             }
         }
-        let path = prog.abs(&operand);
-        match done_or(prog, Request::Remove { path, recursive }).await? {
-            Ok(()) => {
-                if verbose {
-                    let line = if kind == EntryKind::Directory {
-                        format!("removed directory '{operand}'\n")
-                    } else {
-                        format!("removed '{operand}'\n")
-                    };
-                    prog.out(line.as_bytes()).await?;
-                }
-            }
-            Err(error) => {
-                prog.err(&format!("cannot remove '{}': {}", operand, describe(error)))
-                    .await?;
-                status = 1;
-            }
+        if ask == Ask::Always && !confirm(prog, &prompt(&operand, kind, size)).await? {
+            continue;
+        }
+        if remove(prog, &operand, kind, recursive, verbose).await? == Walked::Failed {
+            status = 1;
         }
     }
     Ok(status)
+}
+
+/// The operand as GNU rm names it when its last component is `.` or `..`: trailing slashes
+/// cut to one. `None` for any other operand.
+fn dot_or_dot_dot(operand: &str) -> Option<String> {
+    let trimmed = operand.trim_end_matches('/');
+    let last = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if trimmed.is_empty() || (last != "." && last != "..") {
+        return None;
+    }
+    Some(if trimmed.len() == operand.len() {
+        operand.to_owned()
+    } else {
+        format!("{trimmed}/")
+    })
+}
+
+/// The question `rm -i` asks before it removes one entry.
+fn prompt(shown: &str, kind: EntryKind, size: u64) -> String {
+    match kind {
+        EntryKind::Directory => format!("rm: remove directory '{shown}'? "),
+        EntryKind::File if size == 0 => format!("rm: remove regular empty file '{shown}'? "),
+        EntryKind::File => format!("rm: remove regular file '{shown}'? "),
+    }
+}
+
+/// Ask on standard error and read one line of standard input: yes when it begins with `y`.
+async fn confirm(prog: &mut Prog<'_>, question: &str) -> Result<bool, Flow> {
+    prog.sh.error_text(question).await?;
+    let answer = crate::machine::read_answer(prog.sh, 0).await?;
+    Ok(answer.is_some_and(|line| matches!(line.first(), Some(b'y' | b'Y'))))
+}
+
+/// Remove one entry, reporting it under `-v` and its failure on standard error.
+async fn remove(
+    prog: &mut Prog<'_>,
+    shown: &str,
+    kind: EntryKind,
+    recursive: bool,
+    verbose: bool,
+) -> Result<Walked, Flow> {
+    let path = prog.abs(shown);
+    match done_or(prog, Request::Remove { path, recursive }).await? {
+        Ok(()) => {
+            if verbose {
+                let line = if kind == EntryKind::Directory {
+                    format!("removed directory '{shown}'\n")
+                } else {
+                    format!("removed '{shown}'\n")
+                };
+                prog.out(line.as_bytes()).await?;
+            }
+            Ok(Walked::Removed)
+        }
+        Err(error) => {
+            prog.err(&format!("cannot remove '{}': {}", shown, describe(error)))
+                .await?;
+            Ok(Walked::Failed)
+        }
+    }
+}
+
+/// `rm -ri` on one directory: ask to descend, ask for each entry beneath it, then ask for the
+/// directory itself, removing each entry alone so a kept child keeps its parent. A directory
+/// with a child that failed, or one it was not let descend into, is not asked about, as GNU rm
+/// skips it.
+fn walk<'a, 's: 'a>(
+    prog: &'a mut Prog<'s>,
+    shown: String,
+    verbose: bool,
+) -> crate::machine::io::Task<'a, Result<Walked, Flow>> {
+    Box::pin(async move {
+        let entries = match list(prog, &shown).await? {
+            Ok(entries) => entries,
+            Err(error) => {
+                prog.err(&format!("cannot remove '{}': {}", shown, describe(error)))
+                    .await?;
+                return Ok(Walked::Failed);
+            }
+        };
+        if !entries.is_empty() {
+            if !confirm(prog, &format!("rm: descend into directory '{shown}'? ")).await? {
+                return Ok(Walked::Skipped);
+            }
+            let (mut failed, mut skipped) = (false, false);
+            for entry in entries {
+                let child = join(&shown, &entry.name);
+                let walked = match entry.kind {
+                    EntryKind::Directory => walk(prog, child, verbose).await?,
+                    EntryKind::File => {
+                        let size = prog.stat(&child).await?.map_or(0, |(_, size)| size);
+                        if confirm(prog, &prompt(&child, EntryKind::File, size)).await? {
+                            remove(prog, &child, EntryKind::File, false, verbose).await?
+                        } else {
+                            Walked::Kept
+                        }
+                    }
+                };
+                failed |= walked == Walked::Failed;
+                skipped |= walked == Walked::Skipped;
+            }
+            if failed {
+                return Ok(Walked::Failed);
+            }
+            if skipped {
+                return Ok(Walked::Skipped);
+            }
+        }
+        if !confirm(prog, &prompt(&shown, EntryKind::Directory, 0)).await? {
+            return Ok(Walked::Kept);
+        }
+        remove(prog, &shown, EntryKind::Directory, false, verbose).await
+    })
 }
 
 pub async fn mkdir(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {

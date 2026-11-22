@@ -28,6 +28,10 @@ A line never runs as the system actor.
 
 A redirection is opened as bash opens it, before its command runs, so a command never acts before vfs refuses its file. When the command only prints (`echo`, `:`, `true`, `printf` without `-v`, or `cat` reading an input its own redirection gives it), its file is judged with a `stat` and written with one `write` of all its bytes. Any other command could act first, so its file is opened with a `write` of no bytes, and what the command prints follows in a second `write`. Output past 8 MiB is written in more than one request.
 
+Each open of a file is one `read` of its whole body, judged under the caller's rights at that moment. So `cat f; cat f` reads twice, and the second `cat` sees an edit or a revoke made in between. Every chunk one open reads comes from the version that open saw. When bodies held for open files pass 128 MiB, the one read least recently gives way; its open reads it again, and is refused, with a `vfs.conflict` warning, if the file has changed since.
+
+A write vfs refuses ends its writer: nothing more is sent to that file, and the command fails with status 1. A refusal found only as the line ends, as through `{fd}>`, is printed and fails the line with status 1.
+
 The interpreter runs inside a WebAssembly module, in a runtime linked into vfs. The runtime is the wall around the line. It counts every instruction the line executes, holds the module's memory under a hard limit, and ends the line when its deadline passes or its call is cancelled. A fault inside the interpreter ends that line with an error; the process goes on. Each line runs in a fresh instance, one slice at a time on vfs's worker pool, so the event loop keeps serving other calls while a line computes.
 
 ## The Result
@@ -108,6 +112,12 @@ vfs runs these programs itself. Each is one call of its verb, as the caller. Eac
 | `mkedge -t TYPE SOURCE TARGET`, `rmedge -t TYPE SOURCE TARGET` | Nothing, when the edge is made or removed. |
 
 `glob`, `search` and `traverse` print absolute paths, and exit 0 when they print something, 1 when they find nothing and 2 on trouble, as `grep` does.
+
+### `rm` and `sed`
+
+`rm` refuses an empty operand as a missing file, and an operand whose last component is `.` or `..` with `refusing to remove '.' or '..' directory`, before it looks anything up, as GNU rm does; with `-f` the empty operand is silent, and the `.` and `..` refusals are not. So `X=; rm -rf "$X"` removes nothing. `-i` asks before each removal and `-I` once, for more than three operands or any recursion; the question goes to standard error and the answer is one line of standard input, yes when it begins with `y` or `Y`. The last of `-f`, `-i` and `-I` wins. `rm -ri` removes each entry alone, deepest first, so a directory that still holds a kept child, or one that arrived meanwhile, fails `Directory not empty` and survives; when descent into a directory is declined, no directory above it is asked about.
+
+`sed --sandbox` refuses `e`, `r`, `R`, `w`, `W` and the `w` and `e` flags of `s` when the script compiles, before any file is read or written. It applies to the whole script wherever the option stands, where GNU sed exempts an `-e` that comes before it. `sed -i` replaces a file only when its edit ends at its last line or at `q` or `Q`; a fault discards the edit and leaves the file as it was. A refused backup or replacement stops that edit and every later one, with status 4.
 
 ### Other names
 

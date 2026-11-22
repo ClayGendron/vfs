@@ -113,34 +113,56 @@ pub struct SedOutput {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub status: i32,
-    /// Files to write whole: `-i` results and `w` targets, by the path as given.
-    pub writes: Vec<(String, Vec<u8>)>,
+    /// Files to write whole, in order: each `-i` result after its backup, then the `w` targets,
+    /// by the path as given.
+    pub writes: Vec<SedWrite>,
+}
+
+/// One file `sed` writes whole.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SedWrite {
+    pub path: String,
+    pub data: Vec<u8>,
+    pub kind: WriteKind,
+}
+
+/// What a write is for, so a refused backup can stop the edit it guards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteKind {
+    /// The backup `-i` makes of `source` before it replaces it.
+    Backup { source: String },
+    /// The edited body `-i` writes over its source.
+    InPlace,
+    /// A `w` or `W` target.
+    Script,
 }
 
 // ---------------------------------------------------------------------------
 // The entry points
 // ---------------------------------------------------------------------------
 
-/// The files `sed` will read for `args` (operands, `-` for standard input,
-/// the targets of `r` and `R`, and `-f` script files), or the output of a
-/// usage or script error. The `r` and `R` targets inside a `-f` script are
-/// not known before the script is read, so they are not named.
-pub fn inputs(args: &[String]) -> Result<Vec<String>, SedOutput> {
+/// The `-f` script files `sed` must read before it can compile its script, in order, `-` being
+/// standard input; or the output of a usage error.
+pub fn scripts(args: &[String]) -> Result<Vec<String>, SedOutput> {
     let options = Options::parse(args)?;
-    let mut names = options.operand_names();
-    let scripts: Vec<String> = options
+    Ok(options
         .sources
         .iter()
         .filter_map(|source| match source {
             Source::File(name) => Some(name.clone()),
             Source::Expr(_) => None,
         })
-        .collect();
-    if scripts.is_empty() {
-        let program = compile(&options, &Files::new(), &[])?;
-        names.extend(program.reads);
-    }
-    names.extend(scripts);
+        .collect())
+}
+
+/// The files `sed` will read for `args` once its script compiles with the `-f` files already
+/// read (operands, `-` for standard input, and the targets of `r` and `R`); or the output of a
+/// usage or script error, before any of them is read.
+pub fn inputs(args: &[String], scripts: &Files, stdin: &[u8]) -> Result<Vec<String>, SedOutput> {
+    let options = Options::parse(args)?;
+    let program = compile(&options, scripts, stdin)?;
+    let mut names = options.operand_names();
+    names.extend(program.reads);
     let mut seen = BTreeSet::new();
     names.retain(|name| seen.insert(name.clone()));
     Ok(names)
@@ -186,6 +208,8 @@ struct Options {
     line_width: usize,
     sources: Vec<Source>,
     operands: Vec<String>,
+    /// `--sandbox`: the script may not name a file or a command.
+    sandbox: bool,
 }
 
 impl Options {
@@ -284,6 +308,7 @@ impl Options {
             "separate" => self.separate = true,
             "null-data" | "zero-terminated" => self.null_data = true,
             "in-place" => self.in_place = Some(value.unwrap_or_default()),
+            "sandbox" => self.sandbox = true,
             "expression" | "file" | "line-length" => {
                 let value = match value {
                     Some(value) => value,
@@ -475,6 +500,7 @@ struct Parser<'a> {
     pos: usize,
     chunks: &'a [Chunk],
     extended: bool,
+    sandbox: bool,
     program: Program,
     /// The indices of the `{` commands not yet closed.
     open: Vec<usize>,
@@ -603,6 +629,7 @@ impl Parser<'_> {
                 }
             }
             Some(letter @ ('r' | 'R' | 'w' | 'W')) => {
+                self.unsandboxed()?;
                 let name = self.filename()?;
                 match letter {
                     'r' | 'R' => {
@@ -626,7 +653,10 @@ impl Parser<'_> {
                 self.end_of_command(EXTRA_CHARACTERS)?;
                 Kind::Nop
             }
-            Some('e') => return Err(self.error("the `e' command is not supported")),
+            Some('e') => {
+                self.unsandboxed()?;
+                return Err(self.error("the `e' command is not supported"));
+            }
             Some(letter) => {
                 let kind = match letter {
                     '=' => Kind::LineNumber,
@@ -781,6 +811,7 @@ impl Parser<'_> {
                 }
                 Some('e') => {
                     self.bump();
+                    self.unsandboxed()?;
                     return Err(self.error("the `e' option to `s' is not supported"));
                 }
                 Some('0'..='9') => {
@@ -797,6 +828,7 @@ impl Parser<'_> {
                 }
                 Some('w') => {
                     self.bump();
+                    self.unsandboxed()?;
                     let name = self.filename()?;
                     subst.write = Some(self.sink(name));
                     break;
@@ -1027,6 +1059,14 @@ impl Parser<'_> {
 
     fn error(&self, message: &str) -> String {
         self.error_at(self.pos, message)
+    }
+
+    /// Under `--sandbox`, the refusal of a command that names a file or runs one.
+    fn unsandboxed(&self) -> Result<(), String> {
+        if self.sandbox {
+            return Err(self.error("e/r/w commands disabled in sandbox mode"));
+        }
+        Ok(())
     }
 
     /// GNU's location prefix: the expression and the characters read of it, or a script file's line.
@@ -1330,12 +1370,23 @@ impl<'a> Machine<'a> {
                 }
                 let items = unit.lines.into_iter().map(Item::Line).collect();
                 outcome = self.stream(Stream::new(items));
-                if let Some(out) = self.outputs.in_place.take() {
+                // A file is published only when its edit ended well, by its end or a quit.
+                if let (Some(out), Ok(_)) = (self.outputs.in_place.take(), &outcome) {
                     let suffix = self.options.in_place.as_deref().unwrap_or_default();
                     if !suffix.is_empty() {
-                        writes.push((backup_name(&unit.name, suffix), unit.original));
+                        writes.push(SedWrite {
+                            path: backup_name(&unit.name, suffix),
+                            data: unit.original,
+                            kind: WriteKind::Backup {
+                                source: unit.name.clone(),
+                            },
+                        });
                     }
-                    writes.push((unit.name, out.bytes));
+                    writes.push(SedWrite {
+                        path: unit.name,
+                        data: out.bytes,
+                        kind: WriteKind::InPlace,
+                    });
                 }
                 if !matches!(outcome, Ok(None)) {
                     break;
@@ -1362,7 +1413,11 @@ impl<'a> Machine<'a> {
             Ok(code) => code.unwrap_or(0),
         };
         for (name, out) in self.program.writes.iter().zip(self.outputs.files) {
-            writes.push((name.clone(), out.bytes));
+            writes.push(SedWrite {
+                path: name.clone(),
+                data: out.bytes,
+                kind: WriteKind::Script,
+            });
         }
         SedOutput {
             stdout: self.outputs.stdout.bytes,
@@ -1877,6 +1932,7 @@ fn compile(options: &Options, files: &Files, stdin: &[u8]) -> Result<Program, Se
         pos: 0,
         chunks: &chunks,
         extended: options.extended,
+        sandbox: options.sandbox,
         program: Program {
             cmds: Vec::new(),
             regexes: Vec::new(),
@@ -2294,22 +2350,33 @@ mod tests {
         output
             .writes
             .iter()
-            .map(|(name, bytes)| (name.as_str(), std::str::from_utf8(bytes).unwrap()))
+            .map(|write| {
+                (
+                    write.path.as_str(),
+                    std::str::from_utf8(&write.data).unwrap(),
+                )
+            })
             .collect()
     }
 
     #[test]
     fn inputs_names_operands_stdin_and_read_targets() {
-        assert_eq!(inputs(&args(&["p"])).unwrap(), ["-"]);
+        let none = Files::new();
+        assert_eq!(inputs(&args(&["p"]), &none, b"").unwrap(), ["-"]);
         assert_eq!(
-            inputs(&args(&["-n", "1r extra\n2R more", "a", "-", "b"])).unwrap(),
+            inputs(
+                &args(&["-n", "1r extra\n2R more", "a", "-", "b"]),
+                &none,
+                b""
+            )
+            .unwrap(),
             ["a", "-", "b", "extra", "more"]
         );
-        assert_eq!(
-            inputs(&args(&["-f", "script.sed", "in.txt"])).unwrap(),
-            ["in.txt", "script.sed"]
-        );
-        let refused = inputs(&args(&["s/a/b"])).unwrap_err();
+        let list = args(&["-f", "script.sed", "in.txt"]);
+        assert_eq!(scripts(&list).unwrap(), ["script.sed"]);
+        let read = Files::from([("script.sed".to_owned(), Ok(b"1r extra\n".to_vec()))]);
+        assert_eq!(inputs(&list, &read, b"").unwrap(), ["in.txt", "extra"]);
+        let refused = inputs(&args(&["s/a/b"]), &none, b"").unwrap_err();
         assert_eq!(
             refused.stderr,
             b"sed: -e expression #1, char 5: unterminated `s' command\n"

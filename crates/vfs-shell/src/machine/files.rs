@@ -55,6 +55,8 @@ impl Drop for ReadBuffer {
 /// A file read in chunks.
 pub struct FileReader {
     pub path: String,
+    /// The key of the read that opened the file, which every later read of it names.
+    pub open: RequestKey,
     pub offset: u64,
     pub chunk: Vec<u8>,
     pub pos: usize,
@@ -66,6 +68,7 @@ impl FileReader {
     pub fn new(
         hub: &HubRef,
         path: String,
+        open: RequestKey,
         first: Vec<u8>,
         eof: bool,
     ) -> Result<Rc<RefCell<FileReader>>, Fatal> {
@@ -73,6 +76,7 @@ impl FileReader {
         let offset = first.len() as u64;
         Ok(Rc::new(RefCell::new(FileReader {
             path,
+            open,
             offset,
             chunk: first,
             pos: 0,
@@ -95,7 +99,7 @@ impl FileReader {
         hub: &HubRef,
         key: RequestKey,
     ) -> Result<bool, Fatal> {
-        let (path, offset) = {
+        let (path, open, offset) = {
             let this = reader.borrow();
             if this.pos < this.chunk.len() {
                 return Ok(true);
@@ -103,13 +107,14 @@ impl FileReader {
             if this.eof {
                 return Ok(false);
             }
-            (this.path.clone(), this.offset)
+            (this.path.clone(), this.open.clone(), this.offset)
         };
         let reply = super::io::host_call(
             hub,
             key,
             Request::Read {
                 path,
+                open,
                 offset,
                 length: CHUNK as u64,
             },
@@ -147,7 +152,10 @@ pub struct FileWriter {
     buffer: Vec<u8>,
     /// How the first write treats the file; `None` once it has been written.
     pending: Option<WriteMode>,
+    /// The refusal not yet reported; taken once by whoever says so.
     pub error: Option<HostError>,
+    /// A write was refused: the writer sends nothing again, whoever holds it.
+    failed: bool,
     hub: HubRef,
 }
 
@@ -159,6 +167,7 @@ impl FileWriter {
             buffer: Vec::new(),
             pending: Some(mode),
             error: None,
+            failed: false,
             hub: Rc::clone(hub),
         }));
         let mut hub = hub.borrow_mut();
@@ -169,6 +178,9 @@ impl FileWriter {
 
     /// Hold `bytes`; true when a chunk is held and should be written.
     pub fn push(&mut self, hub: &HubRef, bytes: &[u8]) -> Result<bool, Fatal> {
+        if self.failed {
+            return Ok(false);
+        }
         hub.borrow_mut().charge(bytes.len())?;
         self.buffer.extend_from_slice(bytes);
         Ok(self.buffer.len() >= WRITE_CHUNK)
@@ -176,7 +188,7 @@ impl FileWriter {
 
     /// Whether a flush would write: bytes are held, or the file is not yet created or truncated.
     pub fn is_dirty(&self) -> bool {
-        !self.buffer.is_empty() || self.pending.is_some()
+        !self.failed && (!self.buffer.is_empty() || self.pending.is_some())
     }
 
     /// Write what is held as one request: the opening mode the first time, appending after.
@@ -192,12 +204,20 @@ impl FileWriter {
             }
             let data = std::mem::take(&mut this.buffer);
             this.hub.borrow_mut().release(data.len());
-            let mode = this.pending.take().unwrap_or(WriteMode::Append);
+            // The opening mode holds until a write is accepted: a refused writer never appends.
+            let mode = this.pending.unwrap_or(WriteMode::Append);
             (this.path.clone(), data, mode)
         };
         let reply = super::io::host_call(hub, key, Request::Write { path, data, mode }).await?;
-        if let Reply::Error(error) = reply {
-            writer.borrow_mut().error = Some(error);
+        let mut this = writer.borrow_mut();
+        match reply {
+            Reply::Error(error) => {
+                this.error = Some(error);
+                this.failed = true;
+                let held = std::mem::take(&mut this.buffer);
+                this.hub.borrow_mut().release(held.len());
+            }
+            _ => this.pending = None,
         }
         Ok(())
     }
@@ -207,8 +227,34 @@ impl Drop for FileWriter {
     fn drop(&mut self) {
         if let Ok(mut hub) = self.hub.try_borrow_mut() {
             hub.release(self.buffer.len());
+            if let Some(error) = self.error.take() {
+                hub.refusals.push((std::mem::take(&mut self.path), error));
+            }
         }
     }
+}
+
+/// The refusals no one has reported yet, each with its path, taken so each is said once: those
+/// of writers still open, and those of writers a child shell ended.
+pub fn unreported(hub: &HubRef) -> Vec<(String, HostError)> {
+    let writers: Vec<_> = hub
+        .borrow()
+        .writers
+        .iter()
+        .filter_map(Weak::upgrade)
+        .collect();
+    let mut refused = std::mem::take(&mut hub.borrow_mut().refusals);
+    refused.extend(writers.iter().filter_map(|writer| {
+        let mut this = writer.try_borrow_mut().ok()?;
+        let error = this.error.take()?;
+        Some((this.path.clone(), error))
+    }));
+    refused
+}
+
+/// What the line says of a write its host refused.
+pub fn refusal_text(lineno: u32, path: &str, error: HostError) -> String {
+    format!("bash: line {lineno}: {path}: {}\n", error.message())
 }
 
 /// The writers holding bytes for `path`, or for any path when `path` is `None`.
