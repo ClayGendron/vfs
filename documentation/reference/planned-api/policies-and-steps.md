@@ -48,7 +48,7 @@ fs.policies()                      # a tuple, in order
 fs.session(authority, id, policies=[...])
 ```
 
-Policies are kept and asked in the order they were added. A change to the list is seen by the next step. Two different policies may not share a name. Nothing about a policy is stored: each process holds its own list, and a session's policies are passed each time the session is asked for.
+Policies are kept and asked in the order they were added. A change to the list is seen by the next step. Two different policies may not share a name. Nothing about a policy is stored. Each process holds its own list, and a session's policies are passed each time the session is asked for.
 
 A session's policies are asked after the file system's. A session can add a policy and can never remove one, so it can ask for more review and never for less.
 
@@ -64,7 +64,7 @@ It asks for a person's approval before any change under one of its paths, and be
 
 ## Step
 
-VFS builds a step and hands it to a policy. A step is frozen: a policy reads it and cannot change it. It is built after the call's arguments and paths are checked, so a policy can trust what it reads.
+VFS builds a step and hands it to a policy. A step is frozen, so a policy reads it and cannot change it. It is built after the call's arguments and paths are checked, so a policy can trust what it reads.
 
 | Attribute | Type | Meaning |
 |---|---|---|
@@ -81,7 +81,7 @@ Each step class adds the arguments of its own verb. An `EditStep` has `path`, `o
 
 ### The Step Classes
 
-There are 26 step classes: one for each of the 25 verbs, and `RewindStep`. `Step` is the base of them all, and `Mutation` is the base of the 16 that change something.
+There are 26 step classes, one for each of the 25 verbs and one more, `RewindStep`. `Step` is the base of them all, and `Mutation` is the base of the 16 that change something.
 
 | Group | Classes |
 |---|---|
@@ -95,11 +95,11 @@ There are 26 step classes: one for each of the 25 verbs, and `RewindStep`. `Step
 A policy is asked once for each call of a verb, after VFS has checked the call's arguments and before any storage is asked to act.
 
 - **Only a policy typed for the step is asked.** With no policy, or none typed for the verb, a call pays nothing more.
-- **Every policy typed for the step is asked,** one after another: the file system's in the order added, then the session's. One denial refuses the step. When several deny, the result carries each one's reason.
+- **Every policy typed for the step is asked,** one after another. The file system's are asked in the order added, then the session's. One denial refuses the step. When several deny, the result carries each one's reason.
 - **For a change, the caller's rights are proven first.** A change the caller may not make is refused in the usual words and reaches no policy. This costs about four reads for a write of one file.
 - **For a read, nothing is proven first.** A read is filtered by the caller's rights when it is answered.
 - **No policy is asked about a step of the system authority.**
-- **Each verb a shell line makes is a step,** with `via` set to the line. That includes the checks the shell makes on its way: `cat /a; echo x > /b; rm /c` makes four `stat` steps beside one read, one write and one delete. The line itself is not a step.
+- **Each verb a shell line makes is a step,** with `via` set to the line. That includes the checks the shell makes on its way. The line `cat /a; echo x > /b; rm /c` makes four `stat` steps beside one read, one write and one delete. The line itself is not a step.
 - **A policy is asked again when its job is resumed.** So what it asks a person, and whether it asks, must depend only on the step and on the answers it has been given.
 - **A policy may call its own file system only as the system authority.**
 
@@ -117,7 +117,7 @@ A step a policy refuses changes nothing, and nothing is sent to any mount.
 
 **A policy that fails refuses the step.** A broken guard stops the work. The message never holds an exception's text.
 
-The line an agent reads for a denial is:
+An agent reads this line for a denial.
 
 ```text
 ERROR /contracts/acme.md: Refused by a policy: Contracts are frozen until Friday. (policy contracts_are_frozen) — A rule of this file system refused this step, so nothing was changed. Do not retry it or make the change another way. (retry: never)

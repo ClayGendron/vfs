@@ -120,7 +120,7 @@ A refusal changes nothing. In a batch, every stale row is listed and the batch c
 | A value that is not an etag, or `if_match` used with a batch | `vfs.invalid` | Nothing. It is refused before any storage is called. |
 | A precondition sent to a mount whose storage issues no etag | `vfs.unsupported` | Nothing |
 
-The line an agent reads for a conflict is:
+An agent reads this line for a conflict.
 
 ```text
 ERROR /notes/plan.md: Conflict: the etag required is not the etag of what is stored — Read the entry again, then retry; a change that requires an etag takes the one that read returns. (retry: refresh)

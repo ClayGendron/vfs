@@ -1,6 +1,6 @@
 # Planned API
 
-This section lists the API of two features that are designed and not yet built: a [job](../glossary.md#job) that is interrupted to ask a person and resumed with the answer, and a [session](../glossary.md#session) that remembers what an agent has read, works in [turns](../glossary.md#turn), and can be rewound or forked.
+This section lists the API of two features that are designed and not yet built. One is a [job](../glossary.md#job) that is interrupted to ask a person and resumed with the answer. The other is a [session](../glossary.md#session) that remembers what an agent has read, works in [turns](../glossary.md#turn), and can be rewound or forked.
 
 > **Nothing in this section is built.** The pages are written so the API can be agreed before the code is written. Every name here may still change. The pages under [Python API](../python-api/index.md) describe the code as it is today.
 
@@ -60,4 +60,4 @@ Each name is imported from `vfs`.
 
 ## Where the Design Is Written
 
-The design is nine specs under `agents/` in the repository. `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` is their map: what each one decides, the order they are built in, and what they share.
+The design is nine specs under `agents/` in the repository. `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` is their map. It says what each one decides, the order they are built in, and what they share.

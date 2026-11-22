@@ -34,33 +34,43 @@ The path a [mount](#mount) is attached at is an entry too. It is an empty direct
 
 ## Etag
 
-An etag is a short value on a row that names one [entry](#entry) at one version. Two results show the same etag only when they saw the same file in the same state.
+An etag is a short code that VFS returns with every [entry](#entry). The code stands for a file as it was at that moment. When the file changes, its etag changes too.
 
-A caller that reads a file and changes it later passes the etag back as `if_match`. The change is made only when the file at that path still has that etag. When the file has been changed, or when a different file has come to stand at the path, nothing is changed and the call is refused with a conflict.
+An etag lets a caller say "change this file only if it is still the one I read". The caller reads a file and keeps its etag. Later it passes the etag back as `if_match` with its change. If the file still has that etag, the change is made. If the file has a different etag, nothing is changed and the call is refused with a conflict. The caller then reads the file again and tries once more.
 
-An etag is compared and never taken apart. It cannot be turned back into a version number, and it grants no right to anything. It changes whenever the file's version does, and it stays the same when a directory above the file is moved, deleted or restored.
+For example, an agent reads `/notes/plan.md` and edits it a minute later. If a teammate saved the file in that minute, the etag no longer matches and the edit is refused. The teammate's work is not written over. The same happens when the file was deleted and a new file was made at the same path.
+
+An etag is only for comparing. A caller cannot read a version number out of it, and holding one gives no access to the file. Moving, deleting or restoring a directory above a file leaves the file's etag as it was.
 
 The etag is part of a design that is not yet built. [Etags and Preconditions](planned-api/etags-and-preconditions.md) has its details.
 
 ## Interrupt
 
-An interrupt is what a stopped [job](#job) is waiting for: a message for a person, the shape the answer must have, and a preview of what would change. A [policy](#policy) raises one when a [step](#step) needs a person.
+An interrupt is a question that a person must answer before VFS goes on. It comes up when an agent tries something that needs a person's say, such as an edit to a contract. VFS stops the [job](#job) before anything is changed and hands the interrupt back to the application.
 
-An application builds its question from those three things alone, and asks the person in whatever way it likes. The answer goes back through `resume`, and the job carries on.
+An interrupt has three parts.
 
-A job has at most one interrupt waiting. An answer belongs to that interrupt of that job and to nothing else.
+| Part | What it is |
+|---|---|
+| Message | The question, in words a person can read |
+| Schema | The form the answer must take, such as approve or deny |
+| Preview | What would change if the person says yes |
+
+The application shows these to a person in whatever way it likes, such as a chat window, an email or a ticket. VFS does not ask the person and does not wait for them. When the person answers, the application passes the answer to `resume`, and the job carries on from where it stopped.
+
+A job waits on one interrupt at a time. An answer is for that one interrupt and cannot be used on another job. An interrupt is raised by a [policy](#policy), when the policy sees a [step](#step) that needs a person.
 
 The interrupt is part of a design that is not yet built. [Jobs and Interrupts](planned-api/jobs-and-interrupts.md) has its details.
 
 ## Job
 
-A job is one call through VFS. A direct call such as `edit` is a job of one [step](#step), and a line of shell is a job of many.
+A job is one piece of work a caller asks VFS to do. One call is one job. A call such as `edit` is a job with one [step](#step). A line of shell such as `cp a b && rm a` is a job with several.
 
-Most jobs finish inside the call that started them, and VFS keeps nothing for them. A job is stored only when a step needs a person. VFS then saves the job and returns at once, and what the job waits for is its [interrupt](#interrupt).
+Almost every job starts and finishes inside its call, and VFS keeps no record of it. A job is saved only when it has to stop and ask a person something. VFS then saves the job in the database and returns at once. The question it left behind is the job's [interrupt](#interrupt).
 
-A stored job has an id and a state. `resume` gives it an answer and carries it on, as the caller that started it, from any program that can reach the same database. A job that nobody answers lapses after a day.
+A saved job has an id. The application passes that id and the person's answer to `resume`, and the job carries on as the caller that started it. Any program that can reach the same database can do this, so the person may answer hours later and from another server. A job that nobody answers within a day is ended.
 
-A job is not a shell job. The shell's own `jobs`, `fg` and `wait` are about commands running inside one line.
+A job here is not a shell job. The shell commands `jobs`, `fg` and `wait` are about commands running inside one line.
 
 The job is part of a design that is not yet built. [Jobs and Interrupts](planned-api/jobs-and-interrupts.md) has its details.
 
@@ -84,47 +94,59 @@ Adding or removing a mount is a write at its path. A read-only mount takes no ne
 
 ## Policy
 
-A policy is a function the host writes that VFS shows each [step](#step) before the step runs. It allows the step, denies it with a reason, or asks for a person by raising an [interrupt](#interrupt).
+A policy is a rule that the application writes as a Python function. VFS calls the function just before each [step](#step) runs, and the function gives one of three answers.
 
-The type of the policy's argument chooses the steps it is shown. A policy written for changes is never asked about a read.
+| Answer | What happens |
+|---|---|
+| Allow | The step runs |
+| Deny | The step is refused, and the agent is told the reason |
+| Ask a person | The step stops and waits for an answer, as an [interrupt](#interrupt) |
 
-A policy can only narrow what a caller may do. For a change, VFS checks the caller's rights first, and a change the caller may not make is refused before any policy is called. Every policy written for a step is asked, and one denial refuses the step.
+For example, one policy can let an agent edit any file and ask a person before an edit under `/contracts`.
 
-A policy that raises an error, returns something that is not a decision, or takes too long refuses the step. No policy is asked about a step made as the system.
+A policy chooses the steps it sees by the type of its argument. A policy written for deletes is never called for a read.
+
+A policy can take access away and can never give it. For a change, VFS first checks that the caller is allowed to make the change at all, and it calls a policy only when the caller is. When several policies see one step, every one of them is asked, and one "deny" is enough to refuse the step.
+
+A policy that breaks refuses the step. That covers a policy that raises an error, one that returns something other than the three answers, and one that takes longer than ten seconds. Policies are not called for work VFS does as the system.
 
 The policy is part of a design that is not yet built. [Policies and Steps](planned-api/policies-and-steps.md) has its details.
 
 ## Session
 
-A session is what VFS keeps for one conversation: who the agent is, what it has been shown, and where its shell is. The host's application keeps the messages.
+A session is the record VFS keeps of one conversation with an agent. It remembers which files the agent has seen and which directory the agent's shell is in. It does not hold the messages. Those stay with the application.
 
-A session is stored by the file system, under its owner and an id the host chooses, so any program can ask for it again. The owner is the authority the session was asked for with. The id is a name inside that owner and opens nothing by itself: a caller with another authority who passes the same id gets a session of its own.
+A session has an id. The application usually gives it the id it already has for the conversation, such as `conv_123`. VFS saves the session in the database, so the next request can ask for the same id and get the same session back, on any server.
 
-A session refuses to change a file that has changed since the agent was shown it, and a file the agent was never shown. What it remembers of each file is a [stamp](#stamp). Its work is divided into [turns](#turn), and it can be taken back to an earlier turn or forked at one.
+A session belongs to its owner, the caller it was made for. The id is only a name, and knowing an id does not let a caller into another caller's session. A different caller who passes the same id gets a new, empty session of its own.
 
-A session stores no right. Every call made through it is checked against its authority at the time of the call. It is not a file and has no path.
+A session protects files from stale changes. It refuses to change a file that has changed since the agent last saw it, and it refuses to change a file the agent never saw. The note it keeps for each file is a [stamp](#stamp). A session's work is split into [turns](#turn), and a session can be taken back to an earlier turn or copied from one.
+
+A session gives no access to anything. Every call made through it is checked against what its owner may do at that moment. A session is not a file and has no path.
 
 The stored session is part of a design that is not yet built. [Sessions and Turns](planned-api/sessions-and-turns.md) has its details.
 
 ## Stamp
 
-A stamp is a [session's](#session) memory that it was shown one path: as a file at one version, as a directory, or as holding nothing. For a file it holds the [etag](#etag) the file had when it was shown.
+A stamp is a note that a [session](#session) keeps about one path. The note says that the agent has seen the path, and what was there when it did. What was there is a file, a directory, or nothing. For a file, the stamp keeps the file's [etag](#etag).
 
-A session makes a stamp whenever a call through it returns a row, and whenever the session itself changes a file. A caller never writes one and cannot read one.
+A session writes its stamps by itself. It writes one each time a call shows the agent a file or a listing, and each time the session changes a file. A caller never writes a stamp and cannot read one.
 
-When the session later changes a file, it requires the file to still have the etag in its stamp. If the file has moved on, the change is refused and nothing is written. One read of the file makes a new stamp, and the change then goes through.
+Stamps are how a session catches a stale change. Before it changes a file, the session checks that the file still has the etag in its stamp. If somebody else has changed the file, the change is refused and nothing is written. The agent reads the file again, which makes a new stamp, and the change then goes through.
 
-Stamps are stored with the session, one for each path and [turn](#turn). They are bounded, and a session that passes its bound forgets the oldest. A forgotten stamp can only cause a refusal.
+Stamps are saved with the session, one for each path in each [turn](#turn). A session keeps a limited number of them, and when it has too many it drops the oldest. Losing a stamp is safe. The worst that follows is a refusal, and the agent reads the file again.
 
 The stamp is part of a design that is not yet built. [Sessions and Turns](planned-api/sessions-and-turns.md) has its details.
 
 ## Step
 
-A step is one verb about to run, with the arguments VFS has already checked, as a value that cannot be changed. It is what VFS shows a [policy](#policy).
+A step is one action that VFS is about to take, such as an edit of `/contracts/acme.md`. VFS describes the action before it happens, so that a [policy](#policy) can look at it and decide whether it may run.
 
-A direct call such as `edit` is one step. A line of shell makes one step for each verb it carries out. One step is not a verb: a rewind that puts a [session's](#session) files back is a single step, judged once.
+A direct call such as `edit` makes one step. A line of shell makes one step for each action it carries out. A step is usually one verb, and a rewind is the exception. A rewind that puts a [session's](#session) files back may restore many files, and it is still one step that is judged once.
 
-Every step has its verb, the paths it names, and the authority that is calling. Each kind of step adds the arguments of its own verb, so an edit's step has the path, the old text and the new text.
+A step holds what a policy needs to judge it. Every step says which verb it is, which paths it names, and who is calling. Each kind of step adds the arguments of its own verb, so the step for an edit also has the old text and the new text.
+
+A step cannot be changed. A policy reads it and decides, and nothing more. VFS builds the step after it has checked the call's arguments, so what a policy reads is what will run.
 
 The step is part of a design that is not yet built. [Policies and Steps](planned-api/policies-and-steps.md) has its details.
 
@@ -149,10 +171,10 @@ A kernel that is given no storage makes an `InMemoryStorage` for its root. A sto
 
 ## Turn
 
-A turn is one message from the user and everything the agent does in answer to it, kept as one part of a [session](#session).
+A turn is one message from the user together with everything the agent does to answer it. A [session](#session) is a series of turns, one after another.
 
-The host starts a turn at the top of each request and gives it an id, usually the id of the user's message. Everything the session records from then on belongs to that turn: what the agent was shown, what it changed, where its shell went, and any [job](#job) that was interrupted. A turn often spans several requests, and each of them starts the same id.
+The application starts a turn at the start of each request. It calls `start_turn` with an id, usually the id of the user's message. From then on, everything the session records is marked with that turn. That covers the files the agent saw, the files it changed, where its shell went, and any [job](#job) that stopped to ask a person. One turn can run over several requests, and each request starts the same id again.
 
-A turn is the point a session is rewound to or forked at. Because each record belongs to a turn, a session can forget everything from one message onward and nothing before it.
+Turns are what let a conversation go back. When a user edits an earlier message, the application rewinds the session to before that message's turn. The session forgets everything from that turn on and keeps everything before it. A fork uses a turn in the same way. It copies the session up to that turn into a new session and leaves the first one as it is.
 
 The turn is part of a design that is not yet built. [Sessions and Turns](planned-api/sessions-and-turns.md) has its details.

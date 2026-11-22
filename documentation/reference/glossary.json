@@ -11,17 +11,17 @@
   },
   {
     "term": "Etag",
-    "summary": "A short value on a row that names one file at one version, which a change can require.",
+    "summary": "A short code that stands for one file as it was when read, so a later change can require the file to be unchanged.",
     "types": []
   },
   {
     "term": "Interrupt",
-    "summary": "What a stopped job is waiting for: a message for a person, the shape of the answer, and a preview of the change.",
+    "summary": "A question a stopped job needs a person to answer, with a message, the form of the answer, and a preview of the change.",
     "types": []
   },
   {
     "term": "Job",
-    "summary": "One call through VFS, which is stored only when it is stopped to ask a person and is resumed later with the answer.",
+    "summary": "One piece of work a caller asks of VFS, saved only when it stops to ask a person and carried on with the answer.",
     "types": []
   },
   {
@@ -36,22 +36,22 @@
   },
   {
     "term": "Policy",
-    "summary": "A function the host writes that is shown each step before it runs and allows it, denies it, or asks for a person.",
+    "summary": "A rule the application writes as a function, which sees each step before it runs and allows it, denies it, or asks a person.",
     "types": []
   },
   {
     "term": "Session",
-    "summary": "What VFS keeps for one conversation: who the agent is, what it has been shown, and where its shell is.",
+    "summary": "The record VFS keeps of one conversation with an agent, which remembers the files the agent has seen and where its shell is.",
     "types": ["AsyncSession"]
   },
   {
     "term": "Stamp",
-    "summary": "A session's memory that it was shown one path, as a file at one version, a directory, or nothing.",
+    "summary": "A note a session keeps that the agent has seen one path, and what was there when it did.",
     "types": []
   },
   {
     "term": "Step",
-    "summary": "One verb about to run, with its arguments already checked, as a value that cannot be changed.",
+    "summary": "One action VFS is about to take, described before it happens so a policy can decide whether it may run.",
     "types": []
   },
   {
@@ -61,7 +61,7 @@
   },
   {
     "term": "Turn",
-    "summary": "One message from the user and everything the agent does in answer to it, kept as one part of a session.",
+    "summary": "One message from the user and everything the agent does to answer it, as one part of a session.",
     "types": []
   }
 ]

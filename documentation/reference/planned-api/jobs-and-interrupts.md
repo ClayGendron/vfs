@@ -105,7 +105,7 @@ session.resume(answer, *, job=None, authority) -> Result
 | `authority` | The principal that answered. It is required, and it is never taken from a default. |
 | `job` | On a session, which job to resume. Needed only when the session has more than one waiting. |
 
-`resume` is the only call that answers. It returns the result the first call would have returned: the step's result when the step ran, another interrupted result when the job stops again, and a refusal otherwise.
+`resume` is the only call that answers. It returns the result the first call would have returned. That is the step's result when the step ran, another interrupted result when the job stops again, and a refusal otherwise.
 
 - **The step runs as the caller that made the call,** never as the principal that answered. The caller's rights are checked again when it runs.
 - **The file must still be as the preview showed it,** for `write`, `edit`, `delete` and `move`. If it changed, nothing is written and the result is a conflict.
@@ -116,7 +116,7 @@ session.resume(answer, *, job=None, authority) -> Result
 
 ### Who May Resume
 
-The system authority may resume any job. Any other authority must hold `read_write` on every path the step names. A caller may answer its own job when it holds that level. **So the rule that an agent cannot approve its own work rests on your application: never offer `resume` to an agent as a tool.** It is not a shell command, and a session handed to a tool does not carry it.
+The system authority may resume any job. Any other authority must hold `read_write` on every path the step names. A caller may answer its own job when it holds that level. **So the rule that an agent cannot approve its own work rests on your application. Never offer `resume` to an agent as a tool.** It is not a shell command, and a session handed to a tool does not carry it.
 
 A job that a session's own policies judged is resumed with `session.resume`, on a handle given the same policies.
 

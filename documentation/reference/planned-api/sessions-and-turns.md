@@ -25,7 +25,7 @@ It returns a handle, an `AsyncSession` or a `Session`. **Making a handle stores 
 |---|---|
 | `session.id` | The id, as given or as made |
 | `session.authority` | The authority every call is made as |
-| `session.strict`, `session.policies` | As given. Neither is stored: pass them each time. |
+| `session.strict`, `session.policies` | As given. Neither is stored, so pass them each time. |
 | `session.turn` | The id of the turn the handle is in, or `None` before one is started |
 | `session.parent` | On the handle `fork` returns, the id of the session it was forked from |
 | Every verb, and `cli` | The file system's call, with the authority filled in |
@@ -34,7 +34,7 @@ It returns a handle, an `AsyncSession` or a `Session`. **Making a handle stores 
 
 ### The Id
 
-An id is 1 to 255 visible ASCII characters, with no space. It is kept exactly as given and compared byte for byte, so `Conv_1` and `conv_1` are two sessions. It must be a `str`: an integer or a `UUID` is refused. An id VFS makes is `ses_` followed by 26 characters, from 128 random bits.
+An id is 1 to 255 visible ASCII characters, with no space. It is kept exactly as given and compared byte for byte, so `Conv_1` and `conv_1` are two sessions. It must be a `str`, so an integer or a `UUID` is refused. An id VFS makes is `ses_` followed by 26 characters, from 128 random bits.
 
 ### The Owner
 
@@ -48,7 +48,7 @@ An id is 1 to 255 visible ASCII characters, with no space. It is kept exactly as
 
 ## What a Session Remembers
 
-A session keeps a [stamp](../glossary.md#stamp) for each path it has been shown: which file it was and at which version.
+A session keeps a [stamp](../glossary.md#stamp) for each path it has been shown. A stamp records which file it was and at which version.
 
 | Call through a session | What it stamps |
 |---|---|
@@ -89,7 +89,7 @@ session.turns(*, after=None, limit=100) -> tuple[Turn, ...]
 
 - **Starting a turn the session already has carries it on.** A turn often spans several requests, and each of them starts the same id.
 - With no id, VFS makes one, such as `turn_01JD3K7Q`.
-- A turn id follows the rule for a session id: 1 to 255 visible ASCII characters.
+- A turn id follows the rule for a session id, which is 1 to 255 visible ASCII characters.
 - The turn is on the handle. Two handles of one session may be in two turns, and the store holds no "current turn".
 - A call made through a handle with no turn started goes into the session's latest turn.
 
@@ -134,7 +134,7 @@ With `files=True`, the files the session changed in the removed turns are put ba
 - Nothing is destroyed. Replaced content is kept as a version, and a removed file goes to the trash.
 - A rewind with files is one [step](../glossary.md#step), `RewindStep`, to your policies, and one job if it is interrupted.
 
-`Rewind.files` is a result. Its `observations` hold one row for each file put back, with a `status` of `updated`, `deleted`, `created` or `unchanged`. Its `warnings` hold one entry for each file left as it is, and `data["vfs.rewind"]["reason"]` says why: `changed`, `not_there`, `gone`, `path_taken`, `not_empty`, `no_version` or `partly`.
+`Rewind.files` is a result. Its `observations` hold one row for each file put back, with a `status` of `updated`, `deleted`, `created` or `unchanged`. Its `warnings` hold one entry for each file left as it is, and `data["vfs.rewind"]["reason"]` says why, as one of `changed`, `not_there`, `gone`, `path_taken`, `not_empty`, `no_version` or `partly`.
 
 A change made without a session is not recorded, so a rewind cannot put it back. Neither can it put back rights, anything outside VFS, or a file that has been destroyed for good.
 
@@ -144,7 +144,7 @@ A change made without a session is not recorded, so a rewind cannot put it back.
 session.fork(id=None, *, before=None)
 ```
 
-It makes a new session of the same owner and returns a handle to it. `before` names a turn, as for a rewind: the fork gets the turns before it. With no `before`, it gets every turn.
+It makes a new session of the same owner and returns a handle to it. `before` names a turn, as for a rewind, and the fork gets the turns before it. With no `before`, it gets every turn.
 
 | A fork copies | A fork shares | A fork leaves behind |
 |---|---|---|
@@ -156,7 +156,7 @@ It makes a new session of the same owner and returns a handle to it. `before` na
 
 ## The Shell
 
-A session keeps two things of its shell from one line to the next: the working directory and the exported variables. Each line behaves as a new bash process started where the last line ended. A variable that was not exported, a function, an alias and the history are gone when the line ends.
+A session keeps two things of its shell from one line to the next. They are the working directory and the exported variables. Each line behaves as a new bash process started where the last line ended. A variable that was not exported, a function, an alias and the history are gone when the line ends.
 
 `session.cli(line, *, cwd=None, stdin=b"")` starts in the session's own directory when `cwd` is `None`.
 
