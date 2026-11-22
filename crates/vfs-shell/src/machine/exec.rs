@@ -97,6 +97,15 @@ pub fn run_line(
             Err(Flow::Fatal(fatal)) => return Err(fatal),
         };
         flush_all(&mut sh).await?;
+        // A write refused only as the line ends fails the line, once it has been said.
+        let mut status = status;
+        for (path, error) in files::unreported(&sh.hub) {
+            let text = format!("bash: line {}: {}: {}\n", sh.lineno, path, error.message());
+            if sh.error_text(&text).await.is_err() {
+                break;
+            }
+            status = 1;
+        }
         Ok(status & 0xff)
     })
 }

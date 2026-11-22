@@ -350,3 +350,55 @@ fn sed_i_publishes_a_file_a_quit_ended_and_opens_no_later_one() {
     assert_eq!(host.file("/top/sub/f.txt"), Some(&b"X\nb\n"[..]));
     assert_eq!(host.file("/top/sub/c.txt"), Some(&b"gamma\n"[..]));
 }
+
+// ---------------------------------------------------------------------------
+// A writer the host refused stays refused
+// ---------------------------------------------------------------------------
+
+fn run_refusing(source: &str, refused: usize) -> (Outcome, MemoryHost) {
+    let mut host = world();
+    host.add_file("/top/big", &vec![b'z'; 9 << 20]);
+    host.refuse_write = Some(("/top/sub/out".to_owned(), refused));
+    let mut config = host.config();
+    config.cwd = "/top/sub".to_owned();
+    let outcome = host.run(source, config);
+    (outcome, host)
+}
+
+fn writes_to_out(outcome: &Outcome) -> usize {
+    outcome
+        .requests
+        .iter()
+        .filter(|request| request.contains("Write") && request.contains("\"/top/sub/out\""))
+        .count()
+}
+
+#[test]
+fn a_writer_refused_at_its_first_write_never_writes_again() {
+    let (outcome, host) = run_refusing("cat < /top/big > out; echo st=$?", 0);
+    assert_eq!(outcome.stdout, b"st=1\n");
+    assert!(stderr(&outcome).contains("out: Permission denied"));
+    assert_eq!(writes_to_out(&outcome), 1);
+    assert!(!host.exists("/top/sub/out"));
+}
+
+#[test]
+fn a_writer_refused_after_an_accepted_write_sends_no_later_chunk() {
+    let (outcome, host) = run_refusing(
+        "{ echo head; cat /top/big; echo tail; } > out; echo st=$?",
+        1,
+    );
+    assert_eq!(outcome.stdout, b"st=1\n");
+    assert!(stderr(&outcome).contains("out: Permission denied"));
+    assert_eq!(writes_to_out(&outcome), 2);
+    assert_eq!(host.file("/top/sub/out"), Some(&b""[..]));
+}
+
+#[test]
+fn a_write_refused_when_the_line_ends_fails_the_line() {
+    let (outcome, host) = run_refusing(": {fd}>out; echo hi >&$fd; echo st=$?", 1);
+    assert_eq!(outcome.stdout, b"st=0\n");
+    assert_eq!(outcome.status, 1);
+    assert!(stderr(&outcome).contains("out: Permission denied"));
+    assert_eq!(host.file("/top/sub/out"), Some(&b""[..]));
+}
