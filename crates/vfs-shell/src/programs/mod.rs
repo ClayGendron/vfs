@@ -318,10 +318,21 @@ async fn run_sed(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
         prog.sh.write_fd(2, &output.stderr).await?;
     }
     let mut status = output.status;
-    for (path, data) in output.writes {
-        if let Err(error) = prog.write_file(&path, data).await? {
-            prog.err(&format!("couldn't open file {}: {}", path, describe(error)))
-                .await?;
+    // A refused backup stops its edit and every later one, as GNU sed exits at it.
+    let mut stopped = false;
+    for write in output.writes {
+        if stopped && write.kind != sed::WriteKind::Script {
+            continue;
+        }
+        if let Err(error) = prog.write_file(&write.path, write.data).await? {
+            let message = match &write.kind {
+                sed::WriteKind::Backup { source } => {
+                    stopped = true;
+                    format!("cannot rename {}: {}", source, describe(error))
+                }
+                _ => format!("couldn't open file {}: {}", write.path, describe(error)),
+            };
+            prog.err(&message).await?;
             status = 4;
         }
     }

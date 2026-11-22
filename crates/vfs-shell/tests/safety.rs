@@ -240,3 +240,113 @@ fn rm_i_on_a_missing_operand_asks_nothing() {
         "rm: cannot remove 'nope': No such file or directory\n"
     );
 }
+
+// ---------------------------------------------------------------------------
+// sed --sandbox refuses e, r and w before it reads or writes anything
+// ---------------------------------------------------------------------------
+
+fn writes(outcome: &Outcome) -> Vec<&String> {
+    outcome
+        .requests
+        .iter()
+        .filter(|request| request.contains("Write"))
+        .collect()
+}
+
+#[test]
+fn sed_sandbox_refuses_r_w_and_e_where_gnu_sed_points() {
+    for (script, char) in [
+        ("w out", 1),
+        ("1r keep.txt", 2),
+        ("s/a/X/w out", 7),
+        ("$!N;2e ls", 6),
+        ("p;W out", 3),
+        ("R keep.txt", 1),
+        ("s/a/b/e", 7),
+    ] {
+        let (outcome, host) = run(&format!("sed --sandbox '{script}' a.txt; echo st=$?"), b"");
+        assert_eq!(outcome.stdout, b"st=1\n", "{script}");
+        assert_eq!(
+            stderr(&outcome),
+            format!(
+                "sed: -e expression #1, char {char}: e/r/w commands disabled in sandbox mode\n"
+            ),
+            "{script}"
+        );
+        assert!(writes(&outcome).is_empty(), "{script}");
+        assert!(!host.exists("/top/sub/out"), "{script}");
+    }
+}
+
+#[test]
+fn sed_sandbox_reaches_a_script_file_and_a_later_expression() {
+    let (outcome, _) = run(
+        "printf '1r keep.txt\\n' > s.sed; sed --sandbox -f s.sed a.txt; echo st=$?",
+        b"",
+    );
+    assert_eq!(outcome.stdout, b"st=1\n");
+    assert_eq!(
+        stderr(&outcome),
+        "sed: file s.sed line 1: e/r/w commands disabled in sandbox mode\n"
+    );
+    let (outcome, _) = run("sed --sandbox -e p -e 'w q' a.txt; echo st=$?", b"");
+    assert_eq!(
+        stderr(&outcome),
+        "sed: -e expression #2, char 1: e/r/w commands disabled in sandbox mode\n"
+    );
+    let (outcome, _) = run("sed --sandbox 's/a/X/' a.txt", b"");
+    assert_eq!(outcome.stdout, b"Xlpha\n");
+}
+
+// ---------------------------------------------------------------------------
+// sed -i publishes a file only when its edit ends well, and its backup first
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sed_i_leaves_a_file_whose_edit_failed_as_it_was() {
+    let line = "printf 'a\\nb\\nc\\n' > f.txt; sed -i '2s//x/' f.txt; echo st=$?; cat f.txt";
+    let (outcome, host) = run(line, b"");
+    assert_eq!(outcome.stdout, b"st=1\na\nb\nc\n");
+    assert_eq!(
+        stderr(&outcome),
+        "sed: -e expression #1, char 0: no previous regular expression\n"
+    );
+    assert_eq!(host.file("/top/sub/f.txt"), Some(&b"a\nb\nc\n"[..]));
+
+    let line = "printf 'a\\nb\\n' > g.txt; printf 'a\\nb\\nc\\n' > f.txt; sed -i '3s//x/' g.txt f.txt; echo st=$?";
+    let (outcome, host) = run(line, b"");
+    assert_eq!(outcome.stdout, b"st=1\n");
+    assert_eq!(host.file("/top/sub/f.txt"), Some(&b"a\nb\nc\n"[..]));
+    assert_eq!(host.file("/top/sub/g.txt"), Some(&b"a\nb\n"[..]));
+}
+
+#[test]
+fn sed_i_stops_at_a_backup_it_cannot_write_and_leaves_its_source() {
+    let line = "mkdir a.txt.bak; sed -i.bak 's/a/X/' a.txt c.txt; echo st=$?";
+    let (outcome, host) = run(line, b"");
+    assert_eq!(outcome.stdout, b"st=4\n");
+    assert_eq!(
+        stderr(&outcome),
+        "sed: cannot rename a.txt: Is a directory\n"
+    );
+    assert_eq!(host.file("/top/sub/a.txt"), Some(&b"alpha\n"[..]));
+    assert_eq!(host.file("/top/sub/c.txt"), Some(&b"gamma\n"[..]));
+    assert!(!host.exists("/top/sub/c.txt.bak"));
+
+    // A file edited before the refused backup stays edited, with its own backup.
+    let line = "mkdir c.txt.bak; sed -i.bak 's/a/X/' a.txt c.txt; echo st=$?";
+    let (outcome, host) = run(line, b"");
+    assert_eq!(outcome.stdout, b"st=4\n");
+    assert_eq!(host.file("/top/sub/a.txt"), Some(&b"Xlpha\n"[..]));
+    assert_eq!(host.file("/top/sub/a.txt.bak"), Some(&b"alpha\n"[..]));
+    assert_eq!(host.file("/top/sub/c.txt"), Some(&b"gamma\n"[..]));
+}
+
+#[test]
+fn sed_i_publishes_a_file_a_quit_ended_and_opens_no_later_one() {
+    let line = "printf 'a\\nb\\nc\\n' > f.txt; sed -i 's/a/X/;2q5' f.txt c.txt; echo st=$?";
+    let (outcome, host) = run(line, b"");
+    assert_eq!(outcome.stdout, b"st=5\n");
+    assert_eq!(host.file("/top/sub/f.txt"), Some(&b"X\nb\n"[..]));
+    assert_eq!(host.file("/top/sub/c.txt"), Some(&b"gamma\n"[..]));
+}
