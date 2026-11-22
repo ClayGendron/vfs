@@ -131,10 +131,7 @@ impl GlobProgram {
             let reach = (top + 1).min(live - 1);
             let (accept_mask, keep_mask): (&[u64], &[u64]) = if (ch as u32) < 128 {
                 let row = ch as usize * self.words;
-                (
-                    &self.ascii_accept[row..row + live],
-                    &self.ascii_keep[row..row + live],
-                )
+                (&self.ascii_accept[row..row + live], &self.ascii_keep[row..row + live])
             } else {
                 self.wide_masks(ch, reach, &mut accept, &mut keep, &mut cost);
                 (&accept, &keep)
@@ -153,10 +150,7 @@ impl GlobProgram {
             top = self.close(&mut state, top, &mut cost);
         }
         let last = self.steps / 64;
-        (
-            last < live && state[last] >> (self.steps % 64) & 1 == 1,
-            cost,
-        )
+        (last < live && state[last] >> (self.steps % 64) & 1 == 1, cost)
     }
 
     /// The group pass, then the star pass; returns the new highest live word.
@@ -166,14 +160,7 @@ impl GlobProgram {
     }
 
     /// The accept and keep masks of one character outside ASCII, up to *reach*.
-    fn wide_masks(
-        &self,
-        ch: char,
-        reach: usize,
-        accept: &mut [u64],
-        keep: &mut [u64],
-        cost: &mut MatchCost,
-    ) {
+    fn wide_masks(&self, ch: char, reach: usize, accept: &mut [u64], keep: &mut [u64], cost: &mut MatchCost) {
         accept[..=reach].copy_from_slice(&self.wide_accept[..=reach]);
         keep[..=reach].copy_from_slice(&self.wide_keep[..=reach]);
         cost.word_ops += 2 * (reach + 1);
@@ -207,17 +194,9 @@ impl GlobProgram {
                 self.wide_keep[word] |= bit;
                 self.stars[word] |= bit;
             }
-            Step::Lit(ch) if (*ch as u32) >= 128 => {
-                self.wide_steps.push((index, WideStep::Lit(*ch)))
-            }
+            Step::Lit(ch) if (*ch as u32) >= 128 => self.wide_steps.push((index, WideStep::Lit(*ch))),
             Step::Class { negated, ranges } => {
-                self.wide_steps.push((
-                    index,
-                    WideStep::Class {
-                        negated: *negated,
-                        ranges: ranges.clone(),
-                    },
-                ));
+                self.wide_steps.push((index, WideStep::Class { negated: *negated, ranges: ranges.clone() }));
             }
             Step::GroupAny => {
                 self.wide_accept[word] |= bit;
@@ -257,20 +236,10 @@ impl GlobSet {
         deadline: Deadline,
     ) -> Result<Option<GlobSet>, ProgramError> {
         if groups.len() > MAX_GROUPS {
-            return Err(ProgramError(format!(
-                "a set holds at most {MAX_GROUPS} groups, got {}",
-                groups.len()
-            )));
+            return Err(ProgramError(format!("a set holds at most {MAX_GROUPS} groups, got {}", groups.len())));
         }
-        if let Some(index) = groups
-            .iter()
-            .flatten()
-            .find(|index| **index >= programs.len())
-        {
-            return Err(ProgramError(format!(
-                "group index {index} is past the {} programs",
-                programs.len()
-            )));
+        if let Some(index) = groups.iter().flatten().find(|index| **index >= programs.len()) {
+            return Err(ProgramError(format!("group index {index} is past the {} programs", programs.len())));
         }
         let mut built = Vec::with_capacity(programs.len());
         for (atoms, by_path) in &programs {
@@ -279,10 +248,7 @@ impl GlobSet {
             }
             built.push((GlobProgram::new(atoms)?, *by_path));
         }
-        Ok(Some(GlobSet {
-            programs: built,
-            groups,
-        }))
+        Ok(Some(GlobSet { programs: built, groups }))
     }
 
     /// The row's verdict word, or `None` when *deadline* passed inside its groups.
@@ -295,12 +261,7 @@ impl GlobSet {
     }
 
     /// The verdict under an injected deadline check, with the programs matched.
-    fn verdict_with(
-        &self,
-        path: &str,
-        name: &str,
-        mut expired: impl FnMut() -> bool,
-    ) -> (Option<u64>, usize) {
+    fn verdict_with(&self, path: &str, name: &str, mut expired: impl FnMut() -> bool) -> (Option<u64>, usize) {
         let mut word = 0u64;
         let mut matched = 0usize;
         for (bit, group) in self.groups.iter().enumerate() {
@@ -358,10 +319,7 @@ enum Step {
     Any,
     /// The first step of a `**/` group: any character, and the group's skip starts here.
     GroupAny,
-    Class {
-        negated: bool,
-        ranges: Vec<(char, char)>,
-    },
+    Class { negated: bool, ranges: Vec<(char, char)> },
     Never,
     StarNotSep,
     StarAny,
@@ -393,10 +351,7 @@ impl Step {
 #[derive(Debug, Clone)]
 enum WideStep {
     Lit(char),
-    Class {
-        negated: bool,
-        ranges: Vec<(char, char)>,
-    },
+    Class { negated: bool, ranges: Vec<(char, char)> },
 }
 
 impl WideStep {
@@ -417,20 +372,14 @@ fn check_atoms(atoms: &[Atom]) -> Result<(), ProgramError> {
             _ => false,
         };
         if refused {
-            return Err(ProgramError(format!(
-                "{:?} may not follow {:?}",
-                pair[1], pair[0]
-            )));
+            return Err(ProgramError(format!("{:?} may not follow {:?}", pair[1], pair[0])));
         }
     }
     for atom in atoms {
         if let Atom::Class(ranges) | Atom::NClass(ranges) = atom {
-            let ordered = ranges.iter().all(|(lo, hi)| lo <= hi)
-                && ranges.windows(2).all(|pair| pair[0].1 < pair[1].0);
+            let ordered = ranges.iter().all(|(lo, hi)| lo <= hi) && ranges.windows(2).all(|pair| pair[0].1 < pair[1].0);
             if !ordered {
-                return Err(ProgramError(
-                    "class ranges must be sorted, disjoint, and each lo <= hi".to_string(),
-                ));
+                return Err(ProgramError("class ranges must be sorted, disjoint, and each lo <= hi".to_string()));
             }
         }
     }
@@ -445,14 +394,8 @@ fn expand(atoms: &[Atom]) -> Vec<Step> {
             Atom::Lit(ch) => steps.push(Step::Lit(*ch)),
             Atom::One => steps.push(Step::NotSep),
             Atom::Star => steps.push(Step::StarNotSep),
-            Atom::Class(ranges) => steps.push(Step::Class {
-                negated: false,
-                ranges: ranges.clone(),
-            }),
-            Atom::NClass(ranges) => steps.push(Step::Class {
-                negated: true,
-                ranges: ranges.clone(),
-            }),
+            Atom::Class(ranges) => steps.push(Step::Class { negated: false, ranges: ranges.clone() }),
+            Atom::NClass(ranges) => steps.push(Step::Class { negated: true, ranges: ranges.clone() }),
             Atom::Dot => steps.push(Step::Any),
             Atom::Never => steps.push(Step::Never),
             Atom::Sep => steps.push(Step::Lit('/')),
@@ -501,9 +444,7 @@ mod tests {
     use super::*;
 
     fn lits(text: &str) -> Vec<Atom> {
-        text.chars()
-            .map(|ch| if ch == '/' { Atom::Sep } else { Atom::Lit(ch) })
-            .collect()
+        text.chars().map(|ch| if ch == '/' { Atom::Sep } else { Atom::Lit(ch) }).collect()
     }
 
     fn program(atoms: Vec<Atom>) -> GlobProgram {
@@ -548,11 +489,7 @@ mod tests {
 
     #[test]
     fn a_negated_class_matches_the_separator() {
-        let not_x = program(vec![
-            Atom::Lit('a'),
-            Atom::NClass(vec![('x', 'x')]),
-            Atom::Lit('b'),
-        ]);
+        let not_x = program(vec![Atom::Lit('a'), Atom::NClass(vec![('x', 'x')]), Atom::Lit('b')]);
         assert!(not_x.is_match("a/b"));
         assert!(!not_x.is_match("axb"));
         let class = program(vec![Atom::Class(vec![('a', 'c'), ('é', 'é')])]);
@@ -655,10 +592,7 @@ mod tests {
         let (matched, cost) = shape.match_cost(&path);
         assert!(!matched);
         assert_eq!(cost.chars, 1_000);
-        assert!(
-            cost.word_ops <= 4 * cost.chars * shape.words + 5 * shape.words,
-            "{cost:?}"
-        );
+        assert!(cost.word_ops <= 4 * cost.chars * shape.words + 5 * shape.words, "{cost:?}");
     }
 
     #[test]
@@ -668,10 +602,7 @@ mod tests {
         let shape = mid_star_shape();
         for pairs in [250, 500, 1_000] {
             let cost = shape.match_cost(&format!("/{}", "xa".repeat(pairs))).1;
-            assert!(
-                cost.word_ops <= 4 * cost.chars * shape.words + 5 * shape.words,
-                "{cost:?}"
-            );
+            assert!(cost.word_ops <= 4 * cost.chars * shape.words + 5 * shape.words, "{cost:?}");
         }
     }
 
@@ -689,9 +620,7 @@ mod tests {
     }
 
     fn set(programs: Vec<(Vec<Atom>, bool)>, groups: Vec<Vec<usize>>) -> GlobSet {
-        GlobSet::build(programs, groups, Deadline::never())
-            .expect("a well-formed set")
-            .expect("no deadline")
+        GlobSet::build(programs, groups, Deadline::never()).expect("a well-formed set").expect("no deadline")
     }
 
     /// `*.py` over names, `/src/` + tail over paths, `/` `**/` `app/` tail over paths.
@@ -711,32 +640,17 @@ mod tests {
     #[test]
     fn glob_set_sets_one_bit_per_matching_group() {
         let gates = three_groups();
-        assert_eq!(
-            gates.verdict("/src/app/main.py", "main.py", Deadline::never()),
-            Some(0b111)
-        );
-        assert_eq!(
-            gates.verdict("/src/readme.md", "readme.md", Deadline::never()),
-            Some(0b010)
-        );
-        assert_eq!(
-            gates.verdict("/lib/a.py", "a.py", Deadline::never()),
-            Some(0b101)
-        );
-        assert_eq!(
-            gates.verdict("/lib/a.md", "a.md", Deadline::never()),
-            Some(0)
-        );
+        assert_eq!(gates.verdict("/src/app/main.py", "main.py", Deadline::never()), Some(0b111));
+        assert_eq!(gates.verdict("/src/readme.md", "readme.md", Deadline::never()), Some(0b010));
+        assert_eq!(gates.verdict("/lib/a.py", "a.py", Deadline::never()), Some(0b101));
+        assert_eq!(gates.verdict("/lib/a.md", "a.md", Deadline::never()), Some(0));
     }
 
     #[test]
     fn glob_set_reads_the_path_or_the_name_per_program() {
         let name = lits("x");
         let path = lits("/x");
-        let gates = set(
-            vec![entry(name, false), entry(path, true)],
-            vec![vec![0], vec![1]],
-        );
+        let gates = set(vec![entry(name, false), entry(path, true)], vec![vec![0], vec![1]]);
         assert_eq!(gates.verdict("/x", "x", Deadline::never()), Some(0b11));
         assert_eq!(gates.verdict("/d/x", "x", Deadline::never()), Some(0b01));
         // A name program never sees the path, a path program never the name.
@@ -746,8 +660,7 @@ mod tests {
     #[test]
     fn glob_set_rows_past_the_deadline_are_unjudged() {
         let gates = three_groups();
-        let rows: Vec<(&str, &str)> =
-            vec![("/src/a.py", "a.py"), ("/b.md", "b.md"), ("/app/c", "c")];
+        let rows: Vec<(&str, &str)> = vec![("/src/a.py", "a.py"), ("/b.md", "b.md"), ("/app/c", "c")];
         let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
         let outcome = judge_batch(&gates, &rows, Deadline::at(expired));
         assert_eq!(outcome.results, vec![None, None, None]);
@@ -759,9 +672,7 @@ mod tests {
 
     #[test]
     fn glob_set_a_row_with_many_programs_stops_at_the_deadline() {
-        let programs = (0..1_000)
-            .map(|_| entry(lits("never-this"), false))
-            .collect();
+        let programs = (0..1_000).map(|_| entry(lits("never-this"), false)).collect();
         let gates = set(programs, vec![(0..1_000).collect()]);
         let mut checks = 0;
         let (verdict, matched) = gates.verdict_with("/a", "a", || {
@@ -784,11 +695,7 @@ mod tests {
     #[test]
     fn glob_set_build_stops_at_the_deadline() {
         let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
-        let built = GlobSet::build(
-            vec![entry(lits("a"), false)],
-            vec![vec![0]],
-            Deadline::at(expired),
-        );
+        let built = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]], Deadline::at(expired));
         assert!(matches!(built, Ok(None)));
     }
 
@@ -802,15 +709,9 @@ mod tests {
                 (format!("/{dir}/{name}"), name)
             })
             .collect();
-        let sequential: Vec<Option<u64>> = rows
-            .iter()
-            .map(|(path, name)| gates.verdict(path, name, Deadline::never()))
-            .collect();
+        let sequential: Vec<Option<u64>> = rows.iter().map(|(path, name)| gates.verdict(path, name, Deadline::never())).collect();
         for threads in [1, 8] {
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .expect("pool builds");
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool builds");
             let outcome = pool.install(|| judge_batch(&gates, &rows, Deadline::never()));
             assert_eq!(outcome.results, sequential);
             assert!(outcome.completed);
@@ -822,25 +723,10 @@ mod tests {
         let never = Deadline::never();
         let out_of_range = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![1]], never);
         assert!(out_of_range.is_err());
-        let too_wide = GlobSet::build(
-            vec![entry(lits("a"), false)],
-            vec![vec![0]; MAX_GROUPS + 1],
-            never,
-        );
+        let too_wide = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]; MAX_GROUPS + 1], never);
         assert!(too_wide.is_err());
-        assert!(
-            GlobSet::build(
-                vec![entry(lits("a"), false)],
-                vec![vec![0]; MAX_GROUPS],
-                never
-            )
-            .is_ok()
-        );
-        let refused = GlobSet::build(
-            vec![entry(vec![Atom::Star, Atom::Star], false)],
-            vec![vec![0]],
-            never,
-        );
+        assert!(GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]; MAX_GROUPS], never).is_ok());
+        let refused = GlobSet::build(vec![entry(vec![Atom::Star, Atom::Star], false)], vec![vec![0]], never);
         assert!(refused.is_err());
     }
 
@@ -850,9 +736,7 @@ mod tests {
         let (_, cost) = classes.match_cost(&"é".repeat(300));
         assert!(cost.step_reads <= 300 * 100, "{cost:?}");
         // Only the steps within the live words are read, however many classes follow.
-        let many = program(
-            std::iter::repeat_n(Atom::Class(vec![('a', 'z'), ('é', 'é')]), 100_000).collect(),
-        );
+        let many = program(std::iter::repeat_n(Atom::Class(vec![('a', 'z'), ('é', 'é')]), 100_000).collect());
         let (matched, cost) = many.match_cost(&"é".repeat(255));
         assert!(!matched);
         let live = (4 + 5 * "é".repeat(255).len()) / 64 + 1;

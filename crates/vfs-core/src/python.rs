@@ -35,9 +35,7 @@ static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 #[pyfunction]
 fn distinct_gram_count(data: &[u8], cap: usize) -> usize {
     let gate = GATE.get_or_init(|| Mutex::new(GramExtractor::new()));
-    gate.lock()
-        .expect("gate poisoned")
-        .distinct_capped(data, cap)
+    gate.lock().expect("gate poisoned").distinct_capped(data, cap)
 }
 
 /// Streaming posting-set builder: feed (doc_id, folded bytes) in strictly
@@ -53,17 +51,12 @@ struct PostingsBuilder {
 impl PostingsBuilder {
     #[new]
     fn new() -> Self {
-        Self {
-            accumulator: Some(PostingsAccumulator::new()),
-            drained: None,
-        }
+        Self { accumulator: Some(PostingsAccumulator::new()), drained: None }
     }
 
     fn add_docs(&mut self, py: Python<'_>, docs: Vec<(i64, Vec<u8>)>) -> PyResult<()> {
         let Some(accumulator) = self.accumulator.as_mut() else {
-            return Err(PyValueError::new_err(
-                "builder is already draining; create a fresh one",
-            ));
+            return Err(PyValueError::new_err("builder is already draining; create a fresh one"));
         };
         py.detach(|| {
             for (doc_id, data) in &docs {
@@ -82,9 +75,7 @@ impl PostingsBuilder {
     ) -> PyResult<Option<Vec<(u32, Bound<'py, PyBytes>, u32)>>> {
         if self.drained.is_none() {
             let Some(accumulator) = self.accumulator.take() else {
-                return Err(PyValueError::new_err(
-                    "builder was never fed; create a fresh one",
-                ));
+                return Err(PyValueError::new_err("builder was never fed; create a fresh one"));
             };
             self.drained = Some(py.detach(|| accumulator.finish()));
         }
@@ -189,9 +180,7 @@ impl GlobProgram {
             .map(|(op, ranges)| glob_atom(&op, ranges))
             .collect::<Result<Vec<_>, String>>()
             .map_err(PyValueError::new_err)?;
-        Program::new(&atoms)
-            .map(|program| Self { program })
-            .map_err(|err| PyValueError::new_err(err.to_string()))
+        Program::new(&atoms).map(|program| Self { program }).map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
     /// Whether *subject* matches, whole, from its first character.
@@ -213,12 +202,7 @@ impl GlobSet {
     /// Every row's verdict, judged in parallel off the GIL; `budget` is wall
     /// seconds from call start. A row past it is `None`; returns (verdicts, completed).
     #[pyo3(signature = (rows, *, budget))]
-    fn judge(
-        &self,
-        py: Python<'_>,
-        rows: Vec<(PyBackedStr, PyBackedStr)>,
-        budget: Option<f64>,
-    ) -> (Vec<Option<u64>>, bool) {
+    fn judge(&self, py: Python<'_>, rows: Vec<(PyBackedStr, PyBackedStr)>, budget: Option<f64>) -> (Vec<Option<u64>>, bool) {
         let deadline = Deadline::after(budget);
         let outcome = py.detach(|| judge_batch(&self.set, &rows, deadline));
         (outcome.results, outcome.completed)
@@ -243,17 +227,12 @@ fn glob_set(
     let programs = programs
         .into_iter()
         .map(|(atoms, by_path)| {
-            let atoms = atoms
-                .into_iter()
-                .map(|(op, ranges)| glob_atom(&op, ranges))
-                .collect::<Result<Vec<_>, String>>()?;
+            let atoms = atoms.into_iter().map(|(op, ranges)| glob_atom(&op, ranges)).collect::<Result<Vec<_>, String>>()?;
             Ok((atoms, by_path))
         })
         .collect::<Result<Vec<_>, String>>()
         .map_err(PyValueError::new_err)?;
-    let built = py
-        .detach(|| Set::build(programs, groups, deadline))
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let built = py.detach(|| Set::build(programs, groups, deadline)).map_err(|err| PyValueError::new_err(err.to_string()))?;
     Ok(built.map(|set| GlobSet { set }))
 }
 
@@ -265,10 +244,7 @@ fn glob_atom(op: &str, ranges: Vec<(char, char)>) -> Result<Atom, String> {
         _ => ranges.is_empty(),
     };
     if !fits {
-        return Err(format!(
-            "glob atom {op:?} cannot carry {} ranges",
-            ranges.len()
-        ));
+        return Err(format!("glob atom {op:?} cannot carry {} ranges", ranges.len()));
     }
     match op {
         "lit" => Ok(Atom::Lit(ranges[0].0)),
@@ -307,25 +283,15 @@ fn chunk_spans(
     bodies: Vec<(PyBackedBytes, String)>,
     chunk_size: usize,
 ) -> Vec<Option<Vec<(u32, u32, u32, u32, bool)>>> {
-    let pairs: Vec<(&[u8], &str)> = bodies
-        .iter()
-        .map(|(body, grammar)| (body.as_ref(), grammar.as_str()))
-        .collect();
+    let pairs: Vec<(&[u8], &str)> =
+        bodies.iter().map(|(body, grammar)| (body.as_ref(), grammar.as_str())).collect();
     py.detach(|| {
         split_batch(&pairs, chunk_size)
             .into_iter()
             .map(|rows| {
                 rows.map(|rows| {
                     rows.into_iter()
-                        .map(|row| {
-                            (
-                                row.start,
-                                row.end,
-                                row.line_start,
-                                row.line_end,
-                                row.oversized,
-                            )
-                        })
+                        .map(|row| (row.start, row.end, row.line_start, row.line_end, row.oversized))
                         .collect()
                 })
             })
@@ -368,18 +334,10 @@ fn overlay_postings(
     budget: Option<f64>,
 ) -> (Vec<Vec<(i64, u32, u32)>>, u64, u64, bool) {
     let deadline = Deadline::after(budget);
-    let bodies: Vec<(i64, &str)> = docs
-        .iter()
-        .map(|(doc_id, text)| (*doc_id, &**text))
-        .collect();
+    let bodies: Vec<(i64, &str)> = docs.iter().map(|(doc_id, text)| (*doc_id, &**text)).collect();
     let queries: Vec<&str> = terms.iter().map(String::as_str).collect();
     let outcome = py.detach(|| lexical::overlay_postings(&bodies, &queries, deadline));
-    (
-        outcome.postings,
-        outcome.reached,
-        outcome.total_dl,
-        outcome.completed,
-    )
+    (outcome.postings, outcome.reached, outcome.total_dl, outcome.completed)
 }
 
 /// One byte of class flags per code point (word 1, upper 2, lower 4,
@@ -397,14 +355,7 @@ fn lexical_casefolds() -> Vec<(u32, &'static str)> {
 
 /// The Python shapes of a summary row and a block row.
 type SummaryTuple<'py> = (String, u32, f64, f64, Bound<'py, PyBytes>);
-type BlockTuple<'py> = (
-    String,
-    u32,
-    u32,
-    Bound<'py, PyBytes>,
-    Bound<'py, PyBytes>,
-    Bound<'py, PyBytes>,
-);
+type BlockTuple<'py> = (String, u32, u32, Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>);
 
 /// Streaming lexical builder: feed `(doc_id, text)` in strictly increasing
 /// doc-id order (each call returns the docs' token counts), `finish` for
@@ -419,10 +370,7 @@ struct LexicalBuilder {
 impl LexicalBuilder {
     fn sealed(&mut self, py: Python<'_>) -> &mut DrainedLexical {
         if self.drained.is_none() {
-            let accumulator = self
-                .accumulator
-                .take()
-                .expect("one of the two is always present");
+            let accumulator = self.accumulator.take().expect("one of the two is always present");
             self.drained = Some(py.detach(|| accumulator.finish()));
         }
         self.drained.as_mut().expect("just installed")
@@ -433,25 +381,16 @@ impl LexicalBuilder {
 impl LexicalBuilder {
     #[new]
     fn new() -> Self {
-        Self {
-            accumulator: Some(LexicalAccumulator::new()),
-            drained: None,
-        }
+        Self { accumulator: Some(LexicalAccumulator::new()), drained: None }
     }
 
     fn add_docs(&mut self, py: Python<'_>, docs: Vec<(i64, PyBackedStr)>) -> PyResult<Vec<u32>> {
         let Some(accumulator) = self.accumulator.as_mut() else {
-            return Err(PyValueError::new_err(
-                lexical::LexicalError::Sealed.to_string(),
-            ));
+            return Err(PyValueError::new_err(lexical::LexicalError::Sealed.to_string()));
         };
         py.detach(|| {
             docs.iter()
-                .map(|(doc_id, text)| {
-                    accumulator
-                        .add_doc(*doc_id, text)
-                        .map_err(|err| PyValueError::new_err(err.to_string()))
-                })
+                .map(|(doc_id, text)| accumulator.add_doc(*doc_id, text).map_err(|err| PyValueError::new_err(err.to_string())))
                 .collect()
         })
     }
@@ -463,59 +402,33 @@ impl LexicalBuilder {
 
     fn vocabulary(&self) -> PyResult<Vec<(String, u32)>> {
         let Some(accumulator) = self.accumulator.as_ref() else {
-            return Err(PyValueError::new_err(
-                lexical::LexicalError::Sealed.to_string(),
-            ));
+            return Err(PyValueError::new_err(lexical::LexicalError::Sealed.to_string()));
         };
         Ok(accumulator.vocabulary())
     }
 
-    fn finish_under(
-        &mut self,
-        py: Python<'_>,
-        avg_dl: f64,
-        idfs: Vec<f64>,
-    ) -> PyResult<(u64, f64)> {
+    fn finish_under(&mut self, py: Python<'_>, avg_dl: f64, idfs: Vec<f64>) -> PyResult<(u64, f64)> {
         let Some(accumulator) = self.accumulator.take() else {
-            return Err(PyValueError::new_err(
-                lexical::LexicalError::Sealed.to_string(),
-            ));
+            return Err(PyValueError::new_err(lexical::LexicalError::Sealed.to_string()));
         };
         let terms = accumulator.distinct_terms();
         if idfs.len() != terms {
             self.accumulator = Some(accumulator);
-            let refusal = lexical::LexicalError::IdfCount {
-                given: idfs.len(),
-                terms,
-            };
+            let refusal = lexical::LexicalError::IdfCount { given: idfs.len(), terms };
             return Err(PyValueError::new_err(refusal.to_string()));
         }
-        let drained = py
-            .detach(|| accumulator.finish_under(avg_dl, &idfs))
-            .expect("the idf count was checked");
+        let drained = py.detach(|| accumulator.finish_under(avg_dl, &idfs)).expect("the idf count was checked");
         let stats = (drained.n_docs, drained.avg_dl);
         self.drained = Some(drained);
         Ok(stats)
     }
 
-    fn next_df_batch<'py>(
-        &mut self,
-        py: Python<'py>,
-        row_cap: usize,
-    ) -> Option<Vec<SummaryTuple<'py>>> {
+    fn next_df_batch<'py>(&mut self, py: Python<'py>, row_cap: usize) -> Option<Vec<SummaryTuple<'py>>> {
         let drained = self.sealed(py);
         let rows = py.detach(|| drained.next_df_batch(row_cap))?;
         Some(
             rows.into_iter()
-                .map(|row| {
-                    (
-                        row.term,
-                        row.df,
-                        row.idf,
-                        row.max_weight,
-                        PyBytes::new(py, &row.blocks),
-                    )
-                })
+                .map(|row| (row.term, row.df, row.idf, row.max_weight, PyBytes::new(py, &row.blocks)))
                 .collect(),
         )
     }
@@ -559,13 +472,7 @@ fn lexical_score(
     let set: Option<Vec<i64>> = candidates.map(|raw| unpack_i64(&raw));
     let views: Vec<ScoreBlock> = blocks
         .iter()
-        .map(|(term, bound, ids, tfs, dls)| ScoreBlock {
-            term: *term,
-            bound: *bound,
-            doc_ids: ids,
-            tfs,
-            dls,
-        })
+        .map(|(term, bound, ids, tfs, dls)| ScoreBlock { term: *term, bound: *bound, doc_ids: ids, tfs, dls })
         .collect();
     Ok(py.detach(|| lexical::score(&views, &idfs, avg_dl, k, set.as_deref())))
 }
@@ -573,13 +480,9 @@ fn lexical_score(
 /// A term's summary blob decoded to packed native-endian arrays: the
 /// blocks' first ids as int64 and their maximum weights as f64.
 #[pyfunction]
-fn decode_summary<'py>(
-    py: Python<'py>,
-    blob: PyBackedBytes,
-) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)> {
-    let (firsts, maxes) = py
-        .detach(|| lexical::decode_summary(&blob))
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+fn decode_summary<'py>(py: Python<'py>, blob: PyBackedBytes) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)> {
+    let (firsts, maxes) =
+        py.detach(|| lexical::decode_summary(&blob)).map_err(|err| PyValueError::new_err(err.to_string()))?;
     Ok((packed_i64(py, &firsts), packed_f64(py, &maxes)))
 }
 
@@ -598,17 +501,12 @@ fn select_blocks(
     scores: PyBackedBytes,
     theta: f64,
 ) -> Vec<Vec<usize>> {
-    let views: Vec<(Cow<'_, [i64]>, Cow<'_, [f64]>)> = summaries
-        .iter()
-        .map(|(firsts, maxes)| (view_i64(firsts), view_f64(maxes)))
-        .collect();
+    let views: Vec<(Cow<'_, [i64]>, Cow<'_, [f64]>)> =
+        summaries.iter().map(|(firsts, maxes)| (view_i64(firsts), view_f64(maxes))).collect();
     let ids = view_i64(&candidates);
     let weights = view_f64(&scores);
     py.detach(|| {
-        let borrowed: Vec<(&[i64], &[f64])> = views
-            .iter()
-            .map(|(f, m)| (f.as_ref(), m.as_ref()))
-            .collect();
+        let borrowed: Vec<(&[i64], &[f64])> = views.iter().map(|(f, m)| (f.as_ref(), m.as_ref())).collect();
         lexical::select_blocks(&borrowed, &ids, &weights, theta)
     })
 }
@@ -628,20 +526,14 @@ fn vector_topk(
     k: usize,
 ) -> PyResult<Vec<(i64, f32)>> {
     if query.len() % 4 != 0 {
-        return Err(PyValueError::new_err(
-            "query bytes are not whole float32 components",
-        ));
+        return Err(PyValueError::new_err("query bytes are not whole float32 components"));
     }
     if ids.len() % 8 != 0 {
         return Err(PyValueError::new_err("id bytes are not whole int64 values"));
     }
-    let components: Vec<f32> = query
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().expect("4 bytes")))
-        .collect();
+    let components: Vec<f32> = query.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().expect("4 bytes"))).collect();
     let rows = view_i64(&ids);
-    py.detach(|| cosine_topk(&components, &rows, &vectors, k))
-        .map_err(|err| PyValueError::new_err(err.to_string()))
+    py.detach(|| cosine_topk(&components, &rows, &vectors, k)).map_err(|err| PyValueError::new_err(err.to_string()))
 }
 
 /// The centrality prior per node as packed float64: `sources`, `targets`
@@ -664,34 +556,21 @@ fn centrality_prior<'py>(
     iterations: u32,
     gamma: f64,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    for (name, raw) in [
-        ("sources", &sources),
-        ("targets", &targets),
-        ("parents", &parents),
-    ] {
+    for (name, raw) in [("sources", &sources), ("targets", &targets), ("parents", &parents)] {
         if raw.len() % 8 != 0 {
-            return Err(PyValueError::new_err(format!(
-                "{name} bytes are not whole int64 values"
-            )));
+            return Err(PyValueError::new_err(format!("{name} bytes are not whole int64 values")));
         }
     }
     let measure = match measure {
         "in_degree" => Measure::InDegree,
-        "pagerank" => Measure::PageRank {
-            damping,
-            iterations,
-        },
+        "pagerank" => Measure::PageRank { damping, iterations },
         "katz" => Measure::Katz { alpha, iterations },
         other => return Err(PyValueError::new_err(format!("unknown measure {other:?}"))),
     };
     let (sources, targets, parents) = (view_i64(&sources), view_i64(&targets), view_i64(&parents));
     let flags: Vec<bool> = files.iter().map(|&flag| flag != 0).collect();
     let values = py
-        .detach(|| {
-            prior(
-                node_count, &sources, &targets, &parents, &flags, measure, gamma,
-            )
-        })
+        .detach(|| prior(node_count, &sources, &targets, &parents, &flags, measure, gamma))
         .map_err(|err| PyValueError::new_err(err.to_string()))?;
     Ok(packed_f64(py, &values))
 }
@@ -701,22 +580,14 @@ fn view_i64(raw: &[u8]) -> Cow<'_, [i64]> {
     // SAFETY: every bit pattern is a valid i64; `align_to` only yields the
     // aligned middle, and the prefix/suffix check rejects a misaligned start.
     let (prefix, aligned, suffix) = unsafe { raw.align_to::<i64>() };
-    if prefix.is_empty() && suffix.is_empty() {
-        Cow::Borrowed(aligned)
-    } else {
-        Cow::Owned(unpack_i64(raw))
-    }
+    if prefix.is_empty() && suffix.is_empty() { Cow::Borrowed(aligned) } else { Cow::Owned(unpack_i64(raw)) }
 }
 
 /// Packed f64 bytes as a slice: a view when aligned, a copy otherwise.
 fn view_f64(raw: &[u8]) -> Cow<'_, [f64]> {
     // SAFETY: as `view_i64` — every bit pattern is a valid f64.
     let (prefix, aligned, suffix) = unsafe { raw.align_to::<f64>() };
-    if prefix.is_empty() && suffix.is_empty() {
-        Cow::Borrowed(aligned)
-    } else {
-        Cow::Owned(unpack_f64(raw))
-    }
+    if prefix.is_empty() && suffix.is_empty() { Cow::Borrowed(aligned) } else { Cow::Owned(unpack_f64(raw)) }
 }
 
 fn packed_i64<'py>(py: Python<'py>, values: &[i64]) -> Bound<'py, PyBytes> {
@@ -740,15 +611,11 @@ fn packed_f64<'py>(py: Python<'py>, values: &[f64]) -> Bound<'py, PyBytes> {
 }
 
 fn unpack_i64(raw: &[u8]) -> Vec<i64> {
-    raw.chunks_exact(8)
-        .map(|c| i64::from_ne_bytes(c.try_into().expect("8 bytes")))
-        .collect()
+    raw.chunks_exact(8).map(|c| i64::from_ne_bytes(c.try_into().expect("8 bytes"))).collect()
 }
 
 fn unpack_f64(raw: &[u8]) -> Vec<f64> {
-    raw.chunks_exact(8)
-        .map(|c| f64::from_ne_bytes(c.try_into().expect("8 bytes")))
-        .collect()
+    raw.chunks_exact(8).map(|c| f64::from_ne_bytes(c.try_into().expect("8 bytes"))).collect()
 }
 
 /// The grep candidate kernel: per AND-group, the planner's chosen posting
@@ -764,10 +631,7 @@ fn candidate_ids(
     allow: Option<Vec<i64>>,
     cap: usize,
 ) -> PyResult<(Vec<i64>, usize)> {
-    let views: Vec<Vec<&[u8]>> = groups
-        .iter()
-        .map(|group| group.iter().map(|b| b.as_ref()).collect())
-        .collect();
+    let views: Vec<Vec<&[u8]>> = groups.iter().map(|group| group.iter().map(|b| b.as_ref()).collect()).collect();
     py.detach(|| candidates(&views, allow.as_deref(), cap))
         .map_err(|err| PyValueError::new_err(err.to_string()))
 }

@@ -31,22 +31,10 @@ pub enum Measure {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SignalError {
-    EdgeShape {
-        sources: usize,
-        targets: usize,
-    },
-    TreeShape {
-        parents: usize,
-        files: usize,
-        node_count: usize,
-    },
-    NodeOutOfRange {
-        index: i64,
-        node_count: usize,
-    },
-    TreeCycle {
-        node: usize,
-    },
+    EdgeShape { sources: usize, targets: usize },
+    TreeShape { parents: usize, files: usize, node_count: usize },
+    NodeOutOfRange { index: i64, node_count: usize },
+    TreeCycle { node: usize },
     Parameter(&'static str),
 }
 
@@ -54,20 +42,10 @@ impl std::fmt::Display for SignalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EdgeShape { sources, targets } => {
-                write!(
-                    f,
-                    "edge arrays disagree: {sources} sources, {targets} targets"
-                )
+                write!(f, "edge arrays disagree: {sources} sources, {targets} targets")
             }
-            Self::TreeShape {
-                parents,
-                files,
-                node_count,
-            } => {
-                write!(
-                    f,
-                    "tree arrays disagree with {node_count} nodes: {parents} parents, {files} file flags"
-                )
+            Self::TreeShape { parents, files, node_count } => {
+                write!(f, "tree arrays disagree with {node_count} nodes: {parents} parents, {files} file flags")
             }
             Self::NodeOutOfRange { index, node_count } => {
                 write!(f, "node index {index} is outside the {node_count} nodes")
@@ -100,17 +78,10 @@ pub fn centrality_prior(
     gamma: f64,
 ) -> Result<Vec<f64>, SignalError> {
     if sources.len() != targets.len() {
-        return Err(SignalError::EdgeShape {
-            sources: sources.len(),
-            targets: targets.len(),
-        });
+        return Err(SignalError::EdgeShape { sources: sources.len(), targets: targets.len() });
     }
     if parents.len() != node_count || files.len() != node_count {
-        return Err(SignalError::TreeShape {
-            parents: parents.len(),
-            files: files.len(),
-            node_count,
-        });
+        return Err(SignalError::TreeShape { parents: parents.len(), files: files.len(), node_count });
     }
     if !(0.0..=1.0).contains(&gamma) {
         return Err(SignalError::Parameter("gamma must lie in [0, 1]"));
@@ -119,14 +90,9 @@ pub fn centrality_prior(
     let depth = depths(parents, node_count)?;
     let raw = match measure {
         Measure::InDegree => in_degree(node_count, &edges),
-        Measure::PageRank {
-            damping,
-            iterations,
-        } => {
+        Measure::PageRank { damping, iterations } => {
             if !(damping > 0.0 && damping < 1.0) {
-                return Err(SignalError::Parameter(
-                    "PageRank damping must lie in (0, 1)",
-                ));
+                return Err(SignalError::Parameter("PageRank damping must lie in (0, 1)"));
             }
             if iterations == 0 {
                 return Err(SignalError::Parameter("iterations must be at least 1"));
@@ -153,25 +119,14 @@ pub fn centrality_prior(
 // ---------------------------------------------------------------------------
 
 /// Edges as `(source, target)` node indices, each checked against the node count.
-fn dense_edges(
-    node_count: usize,
-    sources: &[i64],
-    targets: &[i64],
-) -> Result<Vec<(usize, usize)>, SignalError> {
+fn dense_edges(node_count: usize, sources: &[i64], targets: &[i64]) -> Result<Vec<(usize, usize)>, SignalError> {
     let index = |raw: i64| -> Result<usize, SignalError> {
         usize::try_from(raw)
             .ok()
             .filter(|&index| index < node_count)
-            .ok_or(SignalError::NodeOutOfRange {
-                index: raw,
-                node_count,
-            })
+            .ok_or(SignalError::NodeOutOfRange { index: raw, node_count })
     };
-    sources
-        .iter()
-        .zip(targets)
-        .map(|(&s, &t)| Ok((index(s)?, index(t)?)))
-        .collect()
+    sources.iter().zip(targets).map(|(&s, &t)| Ok((index(s)?, index(t)?))).collect()
 }
 
 /// Each node's depth from its root; a parent outside the nodes or a looping chain is refused.
@@ -200,10 +155,7 @@ fn depths(parents: &[i64], node_count: usize) -> Result<Vec<u32>, SignalError> {
                     node = usize::try_from(parent)
                         .ok()
                         .filter(|&index| index < node_count)
-                        .ok_or(SignalError::NodeOutOfRange {
-                            index: parent,
-                            node_count,
-                        })?;
+                        .ok_or(SignalError::NodeOutOfRange { index: parent, node_count })?;
                 }
             }
         };
@@ -223,12 +175,7 @@ fn in_degree(node_count: usize, edges: &[(usize, usize)]) -> Vec<f64> {
     degree
 }
 
-fn pagerank(
-    node_count: usize,
-    edges: &[(usize, usize)],
-    damping: f64,
-    iterations: u32,
-) -> Vec<f64> {
+fn pagerank(node_count: usize, edges: &[(usize, usize)], damping: f64, iterations: u32) -> Vec<f64> {
     let count = node_count as f64;
     let mut out_degree = vec![0.0; node_count];
     for &(source, _) in edges {
@@ -236,10 +183,7 @@ fn pagerank(
     }
     let mut rank = vec![1.0 / count; node_count];
     for _ in 0..iterations {
-        let dangling: f64 = (0..node_count)
-            .filter(|&node| out_degree[node] == 0.0)
-            .map(|node| rank[node])
-            .sum();
+        let dangling: f64 = (0..node_count).filter(|&node| out_degree[node] == 0.0).map(|node| rank[node]).sum();
         let base = ((1.0 - damping) + damping * dangling) / count;
         let mut next = vec![base; node_count];
         for &(source, target) in edges {
@@ -266,13 +210,7 @@ fn katz(node_count: usize, edges: &[(usize, usize)], alpha: f64, iterations: u32
 ///
 /// A directory with nothing under it has no mean and adds nothing to
 /// its parent's; a root blends with nothing.
-fn smooth(
-    measured: &[f64],
-    parents: &[i64],
-    files: &[bool],
-    depth: &[u32],
-    gamma: f64,
-) -> Vec<f64> {
+fn smooth(measured: &[f64], parents: &[i64], files: &[bool], depth: &[u32], gamma: f64) -> Vec<f64> {
     let node_count = measured.len();
     let mut order: Vec<usize> = (0..node_count).collect();
     order.sort_by_key(|&node| depth[node]);
@@ -318,13 +256,7 @@ fn scale_files(prior: &[f64], files: &[bool]) -> Vec<f64> {
     prior
         .iter()
         .zip(files)
-        .map(|(value, &file)| {
-            if file && span > 0.0 {
-                (value - low) / span
-            } else {
-                0.0
-            }
-        })
+        .map(|(value, &file)| if file && span > 0.0 { (value - low) / span } else { 0.0 })
         .collect()
 }
 
@@ -339,16 +271,7 @@ mod tests {
     #[test]
     fn in_degree_with_no_smoothing_is_the_scaled_log_count() {
         // x referenced twice, y once, z never.
-        let prior = centrality_prior(
-            5,
-            &[3, 4, 4],
-            &[2, 2, 3],
-            &PARENTS,
-            &FILES,
-            Measure::InDegree,
-            0.0,
-        )
-        .unwrap();
+        let prior = centrality_prior(5, &[3, 4, 4], &[2, 2, 3], &PARENTS, &FILES, Measure::InDegree, 0.0).unwrap();
         assert_eq!(prior[0], 0.0);
         assert_eq!(prior[1], 0.0);
         assert_eq!(prior[2], 1.0);
@@ -359,8 +282,7 @@ mod tests {
     #[test]
     fn smoothing_lifts_a_file_by_its_directory() {
         // Only x is referenced; y inherits a share of a's mean through gamma.
-        let prior =
-            centrality_prior(5, &[4], &[2], &PARENTS, &FILES, Measure::InDegree, 0.2).unwrap();
+        let prior = centrality_prior(5, &[4], &[2], &PARENTS, &FILES, Measure::InDegree, 0.2).unwrap();
         assert_eq!(prior[2], 1.0);
         assert!(prior[3] > 0.0 && prior[3] < prior[2]);
         assert_eq!(prior[4], 0.0);
@@ -368,26 +290,15 @@ mod tests {
 
     #[test]
     fn a_uniform_measure_scales_to_zero_everywhere() {
-        let prior =
-            centrality_prior(5, &[], &[], &PARENTS, &FILES, Measure::InDegree, 0.2).unwrap();
+        let prior = centrality_prior(5, &[], &[], &PARENTS, &FILES, Measure::InDegree, 0.2).unwrap();
         assert!(prior.iter().all(|&value| value == 0.0));
     }
 
     #[test]
     fn pagerank_ranks_the_referenced_file_first() {
-        let prior = centrality_prior(
-            5,
-            &[3, 4],
-            &[2, 2],
-            &PARENTS,
-            &FILES,
-            Measure::PageRank {
-                damping: 0.85,
-                iterations: 20,
-            },
-            0.0,
-        )
-        .unwrap();
+        let prior =
+            centrality_prior(5, &[3, 4], &[2, 2], &PARENTS, &FILES, Measure::PageRank { damping: 0.85, iterations: 20 }, 0.0)
+                .unwrap();
         assert_eq!(prior[2], 1.0);
         assert!(prior[3] < 1.0 && prior[4] < 1.0);
     }
@@ -395,19 +306,8 @@ mod tests {
     #[test]
     fn katz_counts_paths_of_every_length() {
         // z -> y -> x: x gains from both the direct and the two-step path.
-        let prior = centrality_prior(
-            5,
-            &[4, 3],
-            &[3, 2],
-            &PARENTS,
-            &FILES,
-            Measure::Katz {
-                alpha: 0.5,
-                iterations: 10,
-            },
-            0.0,
-        )
-        .unwrap();
+        let prior =
+            centrality_prior(5, &[4, 3], &[3, 2], &PARENTS, &FILES, Measure::Katz { alpha: 0.5, iterations: 10 }, 0.0).unwrap();
         assert_eq!(prior[2], 1.0);
         assert!(prior[3] > 0.0 && prior[3] < 1.0);
         assert_eq!(prior[4], 0.0);
@@ -417,60 +317,22 @@ mod tests {
     fn shapes_and_parameters_are_refused() {
         assert_eq!(
             centrality_prior(5, &[1], &[], &PARENTS, &FILES, Measure::InDegree, 0.0),
-            Err(SignalError::EdgeShape {
-                sources: 1,
-                targets: 0
-            })
+            Err(SignalError::EdgeShape { sources: 1, targets: 0 })
         );
         assert_eq!(
             centrality_prior(4, &[], &[], &PARENTS, &FILES, Measure::InDegree, 0.0),
-            Err(SignalError::TreeShape {
-                parents: 5,
-                files: 5,
-                node_count: 4
-            })
+            Err(SignalError::TreeShape { parents: 5, files: 5, node_count: 4 })
         );
         assert_eq!(
             centrality_prior(5, &[7], &[2], &PARENTS, &FILES, Measure::InDegree, 0.0),
-            Err(SignalError::NodeOutOfRange {
-                index: 7,
-                node_count: 5
-            })
+            Err(SignalError::NodeOutOfRange { index: 7, node_count: 5 })
         );
         assert_eq!(
             centrality_prior(2, &[], &[], &[1, 0], &[true, true], Measure::InDegree, 0.0),
             Err(SignalError::TreeCycle { node: 0 })
         );
         assert!(centrality_prior(5, &[], &[], &PARENTS, &FILES, Measure::InDegree, 1.5).is_err());
-        assert!(
-            centrality_prior(
-                5,
-                &[],
-                &[],
-                &PARENTS,
-                &FILES,
-                Measure::PageRank {
-                    damping: 1.0,
-                    iterations: 1
-                },
-                0.0
-            )
-            .is_err()
-        );
-        assert!(
-            centrality_prior(
-                5,
-                &[],
-                &[],
-                &PARENTS,
-                &FILES,
-                Measure::Katz {
-                    alpha: 0.1,
-                    iterations: 0
-                },
-                0.0
-            )
-            .is_err()
-        );
+        assert!(centrality_prior(5, &[], &[], &PARENTS, &FILES, Measure::PageRank { damping: 1.0, iterations: 1 }, 0.0).is_err());
+        assert!(centrality_prior(5, &[], &[], &PARENTS, &FILES, Measure::Katz { alpha: 0.1, iterations: 0 }, 0.0).is_err());
     }
 }

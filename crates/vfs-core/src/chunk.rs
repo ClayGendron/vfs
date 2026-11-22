@@ -26,64 +26,12 @@ pub struct SpanRow {
 /// Grammar names the registry serves, sorted; the host's coverage
 /// contract pins its extension map against this list.
 pub const GRAMMAR_NAMES: &[&str] = &[
-    "bash",
-    "c",
-    "cmake",
-    "cpp",
-    "csharp",
-    "css",
-    "cuda",
-    "d",
-    "dart",
-    "elixir",
-    "elm",
-    "erlang",
-    "fish",
-    "fsharp",
-    "gleam",
-    "go",
-    "graphql",
-    "groovy",
-    "haskell",
-    "hcl",
-    "html",
-    "ini",
-    "java",
-    "javascript",
-    "json",
-    "julia",
-    "kotlin",
-    "less",
-    "lua",
-    "make",
-    "markdown",
-    "nim",
-    "nix",
-    "ocaml",
-    "odin",
-    "perl",
-    "php",
-    "powershell",
-    "proto",
-    "python",
-    "r",
-    "rst",
-    "ruby",
-    "rust",
-    "scala",
-    "scss",
-    "solidity",
-    "sql",
-    "svelte",
-    "swift",
-    "terraform",
-    "toml",
-    "tsx",
-    "typescript",
-    "vim",
-    "xml",
-    "yaml",
-    "zig",
+    "bash", "c", "cmake", "cpp", "csharp", "css", "cuda", "d", "dart", "elixir", "elm", "erlang",
+    "fish", "fsharp", "gleam", "go", "graphql", "groovy", "haskell", "hcl", "html", "ini", "java",
+    "javascript", "json", "julia", "kotlin", "less", "lua", "make", "markdown", "nim", "nix", "ocaml",
+    "odin", "perl", "php", "powershell", "proto", "python", "r", "rst", "ruby", "rust", "scala",
+    "scss", "solidity", "sql", "svelte", "swift", "terraform", "toml", "tsx", "typescript", "vim",
+    "xml", "yaml", "zig",
 ];
 
 /// Split every `(body, grammar)` pair into merged chunk spans, in
@@ -93,9 +41,7 @@ pub const GRAMMAR_NAMES: &[&str] = &[
 pub fn split_batch(bodies: &[(&[u8], &str)], chunk_size: usize) -> Vec<Option<Vec<SpanRow>>> {
     bodies
         .par_iter()
-        .map_init(Parser::new, |parser, (body, grammar)| {
-            split_one(parser, body, grammar, chunk_size)
-        })
+        .map_init(Parser::new, |parser, (body, grammar)| split_one(parser, body, grammar, chunk_size))
         .collect()
 }
 
@@ -166,12 +112,7 @@ fn language(name: &str) -> Option<Language> {
     })
 }
 
-fn split_one(
-    parser: &mut Parser,
-    body: &[u8],
-    grammar: &str,
-    chunk_size: usize,
-) -> Option<Vec<SpanRow>> {
+fn split_one(parser: &mut Parser, body: &[u8], grammar: &str, chunk_size: usize) -> Option<Vec<SpanRow>> {
     if body.len() > u32::MAX as usize {
         return None;
     }
@@ -190,11 +131,7 @@ fn split_one(
                     start,
                     end,
                     line_start: line_at(start),
-                    line_end: if end > start {
-                        line_at(end - 1)
-                    } else {
-                        line_at(start)
-                    },
+                    line_end: if end > start { line_at(end - 1) } else { line_at(start) },
                     oversized: (end - start) as usize > chunk_size,
                 }
             })
@@ -270,9 +207,7 @@ mod tests {
     const PY: &str = "def f(x):\n    return x + 1\n\n\ndef g(y):\n    return y * 2\n";
 
     fn rows(body: &str, grammar: &str, chunk_size: usize) -> Vec<SpanRow> {
-        split_batch(&[(body.as_bytes(), grammar)], chunk_size)[0]
-            .clone()
-            .expect("splits")
+        split_batch(&[(body.as_bytes(), grammar)], chunk_size)[0].clone().expect("splits")
     }
 
     #[test]
@@ -332,14 +267,7 @@ mod tests {
 
     #[test]
     fn batch_results_align_with_inputs() {
-        let out = split_batch(
-            &[
-                (PY.as_bytes(), "python"),
-                (b"body", "no-such"),
-                (PY.as_bytes(), "python"),
-            ],
-            2048,
-        );
+        let out = split_batch(&[(PY.as_bytes(), "python"), (b"body", "no-such"), (PY.as_bytes(), "python")], 2048);
         assert!(out[0].is_some() && out[1].is_none() && out[2].is_some());
         assert_eq!(out[0], out[2]);
     }

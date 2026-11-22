@@ -208,8 +208,5 @@ fn a_second_pass_interns_nothing_and_allocates_under_two_a_chunk() {
     let allocations = allocations_during(|| feed(&mut builder, &chunks, CHUNKS as i64));
     assert_eq!(builder.distinct_terms(), interned);
     let bound = ALLOWANCE_PER_CHUNK * CHUNKS as u64;
-    assert!(
-        allocations < bound,
-        "{allocations} allocations over {CHUNKS} already-seen chunks; the bound is {bound}"
-    );
+    assert!(allocations < bound, "{allocations} allocations over {CHUNKS} already-seen chunks; the bound is {bound}");
 }

@@ -17,10 +17,7 @@ pub struct GramExtractor {
 
 impl GramExtractor {
     pub fn new() -> Self {
-        Self {
-            seen: vec![0u64; GRAM_SPACE / 64],
-            scratch: Vec::new(),
-        }
+        Self { seen: vec![0u64; GRAM_SPACE / 64], scratch: Vec::new() }
     }
 
     /// Collect the distinct packed trigrams of `data` into `out`, in first-
@@ -97,14 +94,7 @@ mod tests {
     fn matches_reference_and_resets_between_docs() {
         let mut extractor = GramExtractor::new();
         let mut out = Vec::new();
-        for data in [
-            &b"abcabcabc"[..],
-            b"",
-            b"ab",
-            b"xyz",
-            b"\x00\xff\x00\xff",
-            b"hello world",
-        ] {
+        for data in [&b"abcabcabc"[..], b"", b"ab", b"xyz", b"\x00\xff\x00\xff", b"hello world"] {
             extractor.unique_grams(data, &mut out);
             let mut sorted = out.clone();
             sorted.sort_unstable();
@@ -118,10 +108,7 @@ mod tests {
         let mut out = Vec::new();
         extractor.unique_grams(b"abcbca", &mut out);
         let key = |w: &[u8]| (u32::from(w[0]) << 16) | (u32::from(w[1]) << 8) | u32::from(w[2]);
-        assert_eq!(
-            out,
-            vec![key(b"abc"), key(b"bcb"), key(b"cbc"), key(b"bca")]
-        );
+        assert_eq!(out, vec![key(b"abc"), key(b"bcb"), key(b"cbc"), key(b"bca")]);
     }
 
     #[test]
