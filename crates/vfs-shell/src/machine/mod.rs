@@ -6,6 +6,7 @@
 
 mod arith;
 mod builtins;
+pub(crate) use builtins::read_answer;
 mod deparse;
 pub(crate) mod exec;
 mod expand;

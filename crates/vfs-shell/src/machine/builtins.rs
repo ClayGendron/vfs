@@ -517,6 +517,15 @@ fn parse_target(text: &str) -> Option<(String, Option<String>)> {
 // Reading
 // ---------------------------------------------------------------------------
 
+/// One line of `fd`, without its newline, as a program reads an answer to its prompt; `None`
+/// when the stream is at its end or `fd` is not open.
+pub(crate) async fn read_answer(sh: &mut Shell, fd: u32) -> Result<Option<Vec<u8>>, Flow> {
+    Ok(match read_record(sh, fd, Some(b'\n'), None).await? {
+        Some(record) if record.delimited || !record.bytes.is_empty() => Some(record.bytes),
+        _ => None,
+    })
+}
+
 /// What one read of a record found.
 struct Record {
     bytes: Vec<u8>,

@@ -110,6 +110,11 @@ impl MemoryHost {
             .insert(path.to_owned(), Node::File(bytes.to_vec()));
     }
 
+    /// Whether anything, a file or a directory, stands at `path`.
+    pub fn exists(&self, path: &str) -> bool {
+        self.nodes.contains_key(path)
+    }
+
     pub fn file(&self, path: &str) -> Option<&[u8]> {
         match self.nodes.get(path) {
             Some(Node::File(bytes)) => Some(bytes),
