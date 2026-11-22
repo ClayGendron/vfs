@@ -8,7 +8,7 @@ result = await fs.cli(line, authority=alice)
 print(result.stdout)
 ```
 
-The result carries `stdout` and `stderr` as bash prints them, and `exit_status` as bash would exit. `Session.cli` runs a line as the session's authority. `VirtualFileSystem.cli` is the same call without `await`.
+The result carries `stdout` and `stderr` as bash prints them, `exit_code` as bash would exit, and `statuses`, each top-level pipeline's `PIPESTATUS`. `Session.cli` runs a line as the session's authority. `VirtualFileSystem.cli` is the same call without `await`.
 
 ## How a Line Runs
 
@@ -29,7 +29,32 @@ A redirection is opened as bash opens it, before its command runs, so a command 
 
 The interpreter runs inside a WebAssembly module, in a runtime linked into vfs. The runtime is the wall around the line. It counts every instruction the line executes, holds the module's memory under a hard limit, and ends the line when its deadline passes or its call is cancelled. A fault inside the interpreter ends that line with an error; the process goes on. Each line runs in a fresh instance, one slice at a time on vfs's worker pool, so the event loop keeps serving other calls while a line computes.
 
-A program's own non-zero status is not a failure of the call: `grep` with no match exits 1, and the call still succeeds. A verb that a program was refused, such as a `read` of a file the caller may not see, is kept on the result as a warning.
+## The Result
+
+`success` says whether the line ran to its end as written. `exit_code` and `statuses` say how its commands fared. This is the contract of Python's `subprocess.run`: a program that exits 1 has still run.
+
+So a command's non-zero status is not a failure of the call. `grep` with no match exits 1, and the call succeeds. A verb vfs refused inside the line, such as a `read` of a file that does not exist, is kept on the result as a warning, and the call still succeeds. Lines such as `cat f 2>/dev/null || touch f` and `rm -f tmp` meet a missing file on purpose and work as written.
+
+```python
+result = await fs.cli("cat /nope | wc -l", authority=alice)
+assert result.success and result.exit_code == 0
+assert result.statuses == [[1, 0]]
+```
+
+The call fails when the line did not run to its end: it did not parse, it holds a refused word, or a budget, the deadline or a cancel ended it. A caller who wants a failing command to fail the call checks `exit_code`, or starts the line with `set -e`.
+
+| Field | What it holds |
+|---|---|
+| `stdout`, `stderr` | What the line printed to each stream, as UTF-8 text with invalid bytes replaced. |
+| `exit_code` | `$?` of the line, as bash would exit; the statuses are listed below. |
+| `statuses` | For each pipeline of the line's top level that ran, in order, the `PIPESTATUS` bash reads right after it. A pipeline inside a loop, a function or a compound command adds no entry of its own, so the list is bounded by the line's text. A job run with `&` adds none, and `wait` reports it. |
+| `errors` | Why the line did not run to its end, and, as warnings, each distinct thing vfs refused inside it, once. Past 100 distinct refusals, the rest are counted in one `truncated` warning. |
+| `fuel_used` | The instructions the line executed. |
+| `ops` | Always `("cli",)`. |
+
+`str(result)` prints the line's standard output, then its standard error, then its facts.
+
+`cli` is no mount's operation. It is not in `capabilities()`, and a mount's `deny_ops` refuses to name it. Each verb inside the line is judged and masked as its own operation, so a mount's mask holds inside a line as it holds outside one.
 
 ## The Language
 
@@ -95,4 +120,4 @@ The instruction count is a function of the line and its replies, and the result 
 
 ## How Closely It Follows Bash
 
-The shell is tested against a corpus of 3,333 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not. 3,212 of the 3,333 pass; the other 121 are listed by name in `tests/shell/known_failures.txt`, and the corpus test fails when a listed case starts to pass or an unlisted one fails.
+The shell is tested against a corpus of 3,337 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not. 3,216 of the 3,337 pass; the other 121 are listed by name in `tests/shell/known_failures.txt`, and the corpus test fails when a listed case starts to pass or an unlisted one fails.

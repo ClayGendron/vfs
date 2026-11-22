@@ -82,6 +82,6 @@ async def test_lines_that_append_at_once_lose_no_line(engine: str, tmp_path: Pat
     async with _engine(engine, tmp_path) as fs:
         lines = [fs.cli(f"echo line{n} >> /log", authority=ADA) for n in range(CONCURRENT_LINES)]
         results = await asyncio.gather(*lines)
-        assert {r.exit_status for r in results} == {0}
+        assert {r.exit_code for r in results} == {0}
         written = (await _body(fs, "/log")).splitlines()
         assert sorted(written) == sorted(f"line{n}" for n in range(CONCURRENT_LINES))

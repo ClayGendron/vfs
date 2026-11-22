@@ -12,9 +12,11 @@ its own copy. A verb's class decides how it is routed and gated:
     GRANT_OPS       → routed to the mount holding the path; the writing
                       ones are write-gated, and none touches a row
 
-``cli`` is deliberately absent: it is a meta-verb that parses a command
-string into these ops and re-enters through their public methods, so every
-gate fires on the real verb. It is a front door, not an op.
+``cli`` is deliberately absent: it runs a line of bash whose every effect
+re-enters through these ops' public methods, so every gate fires on the
+real verb. It spans every mount and no storage answers it, so it is a
+front, in ``FRONT_METHODS``, and not an op: it is in no capability set and
+no mount can mask it. ``Result.ops`` still names it, as ``("cli",)``.
 
 The ``traverse`` op routes and reports as one verb: traversal only —
 ``outbound`` follows each edge from its source to its target, ``inbound``
@@ -106,11 +108,15 @@ ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
 
 MANAGEMENT_METHODS: Final[frozenset[str]] = frozenset(
-    {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge", "cli"}
+    {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
 )
-"""The router's public coroutines that manage the mount tree rather than route an op.
-They are not ops; the router's public surface is exactly ``ALL_OPS | MANAGEMENT_METHODS``,
-and the sync facade mirrors both."""
+"""The router's public coroutines that manage the mount tree rather than route an op."""
+
+FRONT_METHODS: Final[frozenset[str]] = frozenset({"cli"})
+"""The router's public coroutines that run other ops on a caller's behalf, each through their
+public methods; no storage answers one. With the ops and the management methods they are the
+router's whole public surface, ``ALL_OPS | MANAGEMENT_METHODS | FRONT_METHODS``, and the sync
+facade mirrors all three."""
 
 # ---------------------------------------------------------------------------
 # The ladder — the rung each verb needs

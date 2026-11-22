@@ -49,6 +49,7 @@ type StepTuple<'py> = (
     Vec<(u8, Bound<'py, PyBytes>)>,
     Vec<(String, &'static str, Bound<'py, PyDict>)>,
     (&'static str, i32, Option<String>),
+    Vec<Vec<i32>>,
 );
 
 /// One line of bash, run over requests its Python host answers.
@@ -150,8 +151,9 @@ impl ShellMachine {
     }
 
     /// Give the replies to what the last step asked, and run on. Returns the
-    /// output, the requests, and the status: `("running", 0, None)`,
-    /// `("done", status, None)` or `("ended", status, reason)`.
+    /// output, the requests, the status: `("running", 0, None)`,
+    /// `("done", status, None)` or `("ended", status, reason)`, and the
+    /// `PIPESTATUS` of each top-level pipeline that ended in this step.
     fn step<'py>(
         &self,
         py: Python<'py>,
@@ -168,7 +170,12 @@ impl ShellMachine {
         let outcome = py.detach(|| self.run_step(document.as_bytes()))?;
         let answer = match outcome {
             Err(Ended(reason, status)) => {
-                return Ok((Vec::new(), Vec::new(), ("ended", status, Some(reason))));
+                return Ok((
+                    Vec::new(),
+                    Vec::new(),
+                    ("ended", status, Some(reason)),
+                    Vec::new(),
+                ));
             }
             Ok(answer) => answer,
         };
@@ -180,6 +187,7 @@ impl ShellMachine {
                     Vec::new(),
                     Vec::new(),
                     ("ended", 1, Some(format!("Internal({message:?})"))),
+                    Vec::new(),
                 ));
             }
         };
@@ -207,7 +215,7 @@ impl ShellMachine {
         if status.0 != "running" {
             self.drop_instance();
         }
-        Ok((output, requests, status))
+        Ok((output, requests, status, step.statuses))
     }
 
     /// Stop the line: a running slice ends within one epoch tick, and the next step ends the line.

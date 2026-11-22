@@ -27,6 +27,8 @@ pub struct Outcome {
     pub requests: Vec<String>,
     /// When a budget or a fault ended the line: why.
     pub ended: Option<String>,
+    /// The `PIPESTATUS` of each pipeline of the line's top level that ran.
+    pub statuses: Vec<Vec<i32>>,
 }
 
 /// A program the host runs itself: its arguments and the whole of its standard input in, and
@@ -152,6 +154,7 @@ impl MemoryHost {
             if self.reverse_replies {
                 replies.reverse();
             }
+            outcome.statuses.extend(step.statuses);
             match step.status {
                 Status::Running => {}
                 Status::Done(status) => {

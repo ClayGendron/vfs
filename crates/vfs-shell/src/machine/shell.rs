@@ -282,6 +282,10 @@ pub struct Shell {
     pub cwd: String,
     pub last_status: i32,
     pub pipestatus: Vec<i32>,
+    /// The `PIPESTATUS` the walk last set, and a count of how often it has set one.
+    pub published: (u64, Vec<i32>),
+    /// Whether the next pipeline is one of the main shell's top level, whose statuses the line reports.
+    pub top_level: bool,
     pub lineno: u32,
     /// This shell's place in the walk, and its counters there.
     pub task: Vec<u32>,
@@ -347,6 +351,7 @@ impl Shell {
         child.single_word = false;
         child.literal_splits = false;
         child.jobs = Vec::new();
+        child.top_level = false;
         child.bash_pid = self
             .bash_pid
             .wrapping_add(self.next_child)

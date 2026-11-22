@@ -318,7 +318,8 @@ class Result(BaseModel):
 
     - **Envelope:** ``ops`` records every op whose rows were merged in
       (ordered union under ``|``) — one vocabulary with the router's
-      ``vfs.ops``, kept open ``str`` because a peer may report ops this
+      ``vfs.ops``, where a front such as ``cli`` also names the call it
+      made, kept open ``str`` because a peer may report ops this
       client predates. The ``.op`` property yields the sole op, or
       ``None`` for a cross-op merge — renderers fall back to a generic
       arrangement on ``None``.

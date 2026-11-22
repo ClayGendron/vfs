@@ -6,6 +6,7 @@ with the authority the caller was admitted as. A verb's refusal becomes the
 error a Unix tool would see, so ``cat`` prints "No such file or directory"
 where the router says ``not_found``, and the refusal itself is kept on the
 result as a warning: a program's failure is evidence, not the call's failure.
+The call fails only when the line could not run to its end as written.
 
 A line is parsed whole before anything runs, so a syntax error, a refused
 construct or a spent parse budget fails the call and touches nothing.
@@ -22,6 +23,8 @@ import random
 import time
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Protocol
+
+from pydantic import Field
 
 from vfs.deadline import Deadline
 from vfs.native import extension
@@ -105,6 +108,10 @@ UNKNOWN_PROGRAMS: Final[dict[str, str]] = {
 }
 """Names vfs never runs, each with a hint at what does the work here; the command exits 127."""
 
+LINE_FACTS: Final = 100
+"""Distinct refusals a line's result keeps; a refusal seen before is kept once, and past this count
+the rest are counted in one rollup, so a loop of refusals leaves a bounded result."""
+
 _FAILURE_KIND: Final[dict[str, ErrorKind]] = {
     "syntax": ErrorKind.invalid,
     "refused": ErrorKind.unsupported,
@@ -154,21 +161,44 @@ class Router(Protocol):
 
 
 class LineResult(Result):
-    """What ``cli`` returns: a :class:`Result` with what the line printed and the status it exited with.
+    """What ``cli`` returns: a :class:`Result` with what the line printed and how its commands fared.
 
-    ``stdout`` and ``stderr`` are the bytes bash would print, decoded as UTF-8 with invalid bytes
-    replaced. ``exit_status`` is the status bash would exit with. The errors are the classified facts:
-    a line that could not run, a budget that ended it, and each verb a program was refused.
+    ``success`` says whether the line ran to its end as written, and ``exit_code`` and ``statuses``
+    say how its commands fared, as ``subprocess.run`` keeps a program's exit apart from its own
+    failure. A command that exits non-zero, or a verb vfs refused inside the line, leaves
+    ``success`` true: ``cat f 2>/dev/null || touch f`` is a line working as written. The call fails
+    when the line did not parse, holds a refused construct, or a budget, the deadline or a cancel
+    ended it. ``stdout`` and ``stderr`` are the bytes bash would print, decoded as UTF-8 with
+    invalid bytes replaced. The errors are the classified facts: why a line did not run to its
+    end, and, as warnings, each distinct thing vfs refused inside it.
     """
 
+    ops: tuple[str, ...] = ("cli",)
+    """Always ``("cli",)``: the call that made the result, which is no routed op."""
     stdout: str = ""
     """What the line wrote to standard output."""
     stderr: str = ""
     """What the line wrote to standard error."""
+    exit_code: int = 0
+    """``$?`` of the line: the last command's status, or 2 when the line could not run as written,
+    124 when its deadline passed, 130 when it was cancelled and 137 when a budget ended it."""
+    statuses: list[list[int]] = Field(default_factory=list)
+    """``PIPESTATUS`` after each pipeline of the line's top level that ran, in order: ``[[1, 0]]`` for
+    ``cat /nope | wc -l``. A pipeline inside a loop, a function or a compound command adds no entry
+    of its own, so the list is bounded by the line's text; a pipeline that did not run is absent."""
     fuel_used: int = 0
     """The instructions the line executed inside the machine's module, a function of the line and its replies."""
-    exit_status: int = 0
-    """The last command's status, or 2, 130 or 137 when the line could not run, was cancelled or hit a budget."""
+
+    def to_str(self, *, projection: tuple[str, ...] | list[str] | None = None) -> str:
+        """The line's standard output, then its standard error, then its facts after a blank line."""
+        facts = Result(ops=self.ops, errors=self.errors).to_str(projection=projection)
+        printed = self.stdout + self.stderr
+        return f"{printed}\n{facts}" if facts else printed
+
+
+def refused_line(fact: ResultError) -> LineResult:
+    """The result of a line that never started, for the one fact that stopped it."""
+    return LineResult(errors=[fact], exit_code=2)
 
 
 async def run_line(
@@ -185,7 +215,7 @@ async def run_line(
 ) -> LineResult:
     """Run ``line`` as ``authority`` and return its output, its exit status and its evidence.
 
-    The result carries ``stdout`` and ``stderr`` as text and ``exit_status`` as an int. It fails
+    The result carries ``stdout`` and ``stderr`` as text and ``exit_code`` as an int. It fails
     only when the line could not run as written: it does not parse, it holds a refused construct,
     or a budget, the deadline or a cancel ended it. A program that exits non-zero is not a
     failure of the call. ``env`` is the environment the line starts with, and ``limits`` lowers
@@ -202,10 +232,10 @@ async def run_line(
     refused = sorted(name for name, value in (limits or {}).items() if name not in LIMITS or not _a_budget(value))
     if refused:
         detail = f"no such budget, or no count: {', '.join(refused)}; the budgets are {', '.join(sorted(LIMITS))}"
-        return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
+        return refused_line(classified(ErrorKind.invalid, detail=detail))
     if authority.actor.is_system:
         detail = "a line never runs as the system actor; name the caller's authority"
-        return LineResult(errors=[classified(ErrorKind.invalid, detail=detail)], exit_status=2)
+        return refused_line(classified(ErrorKind.invalid, detail=detail))
     start = partial(
         extension().ShellMachine,
         line,
@@ -230,17 +260,19 @@ async def run_line(
             data={"line": line_number, "column": column},
         )
         return LineResult(
-            errors=[fact], stdout="", stderr=f"{SHELL_NAME}: line {line_number}: {message}\n", exit_status=2
+            errors=[fact], stdout="", stderr=f"{SHELL_NAME}: line {line_number}: {message}\n", exit_code=2
         )
     host = _Host(fs, authority)
     stdout = bytearray()
     stderr = bytearray()
+    statuses: list[list[int]] = []
     replies: list[tuple[str, str, object]] = []
     try:
         while True:
-            output, requests, (state, status, reason) = await call_offloaded(
+            output, requests, (state, status, reason), ended = await call_offloaded(
                 offload_pool(), partial(machine.step, replies)
             )
+            statuses.extend(ended)
             for stream, chunk in output:
                 (stdout if stream == 1 else stderr).extend(chunk)
             replies = [(key, *await host.answer(op, {**args, "key": key})) for key, op, args in requests]
@@ -256,8 +288,9 @@ async def run_line(
         errors=errors,
         stdout=stdout.decode(errors="replace"),
         stderr=stderr.decode(errors="replace"),
+        exit_code=status,
+        statuses=statuses,
         fuel_used=machine.fuel_used,
-        exit_status=status,
     )
 
 
@@ -292,7 +325,28 @@ class _Host:
         self._held = 0
         self._reading: set[str] = set()
         self._running: dict[str, tuple[str, list[str], str]] = {}
-        self.evidence: list[ResultError] = []
+        self._facts: dict[tuple[str, str | None, str], ResultError] = {}
+        self._unkept = 0
+
+    @property
+    def evidence(self) -> list[ResultError]:
+        """Each distinct refusal of the line once, as a warning, and a rollup of those past the count."""
+        facts = list(self._facts.values())
+        if self._unkept:
+            message = f"{self._unkept} more refusals inside the line are not kept"
+            rollup = {"vfs.rollup": {"count": self._unkept, "sources": []}}
+            facts.append(classified(ErrorKind.truncated, detail=message, data=rollup, severity=Severity.warning))
+        return facts
+
+    def keep(self, fact: ResultError) -> None:
+        """Keep ``fact`` as a warning of the line, once, while fewer than ``LINE_FACTS`` are kept."""
+        key = (str(fact.kind), fact.path, fact.message)
+        if key in self._facts:
+            return
+        if len(self._facts) >= LINE_FACTS:
+            self._unkept += 1
+            return
+        self._facts[key] = fact.model_copy(update={"severity": Severity.warning})
 
     async def answer(self, op: str, args: dict[str, Any]) -> tuple[str, object]:
         """The reply to one request, as the machine reads it."""
@@ -364,6 +418,7 @@ class _Host:
         """Resolve a program name: vfs's own program, a refusal, or not found."""
         name = args["name"]
         if name in REFUSED_PROGRAMS:
+            self.keep(classified(ErrorKind.unsupported, detail=f"{name}: {REFUSED_PROGRAMS[name]}"))
             return "refused", (126, REFUSED_PROGRAMS[name])
         if name in UNKNOWN_PROGRAMS:
             return "refused", (127, UNKNOWN_PROGRAMS[name])
@@ -389,7 +444,7 @@ class _Host:
         result = await self._fs.search(query, limit=limit, paths=roots, authority=self._authority)
         if not result.success:
             fact = result.failures[0]
-            self.evidence.append(fact.model_copy(update={"severity": Severity.warning}))
+            self.keep(fact)
             return b"", f"search: {fact.message}\n".encode(), 1
         lines = "".join(f"{row.path}\n" for row in result.observations)
         return lines.encode(), b"", 0 if lines else 1
@@ -424,7 +479,7 @@ class _Host:
             return None
         fact = result.failures[0]
         if keep:
-            self.evidence.append(fact.model_copy(update={"severity": Severity.warning}))
+            self.keep(fact)
         if fact.kind == ErrorKind.wrong_kind:
             named = (fact.data or {}).get("kind")
             return "error", "is_a_directory" if named == "directory" else "not_a_directory"

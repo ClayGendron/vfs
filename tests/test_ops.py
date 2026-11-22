@@ -11,14 +11,17 @@ from __future__ import annotations
 import inspect
 from typing import get_args
 
+import pytest
+
 from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStorage
-from vfs import ops, permissions
+from vfs import mounts, ops, permissions
 from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import (
     ADDITIVE_WRITE,
     ALL_OPS,
     DEVELOPER_OPS,
     EXEC_OPS,
+    FRONT_METHODS,
     GRANT_OPS,
     GRANT_WRITE_OPS,
     MANAGEMENT_METHODS,
@@ -279,4 +282,17 @@ def test_router_public_verbs_are_exactly_the_registered_ops() -> None:
         for name, _member in inspect.getmembers(AsyncVirtualFileSystem, inspect.iscoroutinefunction)
         if not name.startswith("_")
     }
-    assert verbs - MANAGEMENT_METHODS == ALL_OPS
+    assert verbs - MANAGEMENT_METHODS - FRONT_METHODS == ALL_OPS
+
+
+def test_the_shell_is_a_front_and_no_op() -> None:
+    """``cli`` spans every mount and no storage answers it, so it is in no op table and no mask."""
+    assert {"cli"} == FRONT_METHODS
+    assert not FRONT_METHODS & (ALL_OPS | MANAGEMENT_METHODS)
+    assert "cli" not in AsyncVirtualFileSystem().capabilities()
+    assert "cli" not in VERB_RUNGS
+
+
+def test_a_mount_cannot_mask_the_shell() -> None:
+    with pytest.raises(ValueError, match="cli"):
+        mounts.validate_deny_ops(frozenset({"cli"}))  # ty: ignore[invalid-argument-type]

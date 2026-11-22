@@ -262,7 +262,15 @@ pub fn encode_step(step: &Step, memory: usize) -> String {
             ));
         }
     }
-    out.push_str(&format!(",\"memory\":{memory}}}"));
+    out.push_str(",\"statuses\":[");
+    for (index, entry) in step.statuses.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let stages: Vec<String> = entry.iter().map(i32::to_string).collect();
+        out.push_str(&format!("[{}]", stages.join(",")));
+    }
+    out.push_str(&format!("],\"memory\":{memory}}}"));
     out
 }
 
@@ -493,6 +501,8 @@ pub struct WireStep {
     pub output: Vec<(Stream, Vec<u8>)>,
     pub requests: Vec<(RequestKey, Request)>,
     pub status: WireStatus,
+    /// The `PIPESTATUS` of each pipeline of the top level that ended in this step.
+    pub statuses: Vec<Vec<i32>>,
     /// Bytes the machine holds, as it counts them.
     pub memory: u64,
 }
@@ -527,10 +537,20 @@ pub fn decode_step(text: &str) -> Result<WireStep, String> {
     } else {
         WireStatus::Running
     };
+    let mut statuses = Vec::new();
+    for entry in doc.get("statuses").map(Json::list).unwrap_or_default() {
+        let stages: Option<Vec<i32>> = entry
+            .list()
+            .iter()
+            .map(|stage| stage.number().and_then(|n| i32::try_from(n as i64).ok()))
+            .collect();
+        statuses.push(stages.ok_or("a status the host cannot read")?);
+    }
     Ok(WireStep {
         output,
         requests,
         status,
+        statuses,
         memory: doc.u64_or("memory", 0),
     })
 }

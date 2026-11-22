@@ -297,6 +297,11 @@ pub enum Fatal {
     Internal(String),
 }
 
+/// Bytes one entry of a line's statuses is counted as while the machine holds it.
+pub fn status_bytes(entry: &[i32]) -> usize {
+    entry.len().saturating_add(1).saturating_mul(4)
+}
+
 /// The exit status of a line a budget or a cancel ended.
 pub const BUDGET_STATUS: i32 = 137;
 pub const CANCELLED_STATUS: i32 = 130;
@@ -318,6 +323,8 @@ pub struct Step {
     /// What the line asks now. Each must be answered before the line can go on.
     pub requests: Vec<(RequestKey, Request)>,
     pub status: Status,
+    /// The `PIPESTATUS` of each pipeline of the line's top level that ended since the last step.
+    pub statuses: Vec<Vec<i32>>,
 }
 
 /// Why a line could not start.
@@ -378,6 +385,7 @@ impl Machine {
                 output: Vec::new(),
                 requests: Vec::new(),
                 status: status.clone(),
+                statuses: Vec::new(),
             };
         }
         {
@@ -396,6 +404,9 @@ impl Machine {
         let released: usize = output.iter().map(|(_, bytes)| bytes.len()).sum();
         hub.release(released);
         let requests = std::mem::take(&mut hub.requests);
+        let statuses = std::mem::take(&mut hub.statuses);
+        let held: usize = statuses.iter().map(|entry| status_bytes(entry)).sum();
+        hub.release(held);
         drop(hub);
         if !matches!(status, Status::Running) {
             self.finished = Some(status.clone());
@@ -405,6 +416,7 @@ impl Machine {
             output,
             requests,
             status,
+            statuses,
         }
     }
 

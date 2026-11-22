@@ -35,6 +35,7 @@ from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
 from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
+from vfs.shell import refused_line
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
@@ -579,7 +580,7 @@ class VirtualFileSystem:
         return self._result("run", self._fs.run, path, arguments=arguments, authority=authority)
 
     def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"", authority: Authority | None = None) -> LineResult:
-        return self._await("cli", self._fs.cli, line, cwd=cwd, stdin=stdin, authority=authority)
+        return self._line(self._fs.cli, line, cwd=cwd, stdin=stdin, authority=authority)
 
     # -------------------------------------------------------------------
     # grants
@@ -678,6 +679,15 @@ class VirtualFileSystem:
         if threading.get_ident() == self._thread.ident:
             return Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL)])
         self._warn_if_blocking_a_foreign_loop(op)
+        return self._submit(call(*args, **kwargs))
+
+    def _line(self, call: Callable[..., Coroutine[Any, Any, LineResult]], *args: Any, **kwargs: Any) -> LineResult:
+        """The shell's hop: refuse as a classified line, as a verb refuses, else run it on the loop and wait."""
+        if self._closed:
+            return refused_line(classified(ErrorKind.backend_unavailable, detail=CLOSED_DETAIL))
+        if threading.get_ident() == self._thread.ident:
+            return refused_line(classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL))
+        self._warn_if_blocking_a_foreign_loop("cli")
         return self._submit(call(*args, **kwargs))
 
     def _await(self, name: str, call: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
@@ -1039,7 +1049,9 @@ class Session:
         return self._result("run", self._session.run, path, arguments=arguments)
 
     def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"") -> LineResult:
-        return self._facade._await("cli", self._session.cli, line, cwd=cwd, stdin=stdin)
+        if self._session.closed:
+            return refused_line(closed_refusal("cli").errors[0])
+        return self._facade._line(self._session.cli, line, cwd=cwd, stdin=stdin)
 
     # -------------------------------------------------------------------
     # grants

@@ -133,3 +133,18 @@ fn every_reply_reads_back_as_itself() {
     let text = wire::encode_replies(&replies);
     assert_eq!(wire::decode_replies(&text).unwrap(), replies, "{text}");
 }
+
+#[test]
+fn a_steps_statuses_read_back_as_themselves() {
+    use shell::machine::{Status, Step};
+    let step = Step {
+        output: Vec::new(),
+        requests: Vec::new(),
+        status: Status::Done(3),
+        statuses: vec![vec![1, 0], vec![255], Vec::new()],
+    };
+    let read = wire::decode_step(&wire::encode_step(&step, 7)).unwrap();
+    assert_eq!(read.statuses, step.statuses);
+    assert_eq!(read.status, wire::WireStatus::Done(3));
+    assert_eq!(read.memory, 7);
+}

@@ -119,7 +119,7 @@ async def test_a_language_case_runs_on_the_vfs_host_as_on_the_reference_host(
     await fs.close()
     want_err = _stream(record, "stderr")
     assert result.stdout.encode() == _stream(record, "stdout"), name
-    assert result.exit_status == record["status"], result.stderr
+    assert result.exit_code == record["status"], result.stderr
     if stderr_exact:
         assert result.stderr.encode() == want_err
     else:
@@ -156,7 +156,7 @@ async def test_every_request_reaches_a_public_verb_with_the_admitted_authority(m
         "mv out/g.txt out/h.txt; rm -r out; [ -d docs ] && echo dir; grep -c alpha docs/*.md"
     )
     result = await run_line(fs, line, AGENT, cwd="/work", env=ENVIRONMENT)
-    assert result.exit_status == 0, result.stderr
+    assert result.exit_code == 0, result.stderr
     assert answered > 10
     assert len(calls) == answered, "one public verb for each request"
     assert {who for _, who in calls} == {AGENT}
@@ -243,7 +243,7 @@ async def test_two_authorities_see_different_listings() -> None:
     assert seen_by_ada.stdout != seen_by_grace.stdout
     assert "hers" in seen_by_grace.stdout
     assert "hers" not in seen_by_ada.stdout
-    assert seen_by_ada.exit_status == 1
+    assert seen_by_ada.exit_code == 1
     assert [e.severity for e in seen_by_ada.errors] == [Severity.warning]
 
 
@@ -378,7 +378,7 @@ async def test_a_line_that_cannot_run_fails_and_changes_nothing(line: str, kind:
     result = await fs.cli(f"echo made > /made.txt; {line}", authority=ADA)
     assert result.success is False
     assert result.errors[0].kind == kind
-    assert result.exit_status == 2
+    assert result.exit_code == 2
     assert (await fs.stat("/made.txt", authority=SYSTEM)).success is False
 
 
@@ -387,7 +387,7 @@ async def test_a_budget_that_ends_a_line_is_its_failure() -> None:
     result = await run_line(fs, "while :; do :; done", ADA, limits={"loop_iterations": 50})
     assert result.success is False
     assert result.errors[-1].kind == ErrorKind.budget_exhausted
-    assert result.exit_status == 137
+    assert result.exit_code == 137
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +431,7 @@ async def test_each_wall_ends_a_line_and_the_process_goes_on(
     assert result.success is False
     assert result.errors[-1].kind == kind
     assert named in result.errors[-1].message
-    assert result.exit_status == status
+    assert result.exit_code == status
     if named == "output":
         assert len(result.stdout) == 1000
     assert (await fs.cli("echo after", authority=ADA)).stdout == "after\n"
@@ -440,7 +440,7 @@ async def test_each_wall_ends_a_line_and_the_process_goes_on(
 async def test_a_chain_past_the_depth_budget_is_an_error_not_a_crash() -> None:
     fs = AsyncVirtualFileSystem()
     result = await fs.cli("e=$(printf '1+%.0s' {1..70000})1; echo $((e))", authority=ADA)
-    assert result.exit_status == 1, "an expansion error ends the line, as it ends bash"
+    assert result.exit_code == 1, "an expansion error ends the line, as it ends bash"
     assert "recursion level exceeded" in result.stderr
     assert (await fs.cli("echo after", authority=ADA)).stdout == "after\n"
 
@@ -457,7 +457,7 @@ async def test_the_event_loop_runs_while_a_line_computes() -> None:
     task = asyncio.create_task(heart())
     result = await run_line(AsyncVirtualFileSystem(), "while :; do :; done", ADA, limits=UNBOUNDED_LOOP, fuel=10**8)
     task.cancel()
-    assert result.exit_status == 137
+    assert result.exit_code == 137
     assert beats > 5, "each slice runs on the pool, so the loop runs between them"
 
 
@@ -631,7 +631,7 @@ async def test_a_closed_storage_reads_as_permission_denied() -> None:
     ok(await fs.set_posture("/", "none", authority=SYSTEM))
     ok(await fs.write(path="/f.txt", content="x", authority=SYSTEM))
     result = await fs.cli("echo y > /g.txt", authority=ADA)
-    assert result.exit_status == 1
+    assert result.exit_code == 1
     assert "Permission denied" in result.stderr or "No such file" in result.stderr
 
 
@@ -653,7 +653,7 @@ async def test_an_unknown_request_is_unsupported() -> None:
 async def test_an_unknown_or_negative_budget_fails_the_call(limits: dict[str, int]) -> None:
     result = await run_line(AsyncVirtualFileSystem(), "echo hi", ADA, limits=limits)
     assert result.errors[0].kind == ErrorKind.invalid
-    assert result.exit_status == 2
+    assert result.exit_code == 2
 
 
 def test_the_module_memory_limit_ends_the_line_and_not_the_process() -> None:
@@ -669,6 +669,92 @@ def test_values_that_are_not_functions_of_the_line() -> None:
     assert host_module._value("time")[0] == "text"
     assert 0 <= int(str(host_module._value("random")[1])) < 32768
     assert host_module._value("other") == ("error", "unsupported")
+
+
+# ---------------------------------------------------------------------------
+# The result of a line
+# ---------------------------------------------------------------------------
+
+FUEL = 400_000_000
+"""Instructions enough to start a line and run a few thousand steps of it, and no more."""
+
+
+async def test_a_verb_refused_inside_a_line_is_a_warning_and_the_line_runs() -> None:
+    result = await AsyncVirtualFileSystem().cli("cat /nope | wc -l", authority=ADA)
+    assert result.success is True
+    assert result.stdout == "0\n"
+    assert result.exit_code == 0
+    assert result.statuses == [[1, 0]]
+    assert [(e.kind, e.severity) for e in result.errors] == [(ErrorKind.not_found, Severity.warning)]
+
+
+async def test_each_top_level_pipeline_that_ran_is_one_entry_of_statuses() -> None:
+    fs = AsyncVirtualFileSystem()
+    assert (await fs.cli("false; true | false; false && true", authority=ADA)).statuses == [[1], [0, 1], [1]]
+    looped = await fs.cli("for i in {1..1000}; do false | true; done", authority=ADA)
+    assert looped.statuses == [[1, 0]]
+
+
+async def test_a_line_a_wall_stopped_keeps_the_statuses_before_it() -> None:
+    line = "true | false; while :; do :; done"
+    stopped = await run_line(AsyncVirtualFileSystem(), line, ADA, limits={"loop_iterations": 1 << 40}, fuel=FUEL)
+    assert stopped.success is False
+    assert stopped.errors[-1].data == {"limit": "fuel"} or "fuel" in (stopped.errors[-1].message or "")
+    assert stopped.statuses == [[0, 1]]
+
+
+async def test_a_program_vfs_refuses_is_a_warning_and_its_own_exit_is_none() -> None:
+    result = await AsyncVirtualFileSystem().cli("curl http://x; echo y | grep -q x; false", authority=ADA)
+    assert result.success is True
+    assert result.statuses == [[126], [0, 1], [1]]
+    assert [(e.kind, e.severity) for e in result.errors] == [(ErrorKind.unsupported, Severity.warning)]
+
+
+async def test_a_refusal_repeated_in_a_loop_is_kept_once() -> None:
+    result = await AsyncVirtualFileSystem().cli("for i in {1..2000}; do cat /nope; done 2>/dev/null", authority=ADA)
+    assert [e.kind for e in result.errors] == [ErrorKind.not_found]
+
+
+async def test_the_facts_a_line_keeps_are_bounded_and_the_rest_counted() -> None:
+    line = "for i in {1..2000}; do cat /nope$i; done 2>/dev/null"
+    result = await AsyncVirtualFileSystem().cli(line, authority=ADA)
+    assert len(result.errors) == host_module.LINE_FACTS + 1
+    rollup = result.errors[-1]
+    assert (rollup.kind, rollup.severity) == (ErrorKind.truncated, Severity.warning)
+    assert rollup.data == {"vfs.rollup": {"count": 2000 - host_module.LINE_FACTS, "sources": []}}
+    assert result.success is True
+
+
+async def test_every_line_result_names_its_call() -> None:
+    fs = AsyncVirtualFileSystem()
+    session = fs.open_session(ADA)
+    await session.close()
+    results = [
+        await fs.cli("echo hi", authority=ADA),
+        await fs.cli("if", authority=ADA),
+        await fs.cli("echo hi", authority=SYSTEM),
+        await run_line(fs, "echo hi", ADA, limits={"nope": 1}),
+        await session.cli("echo hi"),
+    ]
+    assert [r.ops for r in results] == [("cli",)] * 5
+    assert [r.success for r in results] == [True, False, False, False, False]
+    assert all(r.exit_code == 2 for r in results[1:])
+
+
+async def test_a_line_result_crosses_the_wire_whole() -> None:
+    result = await AsyncVirtualFileSystem().cli("echo out; echo err >&2; cat /nope; false | true", authority=ADA)
+    back = host_module.LineResult.from_payload(result.to_payload(), strict=True)
+    assert isinstance(back, host_module.LineResult)
+    assert back == result
+    assert back.statuses == [[0], [0], [1], [1, 0]]
+
+
+async def test_a_line_result_prints_its_output_then_its_facts() -> None:
+    result = await AsyncVirtualFileSystem().cli("echo out; echo err >&2; cat /nope", authority=ADA)
+    text = str(result)
+    assert text.startswith("out\nerr\ncat: /nope: No such file or directory\n")
+    assert "WARNING" in text.split("\n\n")[-1]
+    assert str(await AsyncVirtualFileSystem().cli("echo hi", authority=ADA)) == "hi\n"
 
 
 # ---------------------------------------------------------------------------
@@ -689,3 +775,17 @@ def test_the_sync_facade_runs_a_line() -> None:
         assert fs.cli("printf '%s\\n' a b | wc -l", authority=ADA).stdout == "2\n"
         with fs.open_session(ADA) as session:
             assert session.cli("echo hi", stdin=b"").stdout == "hi\n"
+
+
+def test_a_closed_facade_answers_a_line_with_a_classified_refusal() -> None:
+    fs = VirtualFileSystem()
+    session = fs.open_session(ADA)
+    session.close()
+    closed_session = session.cli("echo hi")
+    fs.close()
+    closed_facade = fs.cli("echo hi", authority=ADA)
+    assert [r.ops for r in (closed_session, closed_facade)] == [("cli",), ("cli",)]
+    assert closed_session.errors[0].kind == ErrorKind.invalid
+    assert closed_facade.errors[0].kind == ErrorKind.backend_unavailable
+    assert closed_facade.success is False
+    assert closed_facade.exit_code == 2

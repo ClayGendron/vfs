@@ -117,6 +117,8 @@ fn new_shell(hub: HubRef, source: Rc<str>, config: &Config) -> Result<Shell, Fat
         cwd: config.cwd.clone(),
         last_status: 0,
         pipestatus: vec![0],
+        published: (0, Vec::new()),
+        top_level: true,
         lineno: 1,
         task: vec![0],
         next_child: 0,
@@ -350,6 +352,40 @@ fn exec_and_or<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, and_or: &'b AndOr) -> Ex
 
 fn exec_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline) -> Exec<'b> {
     Box::pin(async move {
+        let top = std::mem::take(&mut sh.top_level);
+        let before = sh.published.0;
+        let result = run_pipeline(ctx, sh, pipeline).await;
+        sh.top_level = top;
+        if top {
+            report_statuses(sh, before, &result)?;
+        }
+        result
+    })
+}
+
+/// Keep the statuses of a pipeline of the top level: the `PIPESTATUS` it set, or the status
+/// the line stopped with inside it.
+fn report_statuses(sh: &mut Shell, before: u64, result: &Status) -> Result<(), Flow> {
+    let entry = match result {
+        Ok(_) if sh.published.0 != before => sh.published.1.clone(),
+        Ok(_) => return Ok(()),
+        Err(
+            Flow::Exit(status)
+            | Flow::Return(status)
+            | Flow::Discard(status)
+            | Flow::CommandFailed(status),
+        ) => vec![*status],
+        Err(_) => return Ok(()),
+    };
+    let mut hub = sh.hub.borrow_mut();
+    hub.charge(super::status_bytes(&entry))
+        .map_err(Flow::Fatal)?;
+    hub.statuses.push(entry);
+    Ok(())
+}
+
+fn run_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline) -> Exec<'b> {
+    Box::pin(async move {
         io::checkpoint(&sh.hub).await?;
         let outer_condition = sh.in_condition;
         if pipeline.negated {
@@ -364,17 +400,25 @@ fn exec_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline
             status = i32::from(status == 0);
         }
         sh.last_status = status;
-        // A compound command keeps the PIPESTATUS of the last pipeline inside it, as bash does.
-        let compound_alone = matches!(
+        // A compound command keeps the PIPESTATUS of the last pipeline inside it, and a function
+        // definition keeps the one before it, as bash does.
+        let keeps = matches!(
             pipeline.stages.as_slice(),
             [Stage { command: Command::Compound(compound, _), .. }]
                 if !matches!(**compound, CompoundCommand::Subshell(_))
+        ) || matches!(
+            pipeline.stages.as_slice(),
+            [Stage {
+                command: Command::Function(_),
+                ..
+            }]
         );
-        if !compound_alone {
+        if !keeps {
             let statuses: BTreeMap<i64, String> = (0i64..)
                 .zip(sh.pipestatus.iter().map(i32::to_string))
                 .collect();
             set_value(sh, "PIPESTATUS", Value::Indexed(statuses))?;
+            sh.published = (sh.published.0.wrapping_add(1), sh.pipestatus.clone());
         }
         Ok(status)
     })

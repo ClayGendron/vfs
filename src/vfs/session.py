@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
-from vfs.shell import LineResult
+from vfs.shell import LineResult, refused_line
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -401,7 +401,7 @@ class AsyncSession:
 
     async def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"") -> LineResult:
         if (refusal := self._refuse_closed("cli")) is not None:
-            return LineResult(errors=refusal.errors, exit_status=2)
+            return refused_line(refusal.errors[0])
         return await self._fs.cli(line, cwd=cwd, stdin=stdin, authority=self._authority)
 
     async def run(self, path: str, *, arguments: dict[str, Any] | None = None) -> Result:

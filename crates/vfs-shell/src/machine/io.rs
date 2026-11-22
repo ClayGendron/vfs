@@ -51,6 +51,8 @@ pub struct Hub {
     pub sub_depth: u32,
     /// A host's own test of whether this step's slice is spent, when it counts fuel itself.
     pub probe: Option<Box<dyn FnMut() -> bool>>,
+    /// The `PIPESTATUS` of each pipeline of the line's top level that ran, in order.
+    pub statuses: Vec<Vec<i32>>,
 }
 
 pub type HubRef = Rc<RefCell<Hub>>;
@@ -80,6 +82,7 @@ impl Hub {
             last_sub_status: None,
             sub_depth: 0,
             probe: None,
+            statuses: Vec::new(),
         }
     }
 

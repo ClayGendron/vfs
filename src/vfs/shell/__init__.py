@@ -12,6 +12,6 @@ line passes the same gate as the caller's own call would.
 
 from __future__ import annotations
 
-from vfs.shell.host import LineResult, run_line
+from vfs.shell.host import LineResult, refused_line, run_line
 
-__all__ = ["LineResult", "run_line"]
+__all__ = ["LineResult", "refused_line", "run_line"]

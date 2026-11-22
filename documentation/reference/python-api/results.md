@@ -12,7 +12,7 @@ from vfs import Result, ResultError
 
 ## What a Line Returns
 
-`cli` returns a `LineResult`: a `Result` that also carries what the line printed and the status it exited with. [The Shell](../shell.md) says how a line runs.
+`cli` returns a `LineResult`: a `Result` that also carries what the line printed and how its commands fared. Its `success` says whether the line ran to its end; `exit_code` and `statuses` say how its commands exited. [The Shell](../shell.md) says how a line runs.
 
 ```python
 from vfs import LineResult

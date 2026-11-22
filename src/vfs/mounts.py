@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypedDict
 
 from vfs.authority import EVERYONE_NAME, Authority
 from vfs.exceptions import MountError
-from vfs.ops import GRANT_OPS, GRANT_WRITE_OPS, READ_OPS, RUNGS
+from vfs.ops import FRONT_METHODS, GRANT_OPS, GRANT_WRITE_OPS, READ_OPS, RUNGS
 from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.permissions import check_writable_composed
 from vfs.results import ErrorKind, Result, classified
@@ -175,13 +175,19 @@ def validate_deny_ops(deny_ops: Iterable[Op]) -> frozenset[Op]:
     A mask applies to every caller alike. Refusing a read is the job of the storage's rights, which
     know who the caller is. Only the operations the kernel knows to be reads are refused here: the
     read verbs, and ``grants``, which only lists. So a name the kernel does not know can still be
-    masked. The call raises ``ValueError`` that names the refused operations. It raises ``TypeError``
-    for a bare string, which would be read as a set of letters.
+    masked. A front such as ``cli`` is no mount's operation, and masking it would do nothing, so it
+    is refused too: a host turns the shell off through its policy or its tool list. The call raises
+    ``ValueError`` that names the refused operations. It raises ``TypeError`` for a bare string,
+    which would be read as a set of letters.
     """
     if isinstance(deny_ops, (str, bytes)):
         msg = f"deny_ops must be an iterable of op names, not a bare string: {deny_ops!r}"
         raise TypeError(msg)
     mask = frozenset(deny_ops)
+    fronts = mask & FRONT_METHODS
+    if fronts:
+        msg = f"deny_ops may not mask a front, which is no mount's op: {', '.join(sorted(fronts))}"
+        raise ValueError(msg)
     blocked = mask & _UNMASKABLE_OPS
     if blocked:
         msg = f"deny_ops may not mask read-family ops: {', '.join(sorted(blocked))}"
