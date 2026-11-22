@@ -160,7 +160,7 @@ waiting.schema
 Your application now asks the person: a button in a chat window, a message, an approval queue, whatever suits it. When Ada says yes, resume the job with her answer.
 
 ```python
-ada = Authority.of(Principal("ada"))
+ada = Authority.of(Principal("ada"), name="Ada Lovelace")
 
 fs.resume(job.id, True, authority=ada)
 ```
@@ -170,6 +170,8 @@ edit success: 1 file
 
   edited /contracts/acme.md
 ```
+
+The `name` is a label for people to read. VFS shows it in place of the principal's id wherever it reports who answered, and it plays no part in what the authority may do. An authority with no name is reported simply as an authority.
 
 `resume` does two things in one call. It records Ada's answer to the job's interrupt, under her name, and it carries the job on from the step where it stopped. The result is the one Scout's call would have returned. Hand it to Scout in whatever way your application talks to its agent.
 
@@ -201,12 +203,12 @@ fs.resume(
 ```
 
 ```text
-ERROR /contracts/acme.md: Denied by a person — This step needed a person's approval, and ada denied it. Reason: This contract is still in force. (retry: never)
+ERROR /contracts/acme.md: Denied by Ada Lovelace — This step needed approval, and Ada Lovelace denied it. Reason: This contract is still in force. (retry: never)
 ```
 
-`Approval` is the schema `require_approval` asks with. It accepts `True` or `False`, or an `Approval` with a reason. Without a reason, the message ends after "ada denied it."
+`Approval` is the schema `require_approval` asks with. It accepts `True` or `False`, or an `Approval` with a reason. Without a reason, the message ends after "Ada Lovelace denied it." Had Ada's authority carried no name, the message would read "Denied by an authority — This step needed approval, and the authority that answered denied it."
 
-**A denial is a person's decision, not a missing right, and the result says so.** Its kind is `vfs.person.denied`, not `vfs.permission_denied`. Scout had the right to delete the contract; a person who was asked said no. An agent that reads this result knows that a human decided, so it does not look for another way to make the same change, and the reason tells it why.
+**A denial is a decision made in answer to the interrupt, not a missing right, and the result says so.** Its kind is `vfs.interrupt.denied`, not `vfs.permission_denied`. Scout had the right to delete the contract; the authority that was asked said no. An agent that reads this result knows the change was decided against, so it does not look for another way to make it, and the reason tells it why.
 
 ## Cancel a Job
 
@@ -221,19 +223,19 @@ fs.resume(result.job.id, Cancel(reason="We are renegotiating this contract."), a
 ```
 
 ```text
-ERROR /contracts/acme.md: Cancelled by a person — This job was waiting for a person, and ada cancelled it. Reason: We are renegotiating this contract. (retry: never)
+ERROR /contracts/acme.md: Cancelled by Ada Lovelace — This job was waiting for an answer, and Ada Lovelace cancelled it. Reason: We are renegotiating this contract. (retry: never)
 ```
 
-`Cancel()` with no reason cancels the job too, and the message ends after "ada cancelled it."
+`Cancel()` with no reason cancels the job too, and the message ends after "Ada Lovelace cancelled it." With no name on the authority, it reads "Cancelled by an authority".
 
-A denial and a cancel differ in how much they stop. **A denial refuses one step, and the job carries on. A cancel ends the whole job where it stopped.** In a shell line, a denied step fails as a command fails and the line goes on to its next command, while a cancelled line runs nothing more. Either way, what the job did before it stopped stands: a cancel undoes nothing. Its kind is `vfs.person.cancelled`, and a job that is cancelled cannot be resumed again.
+A denial and a cancel differ in how much they stop. **A denial refuses one step, and the job carries on. A cancel ends the whole job where it stopped.** In a shell line, a denied step fails as a command fails and the line goes on to its next command, while a cancelled line runs nothing more. Either way, what the job did before it stopped stands: a cancel undoes nothing. Its kind is `vfs.interrupt.cancelled`, and a job that is cancelled cannot be resumed again.
 
 | Kind | What happened | What it stops |
 |---|---|---|
-| `vfs.person.denied` | A step needed a person's approval, and the person said no | That step |
-| `vfs.person.cancelled` | A person cancelled the job while it waited | The whole job |
+| `vfs.interrupt.denied` | A step needed approval, and the authority that answered said no | That step |
+| `vfs.interrupt.cancelled` | The authority that answered cancelled the job while it waited | The whole job |
 
-Both kinds sit under `vfs.person`, the kinds that mean a person in the loop decided. Your application and your agent can match that prefix to tell a person's decision from a refusal by an access rule or a policy.
+Both kinds sit under `vfs.interrupt`, the kinds that mean the answer to an interrupt decided against the work. Your application and your agent can match that prefix to tell such a decision from a refusal by an access rule or a policy.
 
 ## Interrupt With Any Answer
 
@@ -314,7 +316,7 @@ result.success, fs.read("/notes.md", authority=system).one().content
 
 The line carried on where it stopped: the contract was replaced and the draft was removed. **Nothing ran twice.** The note was written once. VFS saved the line's text and every reply the line had been given up to the stop, and it resumed the line by running it again against those saved replies, without repeating any of the steps they stood for. If the shell has changed so that the line would no longer take the same path, the resume is refused with a conflict that says where it diverged, and nothing more is run.
 
-Had Ada said no, the `cat` command would have failed as a command fails in bash, printing that a person denied it and her reason, and the line would have carried on. A line handles a denial as it handles any failed command, so `cmd || fallback` works. Had Ada cancelled the job, the line would have stopped there, and `rm /drafts/acme.md` would never have run.
+Had Ada said no, the `cat` command would have failed as a command fails in bash, printing that Ada Lovelace denied it and her reason, and the line would have carried on. A line handles a denial as it handles any failed command, so `cmd || fallback` works. Had Ada cancelled the job, the line would have stopped there, and `rm /drafts/acme.md` would never have run.
 
 **A line can stop more than once.** If a later step also needs a person, the resumed line stops again before it, and `resume` returns an interrupted result for the same job. When two commands in a pipeline each need a person, the job stops for the first one, and for the second after it is resumed. The loop that handles every case is short.
 
@@ -470,7 +472,7 @@ A file system that keeps its files in memory keeps its jobs in memory too, and t
 
 A person may resume a job interrupted before a change when they have `write` access to every path the step names. A person may resume a job a tool interrupted when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may resume any job.
 
-A job that waits lapses 24 hours after it stopped. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, resume it with `Cancel`, as [Cancel a Job](#cancel-a-job) shows; your application can do that as the `system` authority when nobody is going to answer. A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
+A job that waits lapses 24 hours after it stopped. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, resume it with `Cancel`, as [Cancel a Job](#cancel-a-job) shows; your application can do that as the `system` authority when nobody is going to answer. Give that authority a name, such as `Authority.system(name="Nightly cleanup")`, and the agent reads "Cancelled by Nightly cleanup" rather than "Cancelled by an authority". A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
 
 ## Use It Inside a LangGraph Application
 
@@ -507,4 +509,4 @@ async def checksum(path: str) -> str:
 
 ## What to Remember
 
-Every call through VFS is a job, and every verb it carries out is a step. A policy, marked `@policy`, sees each step before it runs and allows it or denies it. A policy or a tool that needs a person awaits `interrupt` with a message and the schema of the answer it needs. VFS never asks and never waits: it stops the job before the step, saves it, and returns, and a job waits on one interrupt at a time. Your application asks the person, and `resume` records the answer and carries the job on, as its caller, against what the person saw, with nothing run twice. A person can deny a step, which refuses that step, or cancel the job, which ends it; both are reported as a person's decision, under `vfs.person`, never as a missing right.
+Every call through VFS is a job, and every verb it carries out is a step. A policy, marked `@policy`, sees each step before it runs and allows it or denies it. A policy or a tool that needs a person awaits `interrupt` with a message and the schema of the answer it needs. VFS never asks and never waits: it stops the job before the step, saves it, and returns, and a job waits on one interrupt at a time. Your application asks the person, and `resume` records the answer and carries the job on, as its caller, against what the person saw, with nothing run twice. The authority that answers can deny a step, which refuses that step, or cancel the job, which ends it. Both are reported as a decision by that authority, by its name when it has one, under `vfs.interrupt`, and never as a missing right.
