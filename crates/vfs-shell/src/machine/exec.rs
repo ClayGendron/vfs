@@ -14,7 +14,7 @@ use super::files::{self, FileReader, FileWriter, ReadBuffer};
 use super::io::{self, HubRef, Stream, Task, join_all};
 use super::shell::{Fd, JobRef, Options, Shell, WriteOutcome};
 use super::vars::{self, AssocMap, Value, Var};
-use super::{Config, Fatal, HostError, Reply, Request, WriteMode, builtins, quote};
+use super::{Config, Fatal, HostError, ProgramKind, Reply, Request, WriteMode, builtins, quote};
 use crate::programs;
 use crate::syntax::ast::{
     AndOr, Arg, AssignValue, Assignment, CaseEnd, Command, CompoundCommand, Connector, List,
@@ -1091,7 +1091,7 @@ pub async fn run_program(ctx: &Ctx<'_>, sh: &mut Shell, name: &str, words: Vec<S
         .await?;
         return Ok(127);
     }
-    if sh.programs.contains_key(name) {
+    if sh.programs.get(name) == Some(&ProgramKind::Library) {
         if let Some(status) = programs::run(ctx, sh, name, words).await? {
             return Ok(status);
         }

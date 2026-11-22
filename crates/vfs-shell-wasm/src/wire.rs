@@ -98,6 +98,13 @@ pub fn decode_start(text: &str) -> Result<(String, Config), String> {
         .unwrap_or_default()
         .iter()
         .filter_map(|p| p.text().map(|name| (name.to_owned(), ProgramKind::Library)))
+        .chain(
+            doc.get("host_programs")
+                .map(Json::list)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|p| p.text().map(|name| (name.to_owned(), ProgramKind::Host))),
+        )
         .collect();
     config.pid = u32::try_from(doc.u64_or("pid", 1000)).unwrap_or(1000);
     if let Some(limits) = doc.get("limits") {
@@ -395,14 +402,19 @@ pub fn encode_start(source: &str, config: &Config) -> String {
         .map(|(k, v)| format!("[{},{}]", quote(k), quote(v)))
         .collect();
     let args: Vec<String> = config.args.iter().map(|a| quote(a)).collect();
-    let programs: Vec<String> = config
-        .programs
-        .iter()
-        .map(|(name, _)| quote(name))
-        .collect();
+    let named = |wanted: ProgramKind| -> Vec<String> {
+        config
+            .programs
+            .iter()
+            .filter(|(_, kind)| *kind == wanted)
+            .map(|(name, _)| quote(name))
+            .collect()
+    };
+    let programs = named(ProgramKind::Library);
+    let host_programs = named(ProgramKind::Host);
     let l = &config.limits;
     format!(
-        "{{\"source\":{},\"env\":[{}],\"cwd\":{},\"name\":{},\"args\":[{}],\"stdin\":\"{}\",\"programs\":[{}],\"pid\":{},\"limits\":{{\"memory_bytes\":{},\"loop_iterations\":{},\"function_depth\":{},\"nesting\":{},\"slice\":{},\"output_bytes\":{},\"source_bytes\":{},\"tokens\":{},\"depth\":{},\"pipeline_stages\":{}}}}}",
+        "{{\"source\":{},\"env\":[{}],\"cwd\":{},\"name\":{},\"args\":[{}],\"stdin\":\"{}\",\"programs\":[{}],\"host_programs\":[{}],\"pid\":{},\"limits\":{{\"memory_bytes\":{},\"loop_iterations\":{},\"function_depth\":{},\"nesting\":{},\"slice\":{},\"output_bytes\":{},\"source_bytes\":{},\"tokens\":{},\"depth\":{},\"pipeline_stages\":{}}}}}",
         quote(source),
         pairs.join(","),
         quote(&config.cwd),
@@ -410,6 +422,7 @@ pub fn encode_start(source: &str, config: &Config) -> String {
         args.join(","),
         base64_encode(&config.stdin),
         programs.join(","),
+        host_programs.join(","),
         config.pid,
         l.memory_bytes,
         l.loop_iterations,

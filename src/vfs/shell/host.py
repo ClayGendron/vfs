@@ -12,17 +12,22 @@ A line is parsed whole before anything runs, so a syntax error, a refused
 construct or a spent parse budget fails the call and touches nothing.
 
 The bodies the line reads are held for the rest of the line, so a file read
-in chunks is one ``read``; any write, move, copy or delete forgets them.
+in chunks is one ``read``; any write, move, copy or delete forgets them, and
+so does a program that changes bodies or rights.
+
+A program name the host resolves (:data:`vfs.shell.programs.PROGRAMS`) is
+asked of the host at each start: ``grep -r`` and ``find`` are served from the
+indexed verbs where their answer is GNU's, and handed back to the shell's
+library otherwise; the verbs with no Unix name run as programs of their own.
 """
 
 from __future__ import annotations
 
 import asyncio
-import posixpath
 import random
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final
 
 from pydantic import Field
 
@@ -30,11 +35,13 @@ from vfs.deadline import Deadline
 from vfs.native import extension
 from vfs.offload import call_offloaded, offload_pool
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
+from vfs.shell.programs import MUTATING, PROGRAMS
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from vfs.authority import Authority
+    from vfs.shell.verbs import Router
 
 SHELL_NAME: Final = "bash"
 """``$0`` of every line, so its errors read as bash's do."""
@@ -127,43 +134,6 @@ _FAILURE_KIND: Final[dict[str, ErrorKind]] = {
 # ---------------------------------------------------------------------------
 
 
-class Router(Protocol):
-    """The verbs a line can reach: each request of the machine is one call of one of these, as the caller.
-
-    The router (:class:`~vfs.AsyncVirtualFileSystem`) is one; the shell names only the verbs, so it
-    sits beneath the router and imports nothing above it.
-    """
-
-    async def read(self, path: str, /, *, columns: frozenset[str], authority: Authority | None) -> Result: ...
-
-    async def stat(self, path: str, /, *, authority: Authority | None) -> Result: ...
-
-    async def ls(self, path: str, /, *, authority: Authority | None) -> Result: ...
-
-    async def search(
-        self, query: str, /, *, limit: int, paths: tuple[str, ...], authority: Authority | None
-    ) -> Result: ...
-
-    async def write(
-        self,
-        *,
-        path: str,
-        authority: Authority | None,
-        content: str | None = ...,
-        data: bytes | None = ...,
-        if_absent: bool = ...,
-        append: bool = ...,
-    ) -> Result: ...
-
-    async def mkdir(self, path: str, /, *, parents: bool, exist_ok: bool, authority: Authority | None) -> Result: ...
-
-    async def delete(self, path: str, /, *, cascade: bool, authority: Authority | None) -> Result: ...
-
-    async def copy(self, src: str, dest: str, /, *, authority: Authority | None) -> Result: ...
-
-    async def move(self, src: str, dest: str, /, *, authority: Authority | None) -> Result: ...
-
-
 class LineResult(Result):
     """What ``cli`` returns: a :class:`Result` with what the line printed and how its commands fared.
 
@@ -199,6 +169,11 @@ class LineResult(Result):
         facts = Result(ops=self.ops, errors=self.errors).to_str(projection=projection)
         printed = self.stdout + self.stderr
         return f"{printed}\n{facts}" if facts else printed
+
+
+def library_programs() -> list[str]:
+    """The library's programs the machine runs itself: every one the host does not resolve."""
+    return [name for name in extension().SHELL_PROGRAMS if name not in PROGRAMS]
 
 
 def refused_line(fact: ResultError) -> LineResult:
@@ -249,7 +224,8 @@ async def run_line(
         name=SHELL_NAME,
         args=[],
         stdin=stdin,
-        programs=list(extension().SHELL_PROGRAMS),
+        programs=library_programs(),
+        host_programs=list(PROGRAMS),
         pid=PID,
         limits=dict(limits) if limits is not None else None,
         fuel=fuel,
@@ -329,9 +305,19 @@ class _Host:
         self._bodies: dict[str, bytes] = {}
         self._held = 0
         self._reading: dict[str, None] = {}
-        self._running: dict[str, tuple[str, list[str], str]] = {}
+        self._running: dict[str, list[tuple[bytes, bytes, int | None]]] = {}
         self._facts: dict[tuple[str, str | None, str], ResultError] = {}
         self._unkept = 0
+
+    @property
+    def fs(self) -> Router:
+        """The router every request and program of the line calls."""
+        return self._fs
+
+    @property
+    def authority(self) -> Authority:
+        """The authority the line was admitted as."""
+        return self._authority
 
     @property
     def evidence(self) -> list[ResultError]:
@@ -364,13 +350,17 @@ class _Host:
         if op == "value":
             return _value(args["name"])
         if op == "start":
-            return self._start(args)
+            return await self._start(args)
         if op == "feed":
             return await self._feed(args)
+        self._forget()
+        return await self._mutate(op, args)
+
+    def _forget(self) -> None:
+        """Forget every body the line holds, since what changes next may change one."""
         self._bodies.clear()
         self._held = 0
         self._reading.clear()
-        return await self._mutate(op, args)
 
     async def _read(self, path: str, offset: int, length: int) -> tuple[str, object]:
         body = self._bodies.get(path)
@@ -424,40 +414,39 @@ class _Host:
         ]
         return "entries", entries
 
-    def _start(self, args: dict[str, Any]) -> tuple[str, object]:
-        """Resolve a program name: vfs's own program, a refusal, or not found."""
+    async def _start(self, args: dict[str, Any]) -> tuple[str, object]:
+        """Resolve a program name: vfs's own program, run now, the library's, a refusal, or not found."""
         name = args["name"]
         if name in REFUSED_PROGRAMS:
             self.keep(classified(ErrorKind.unsupported, detail=f"{name}: {REFUSED_PROGRAMS[name]}"))
             return "refused", (126, REFUSED_PROGRAMS[name])
         if name in UNKNOWN_PROGRAMS:
             return "refused", (127, UNKNOWN_PROGRAMS[name])
-        if name not in _PROGRAMS:
+        program = PROGRAMS.get(name)
+        if program is None:
             return "error", "not_found"
-        self._running[args["key"]] = (name, args["args"], args["cwd"])
+        if name in MUTATING:
+            self._forget()
+        ran = await program(self, list(args["args"]), args["cwd"])
+        if ran is None:
+            return "library", None
+        replies: list[tuple[bytes, bytes, int | None]] = [
+            (chunk, b"", None) if stream == 1 else (b"", chunk, None) for stream, chunk in ran.writes
+        ]
+        if replies:
+            replies[-1] = (*replies[-1][:2], ran.status)
+        else:
+            replies.append((b"", b"", ran.status))
+        self._running[args["key"]] = replies
         return "started", None
 
     async def _feed(self, args: dict[str, Any]) -> tuple[str, object]:
-        """Run a vfs program at its first feed: none of them reads its standard input."""
-        name, words, cwd = self._running.pop(args["program"])
-        stdout, stderr, status = await _PROGRAMS[name](self, words, cwd)
-        return "output", (stdout, stderr, status)
-
-    async def search(self, words: list[str], cwd: str) -> tuple[bytes, bytes, int]:
-        """``search [-n LIMIT] QUERY [PATH...]``: the paths :meth:`search` ranks first, one a line."""
-        limit, rest = 10, list(words)
-        if len(rest) >= 2 and rest[0] == "-n" and rest[1].isascii() and rest[1].isdigit():
-            limit, rest = int(rest[1]), rest[2:]
-        if not rest:
-            return b"", b"search: usage: search [-n LIMIT] QUERY [PATH...]\n", 2
-        query, roots = rest[0], tuple(posixpath.normpath(posixpath.join(cwd, p)) for p in rest[1:])
-        result = await self._fs.search(query, limit=limit, paths=roots, authority=self._authority)
-        if not result.success:
-            fact = result.failures[0]
-            self.keep(fact)
-            return b"", f"search: {fact.message}\n".encode(), 1
-        lines = "".join(f"{row.path}\n" for row in result.observations)
-        return lines.encode(), b"", 0 if lines else 1
+        """The next of a program's writes, in the order it made them, its status on the last."""
+        replies = self._running[args["program"]]
+        reply = replies.pop(0)
+        if not replies:
+            del self._running[args["program"]]
+        return "output", reply
 
     async def _mutate(self, op: str, args: dict[str, Any]) -> tuple[str, object]:
         fs, who = self._fs, self._authority
@@ -494,12 +483,6 @@ class _Host:
             named = (fact.data or {}).get("kind")
             return "error", "is_a_directory" if named == "directory" else "not_a_directory"
         return "error", _HOST_ERROR.get(fact.kind, "invalid")
-
-
-_PROGRAMS: Final[dict[str, Callable[[_Host, list[str], str], Awaitable[tuple[bytes, bytes, int]]]]] = {
-    "search": _Host.search,
-}
-"""The programs vfs runs itself, by name."""
 
 
 def _body(data: bytes) -> dict[str, Any]:

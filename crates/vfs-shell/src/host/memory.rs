@@ -1,6 +1,6 @@
 //! A tree of files held in memory that answers every request a machine asks.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::machine::{
     Config, Entry, EntryKind, HostError, Machine, ProgramKind, Reply, Request, RequestKey, Status,
@@ -43,6 +43,8 @@ pub struct MemoryHost {
     programs: BTreeMap<String, HostProgram>,
     /// The names this host refuses to run: the status and the message the line prints.
     refusals: BTreeMap<String, (i32, String)>,
+    /// The names this host hands back to the library's program of the same name at each start.
+    handed_back: BTreeSet<String>,
     /// Each running program by the key of its start: its program, its arguments, its input so far.
     running: BTreeMap<RequestKey, (HostProgram, Vec<String>, Vec<u8>)>,
     /// The most bytes one read answers with, to move chunk boundaries.
@@ -66,6 +68,7 @@ impl MemoryHost {
             random: 12345,
             programs: BTreeMap::new(),
             refusals: BTreeMap::new(),
+            handed_back: BTreeSet::new(),
             running: BTreeMap::new(),
             read_chunk: None,
             reverse_replies: false,
@@ -81,6 +84,11 @@ impl MemoryHost {
     pub fn refuse_program(&mut self, name: &str, status: i32, message: &str) {
         self.refusals
             .insert(name.to_owned(), (status, message.to_owned()));
+    }
+
+    /// Answer a start of `name` by handing it back to the library's program of that name.
+    pub fn hand_back_program(&mut self, name: &str) {
+        self.handed_back.insert(name.to_owned());
     }
 
     /// Add a directory and its parents.
@@ -245,6 +253,9 @@ impl MemoryHost {
                         status: *status,
                         message: message.clone(),
                     });
+                }
+                if self.handed_back.contains(name) {
+                    return Ok(Reply::Library);
                 }
                 let program = self.programs.get(name).ok_or(HostError::NotFound)?;
                 self.running
