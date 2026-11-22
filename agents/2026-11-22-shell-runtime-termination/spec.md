@@ -2,6 +2,8 @@
 
 Draft implementation contract from the November 22, 2026 review of `cbda2721`.
 
+Verified against `dev` at `5a823ea` and amended on 2026-11-22 (`agents/2026-11-22-shell-review/reviews/verification.md`). Every problem reproduced. The design stands, with two notes. The `search -n` limit moved to `src/vfs/shell/programs.py` with the served verbs: 0, a word, -1 and a non-ASCII digit are already usage errors, and the open cases are a value past the verb's maximum, which is dispatched, and a 5000-digit value, which raises `ValueError` out of `run_line`. The drain for an uncooperative router serves a custom Python `Router` handed to the public `run_line`, not a third-party Wasm host, so it stays. Two findings beyond the draft: the `slice` limit has no effect in the product, because the wasm build replaces the operation counter with its probe, and a fork during cold initialization hangs the child on the `RUNTIME` cell, which the ticker's PID check does not cover.
+
 ## The outcome wanted
 
 A line can be refused before guest construction, expire while queued or waiting for storage, or finish normally. Every caller sees the stop that actually occurred.

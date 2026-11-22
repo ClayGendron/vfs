@@ -2,6 +2,8 @@
 
 Draft implementation contract from the November 22, 2026 review of `cbda2721`.
 
+Verified against `dev` at `5a823ea` and amended on 2026-11-22 (`agents/2026-11-22-shell-review/reviews/verification.md`). Every problem reproduced but one, and two claims are corrected. The pipeline-stage allowance already counts the final stage: a limit of 1 refuses `a|b` and 2 refuses `a|b|c`; only a limit of 0 admits a single command, and that is the whole of that row. Expanded arithmetic is bounded today by the fixed `PARSE_DEPTH`, and 200,000 parentheses end in an arithmetic error at exit 1, not a native stack overflow; the decision replaces a fixed bound by the configured one. Deep `!` and nested builtins overflow only the native build's stack; the wasm build already classifies them 137. The native build is the test reference host, not an embedding surface, so the draft's promises to native embedders (a source-compatible public `parse`, per-instance charges for shared external trees) are not constraints; the native stack and memory fixes still matter for the corpus. The balanced-subscript row is wider than stated: `a[$(( 1 + 1 ))]=x` and `a[$(echo 1 2|wc -w)]=x` also fail.
+
 ## The outcome wanted
 
 A complete line is admitted under its parse allowances; structural descent and retained interpreter storage keep their declared bounds in native and Wasm builds. A printed function reparses with its original behavior.
