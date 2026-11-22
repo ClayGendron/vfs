@@ -848,11 +848,7 @@ Each is decided above and stands until it is ruled on.
 
 Four needs of the last round are met and are gone from this list. Spec 3's decision 7 reads the current stamp from live turns alone. Its decision 8 refuses a change through a handle whose turn is dead, in this spec's words, and puts a session's stamps behind with `scope=ref.scope`. Spec 7's decision 5 stores no job as waiting under a dead turn. The wording of a fork point column is moot, since the columns are spec 2's own.
 
-Still open, each with what is missing:
-
-1. **Spec 2, decision 3 (The handle holds seven values, and only its current turn ever changes).** Decision 19 here adds a slot. Missing: a row of that table, "`_parent`, public as `parent`: the id of the session a `fork` made this handle from, fixed when the handle is made, and `None` on a handle from `fs.session`", and the count eight.
-2. **Spec 2, decision 22 (Removal frees the id in one commit and reclaims the rest in bounded chunks).** It calls `remove_turns(session, [session_key])`, in one ranged statement, after the children. Decision 2 here gives `remove_turns(transaction, session_key, limit) -> int`, of the shape of `remove_stamps` and `remove_changes`. Missing: "`remove_turns` is the last member of `SESSION_CHILDREN`, and is called as the others are".
-3. **Spec 2, decision 13, the row for `fork_before`.** It gives the column 1,020 bytes and names `MAX_TURN_ID_BYTES`. A turn id is at most 255 bytes, and the constant is `TURN_ID_MAX`. Missing: that name in the row. The wider column holds every lawful value, so nothing breaks meanwhile.
+Nothing is still open. Three needs on spec 2 that this list held are met by its text: its decision 3 (The handle holds eight values, and only its current turn ever changes) holds the slot `_parent`; `remove_turns(transaction, session_key, limit) -> int` is the last member of its `SESSION_CHILDREN`; and its row for `fork_before` is 255 bytes wide, by this spec's `TURN_ID_MAX`.
 
 Needs other specs state on this one, and where each is met:
 

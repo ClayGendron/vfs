@@ -837,9 +837,7 @@ The overview's "a step is one verb about to run" was settled by the ruling that 
 
 Read against the other eight specs as they stood at `7c383f32`.
 
-One item is open.
-
-1. **Spec 3: which landing of this spec carries `Change`.** Its Builds on says `Change` and `Result._changes` are carried by this spec's "landing 1", and its landings say "Spec 5's first landing, whenever it lands, gives decision 10 its exact rule". The first landing here is the seam alone, by the ruling on that seam, and specs 1 and 8 cite it so. `Change` and `_changes` are the second landing. What is missing, in spec 3's Builds on and in its decision 20: "second landing" in place of "landing 1" and "first landing". Nothing else changes: both landings have no session in them, and both wait only on spec 1's first.
+Nothing is open. The one item this list held is met: spec 3's Builds on and its decision 20 now name this spec's second landing as the one that carries `Change` and `Result._changes`, and its first as the `read_versions` seam alone.
 
 What other specs asked of this one, and where it is met:
 

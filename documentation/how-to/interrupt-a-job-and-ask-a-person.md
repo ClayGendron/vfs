@@ -33,24 +33,25 @@ async def contracts_need_a_person(step: Mutation) -> Decision:
 
 `require_approval` interrupts the job with a yes-or-no question. When the job is resumed with the person's answer, the policy runs again, `require_approval` returns `Decision.allow()` for a yes and `Decision.deny(reason)` for a no, and the policy returns that decision. [Interrupt With Any Answer](#interrupt-with-any-answer) shows the general form, for a policy that needs more than a yes or a no.
 
-The type you give the argument decides which steps the policy sees. `Mutation` is every step that changes something: a write, an edit, a delete, a move, a copy, a new directory, a restore. A policy typed this way is never asked about a read, so it costs nothing on the calls an agent makes most. Each verb has a step type of its own as well, such as `EditStep` or `DeleteStep`, and `Step` is every step, reads included. A union such as `DeleteStep | MoveStep` covers the two.
+The type you give the argument decides which steps the policy sees. `Mutation` is every step that changes something: a write, an edit, a delete, a move, a copy, a new directory, a restore, an edge made or removed, a sweep, a change to who may access a path, and a rewind that puts files back. A policy typed this way is never asked about a read, so it costs nothing on the calls an agent makes most. Each verb has a step type of its own as well, such as `EditStep` or `DeleteStep`, and `Step` is every step, reads included. A union such as `DeleteStep | MoveStep` covers the two.
 
 Every step carries the same core attributes, and each type adds the arguments of its own verb.
 
 | Attribute | What it holds |
 |---|---|
-| `step.verb` | The name of the verb, such as `"edit"`, `"delete"`, or `"run"` for a tool |
+| `step.verb` | The name of the verb, such as `"edit"`, `"delete"`, `"run"` for a tool, or `"rewind"` for a rewind that puts files back |
 | `step.paths` | Every path the step names |
 | `step.authority` | Who is making the call |
-| `step.via` | Where the step came from: `None` for a direct call, or the shell line or tool that made it |
-| `step.touches(path)` | `True` when any of the paths is that path or inside it |
+| `step.subtree` | `True` when the step acts on everything beneath its paths, as a delete of a directory does |
+| `step.via` | Where the step came from: `None` for a direct call, or a `Line` with the shell line's `text` and `cwd` |
+| `step.touches(path)` | `True` when any of the paths is that path or inside it, or when the step acts on everything beneath one of its paths and that path is beneath it |
 | Its own arguments | For an `EditStep`, `step.path`, `step.old` and `step.new`; for a `WriteStep`, `step.path` and the new content; and so on for each verb |
 
 A step is checked before your policy sees it. A call whose arguments are wrong is refused as invalid and never reaches a policy, so a policy can trust every attribute it reads. A step is also frozen: a policy reads it and cannot change it.
 
-**A policy must return a decision, and a policy that fails denies.** If it raises, returns anything other than a `Decision`, or takes longer than its deadline, the step is refused, and the refusal names the policy. A broken guard therefore stops the work rather than letting it through. `@policy` checks the function when you decorate it: a function that is not `async`, or that does not take one argument typed as a step, is refused there and then, before any file system exists.
+**A policy must return a decision, and a policy that fails denies.** If it raises, returns anything other than a `Decision`, or takes longer than its timeout, the step is refused, and the refusal names the policy. The timeout is ten seconds unless `@policy(timeout=...)` sets another. A broken guard therefore stops the work rather than letting it through. `@policy` checks the function when you decorate it: a function that is not `async`, or that does not take one argument typed as a step, is refused there and then, before any file system exists.
 
-A policy can only narrow what a caller may do. VFS checks the caller's access first, so a call the caller has no right to make is refused before any policy sees it.
+A policy can only narrow what a caller may do. For a change, VFS checks the caller's access first, so a change the caller has no right to make is refused before any policy sees it. A read is filtered by the caller's access when it is answered.
 
 ## Step 2: Create the File System
 
@@ -120,7 +121,7 @@ job.id, job.state, waiting.message, waiting.raised_by
 ```
 
 ```text
-('5d0c81aa', 'interrupted', 'A change to a contract needs a person.', 'contracts_need_a_person')
+('5d0c81aa3f6e4b0c9a1d7e2f8b4c6a90', 'interrupted', 'A change to a contract needs a person.', 'contracts_need_a_person')
 ```
 
 An interrupt before a change carries a preview, which is the change as it would land.
@@ -154,7 +155,8 @@ waiting.schema
 | `message` | The text to show the person |
 | `schema` | The JSON Schema the answer must fit |
 | `preview` | What the step would change, or `None` when VFS cannot work that out |
-| `details` | Anything else the policy or tool attached, or `None` |
+| `details` | Anything else the policy or tool attached with `details=`, or `None` |
+| `id` | The interrupt's own id |
 | `raised_by` | The policy or tool that raised it |
 | `step` | The step the job stopped before |
 | `job_id` | The job it belongs to |
@@ -171,9 +173,7 @@ fs.resume(job.id, True, authority=ada)
 ```
 
 ```text
-edit success: 1 file
-
-  edited /contracts/acme.md
+Edited /contracts/acme.md
 ```
 
 The principal's `name` is a label for people and agents to read. VFS uses it wherever it reports who answered a job, and it plays no part in what the principal may do. A principal with no name is reported simply as a principal; its id is never shown, because it tells an agent nothing.
@@ -189,7 +189,7 @@ Resuming does not make a new call. **It carries out the step that was saved, exa
 - **It runs as Scout.** Ada's answer lets Scout's step through. It does not lend Scout any of Ada's access, and if Scout lost access to the contract while the job waited, the step is refused.
 - **It changes the file Ada saw.** If the contract changed between the preview and the resume, the step is refused as a conflict and nothing is written.
 - **Your policies are asked again.** Each policy runs again with the answers the job has been given, so `require_approval` returns Ada's decision rather than interrupting a second time. A policy that now denies the step still denies it. So write a policy to reach the same point when it is asked twice about the same step.
-- **One resume wins.** If two processes resume the same job at once, one carries it on and the other is refused with the job's state. Resuming a job that has already finished returns its result again, and records nothing.
+- **One resume wins.** If two processes resume the same job at once, one carries it on and the other is refused with the job's state. Resuming a job that has already finished returns its result again, and records nothing. A result larger than 1 MiB comes back as its verdict and its errors, without its rows.
 
 ## Step 6: Deny a Change
 
@@ -242,7 +242,7 @@ A denial and a cancel differ in how much they stop. **A denial refuses one step,
 | `vfs.interrupt.denied` | A step needed approval, and the principal that answered said no | That step |
 | `vfs.interrupt.cancelled` | The principal that answered cancelled the job while it waited | The whole job |
 
-Both kinds sit under `vfs.interrupt`, the kinds that mean the answer to an interrupt decided against the work. Your application and your agent can match that prefix to tell such a decision from a refusal by an access rule or a policy.
+Both kinds sit under `vfs.interrupt`, the kinds that mean the answer to an interrupt decided against the work. Your application and your agent can match the prefix `vfs.interrupt.`, with its dot, to tell such a decision from a refusal by an access rule or a policy.
 
 ## Interrupt With Any Answer
 
@@ -300,7 +300,7 @@ fs.write(
 
 result = scout.cli(
     'echo "replaced acme" >> /notes.md; '
-    "cat /drafts/acme.md > /contracts/acme.md; "
+    "cp /drafts/acme.md /contracts/acme.md; "
     "rm /drafts/acme.md"
 )
 result.interrupted, result.job.interrupt.message
@@ -310,7 +310,7 @@ result.interrupted, result.job.interrupt.message
 (True, 'A change to a contract needs a person.')
 ```
 
-The first command ran, so the note is written. The second was interrupted. The third has not run. Resume as before.
+The first command ran, so the note is written. The second was interrupted. The third has not run. If this result is turned into text for an agent, it says that the command was not run and that the commands before it in the line ran. A redirection of a program's output, such as `cat a > b`, is two changes to `b`, so a line that uses one can stop twice for it. Resume as before.
 
 ```python
 result = fs.resume(result.job.id, True, authority=ada)
@@ -321,9 +321,9 @@ result.success, fs.read("/notes.md", authority=system).one().content
 (True, 'replaced acme\n')
 ```
 
-The line carried on where it stopped: the contract was replaced and the draft was removed. **Nothing ran twice.** The note was written once. VFS saved the line's text and every reply the line had been given up to the stop, and it resumed the line by running it again against those saved replies, without repeating any of the steps they stood for. If the shell has changed so that the line would no longer take the same path, the resume is refused with a conflict that says where it diverged, and nothing more is run.
+The line carried on where it stopped: the contract was replaced and the draft was removed. **Nothing ran twice.** The note was written once. VFS saved the line's text and every reply the line had been given up to the stop, and it resumed the line by running it again against those saved replies, without repeating any of the steps they stood for. VFS does not copy the files the line read: it keeps a pointer to the version of each. A resume is refused with a conflict, and nothing more is run, in three cases: the shell is another build than the one that stopped the line, the line no longer asks for what it asked for, or a file the line read has since been deleted for good or moved by someone else.
 
-Had Ada said no, the `cat` command would have failed as a command fails in bash, printing that Ada Lovelace denied it and her reason, and the line would have carried on. A line handles a denial as it handles any failed command, so `cmd || fallback` works. Had Ada cancelled the job, the line would have stopped there, and `rm /drafts/acme.md` would never have run.
+Had Ada said no, the `cp` command would have failed as a command fails in bash, printing that Ada Lovelace denied it and her reason, and the line would have carried on. A line handles a denial as it handles any failed command, so `cmd || fallback` works. Had Ada cancelled the job, the line would have stopped there, and `rm /drafts/acme.md` would never have run. A cancelled line returns no output.
 
 **A line can stop more than once.** If a later step also needs a person, the resumed line stops again before it, and `resume` returns an interrupted result for the same job. When two commands in a pipeline each need a person, the job stops for the first one, and for the second after it is resumed. The loop that handles every case is short.
 
@@ -334,7 +334,7 @@ while result.interrupted:
     result = fs.resume(result.job.id, answer, authority=ada)
 ```
 
-Here `ask_a_person` stands for your own code. A resumed line runs as whoever started it, with that caller's access as it stands at the resume.
+Here `ask_a_person` stands for your own code. A resumed line runs as whoever started it, with that caller's access as it stands at the resume. The result of the last resume holds everything the line printed, from its first command. Each resume runs the line again from its start against its saved replies, so a line that stops many times costs more than one that stops once.
 
 ## Step 8: Write a Tool That Asks a Question
 
@@ -450,7 +450,7 @@ careful = fs.session(
 )
 ```
 
-A session's policies are added to the file system's, and asked after them. A policy is code, so it is not stored with the session: pass the policies each time you ask for it. **A session can ask for more review. It can never ask for less.**
+A session's policies are added to the file system's, and asked after them. A policy is code, so it is not stored with the session: pass the policies each time you ask for it. A job that a session's own policy judged is resumed with `session.resume`, on a handle given the same policies. **A session can ask for more review. It can never ask for less.**
 
 ## The System Authority Is Never Interrupted
 
@@ -469,16 +469,16 @@ fs.jobs(state="interrupted", authority=ada)
 ```text
 | id       | state       | started_by | verb | path               | message                                | expires_at                |
 | -------- | ----------- | ---------- | ---- | ------------------ | -------------------------------------- | ------------------------- |
-| 91aa3c57 | interrupted | scout      | edit | /contracts/acme.md | A change to a contract needs a person. | 2026-11-23 15:04:11+00:00 |
+| 91aa3c57e2d04f1b8a6c5d7e9f0a1b2c | interrupted | scout      | edit | /contracts/acme.md | A change to a contract needs a person. | 2026-11-23 15:04:11+00:00 |
 ```
 
-Called with a person's authority, `fs.jobs` lists only the jobs that person may resume, so an approval screen is built from this one call.
+Called with a person's authority, `fs.jobs` lists the jobs that person started or may resume, a page at a time, so an approval screen is built from this one call.
 
-A file system that keeps its files in memory keeps its jobs in memory too, and they end with the program. To resume a job from another process, create the file system on a database, as shown in [Keep Your Files in a Database](../tutorials/keep-your-files-in-a-database.md).
+A file system whose root storage is in memory keeps its jobs in memory too, even when a database is mounted beneath the root, and they end with the program. To resume a job from another process, make the root storage a database, as shown in [Keep Your Files in a Database](../tutorials/keep-your-files-in-a-database.md).
 
 ## Who May Resume, and for How Long
 
-A person may resume a job interrupted before a change when they have `write` access to every path the step names. A person may resume a job a tool interrupted when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may resume any job.
+A person may resume a job interrupted before a change when they have `read_write` access to every path the step names. A person may resume a job a tool interrupted when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may resume any job.
 
 A job that waits lapses 24 hours after it stopped. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, resume it with `Cancel`, as [Cancel a Job](#cancel-a-job) shows; your application can do that as the `system` authority when nobody is going to answer. The agent then reads "Cancelled by the system". Give the system principal a name, with `Authority.system(name="Nightly cleanup")`, and it reads "Cancelled by Nightly cleanup". A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
 
@@ -498,7 +498,7 @@ async def change_contract(state):
     return {"outcome": str(result)}
 ```
 
-This node is `async`, so here `fs` is an `AsyncVirtualFileSystem` and `scout` a session opened on it, and every call is awaited. The first time the node runs, the edit is interrupted, and `ask` stops the graph with the message, the schema and the preview. When your application resumes the graph, the node runs again: the edit returns the same waiting job, `ask` returns the person's answer, and the job is resumed with it. If the node runs again after that, resuming a finished job returns its result and records nothing, so the node is safe to run again.
+This node is `async`, so here `fs` is an `AsyncVirtualFileSystem` and `scout` a session asked for from it, and every call is awaited. The first time the node runs, the edit is interrupted, and `ask` stops the graph with the message, the schema and the preview. When your application resumes the graph, the node runs again: the edit returns the same waiting job, `ask` returns the person's answer, and the job is resumed with it. If the node runs again after the job has finished, its call is a new call and a new job. Make the node's step one that is safe to make twice, or keep the job's outcome in your graph's state before the node returns. A shell line is different again: made a second time, it runs from its start, so in a node that runs a line, ask the session for a waiting job first and resume that job.
 
 ## Why Policies and Tools Are Async
 

@@ -1,6 +1,8 @@
 # The specs for jobs and sessions: what each one decides, and what they share
 
-Written on 2026-11-22. Nine specs turn two designs into buildable work: a job that is interrupted and resumed, and a session that is stored, works in turns, and is rewound or forked. This page is their map. It says what each spec owns, the order they are built in, and the names, records and rules that more than one of them uses. A spec that needs a shared name takes it from here, and a spec that finds a shared decision wrong says so in its own text and does not quietly choose another.
+Written on 2026-11-22, and brought up to date after the nine specs were reconciled with each other in three rounds. The specs hold 235 decisions. None is reviewed and nothing is built. No claim about Postgres was run: each spec lists, under "Not checked", what to run. Each spec ends with its choices for the owner, and `documentation/reference/planned-api/` lists the public surface they add up to.
+
+First written on 2026-11-22. Nine specs turn two designs into buildable work: a job that is interrupted and resumed, and a session that is stored, works in turns, and is rewound or forked. This page is their map. It says what each spec owns, the order they are built in, and the names, records and rules that more than one of them uses. A spec that needs a shared name takes it from here, and a spec that finds a shared decision wrong says so in its own text and does not quietly choose another.
 
 The public face of both designs is written already, as two guides. They are the reference for every signature and every message an agent or a developer sees:
 
@@ -74,7 +76,8 @@ The kernel's own records are kept by the storage of the root mount, which the ke
 | `vfs_session_stamps` | 3 | One row per session, path and turn: the etag seen, or a mark that the session removed the path in that turn |
 | `vfs_session_changes` | 5 | One row per entry a session changed in a turn: the etag before and after, and what was done |
 | `vfs_jobs` | 7 | One row per stored job: its id, the caller, the session and turn if any, its state, its saved step or line, its interrupt, its expiry |
-| `vfs_job_replies` | 8 | The journal of a line's replies, in order |
+| `vfs_job_pages` | 7 | What of a stored job does not fit in its row: a large saved step, and a stored result |
+| `vfs_job_replies` | 8 | The journal of a line's replies, in pages of at most 1 MiB |
 
 A table's owner fixes its columns. Another spec that needs a column asks for it by naming the need in its own Builds on section.
 
@@ -90,19 +93,24 @@ A read verb adds no synchronous statement for any record on this page. What a re
 
 ```python
 fs.session(authority=None, id=None, *, strict=True, policies=())   # a handle; no I/O
-session.id                      session.turn
-session.exists()                session.delete()
-fs.sessions(authority=None)
+session.id      session.turn      session.parent      session.exists()
+fs.sessions(authority=None, *, after=None, limit=None)
+fs.remove_session(authority, id)
 
 session.start_turn(id=None)     # returns the turn id
-session.rewind(before=..., files=False, preview=False)
+session.turns(*, after=None, limit=100)
+session.rewind(*, before, files=False, preview=False)
 session.fork(id=None, *, before=None)
 
-session.resume(answer, *, job=None, authority)      session.jobs(state=None)
-fs.resume(job_id, answer, *, authority)             fs.jobs(state=None, authority=None)
+session.resume(answer, *, job=None, authority)      session.jobs(state=None, *, after=None, limit=None)
+fs.resume(job_id, answer, *, authority)             fs.jobs(state=None, authority=None, *, after=None, limit=None)
+
+fs.add_policy(policy)      fs.remove_policy(policy)      fs.policies()
 
 VirtualFileSystem(policies=[...], session_lifetime=..., job_lifetime=...)
 ```
+
+The value types are `Etag`, `ABSENT`, `SessionInfo`, `SessionPage`, `Turn`, `Rewind`, `Policy`, `Decision`, `Step` and its 26 classes, `Mutation`, `Line`, `Job`, `Interrupt`, `StepPreview`, `JobPage`, `Approval`, `Choice` and `Cancel`. A storage names where the kernel's records live through `RecordPlace` and its own `record_place`. Removing a session is `fs.remove_session`, because `delete` on a handle is the file verb.
 
 Every one exists on the asynchronous kernel and on the synchronous face, and the parity test covers them. What each returns follows the convention the management methods have today, which the owning spec reads from the code and states. `fs.session` is a noun used as a method, which `documentation/maintainers/how-we-name.md` forbids today with `session()` as its example; spec 2 carries the amendment to that page, with `use_session` as the choice if the amendment is refused.
 
@@ -113,7 +121,8 @@ The owner of a session or a job is the whole authority that made it: its subject
 ### Error kinds
 
 - `vfs.conflict.unread` and `vfs.conflict.changed`: spec 3.
-- `vfs.interrupt.denied` and `vfs.interrupt.cancelled`: spec 7.
+- `vfs.permission_denied.policy`: spec 6.
+- `vfs.interrupted`, `vfs.interrupt.denied` and `vfs.interrupt.cancelled`: spec 7.
 - A session, turn or job that does not exist, or belongs to another owner: `vfs.not_found`, with no new kind.
 
 Each new kind takes a row in `KIND_CONTRACTS` with its phrase, its retry class and its hint for an agent, and the guides hold the words.

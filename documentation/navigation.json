@@ -33,7 +33,12 @@
       "groups": [
         {
           "title": null,
-          "pages": ["/how-to/load-a-folder-of-files", "/how-to/keep-a-session-for-each-conversation", "/how-to/interrupt-a-job-and-ask-a-person"]
+          "pages": [
+            "/how-to/load-a-folder-of-files",
+            "/how-to/keep-a-session-for-each-conversation",
+            "/how-to/rewind-a-conversation-and-put-its-files-back",
+            "/how-to/interrupt-a-job-and-ask-a-person"
+          ]
         }
       ]
     },
@@ -61,6 +66,16 @@
             "/reference/python-api/errors"
           ]
         },
+        {
+          "title": "Planned API",
+          "pages": [
+            "/reference/planned-api",
+            "/reference/planned-api/etags-and-preconditions",
+            "/reference/planned-api/sessions-and-turns",
+            "/reference/planned-api/policies-and-steps",
+            "/reference/planned-api/jobs-and-interrupts"
+          ]
+        },
         { "title": null, "pages": ["/reference/access-levels"] },
         { "title": null, "pages": ["/reference/shell"] },
         { "title": null, "pages": ["/reference/glossary"] }
@@ -68,7 +83,7 @@
     },
     {
       "title": "Explanation",
-      "groups": [{ "title": null, "pages": ["/explanation/why-vfs-stores-files-in-a-database"] }]
+      "groups": [{ "title": null, "pages": ["/explanation/why-vfs-stores-files-in-a-database", "/explanation/how-jobs-sessions-and-turns-fit-together"] }]
     },
     {
       "title": "Maintainers",

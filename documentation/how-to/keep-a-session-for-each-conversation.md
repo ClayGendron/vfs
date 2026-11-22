@@ -6,7 +6,7 @@ This guide shows how to give each conversation an agent has a session of its own
 
 **A session is VFS's side of one conversation.** Your application or its agent framework keeps the messages. VFS keeps three things for the conversation: who the agent is, what the agent has been shown, and where its shell is. The second is the important one. An agent that reads a file and changes it ten minutes later should not overwrite a change somebody else made in between, and the session is what stops it.
 
-**A session is stored in the database, and the object in your code is only a handle to it.** A chat application usually handles each message in a new request, often in another process. A session that lived in one process's memory would forget everything between two messages. So VFS keeps the session in the database you already run, under an id you choose, and any process can pick it up by that id.
+**A session is stored in the database, and the object in your code is only a handle to it.** A chat application usually handles each message in a new request, often in another process. A session that lived in one process's memory would forget everything between two messages. So VFS keeps the session in the database you already run, under an id you choose, and any process can pick it up by that id. On SQLite that is a second file beside your database. A file system whose root storage is in memory keeps its sessions in memory, and they end with the program.
 
 ## Before You Begin
 
@@ -34,7 +34,7 @@ scout.id
 'conv_123'
 ```
 
-`fs.session(authority, id)` gives you the session with that id. It does not matter whether this is the first time the id has been used: the first call and the hundredth are the same call, and they return the same session. Nothing is stored until the session has something to remember, so the call itself costs nothing. Use the id your application already has for the conversation, and you never need a table that maps one id to the other. An id is a string of 1 to 255 characters. When you pass no id, VFS makes one, and `scout.id` holds it.
+`fs.session(authority, id)` gives you the session with that id. It does not matter whether this is the first time the id has been used: the first call and the hundredth are the same call, and they return the same session. Nothing is stored until the session has something to remember, so the call itself costs nothing. Use the id your application already has for the conversation, and you never need a table that maps one id to the other. An id is 1 to 255 visible ASCII characters, kept exactly as given. When you pass no id, VFS makes one, and `scout.id` holds it.
 
 **A session belongs to the authority that uses it.** VFS stores a session under its owner and its id together, so the id is a name and never a key that opens anything. Another caller who passes `"conv_123"` gets a session of their own with that name, empty, and never sees Scout's. [Who Owns a Session](#who-owns-a-session) says exactly what the owner is.
 
@@ -81,7 +81,7 @@ delete errors:
   ERROR /notes/budget.md: Not read yet — This file has not been read in this conversation, so nothing was changed. Read it first, then make the change. (retry: refresh)
 ```
 
-Reading the file, or listing the directory it is in, is enough. Making a new file needs no read, and neither does adding to the end of one, because neither destroys anything. A session you ask for with `fs.session(scout_is, "conv_123", strict=False)` keeps the first rule and drops the second: it still refuses to write over a file that changed, and it lets a change to an unread file through.
+Reading the file, or listing the directory it is in, is enough. A listing of more than about a thousand rows counts for the first of them. Making a new file needs no read, and neither does adding to the end of one, because neither destroys anything. A session you ask for with `fs.session(scout_is, "conv_123", strict=False)` keeps the first rule and drops the second: it still refuses to write over a file that changed, and it lets a change to an unread file through. It protects only what the session still remembers: a file the session has forgotten counts as unread.
 
 ## Step 3: Carry On in Another Request
 
@@ -102,7 +102,7 @@ Edited /notes/plan.md
 
 `later` is a second handle to the same session, and it knew that Scout had read the file, so the edit went through with no second read. This works across processes and machines, because what the session has seen is in the database and not in either handle. There is nothing to close and nothing to save: a handle holds nothing that the database does not, and you can drop it whenever you like.
 
-What a session has seen is written to the database a moment after each read, not during it, so a read costs the same with a session as without one. If the process stops in that moment, the session forgets that one read, and the worst that follows is a "Not read yet" refusal and a second read.
+What a session has seen is written to the database a moment after each read, not during it, so a read costs the same with a session as without one. If the process stops in that moment, the session forgets that one read, and the worst that follows is a "Not read yet" refusal and a second read. If your process ends after each request, close the file system before it ends, and what the session has seen is stored first.
 
 ## Step 4: Start a Turn
 
@@ -138,7 +138,7 @@ Budget: 40,000
 
 `start_turn(id)` starts a turn in the session, and from then on everything done through that handle is recorded under it: what the agent reads, what it changes, where its shell goes, and any job that is interrupted. A turn is a partition of the session's work, and it is the point you later rewind or fork to. Starting a turn stores one small record, so that VFS knows the order of the session's turns, including a turn in which the agent never touches a file.
 
-Use an id your application already has for the turn, such as the id of the user's message. The same id can then name the turn in your chat history, in your agent framework and in VFS, which is what lets you rewind all three to one point. An id is a string of 1 to 255 characters, and it need only be different from the other turns of the same session. When you have no id of your own, call `start_turn()` with none, and VFS makes one and returns it.
+Use an id your application already has for the turn, such as the id of the user's message. The same id can then name the turn in your chat history, in your agent framework and in VFS, which is what lets you rewind all three to one point. An id is a string of 1 to 255 visible ASCII characters, with no space, and it need only be different from the other turns of the same session. When you have no id of your own, call `start_turn()` with none, and VFS makes one and returns it.
 
 ```python
 turn_id = scout.start_turn()
@@ -149,11 +149,11 @@ turn_id, scout.turn
 ('turn_01JD3K7Q', 'turn_01JD3K7Q')
 ```
 
-`scout.turn` holds the id of the turn the handle is in.
+`scout.turn` holds the id of the turn the handle is in, or `None` before a turn is started on that handle.
 
 A turn often spans more than one request. The agent calls a tool, your application answers in a second request, and both belong to the same message. Call `start_turn` with the same id at the top of each of those requests. **Starting a turn the session already has carries that turn on.** It never makes a second turn with the same id, so a request that is sent twice does no harm.
 
-Start a turn on every request, as the first thing you do with the session. Calls made through a handle before any turn is started on it go into the session's latest turn, or into a first turn that VFS makes when the session has none. That is where the calls in the first three steps of this guide went.
+Start a turn on every request, as the first thing you do with the session. Calls made through a handle before any turn is started on it go into the session's latest turn, or into a first turn that VFS makes when the session has none. That is where the calls in the first three steps of this guide went. `scout.turns()` lists a session's turns, and shows the id of a turn VFS made.
 
 ## Step 5: Rewind to Before a Turn
 
@@ -173,11 +173,11 @@ scout.rewind(before="msg_5")
 | The shell's directory | `/notes`, set in `msg_5` | `/`, as it was when `msg_4` ended |
 | A job waiting for an answer, started in `msg_5` | waiting | cancelled |
 
-The second row is the rule working as it should. After the rewind, the agent's own memory of the conversation no longer holds the change it made in `msg_5`. The file does. So the session treats the file as changed since it was read, and the agent reads it again before it writes.
+The second row is the rule working as it should. After the rewind, the agent's own memory of the conversation no longer holds the change it made in `msg_5`. The file does. So the session treats the file as changed since it was read, and the agent reads it again before it writes. With `files=True` the file is put back as it was read in `msg_4`, and Scout can change it without reading it again.
 
-**A rewind changes what the session remembers. It does not change any file.** The edit Scout made in `msg_5` is still in `/notes/plan.md`. VFS records every change with its session and its turn, so that the files a session changed can be put back as they were before a turn. That is a separate feature, planned for the same release.
+**A rewind changes what the session remembers. It changes a file only when it is asked to, with `files=True`.** After `scout.rewind(before="msg_5")` the edit Scout made in `msg_5` is still in `/notes/plan.md`. VFS records every change a session makes with its turn. So `scout.rewind(before="msg_5", files=True)` also puts each file the session changed in `msg_5` and after back as it was, unless somebody else has changed it since, and its result says which files were put back and which were left. [Rewind a Conversation and Put Its Files Back](rewind-a-conversation-and-put-its-files-back.md) shows it.
 
-After a rewind, your application can start `msg_5` again with `scout.start_turn("msg_5")`, and it is a new turn. A rewind to before a turn the session has never started is refused, and the refusal names the turn, so a mistyped id never passes as a rewind that did nothing. This is one more reason to start a turn on every request.
+After a rewind, your application can start `msg_5` again with `scout.start_turn("msg_5")`, and it is a new turn. A rewind cannot be undone, so fork the session first if you want to keep the old line of the conversation. A rewind to before a turn the session has never started raises an error that names the turn, so a mistyped id never passes as a rewind that did nothing. This is one more reason to start a turn on every request.
 
 ## Step 6: Fork a Session
 
@@ -192,12 +192,12 @@ branch.id, branch.parent
 ('conv_456', 'conv_123')
 ```
 
-Pass `before=` to fork from an earlier point, in the same way as a rewind: `scout.fork("conv_456", before="msg_4")` gives the new session everything from before `msg_4` and nothing after.
+`branch.parent` is on the handle `fork` returns. A handle you ask for later with `fs.session` does not carry it, and `fs.sessions` lists each session's parent. Forking to an id you already use for a session is refused. Pass `before=` to fork from an earlier point, in the same way as a rewind: `scout.fork("conv_456", before="msg_4")` gives the new session everything from before `msg_4` and nothing after.
 
 | A fork copies | A fork shares | A fork leaves behind |
 |---|---|---|
 | What the session has seen | Every file | Jobs waiting for an answer |
-| The shell's directory and variables | | |
+| The shell's directory and exported variables | | |
 | Its turns, up to the fork point | | |
 
 **A fork shares the files.** There is one file system, and both sessions work on it. If the branch changes a file, the original conversation sees the change, and its next write to that file is refused until its agent reads the file again. Each session is protected from the other's changes. Neither has a private copy.
@@ -218,17 +218,17 @@ result = scout.resume(True, authority=ada)
 
 `resume` and `jobs` are for your application's code. Do not offer them to the agent as tools.
 
-## Find, Expire and Delete Sessions
+## Find, Expire and Remove Sessions
 
-`fs.sessions(scout_is)` lists the sessions Scout owns, with each one's id, parent, number of turns and time of last use. The system authority may list every session. `scout.exists()` says whether a session has stored anything yet.
+`fs.sessions(scout_is)` lists the sessions Scout owns, a page of 100 at a time, with each one's id, parent, number of turns and time of last use. The system authority may list every session. `scout.exists()` says whether a session has stored anything yet.
 
-A session that is not used for 30 days expires. You set the time with `VirtualFileSystem(session_lifetime=...)`. An expired session is deleted with what it had seen, and its waiting jobs are cancelled. If its id is used again, a new and empty session starts under that id, and the agent reads files again before it changes them. `scout.delete()` does the same at once.
+A session that is not used for 30 days expires. You set the time with `VirtualFileSystem(session_lifetime=...)`. An expired session is deleted with what it had seen, and its waiting jobs are cancelled. If its id is used again, a new and empty session starts under that id, and the agent reads files again before it changes them. `fs.remove_session(scout_is, "conv_123")` does the same at once. On a session, `delete` is the file verb and removes a path, never the session.
 
-A session also has a limit on how much it remembers. When a long conversation passes it, the session forgets the files it has gone longest without touching. Forgetting never lets a write through that would have been refused. It can only cause a "Not read yet" refusal, which one read clears.
+A session also has a limit on how much it remembers. When a long conversation passes it, the session forgets what it was shown in its earliest turns first. In a strict session, forgetting never lets a write through that would have been refused. It can only cause a "Not read yet" refusal, which one read clears.
 
 ## Who Owns a Session
 
-The owner of a session is the whole authority: the agent, and the people it acts for. Scout working for Ada and Scout working for Grace are two owners, so `fs.session(authority, "conv_123")` is two different sessions for them, and neither can reach the other's by knowing its id. Every call through a session is still checked against what its authority may do at the time of the call. A session stores no rights, so taking a right away from Scout takes effect on Scout's next call.
+The owner of a session is the whole authority: the agent, and the people it acts for. Scout working for Ada and Scout working for Grace are two owners, so `fs.session(authority, "conv_123")` is two different sessions for them, and neither can reach the other's by knowing its id. A caller with no name owns no session, and asking for one is an error. Give each caller a principal of its own. Every call through a session is still checked against what its authority may do at the time of the call. A session stores no rights, so taking a right away from Scout takes effect on Scout's next call.
 
 ## Calls at the Same Time
 
@@ -243,11 +243,13 @@ Every chat protocol already carries the two ids a session needs.
 | Your stack | Session id | Turn id |
 |---|---|---|
 | Vercel AI SDK | the chat `id` | the id of the user's message |
-| AG-UI | `threadId` | `runId` |
+| AG-UI | `threadId` | the id of the user's message |
 | LangGraph | `thread_id` | an id your application gives the run |
 | Your own | the conversation's id | the user message's id |
 
-A request handler therefore begins with two lines: `scout = fs.session(authority, session_id)` and `scout.start_turn(turn_id)`.
+A request handler therefore begins with two lines: `scout = fs.session(authority, session_id)` and `scout.start_turn(turn_id)`. In AG-UI one message can span several runs, so the turn id is the message's id and not `runId`.
+
+When the people an agent acts for change, as when someone joins a group chat, the authority changes, and `fs.session(authority, session_id)` is then a new and empty session. The earlier one stays with the earlier authority.
 
 These ids often come from the browser. That is safe, because the session id is only a name inside its owner. Check who the user is in your own code, build the authority from that, and pass the id as it came.
 
@@ -255,7 +257,7 @@ To rewind a whole stack to one point, use the turn's id in each layer: cut your 
 
 ## Work Without a Session
 
-A session is never required. A call made on the file system with `authority=` works as it always has: it remembers nothing, and it guards a write only when you pass the version you expect. A shell line run with `fs.cli(...)` and no session guards itself for the length of the line, so a command that reads a file and writes it back is still protected.
+A session is never required. A call made on the file system with `authority=` works as it always has: it remembers nothing, and it guards a change only when you pass the etag you expect, as `if_match=`. A shell line run with `fs.cli(...)` and no session guards itself for the length of the line, so a command that reads a file and writes it back is still protected. It also refuses to remove, move or overwrite a file the line has not read or listed.
 
 ## What to Remember
 
@@ -263,5 +265,5 @@ A session is never required. A call made on the file system with `authority=` wo
 - `fs.session(authority, id)` gives you the session with that id, new or not. It is stored in the database, and the object is a handle.
 - A session refuses to change a file that changed since the agent read it, and a file the agent has never read.
 - Call `start_turn(id)` at the top of every request. `rewind(before=turn)` takes the session back, and `fork(id, before=turn)` starts a new session from that point.
-- A rewind and a fork change what a session remembers. They never change a file, and a fork shares the files.
+- A rewind and a fork change what a session remembers. A fork never changes a file and shares the files. A rewind changes a file only when it is asked to, with `files=True`.
 - A session belongs to its authority. Its id is a name, never a key.

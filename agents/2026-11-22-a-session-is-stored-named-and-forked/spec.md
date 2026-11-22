@@ -281,7 +281,7 @@ Reason: with an owner in the key and nothing to compare, the two verbs would dif
 | `actor` | text, not null | the actor's `sub`, for a listing |
 | `subjects` | text, not null | the subjects' distinct `sub` values, sorted, as a JSON array |
 | `parent_id` | `BytewiseString(255)`, null | the id of the session this one was forked from; spec 4, decision 19 |
-| `fork_before` | `BytewiseString(1020)`, null | the turn id the fork was given as `before`; 1,020 is spec 4's `MAX_TURN_ID_BYTES` |
+| `fork_before` | `BytewiseString(255)`, null | the turn id the fork was given as `before`; 255 is spec 4's `TURN_ID_MAX` |
 | `fork_number` | `BigInteger`, null | the fork point: every turn the fork took from its parent is numbered below it, and no turn need hold this number; null for a session that is no fork |
 | `turn_counter` | `BigInteger`, not null, default 0 | the last turn number handed out; spec 4's `start_turn` adds to it, through spec 0's `next_number`; a fork's row starts it at the fork point less one |
 | `created_at` | timestamp with zone, not null | for display |
