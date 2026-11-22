@@ -34,8 +34,7 @@ something, 1 when they found nothing and 2 on trouble, as ``grep`` does.
 from __future__ import annotations
 
 import posixpath
-import re
-from fnmatch import translate
+from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 from vfs.models import Observation
@@ -475,17 +474,13 @@ def _shown_beneath(shown: str, root: str, path: str) -> str:
 class _FindTest(NamedTuple):
     """One test of a served ``find``: what it reads, the kind it compares, or the pattern it matches.
 
-    A pattern is matched as GNU ``fnmatch`` reads it with no flags; with ``nocase``, each character
-    is folded alone, as ``FNM_CASEFOLD`` folds it, so a ``?`` still matches a letter that lowercases to two.
+    A pattern is matched as GNU ``fnmatch`` reads it with no flags. With ``nocase``, both sides are
+    first lowered one character at a time, as ``FNM_CASEFOLD`` lowers each with glibc's ``towlower``.
     """
 
     reads: str
     value: str
     nocase: bool = False
-
-    @property
-    def matcher(self) -> re.Pattern[str]:
-        return re.compile(translate(self.value), re.IGNORECASE if self.nocase else 0)
 
 
 async def find(caller: Caller, words: list[str], cwd: str) -> Ran | None:
@@ -584,7 +579,9 @@ def _find_passes(test: _FindTest, shown: str, directory: bool) -> bool:
     if test.reads == "type":
         return directory == (test.value == "d")
     subject = shown if test.reads == "path" else ("/" if shown == "/" else shown.rstrip("/").rsplit("/", 1)[-1])
-    return test.matcher.match(subject) is not None
+    if test.nocase:
+        return fnmatchcase(_lowered(subject), _lowered(test.value))
+    return fnmatchcase(subject, test.value)
 
 
 # ---------------------------------------------------------------------------
@@ -960,6 +957,12 @@ def _reason(fact: ResultError) -> str:
         return _UNIX_ERRORS[fact.kind]
     contract = KIND_CONTRACTS.get(fact.kind)
     return fact.message.removeprefix(f"{contract.phrase}: " if contract is not None else "")
+
+
+def _lowered(text: str) -> str:
+    """Each character lowered alone, to one character, as ``towlower`` lowers it: the dotted capital I
+    to ``i``, and the long s and the dotless i kept, since neither has a lowercase of its own."""
+    return "".join(ch.lower()[:1] for ch in text)
 
 
 def _under(root: str, path: str) -> bool:

@@ -599,3 +599,25 @@ async def test_grants_of_a_path_the_caller_cannot_see_reads_as_its_unix_error() 
     result = await fs.cli("grants /g/a.md; echo $?", authority=Authority.of(Principal("grace")))
     await fs.close()
     assert (result.stdout, result.stderr) == ("1\n", "grants: /g/a.md: No such file or directory\n")
+
+
+@pytest.mark.parametrize(
+    ("pattern", "names"),
+    [
+        ("s.md", ["S.md", "s.md"]),
+        ("i.md", ["I.md", "i.md", "\u0130.md"]),
+        ("k.md", ["k.md"]),
+        ("S.MD", ["S.md", "s.md"]),
+        ("?.md", ["I.md", "S.md", "i.md", "k.md", "s.md", "\u0130.md", "\u0131.md", "\u017f.md"]),
+        ("[a-z].md", ["I.md", "S.md", "i.md", "k.md", "s.md", "\u0130.md"]),
+    ],
+)
+async def test_a_served_find_iname_folds_each_character_as_gnu_find_does(pattern: str, names: list[str]) -> None:
+    """Each answer is GNU findutils' in ``C.UTF-8``: the dotted capital I lowers to ``i``, and the long s
+    and the dotless i lower to themselves. The Kelvin sign is left out, as a path's NFC fold makes it ``K``."""
+    fs = await _world()
+    for name in ("\u017f", "\u0131", "\u0130", "s", "i", "k", "S", "I"):
+        ok(await fs.write(path=f"/work/fold/{name}.md", content="x", parents=True, authority=SYSTEM))
+    result = await run_line(fs, f"find fold -iname '{pattern}'", AGENT, cwd="/work", env=ENVIRONMENT)
+    await fs.close()
+    assert sorted(result.stdout.splitlines()) == sorted(f"fold/{name}" for name in names)
