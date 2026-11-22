@@ -86,22 +86,26 @@ Open a session for Scout, and have Scout change the contract.
 scout = fs.open_session(Authority.of(Principal("scout")))
 
 result = scout.edit("/contracts/acme.md", old="30 days", new="90 days")
-result
-```
-
-```text
-INTERRUPTED /contracts/acme.md: Interrupted (job 5d0c81aa) — A change to a contract needs a person. The job waits for a person and continues when it is resumed. (retry: resume)
-```
-
-The id in your output will be different. Nothing has changed. The call did not fail and it did not run: it stopped, and its job was saved. This is also the text Scout sees, so an agent learns that a person has been asked and that it does not need to try again.
-
-```python
 result.success, result.interrupted
 ```
 
 ```text
 (False, True)
 ```
+
+Nothing has changed. The call did not fail and it did not run: it stopped, and its job was saved for your application to handle. **An interrupted result is for your code, not for the agent.** Your application checks `result.interrupted`, asks the principal, and resumes the job, as the next steps show, and the agent only ever sees the result the resumed job returns.
+
+If your application hands an interrupted result to the agent anyway, the agent reads only that the step was not done.
+
+```python
+str(result)
+```
+
+```text
+ERROR /contracts/acme.md: Not approved — This edit needs approval before it can run ("A change to a contract needs a person."), and it has not been approved, so nothing was changed. Do not retry it or make the change another way. (retry: never)
+```
+
+The text says nothing about jobs or resuming, because an agent can do neither. It tells the agent the one thing it can act on: this step cannot be done now, and trying again will not help. A question from a tool reads the same way, with "needs an answer" in place of "needs approval". The mistake is your application's, so VFS reports it to you: the first time an interrupted result is turned into text, VFS logs one `WARNING` saying that the result should have been handled with `result.interrupted`.
 
 ## Step 4: Look at the Interrupt
 
@@ -298,11 +302,11 @@ result = scout.cli(
     "cat /drafts/acme.md > /contracts/acme.md; "
     "rm /drafts/acme.md"
 )
-result
+result.interrupted, result.job.interrupt.message
 ```
 
 ```text
-INTERRUPTED /contracts/acme.md: Interrupted (job 2b9e6f10) — A change to a contract needs a person. The job waits for a person and continues when it is resumed. (retry: resume)
+(True, 'A change to a contract needs a person.')
 ```
 
 The first command ran, so the note is written. The second was interrupted. The third has not run. Resume as before.
