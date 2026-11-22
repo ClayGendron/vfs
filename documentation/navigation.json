@@ -30,7 +30,12 @@
     },
     {
       "title": "How-to Guides",
-      "groups": [{ "title": null, "pages": ["/how-to/load-a-folder-of-files"] }]
+      "groups": [
+        {
+          "title": null,
+          "pages": ["/how-to/load-a-folder-of-files", "/how-to/interrupt-a-job-and-ask-a-person"]
+        }
+      ]
     },
     {
       "title": "Reference",
