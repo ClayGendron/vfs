@@ -2,6 +2,8 @@
 
 A draft, written on 2026-11-21 from finding M4 of `agents/2026-11-21-the-shell-speaks-bash/reviews/step-3-7-code-review.md`. It is not reviewed, and nothing is built.
 
+Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is frozen, not in the `0.1.0` gate after it.
+
 ## The outcome wanted
 
 A byte that crosses between the machine's module and its host costs a few instructions, not hundreds, so the default fuel bounds the work a line does and not the bytes it moves. And the module is compiled when the wheel is built, not at a process's first line.

@@ -2,6 +2,8 @@
 
 A draft, written on 2026-11-21 from a staff review of the shell before its pull request, the spec review's L8 of `agents/2026-11-21-the-shell-speaks-bash/reviews/spec-review.md`, and roadmap F7.4. It is not reviewed, and nothing is built.
 
+Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is frozen, not in the `0.1.0` gate after it.
+
 ## The outcome wanted
 
 A line that would make 100,000 verb calls ends on a budget of its own, not on its deadline; a host sets the shell's budgets once, at construction; and a caller of `cli`, which an agent reaches over MCP, can lower a budget and never raise one.

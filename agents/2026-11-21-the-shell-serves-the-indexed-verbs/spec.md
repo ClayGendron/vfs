@@ -2,6 +2,8 @@
 
 A draft, written on 2026-11-21 from the structural review of the shell (`agents/2026-11-21-the-shell-speaks-bash/reviews/structural-review.md`, finding 2) and the shell's `progress.md`. It is not reviewed, and nothing is built.
 
+Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is frozen, not in the `0.1.0` gate after it.
+
 ## The outcome wanted
 
 `grep -rn mfa /enterprise | head -20` costs one call of the `grep` verb, not one `read` for each file beneath the root, and `find /docs -name '*.md'` one call of `glob`. `traverse`, `grant`, `revoke`, `grants`, `edit`, `mkedge` and `rmedge` run as programs of the shell, each one call of its verb as the caller.

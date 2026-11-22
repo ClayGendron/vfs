@@ -2,6 +2,8 @@
 
 A draft, written on 2026-11-21 from the shell's `progress.md` and its structural review. It is not reviewed, and nothing is built.
 
+Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is frozen, not in the `0.1.0` gate after it.
+
 ## The outcome wanted
 
 `tests/shell/known_failures.txt` is empty, 40 nested `$( )` parse as bash parses them, every node of the tree carries its span, and the Oils spec-suite rate is measured and published with its commit.

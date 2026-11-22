@@ -2,6 +2,8 @@
 
 A draft, written on 2026-11-21 from a staff review of the shell before its pull request. It is not reviewed, and nothing is built.
 
+Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is frozen, not in the `0.1.0` gate after it.
+
 ## The outcome wanted
 
 Every program of the table in `context/specifications/active/167-the-shell-pipeline-core/spec.md`, which `agents/2026-11-21-the-shell-speaks-bash/spec.md` says still stands, runs in the shell, so the measured sample's in-scope lines run.
