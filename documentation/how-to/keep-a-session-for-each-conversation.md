@@ -100,16 +100,18 @@ Ship on Tuesday.
 Edited /notes/plan.md
 ```
 
-`later` is a second handle to the same session, and it knew that Scout had read the file, so the edit went through with no second read. This works across processes and machines, because what the session has seen is in the database and not in either handle. There is nothing to close and nothing to save: a handle holds no state of its own, and you can drop it whenever you like.
+`later` is a second handle to the same session, and it knew that Scout had read the file, so the edit went through with no second read. This works across processes and machines, because what the session has seen is in the database and not in either handle. There is nothing to close and nothing to save: a handle holds nothing that the database does not, and you can drop it whenever you like.
 
 What a session has seen is written to the database a moment after each read, not during it, so a read costs the same with a session as without one. If the process stops in that moment, the session forgets that one read, and the worst that follows is a "Not read yet" refusal and a second read.
 
-## Step 4: Give Each Turn an Id
+## Step 4: Start a Turn
 
-A *turn* is one message from the user and everything the agent does in answer to it. Pass the turn's id when you ask for the session, and everything done through that handle is recorded under the turn.
+A *turn* is one message from the user and everything the agent does in answer to it. Start a turn at the top of each request, before the agent does anything, and give it an id.
 
 ```python
-scout = fs.session(scout_is, "conv_123", turn="msg_4")
+scout = fs.session(scout_is, "conv_123")
+scout.start_turn("msg_4")
+
 print(scout.read("/notes/plan.md"))
 print(scout.read("/notes/budget.md"))
 ```
@@ -120,8 +122,11 @@ Ship on Wednesday.
 Budget: 40,000
 ```
 
+The user sends another message, so start the next turn.
+
 ```python
-scout = fs.session(scout_is, "conv_123", turn="msg_5")
+scout.start_turn("msg_5")
+
 print(scout.edit("/notes/plan.md", old="Wednesday", new="Thursday"))
 print(scout.cli("cd /notes && cat budget.md"))
 ```
@@ -131,7 +136,24 @@ Edited /notes/plan.md
 Budget: 40,000
 ```
 
-Use an id your application already has for the turn, such as the id of the user's message. The same id can then name the turn in your chat history, in your agent framework and in VFS, which is what lets you rewind all three to one point. VFS numbers the turns of a session in the order it first sees them. A later request that passes an id VFS has seen carries on that turn, which is what happens when a turn spans several requests. When you pass no turn, each handle is a turn of its own with an id VFS makes.
+`start_turn(id)` starts a turn in the session, and from then on everything done through that handle is recorded under it: what the agent reads, what it changes, where its shell goes, and any job that is interrupted. A turn is a partition of the session's work, and it is the point you later rewind or fork to. Starting a turn stores one small record, so that VFS knows the order of the session's turns, including a turn in which the agent never touches a file.
+
+Use an id your application already has for the turn, such as the id of the user's message. The same id can then name the turn in your chat history, in your agent framework and in VFS, which is what lets you rewind all three to one point. An id is a string of 1 to 255 characters, and it need only be different from the other turns of the same session. When you have no id of your own, call `start_turn()` with none, and VFS makes one and returns it.
+
+```python
+turn_id = scout.start_turn()
+turn_id, scout.turn
+```
+
+```text
+('turn_01JD3K7Q', 'turn_01JD3K7Q')
+```
+
+`scout.turn` holds the id of the turn the handle is in.
+
+A turn often spans more than one request. The agent calls a tool, your application answers in a second request, and both belong to the same message. Call `start_turn` with the same id at the top of each of those requests. **Starting a turn the session already has carries that turn on.** It never makes a second turn with the same id, so a request that is sent twice does no harm.
+
+Start a turn on every request, as the first thing you do with the session. Calls made through a handle before any turn is started on it go into the session's latest turn, or into a first turn that VFS makes when the session has none. That is where the calls in the first three steps of this guide went.
 
 ## Step 5: Rewind to Before a Turn
 
@@ -155,7 +177,7 @@ The second row is the rule working as it should. After the rewind, the agent's o
 
 **A rewind changes what the session remembers. It does not change any file.** The edit Scout made in `msg_5` is still in `/notes/plan.md`. VFS records every change with its session and its turn, so that the files a session changed can be put back as they were before a turn. That is a separate feature, planned for the same release.
 
-After a rewind, your application can start `msg_5` again as a new turn.
+After a rewind, your application can start `msg_5` again with `scout.start_turn("msg_5")`, and it is a new turn. A rewind to before a turn the session has never started is refused, and the refusal names the turn, so a mistyped id never passes as a rewind that did nothing. This is one more reason to start a turn on every request.
 
 ## Step 6: Fork a Session
 
@@ -225,6 +247,8 @@ Every chat protocol already carries the two ids a session needs.
 | LangGraph | `thread_id` | an id your application gives the run |
 | Your own | the conversation's id | the user message's id |
 
+A request handler therefore begins with two lines: `scout = fs.session(authority, session_id)` and `scout.start_turn(turn_id)`.
+
 These ids often come from the browser. That is safe, because the session id is only a name inside its owner. Check who the user is in your own code, build the authority from that, and pass the id as it came.
 
 To rewind a whole stack to one point, use the turn's id in each layer: cut your chat history before the message, take your agent framework back to the checkpoint it saved for that turn, and call `scout.rewind(before=turn_id)`.
@@ -238,6 +262,6 @@ A session is never required. A call made on the file system with `authority=` wo
 - A session is VFS's side of one conversation: who the agent is, what it has seen, and where its shell is. Your application keeps the messages.
 - `fs.session(authority, id)` gives you the session with that id, new or not. It is stored in the database, and the object is a handle.
 - A session refuses to change a file that changed since the agent read it, and a file the agent has never read.
-- Pass `turn=` on every request. `rewind(before=turn)` takes the session back, and `fork(id, before=turn)` starts a new session from that point.
+- Call `start_turn(id)` at the top of every request. `rewind(before=turn)` takes the session back, and `fork(id, before=turn)` starts a new session from that point.
 - A rewind and a fork change what a session remembers. They never change a file, and a fork shares the files.
 - A session belongs to its authority. Its id is a name, never a key.
