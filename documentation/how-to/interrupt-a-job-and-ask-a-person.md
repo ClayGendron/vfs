@@ -4,9 +4,11 @@ This guide shows how to stop an agent's work at the points that need a person, s
 
 > **This guide describes an API that is designed and not yet built.** It is written first so that the API can be agreed before the code is written. The names on this page may still change.
 
-**VFS never asks a person anything, and it never waits for one.** Every call you make through VFS is a *job*. Most jobs finish inside the call that started them, and VFS keeps nothing for them. When something inside a job needs a person, VFS stops the job, saves it in the database, and returns at once. What the person must answer is an *interrupt*. Your application asks the person in whatever way it likes, records the answer, and resumes the job. The job then carries on from the point where it stopped.
+**VFS never asks a person anything, and it never waits for one.** Every call you make through VFS is a *job*, and every verb the job carries out is a *step*. A direct call such as `edit` is a job of one step; a shell line is a job of many. Most jobs finish inside the call that started them, and VFS keeps nothing for them. When a step needs a person, VFS stops the job before that step, saves the job in the database, and returns at once. What the person must answer is the job's *interrupt*. Your application asks the person in whatever way it likes, then resumes the job with the answer, and the job carries on from the step where it stopped.
 
-Three things can interrupt a job: a *policy* you write, which looks at each operation before it runs; a tool that must be approved before it runs; and a tool that asks a question while it runs. This guide covers all three, and each one is answered and resumed in the same way.
+A job has at most one interrupt waiting at a time. It may be interrupted several times over its life, once for each step that needs a person, and each time it waits for one answer.
+
+Two things can interrupt a job: a *policy* you write, which looks at each step before it runs, and a *tool*, which can stop its job to ask for something while it runs. Both interrupt in the same way, and every interrupt is resumed in the same way.
 
 ## Before You Begin
 
@@ -16,37 +18,39 @@ The examples use one contract, an agent named Scout, and a person named Ada who 
 
 ## Step 1: Write a Policy
 
-A policy is an `async` function marked with `@policy`. It takes one argument, the operation that is about to run, and returns a decision: allow it, deny it, or interrupt it.
+A policy is an `async` function marked with `@policy`. It takes one argument, the step that is about to run, and returns a `Decision`: `Decision.allow()` or `Decision.deny(reason)`. When the policy needs a person before it can decide, it asks for the person's answer and decides once it has it.
 
 ```python
-from vfs import Decision, Mutation, policy
+from vfs import Decision, Mutation, policy, require_approval
 
 @policy
-async def contracts_need_a_person(op: Mutation) -> Decision:
+async def contracts_need_a_person(step: Mutation) -> Decision:
     """A change to a contract needs a person."""
-    if op.touches("/contracts"):
-        return Decision.interrupt("A change to a contract needs a person.")
+    if step.touches("/contracts"):
+        return await require_approval("A change to a contract needs a person.")
     return Decision.allow()
 ```
 
-The type you give the argument decides which operations the policy sees. `Mutation` is every operation that changes something: a write, an edit, a delete, a move, a copy, a new directory, a restore. A policy typed this way is never asked about a read, so it costs nothing on the calls an agent makes most. Each operation has a type of its own as well, such as `EditOperation` or `DeleteOperation`, and `Operation` is every operation, reads included. A union such as `DeleteOperation | MoveOperation` covers the two.
+`require_approval` interrupts the job with a yes-or-no question. When the job is resumed with the person's answer, the policy runs again, `require_approval` returns `Decision.allow()` for a yes and `Decision.deny(reason)` for a no, and the policy returns that decision. [Interrupt With Any Answer](#interrupt-with-any-answer) shows the general form, for a policy that needs more than a yes or a no.
 
-Every operation carries the same core attributes, and each type adds the arguments of its own verb.
+The type you give the argument decides which steps the policy sees. `Mutation` is every step that changes something: a write, an edit, a delete, a move, a copy, a new directory, a restore. A policy typed this way is never asked about a read, so it costs nothing on the calls an agent makes most. Each verb has a step type of its own as well, such as `EditStep` or `DeleteStep`, and `Step` is every step, reads included. A union such as `DeleteStep | MoveStep` covers the two.
+
+Every step carries the same core attributes, and each type adds the arguments of its own verb.
 
 | Attribute | What it holds |
 |---|---|
-| `op.verb` | The name of the verb, such as `"edit"`, `"delete"`, or `"run"` for a tool |
-| `op.paths` | Every path the operation names |
-| `op.authority` | Who is making the call |
-| `op.via` | Where the operation came from: `None` for a direct call, or the shell line or tool that made it |
-| `op.touches(path)` | `True` when any of the paths is that path or inside it |
-| Its own arguments | For an `EditOperation`, `op.path`, `op.old` and `op.new`; for a `WriteOperation`, `op.path` and the new content; and so on for each verb |
+| `step.verb` | The name of the verb, such as `"edit"`, `"delete"`, or `"run"` for a tool |
+| `step.paths` | Every path the step names |
+| `step.authority` | Who is making the call |
+| `step.via` | Where the step came from: `None` for a direct call, or the shell line or tool that made it |
+| `step.touches(path)` | `True` when any of the paths is that path or inside it |
+| Its own arguments | For an `EditStep`, `step.path`, `step.old` and `step.new`; for a `WriteStep`, `step.path` and the new content; and so on for each verb |
 
-An operation is checked before your policy sees it. A call whose arguments are wrong is refused as invalid and never reaches a policy, so a policy can trust every attribute it reads. An operation is also frozen: a policy reads it and cannot change it.
+A step is checked before your policy sees it. A call whose arguments are wrong is refused as invalid and never reaches a policy, so a policy can trust every attribute it reads. A step is also frozen: a policy reads it and cannot change it.
 
-**A policy must return a decision, and a policy that fails denies.** If it raises, returns anything other than a `Decision`, or takes longer than its deadline, the operation is refused, and the refusal names the policy. A broken guard therefore stops the work rather than letting it through. `@policy` checks the function when you decorate it: a function that is not `async`, or that does not take one argument typed as an operation, is refused there and then, before any file system exists.
+**A policy must return a decision, and a policy that fails denies.** If it raises, returns anything other than a `Decision`, or takes longer than its deadline, the step is refused, and the refusal names the policy. A broken guard therefore stops the work rather than letting it through. `@policy` checks the function when you decorate it: a function that is not `async`, or that does not take one argument typed as a step, is refused there and then, before any file system exists.
 
-A policy can only narrow what a caller may do. VFS checks the caller's access first, so a call the caller has no right to make is refused before any policy sees it. The `system` authority stands for your own application code, and no policy is ever applied to it.
+A policy can only narrow what a caller may do. VFS checks the caller's access first, so a call the caller has no right to make is refused before any policy sees it.
 
 ## Step 2: Create the File System
 
@@ -72,7 +76,7 @@ write success: 1 file
   created /contracts/acme.md
 ```
 
-You can add and remove a policy later with `fs.add_policy(contracts_need_a_person)` and `fs.remove_policy(contracts_need_a_person)`.
+The `system` authority stands for your own application code. No policy is applied to it, and its jobs are never interrupted, as [The System Authority Is Never Interrupted](#the-system-authority-is-never-interrupted) explains. You can add and remove a policy later with `fs.add_policy(contracts_need_a_person)` and `fs.remove_policy(contracts_need_a_person)`.
 
 ## Step 3: Make a Call That Is Interrupted
 
@@ -99,25 +103,25 @@ result.success, result.interrupted
 (False, True)
 ```
 
-## Step 4: Look at the Job
+## Step 4: Look at the Interrupt
 
-The result carries the job that stopped, and the job carries one interrupt for each thing a person must answer.
+The result carries the job that stopped, and the job carries its interrupt.
 
 ```python
 job = result.job
-stopped = job.interrupts[0]
+waiting = job.interrupt
 
-job.id, job.state, stopped.kind, stopped.message
+job.id, job.state, waiting.message, waiting.raised_by
 ```
 
 ```text
-('5d0c81aa', 'interrupted', 'approval', 'A change to a contract needs a person.')
+('5d0c81aa', 'interrupted', 'A change to a contract needs a person.', 'contracts_need_a_person')
 ```
 
-An approval for a change also carries a preview, which is the change as it would land.
+An interrupt before a change carries a preview, which is the change as it would land.
 
 ```python
-stopped.preview
+waiting.preview
 ```
 
 ```text
@@ -128,46 +132,37 @@ edit would change: 1 file
   +Payment is due in 90 days.
 ```
 
-**This is what you show the person.** They approve a change they can read, not the name of an operation.
+**This is what you show the person.** They approve a change they can read, not the name of a verb.
+
+Every interrupt also carries the schema its answer must fit, as JSON Schema, so your application can build the form it shows the person from the interrupt alone.
+
+```python
+waiting.schema
+```
+
+```text
+{'title': 'Approval', 'anyOf': [{'type': 'boolean'}, {'type': 'object', 'properties': {'approved': {'type': 'boolean'}, 'reason': {'type': ['string', 'null']}}, 'required': ['approved']}]}
+```
 
 | Attribute of an interrupt | What it holds |
 |---|---|
-| `id` | The id you answer |
-| `kind` | `"approval"` for a yes or a no, or `"question"` for a tool that asks for a value |
 | `message` | The text to show the person |
-| `preview` | What the operation would change, or `None` when VFS cannot work that out |
-| `options` | For a question, the answers allowed, or `None` when any value is allowed |
-| `raised_by` | The policies or the tool that raised it |
-| `paths` | The paths the operation names |
+| `schema` | The JSON Schema the answer must fit |
+| `preview` | What the step would change, or `None` when VFS cannot work that out |
+| `details` | Anything else the policy or tool attached, or `None` |
+| `raised_by` | The policy or tool that raised it |
+| `step` | The step the job stopped before |
 | `job_id` | The job it belongs to |
-| `expires_at` | When it lapses |
+| `expires_at` | When the job lapses if nobody answers |
 
-## Step 5: Answer the Interrupt
+## Step 5: Resume the Job With the Answer
 
-Your application now asks the person: a button in a chat window, a message, an approval queue, whatever suits it. When Ada says yes, record her answer.
+Your application now asks the person: a button in a chat window, a message, an approval queue, whatever suits it. When Ada says yes, resume the job with her answer.
 
 ```python
 ada = Authority.of(Principal("ada"))
 
-fs.answer(stopped.id, allow=True, authority=ada)
-```
-
-```text
-answer success: 1 interrupt
-
-  allowed 7f3a9c2e by ada
-```
-
-The answer is recorded under Ada's name, and it is bound to this one interrupt. It answers nothing else, not even an identical edit Scout might make tomorrow. Answering the same interrupt again with the same answer reports that it is already answered and changes nothing; answering it with a different answer, or answering an interrupt that is unknown or has lapsed, is refused, and nothing is recorded.
-
-**An agent cannot answer an interrupt.** `answer` is a method of the file system your application holds. It is not on a session, it is not a shell command, and it is never offered to an agent as a tool.
-
-## Step 6: Resume the Job
-
-Once every interrupt of a job is answered, resume it.
-
-```python
-fs.resume(job.id)
+fs.resume(job.id, True, authority=ada)
 ```
 
 ```text
@@ -176,41 +171,84 @@ edit success: 1 file
   edited /contracts/acme.md
 ```
 
-The result is the one Scout's call would have returned. Hand it to Scout in whatever way your application talks to its agent.
+`resume` does two things in one call. It records Ada's answer to the job's interrupt, under her name, and it carries the job on from the step where it stopped. The result is the one Scout's call would have returned. Hand it to Scout in whatever way your application talks to its agent.
 
-Resuming does not make a new call. **It carries out the operation that was saved, exactly as it was when Ada saw it.** Four rules keep that safe.
+The answer must fit the interrupt's schema. One that does not is refused with the reason, nothing is recorded, and the job stays interrupted, so the person can answer again. The answer is bound to this job's interrupt and to nothing else, not even an identical edit Scout might make tomorrow.
 
-- **It runs as Scout.** Ada's approval lets Scout's operation through. It does not lend Scout any of Ada's access, and if Scout lost access to the contract while the job waited, the operation is refused.
-- **It changes the file Ada saw.** If the contract changed between the preview and the resume, the operation is refused as a conflict and nothing is written.
-- **Your policies are asked again.** A policy whose interrupt Ada answered counts as allowing the operation. A policy that now denies it still denies it. So write a policy to give the same decision when it is asked twice about the same operation.
-- **One resume wins.** If two processes resume the same job at once, one carries it on and the other is refused with the job's state. A resume of a job that has already finished returns its result again.
+**An agent cannot resume a job.** `resume` is a method of the file system your application holds. It is not on a session, it is not a shell command, and it is never offered to an agent as a tool.
 
-## Step 7: Reject an Interrupt
+Resuming does not make a new call. **It carries out the step that was saved, exactly as it was when Ada saw it.** Four rules keep that safe.
 
-Have Scout try to delete the contract, and this time have Ada say no.
+- **It runs as Scout.** Ada's answer lets Scout's step through. It does not lend Scout any of Ada's access, and if Scout lost access to the contract while the job waited, the step is refused.
+- **It changes the file Ada saw.** If the contract changed between the preview and the resume, the step is refused as a conflict and nothing is written.
+- **Your policies are asked again.** Each policy runs again with the answers the job has been given, so `require_approval` returns Ada's decision rather than interrupting a second time. A policy that now denies the step still denies it. So write a policy to reach the same point when it is asked twice about the same step.
+- **One resume wins.** If two processes resume the same job at once, one carries it on and the other is refused with the job's state. Resuming a job that has already finished returns its result again, and records nothing.
+
+## Step 6: Reject a Change
+
+Have Scout try to delete the contract, and this time have Ada say no, with a reason.
 
 ```python
-result = scout.delete("/contracts/acme.md")
-stopped = result.job.interrupts[0]
+from vfs import Approval
 
-fs.answer(
-    stopped.id,
-    allow=False,
-    reason="This contract is still in force.",
+result = scout.delete("/contracts/acme.md")
+
+fs.resume(
+    result.job.id,
+    Approval(approved=False, reason="This contract is still in force."),
     authority=ada,
 )
-fs.resume(result.job.id)
 ```
 
 ```text
 ERROR /contracts/acme.md: Permission denied — This contract is still in force. (retry: never)
 ```
 
-A rejected operation is refused with the reason Ada gave, and Scout can read that reason and act on it.
+`Approval` is the schema `require_approval` asks with. It accepts `True` or `False`, or an `Approval` with a reason. A step a person rejects is refused with the reason they gave, and Scout can read that reason and act on it.
 
-## Step 8: Interrupt a Shell Line
+## Interrupt With Any Answer
 
-A shell line is one job made of many operations. When one of them is interrupted, the line stops at that point. It keeps what it has already done, and it continues from the same point once the interrupt is answered.
+An approval is one kind of answer. A policy or a tool can ask for any answer it needs, by awaiting `interrupt` with a message and a schema. The schema is required: it says what the person must send back, and VFS refuses an answer that does not fit it. `interrupt` stops the job the first time it is reached. When the job is resumed, it returns the answer, already checked against the schema and of the schema's type.
+
+This policy lets a change to a contract through only when a person names the ticket that authorises it.
+
+```python
+from pydantic import BaseModel
+from vfs import interrupt
+
+class Ticket(BaseModel):
+    number: str
+
+@policy
+async def contract_changes_need_a_ticket(step: Mutation) -> Decision:
+    """A change to a contract needs the ticket that authorises it."""
+    if not step.touches("/contracts"):
+        return Decision.allow()
+    ticket = await interrupt("Which ticket authorises this change?", Ticket)
+    if not ticket.number.startswith("LEGAL-"):
+        return Decision.deny(f"{ticket.number} is not a legal ticket.")
+    return Decision.allow()
+```
+
+The person's answer is a `Ticket`, or anything that validates as one, such as a dictionary with the same fields.
+
+```python
+result = scout.edit("/contracts/acme.md", old="90 days", new="60 days")
+fs.resume(result.job.id, {"number": "LEGAL-142"}, authority=ada)
+```
+
+A schema can be any type pydantic can check: a model, a dataclass, a `TypedDict`, a `Literal`, or a plain `str`, `int` or `bool`. VFS ships two that are used often.
+
+| Schema | The answer it takes | `interrupt` returns |
+|---|---|---|
+| `Approval` | `True`, `False`, or `Approval(approved=..., reason=...)` | An `Approval` |
+| `Choice(options)` | One of the options | That option, as a `str` |
+
+`require_approval(message)` is `interrupt(message, Approval)` turned into a decision, so most policies never need the long form.
+
+## Step 7: Interrupt a Shell Line
+
+A shell line is one job of many steps. When a step needs a person, the line stops before it. It keeps what it has already done, and it continues from the same point once the job is resumed.
 
 Add a draft, then have Scout run a line that notes the change, replaces the contract with the draft, and removes the draft.
 
@@ -234,11 +272,10 @@ result
 INTERRUPTED /contracts/acme.md: Interrupted (job 2b9e6f10) — A change to a contract needs a person. The job waits for a person and continues when it is resumed. (retry: resume)
 ```
 
-The first command ran, so the note is written. The second was interrupted. The third has not run. Answer and resume as before.
+The first command ran, so the note is written. The second was interrupted. The third has not run. Resume as before.
 
 ```python
-fs.answer(result.job.interrupts[0].id, allow=True, authority=ada)
-result = fs.resume(result.job.id)
+result = fs.resume(result.job.id, True, authority=ada)
 result.success, fs.read("/notes.md", authority=system).one().content
 ```
 
@@ -246,35 +283,27 @@ result.success, fs.read("/notes.md", authority=system).one().content
 (True, 'replaced acme\n')
 ```
 
-The line carried on where it stopped: the contract was replaced and the draft was removed. **Nothing ran twice.** The note was written once. VFS saved the line's text and every answer the line had been given up to the stop, and it resumed the line by running it again against those saved answers, without repeating any of the operations they stood for. If the shell has changed so that the line would no longer take the same path, the resume is refused with a conflict that says where it diverged, and nothing more is run.
+The line carried on where it stopped: the contract was replaced and the draft was removed. **Nothing ran twice.** The note was written once. VFS saved the line's text and every reply the line had been given up to the stop, and it resumed the line by running it again against those saved replies, without repeating any of the steps they stood for. If the shell has changed so that the line would no longer take the same path, the resume is refused with a conflict that says where it diverged, and nothing more is run.
 
 Had Ada said no, the `cat` command would have failed as a command fails in bash, and the line would have carried on. A line handles a rejection as it handles any failed command, so `cmd || fallback` works.
 
-Three more things are true of a line that is interrupted.
-
-- **Interrupts raised together are reported together.** When two commands in one pipeline are both interrupted, the line finishes what it can and stops once, with both interrupts on the job.
-- **A job can stop more than once.** If the resumed line reaches another interrupt, `resume` returns an interrupted result again, for the same job.
-- **A line resumes as whoever started it,** with that caller's access as it stands at the resume.
-
-The loop that handles every case is short.
+**A line can stop more than once.** If a later step also needs a person, the resumed line stops again before it, and `resume` returns an interrupted result for the same job. When two commands in a pipeline each need a person, the job stops for the first one, and for the second after it is resumed. The loop that handles every case is short.
 
 ```python
 result = scout.cli(line)
 while result.interrupted:
-    for stopped in result.job.interrupts:
-        allow = ask_a_person(stopped)
-        fs.answer(stopped.id, allow=allow, authority=ada)
-    result = fs.resume(result.job.id)
+    answer = ask_a_person(result.job.interrupt)
+    result = fs.resume(result.job.id, answer, authority=ada)
 ```
 
-Here `ask_a_person` stands for your own code.
+Here `ask_a_person` stands for your own code. A resumed line runs as whoever started it, with that caller's access as it stands at the resume.
 
-## Step 9: Write a Tool That Asks a Question
+## Step 8: Write a Tool That Asks a Question
 
-A tool is an `async` function marked with `@tool`. An agent runs it by name from a shell line, as it runs `grep`. A tool can stop its job to ask a person a question, by awaiting `interrupt`.
+A tool is an `async` function marked with `@tool`. An agent runs it by name from a shell line, as it runs `grep`. A tool asks a person for something in the same way a policy does, by awaiting `interrupt`.
 
 ```python
-from vfs import AsyncSession, interrupt, tool
+from vfs import AsyncSession, Choice, tool
 
 @tool
 async def translate(path: str, *, files: AsyncSession) -> str:
@@ -282,7 +311,7 @@ async def translate(path: str, *, files: AsyncSession) -> str:
     text = (await files.read(path)).one().content
     language = await interrupt(
         f"Translate {path} into which language?",
-        options=["french", "german"],
+        Choice(["french", "german"]),
     )
     target = path.replace(".md", f".{language}.md")
     await files.write(path=target, content=await translate_text(text, language))
@@ -291,7 +320,7 @@ async def translate(path: str, *, files: AsyncSession) -> str:
 fs.add_tool(translate)
 ```
 
-Here `translate_text` stands for your own code. The parameter typed `AsyncSession` is not something the agent passes: VFS fills it in with a session for whoever runs the tool, so the tool reads and writes files as its caller and is checked against the caller's access and your policies.
+Here `translate_text` stands for your own code. The parameter typed `AsyncSession` is not something the agent passes: VFS fills it in with a session for whoever runs the tool, so the tool reads and writes files as its caller, checked against the caller's access and your policies.
 
 Add a report, then have Scout run the tool on it.
 
@@ -304,35 +333,32 @@ fs.write(
 )
 
 result = scout.cli("translate /reports/q3.md")
-stopped = result.job.interrupts[0]
-
-stopped.kind, stopped.options
+result.job.interrupt.message
 ```
 
 ```text
-('question', ['french', 'german'])
+'Translate /reports/q3.md into which language?'
 ```
 
 ```python
-fs.answer(stopped.id, value="french", authority=ada)
-fs.resume(result.job.id)
+fs.resume(result.job.id, "french", authority=ada)
 ```
 
 ```text
 /reports/q3.french.md
 ```
 
-An answer that is not one of the options is refused, and nothing is recorded. A person can also decline to answer, with `fs.answer(stopped.id, allow=False, reason="Ask me tomorrow.", authority=ada)`. The tool then fails with that reason on standard error and status 1, and the line treats it as any command that fails.
-
-There is one thing to know about a tool that asks. **When the job resumes, the tool's function starts again from its first line.** VFS can save a shell line, and it cannot save a Python function part-way through. So the function runs again, and this time `interrupt` returns Ada's answer and the function carries on. Each question a tool asks has its own place in the job, so each one gets its own answer, and only its own. If a question has changed by the time the function runs again, its earlier answer is not used and the question is asked anew.
+There is one thing to know about a tool that asks. **When the job resumes, the tool's function starts again from its first line.** VFS can save a shell line, and it cannot save a Python function part-way through. So the function runs again, and this time `interrupt` returns Ada's answer and the function carries on. Each `interrupt` a tool reaches has its own place in the job, so each one gets its own answer, and only its own. If the question at that place has changed by the time the function runs again, its earlier answer is not used, and the job is interrupted anew.
 
 Three rules make starting again safe.
 
 - **A tool asks before it changes a file.** Once a tool has written through its session, a call to `interrupt` fails the tool with a message naming this rule. So a tool that starts again never has a write of its own to repeat. `translate` follows the rule: it reads, then asks, then writes.
-- **An answer is for the files the tool had read.** If `/reports/q3.md` changes while the question waits, Ada's answer is not used, and the question is asked again about the report as it now is.
+- **An answer is for the files the tool had read.** If `/reports/q3.md` changes while the job waits, Ada's answer is not used, and the job is interrupted again about the report as it now is.
 - **What a tool does outside VFS is yours to order.** VFS cannot see a request your tool makes to another service, so it cannot keep that request from running again. Put such code after the last `interrupt`, as `translate` puts its write.
 
-## Step 10: Have a Person Approve a Tool
+A tool fails as a program fails. When a person rejects its question, or the tool raises `ToolError`, the message goes to standard error and the status is 1, and the line treats it as any command that fails.
+
+## Step 9: Have a Person Approve a Tool
 
 Some tools should not run at all until a person says yes. Mark them with `approval=True`.
 
@@ -346,25 +372,25 @@ async def publish(path: str, *, files: AsyncSession) -> str:
 fs.add_tool(publish)
 ```
 
-Every run of `publish` is interrupted with an approval before its function is called, and the function runs once, after the answer. A policy can ask for the same approval without a change to the tool: a run of a tool reaches your policies as a `RunOperation`, whose `op.tool` is the tool's name and whose `op.arguments` are the arguments it was given.
+Every run of `publish` interrupts its job with an `Approval` before the function is called, and the function runs once, after the answer. A policy can ask for the same approval without a change to the tool: a run of a tool reaches your policies as a `RunStep`, whose `step.tool` is the tool's name and whose `step.arguments` are the arguments it was given.
 
 ```python
-from vfs import RunOperation
+from vfs import RunStep
 
 @policy
-async def review_publishing(op: RunOperation) -> Decision:
-    if op.tool == "publish":
-        return Decision.interrupt(f"Publish {op.arguments['path']}?")
+async def review_publishing(step: RunStep) -> Decision:
+    if step.tool == "publish":
+        return await require_approval(f"Publish {step.arguments['path']}?")
     return Decision.allow()
 ```
 
 ## Combine Policies
 
-A file system can hold any number of policies. Each operation is shown to every policy whose type covers it, and the strictest answer wins: a denial wins over an interrupt, and an interrupt wins over an allow. The order you list them in does not matter. When several policies interrupt the same operation, the person is asked once, and the interrupt names every policy that raised it.
+A file system can hold any number of policies. Each step is shown to every policy whose type covers it, and the strictest decision wins: one denial refuses the step, whatever the others decide. When no policy denies and some need a person, the job is interrupted for the first of them, in the order the policies were added, and for the next one after it is resumed. A step that one policy denies is refused at once, and no person is asked about it.
 
 **With no policy, nothing is interrupted.** That is the default, and it is the mode to use when an agent should work without stopping.
 
-VFS ships one policy ready to use. `policies.review` allows every read and interrupts every change under the paths you give it, and every run of a tool.
+VFS ships one policy ready to use. `policies.review` allows every read and requires approval for every change under the paths you give it, and for every run of a tool.
 
 ```python
 from vfs import policies
@@ -385,54 +411,55 @@ careful = fs.open_session(
 )
 ```
 
-A session's policies are added to the file system's, and the strictest answer still wins. **A session can ask for more review. It can never ask for less.**
+A session's policies are added to the file system's, and asked after them. **A session can ask for more review. It can never ask for less.**
+
+## The System Authority Is Never Interrupted
+
+The `system` authority stands for your own application, so no policy is applied to its steps, and a job it starts can never be interrupted. When something would interrupt a system job anyway, such as a tool that awaits `interrupt` or a tool marked `approval=True` run directly with `run`, the step fails with an error that names this rule, and the job ends there. A shell line never runs as the system authority, so this happens only when your own code runs a tool that asks.
+
+To run such a tool from your own code, run it with the authority of the person or agent the work is for. The job can then be interrupted and resumed like any other.
 
 ## Find Jobs That Are Waiting
 
-A job that is interrupted is stored in the database, so the answer does not have to come from the program that made the call. A person can answer from another process, or the next morning. List what is waiting.
+A job that is interrupted is stored in the database, so the answer does not have to come from the program that made the call. A person can answer from another process, or the next morning. List the jobs that are waiting.
 
 ```python
-fs.jobs(state="interrupted", authority=system)
+fs.jobs(state="interrupted", authority=ada)
 ```
 
 ```text
-| id       | state       | started_by | verb | path               | interrupts | expires_at                |
-| -------- | ----------- | ---------- | ---- | ------------------ | ---------- | ------------------------- |
-| 91aa3c57 | interrupted | scout      | edit | /contracts/acme.md | 1          | 2026-11-23 15:04:11+00:00 |
+| id       | state       | started_by | verb | path               | message                                | expires_at                |
+| -------- | ----------- | ---------- | ---- | ------------------ | -------------------------------------- | ------------------------- |
+| 91aa3c57 | interrupted | scout      | edit | /contracts/acme.md | A change to a contract needs a person. | 2026-11-23 15:04:11+00:00 |
 ```
 
-To build an approval screen, list the interrupts themselves. Called with a person's authority, `fs.interrupts` lists only the interrupts that person may answer.
-
-```python
-fs.interrupts(authority=ada)
-```
+Called with a person's authority, `fs.jobs` lists only the jobs that person may resume, so an approval screen is built from this one call.
 
 A file system that keeps its files in memory keeps its jobs in memory too, and they end with the program. To resume a job from another process, create the file system on a database, as shown in [Keep Your Files in a Database](../tutorials/keep-your-files-in-a-database.md).
 
-## Who May Answer, and for How Long
+## Who May Resume, and for How Long
 
-A person may answer an approval when they have `write` access to every path it names. A person may answer a tool's question when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may always answer.
+A person may resume a job interrupted before a change when they have `write` access to every path the step names. A person may resume a job a tool interrupted when they may run that tool. Anyone else is refused, and nothing is recorded. The `system` authority may resume any job.
 
-A job that waits lapses 24 hours after it stopped, and its interrupts lapse with it. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, cancel it with `fs.cancel(job.id)`. A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
+A job that waits lapses 24 hours after it stopped. Change the time when you create the file system, with `VirtualFileSystem(job_lifetime=timedelta(hours=72))`. To give up on a job before then, cancel it with `fs.cancel(job.id)`. A lapsed or cancelled job cannot be resumed, and nothing it was waiting to do is done.
 
 ## Use It Inside a LangGraph Application
 
-An application built on LangGraph has its own `interrupt()` and `Command(resume=...)`, and the two fit together. LangGraph runs a node again from the top when it resumes the graph. When the node makes Scout's call again, VFS sees the same operation by the same caller while its job is still waiting, and returns that job rather than raising a second interrupt.
+An application built on LangGraph has its own `interrupt()` and `Command(resume=...)`, and the two fit together. LangGraph runs a node again from the top when it resumes the graph. When the node makes Scout's call again, VFS sees the same step by the same caller while its job is still waiting, and returns that job rather than starting a second one.
 
 ```python
 from langgraph.types import interrupt as ask
 
 async def change_contract(state):
     result = await scout.edit(state["path"], old=state["old"], new=state["new"])
-    if result.interrupted:
-        for stopped in result.job.interrupts:
-            approved = ask({"message": stopped.message, "preview": str(stopped.preview)})
-            await fs.answer(stopped.id, allow=approved, authority=ada)
-        result = await fs.resume(result.job.id)
+    while result.interrupted:
+        waiting = result.job.interrupt
+        answer = ask({"message": waiting.message, "schema": waiting.schema, "preview": str(waiting.preview)})
+        result = await fs.resume(result.job.id, answer, authority=ada)
     return {"outcome": str(result)}
 ```
 
-This node is `async`, so here `fs` is an `AsyncVirtualFileSystem` and `scout` a session opened on it, and every call is awaited. The first time the node runs, the edit is interrupted, and `ask` stops the graph with the message and the preview. When your application resumes the graph, the node runs again: the edit returns the same waiting job, `ask` returns the person's answer, the answer is recorded, and the job is resumed. If the node runs a third time, answering an interrupt that already holds the same answer changes nothing, so the node is safe to run again.
+This node is `async`, so here `fs` is an `AsyncVirtualFileSystem` and `scout` a session opened on it, and every call is awaited. The first time the node runs, the edit is interrupted, and `ask` stops the graph with the message, the schema and the preview. When your application resumes the graph, the node runs again: the edit returns the same waiting job, `ask` returns the person's answer, and the job is resumed with it. If the node runs again after that, resuming a finished job returns its result and records nothing, so the node is safe to run again.
 
 ## Why Policies and Tools Are Async
 
@@ -451,4 +478,4 @@ async def checksum(path: str) -> str:
 
 ## What to Remember
 
-Every call through VFS is a job. A policy, marked `@policy`, sees each operation before it runs, and allows it, denies it, or interrupts it. A tool, marked `@tool`, can need approval or ask a question with `interrupt`. VFS never asks and never waits: it stops the job, saves it, and returns. Your application asks the person, records the answer with `answer`, and carries the job on with `resume`, which runs the saved work as its caller, against what the person saw, with nothing run twice.
+Every call through VFS is a job, and every verb it carries out is a step. A policy, marked `@policy`, sees each step before it runs and allows it or denies it. A policy or a tool that needs a person awaits `interrupt` with a message and the schema of the answer it needs. VFS never asks and never waits: it stops the job before the step, saves it, and returns, and a job waits on one interrupt at a time. Your application asks the person, and `resume` records the answer and carries the job on, as its caller, against what the person saw, with nothing run twice.
