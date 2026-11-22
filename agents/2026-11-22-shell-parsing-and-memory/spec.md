@@ -12,6 +12,23 @@ Own syntax/{parser,ast,arith}.rs, machine/{arith,deparse,vars,exec,io}.rs and th
 
 This work can start against the reviewed implementation.
 
+## Design
+
+```mermaid
+flowchart TD
+    A["Source and limits"]
+    B["Admission ledger"]
+    C["Metered AST"]
+    D["Execution hub"]
+    E["Budget refusal"]
+    A --> B
+    B --> C
+    C --> D
+    B --> E
+    C --> E
+    D --> E
+```
+
 ## The problem
 
 - The parser reconstructs the delimiter from parsed word nodes, dropping nonliteral child nodes in a double-quoted delimiter. Literal data in generated shell source can end up being parsed as commands. Any resulting effects run with the submitting caller’s authority. The existing known-failure list already records the underlying delimiter-handling discrepancy.
@@ -44,6 +61,14 @@ Keep source spans for arithmetic bodies, here-documents, conditional grouping, t
 
 Localize the overflowing case using per-case progress in an isolated test process. Repair deep interpreter paths with explicit stacks/checked descent where applicable. If the excess frames are isolated to the test harness, launch that corpus runner on a documented 16 MiB stack internally and include a focused default-stack test for the actual public parser or machine entry path implicated. Do not hide an interpreter stack fault by only changing the harness. Keep a small-stack test for a low configured limit and retain Wasm trap containment.
 
+## Interfaces and edge cases
+
+### Admission and depth
+
+Initialize an ownership ledger before Machine::new calls the parser. Introduce a metered parser entry which accepts parse limits and an allocation reservation/transfer handle. Charge source once on admission; subparsers borrow it and the shared token balance. Carry the ledger from parser into Hub without allocating or charging the tree again. Keep public parse(source, ParseLimits) source-compatible as the syntax-only API; it enforces syntax limits and reports the tree’s accounted footprint without claiming to enforce a caller-unsupplied runtime memory limit. Public from_script validates the admitted tree’s footprint and spans against the supplied source, charges shared storage once to the new line and returns execution-budget/137 if it does not fit. Keep syntax-only parse budget errors distinct (status 2) even when discovered during constructor work; logical memory exhaustion is 137 both during tree growth and after handoff. Check source length first, then parser admission as allocations occur. Dynamic arithmetic is a runtime limit with status 137. Define every push into a counted grammar/AST construct as one nesting unit; count the first construct as one, parentheses or unary/arithmetic chain nodes once each, and omit helper grammar-function frames. Record the counted nesting value in boundary fixtures.
+
+Use pre-reservation with a tracked capacity-changing helper or an explicitly charged replacement buffer; avoid unmetered geometric growth from ordinary push/extend. Charge backing allocation plus owned child payloads once. On a failed growth the original value remains valid, and the temporary reservation is released. Native reference instances each pay the full accounted size of shared externally supplied immutable trees admitted into their own line. This makes two concurrent independent lines enforce their own ceilings even if Rust shares one immutable tree physically.
+
 ## Acceptance criteria
 
 1. At each configured boundary test below, equal and above: final here-document token merge; zero/one/two pipeline stages; source and expanded arithmetic; and argument-test nesting. Verify error class, status, output, and whether any earlier command was dispatched. For escaped/quoted delimiters assert actual AST command counts and literal body bytes. Exercise whitespace within a valid indexed assignment.
@@ -68,3 +93,5 @@ Localize the overflowing case using per-case progress in an isolated test proces
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `parse_and_execution_share_one_allocation_ledger` to [crates/vfs-shell/tests/laws.rs](../../crates/vfs-shell/tests/laws.rs). Update [documentation/reference/shell.md](../../documentation/reference/shell.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.

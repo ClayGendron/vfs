@@ -10,7 +10,24 @@ Every consumer sees a coherent byte stream or a typed error, and files reflect e
 
 Own machine/{exec,io,files,shell}.rs descriptor lifecycle, delimiter reads, lastpipe and substitution scheduling, plus head and tee in programs/text.rs. “Runtime termination” owns line-wide fatal stops. “Parsing and live memory” owns buffer charges. “Builtins and variables” owns read option semantics. Land descriptor primitives before the consumers.
 
-Implementation prerequisites in this change (specified, pending implementation): [A shell line has one admission budget and one terminal outcome](../2026-11-22-shell-runtime-termination/spec.md).
+These contracts are implementation prerequisites. [A shell line has one admission budget and one terminal outcome](../2026-11-22-shell-runtime-termination/spec.md).
+
+## Design
+
+```mermaid
+flowchart TD
+    A["Open description"]
+    B["Unopened"]
+    C["Active writer"]
+    D["Terminal error"]
+    E["Closed"]
+    A --> B
+    B -->|open accepted| C
+    B -->|refused| D
+    C -->|write refused| D
+    C --> E
+    D --> E
+```
 
 ## The problem
 
@@ -26,7 +43,7 @@ The existing one-write fast path is allowed only for one plain output redirect o
 
 ### 2. A writer moves from unopened to open on its first successful host reply, retaining the requested initial mode while pending.
 
-After the first refused write save that error, discard undeliverable buffered data and enter a permanent failed state shared by all duplicates. No append, retry or close-time flush may write again. Ordinary redirection failures return command status 1 and a diagnostic once, and keep underlying host evidence. A failure first observed at final flush sets the last command result and matching top-level status to 1 unless the line already has a fatal stop. Bytes acknowledged earlier remain committed.
+After the first refused write save that error, discard undeliverable buffered data and enter a permanent failed state shared by all duplicates. No append, retry or close-time flush may write again. Ordinary redirection failures return command status 1 and a diagnostic once, and keep underlying host evidence. A failure first observed at final flush sets the line exit to 1 unless the line already has a fatal stop. Attribute a stage status only where the owning stage is known as detailed below. Bytes acknowledged earlier remain committed.
 
 ### 3. All file and pipe readers return Data, EOF or Error.
 
@@ -39,6 +56,18 @@ Final-stage completion under lastpipe restores the parent fd immediately, before
 ### 5. For tee, parse all options before opening targets.
 
 Open or append targets once in operand order before consuming stdin, report a target error and continue other targets. Stream charged chunks to stdout and all remaining outputs in GNU order. When the default stdout pipe is closed use the existing SIGPIPE behavior, preserving earlier accepted file bytes; a failing named output records status 1 and is removed from subsequent writes. With no named files consume bounded chunks and keep no whole-input copy. No background flush or detached write survives finalization.
+
+## Interfaces and edge cases
+
+### Open descriptions and later writes
+
+Use negotiated writer handles for any file output that can outlive its first write. For the single deferred write the cache-free fast path may finish in one request. For streaming output the first successful create/truncate/append returns an object token scoped to this line and open description. On a subsequent chunk use append_open(path,object,data) under caller authority. In storage, resolve and authorize the current path and atomically require the same mount registration and entry ID before appending. Compare object identity only: a competing authorized append to the same live entry is valid. A move, replacement, deletion or remount that changes the path’s object returns an error and terminates that writer. Never recreate a removed path or follow the object to a new path without a new open. This is the explicit VFS path-authorization rule where Unix open-inode behavior would differ. Backend support is negotiated via writer-v1 independently of range reads. When unavailable, preserve single-write operations; reject attempts requiring a guarded multi-chunk writer before creating/truncating any file. Capability discovery must precede effects.
+
+For tee defaults, the first stdout pipe failure follows SIGPIPE. With -p use GNU warn-nopipe behavior: remove closed pipes, continue writing to surviving named files, and end successfully once all surviving outputs have completed unless a non-pipe write failed. For --output-error accept the GNU modes warn, warn-nopipe, exit and exit-nopipe, or reject an unsupported spelling with a usage error before any open. In warn mode diagnose, remove the failed output and keep serving others; exit stops at the first such error. The nopipe variants suppress pipe diagnostics and continue with remaining outputs. Test default and -p on the same finite input with a short-reading downstream stage. Compare exit status and final bytes on all destinations.
+
+Choose the deferred optimization only when one plain stdout file is the sole deferred target and every other precondition is settled in Bash open order. For cat, use it for a here-string or already validated private input preceding that output. An output redirection followed by an input file open, another output, auxiliary descriptor, a pathname-producing expansion with effects or an inherited input uses eager opens. Keep the existing “pure echo makes one write” fixture. Add a test for a failed input following a successful truncate. Two descriptors referring to one writer share the first-error marker. A close error sets status 1 only for the relevant stage; if discovered solely at line teardown, update the final stage entry only when that stage owned the writer, otherwise keep completed pipeline history and return line exit 1 with the diagnostic.
+
+The writer-v1 backend adds an optional single-path `if_object` precondition to the append form of write. It requires append=True, is exclusive with if_absent, if_version and if_identity, and is invalid on a batch. Check it in the same update/claim transaction as the append. The initial writer object token comes from the successful opening mutation itself, including zero-byte opens; a separate subsequent stat is insufficient. Support fresh/truncate/append/create-only opening modes. On conflict or missing target fail the writer with status 1. Preserve ordinary append atomicity for concurrent writes to the same live object. A two-session integration test opens an output, replaces that entry, and confirms the later chunk cannot modify its replacement. Repeat with two appenders holding the same object and check that both accepted chunks are present. Where supported options include --, stop option parsing at --. Reject an unrecognized tee option or output-error mode before opening any operand.
 
 ## Acceptance criteria
 
@@ -64,3 +93,5 @@ Open or append targets once in operand order before consuming stdin, report a ta
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `refused_writer_stays_failed_across_aliases` to [crates/vfs-shell/tests/laws.rs](../../crates/vfs-shell/tests/laws.rs). Update [documentation/reference/shell.md](../../documentation/reference/shell.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.

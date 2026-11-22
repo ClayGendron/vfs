@@ -10,7 +10,23 @@ Assignments update the intended binding once, input probes preserve the stream, 
 
 Own machine/{builtins,vars,printf,arith,test,quote,expand}.rs for the rules below. “Redirections and pipelines” supplies descriptor reads and ownership; “Runtime termination” supplies the whole-line clock; “Parsing and live memory” owns capacity accounting. Preserve shipped shell settings and the pinned Bash 5.3 behavior wherever a row below refers to Bash.
 
-Implementation prerequisites in this change (specified, pending implementation): [Redirections and pipelines propagate data, closure and failures in order](../2026-11-22-shell-descriptors/spec.md), [The parser and interpreter account for depth and live storage](../2026-11-22-shell-parsing-and-memory/spec.md), [File reads and metadata remain bounded and caller-authorized](../2026-11-22-shell-file-reads-and-metadata/spec.md).
+These contracts are implementation prerequisites. [Redirections and pipelines propagate data, closure and failures in order](../2026-11-22-shell-descriptors/spec.md), [The parser and interpreter account for depth and live storage](../2026-11-22-shell-parsing-and-memory/spec.md), [File reads and metadata remain bounded and caller-authorized](../2026-11-22-shell-file-reads-and-metadata/spec.md).
+
+## Design
+
+```mermaid
+flowchart TD
+    A["Builtin and operands"]
+    B["Resolve binding or input"]
+    C["Validate target"]
+    D["Apply once"]
+    E["Error or timeout"]
+    A --> B
+    B --> C
+    C --> D
+    C --> E
+    B --> E
+```
 
 ## The problem
 
@@ -40,6 +56,16 @@ Clamp/decrement multi-level break/continue as for existing Bash loops and restor
 
 Hexadecimal float %a/%A uses binary exponent and hexadecimal mantissa, honors case, sign, precision and rounding as the pinned Bash implementation. Parameter escape transformation reuses the established ANSI-C decoder where Bash defines identical escapes, including both Unicode widths and control escapes; keep any documented context-specific end/invalid-escape behavior. Descriptor predicates consult the live table, including duplicates and closed entries. Age and permission predicates use “File reads and metadata”.
 
+## Interfaces and edge cases
+
+For read -t 0 a descriptor at regular-file EOF is immediately ready, as is a pipe with buffered bytes or all writers closed. An open empty pipe reports status 1. No destination is modified. For read -n 0 on a valid source assign the empty value to ordinary destinations and return 0 without advancing; preserve normal assignment errors. Positive timeout parsing accepts nonnegative decimal seconds with optional fractional part; use the Bash parser’s usage response on invalid input, round positive fractional nanoseconds up, and compare monotonic instants with checked arithmetic. Attach a timer ID to the waiting read and cancel it on completion or descriptor close. The timer transport is specified in the wire contract. A SIGALRM-style local timeout uses 142; the public line deadline stays 124.
+
+Retain completed job status for explicit repeated waits on the shell’s last background PID as Bash does. A successful bare wait consumes retained statuses for its owned children; a later numeric wait on a consumed PID gives 127. Determine the child set at invocation, preserve existing wait option parsing and interrupt handling, and never leak another fork’s job status. A wait on no children returns 0.
+
+The active [Bash conformance spec](../2026-11-21-the-shell-closes-its-known-failures/spec.md) owns Bash-compatible 80-bit conversion and decimal parsing. Land that arithmetic/formatting primitive before implementing %a/%A or include that prerequisite in the same green change. The hex formatter consumes its extended-precision value directly without an intermediate f64. Record default and explicit precision, carries on rounding, zero and negative zero, upper/lowercase, infinity, NaN and a value that rounds to 1 as f64 but is greater than 1 in the recorder’s long-double format. Compare the stored byte count and the next conversion argument after %n. Retained job-status entries, partial read records and outstanding timer records are charged from creation until consumption, cancel or shell teardown.
+
+For a positive timeout, in-memory strings/buffers and regular-file inputs complete through their normal descriptor paths; match Bash’s regular-file rule that -t does not interrupt a regular-file read. Storage waits on a regular file still obey the whole-line deadline. Pipes with buffered data consume it immediately, EOF ends the read with the ordinary EOF status, and an empty pipe with live writers arms the local timer. Partial pipe input on expiry assigns the partial record and exits 142. A closed/invalid fd reports the normal diagnostic before arming anything. For a native MemoryHost supply a monotonic test clock; a legacy host without timer-v1 may consume ready inputs, but a positive wait that would block returns diagnostic/status 2.
+
 ## Acceptance criteria
 
 1. Compare complete variable declarations, indices, attributes, stdout, stderr and exit status with Bash for each state change. Include a side-effectful subscript, valid last index, invalid index with sentinel zero, implicit associative zero, literal special keys, readonly/nameref arrays, nested locals and an indirect assignment. A count conversion followed by an ordinary conversion must assign the correct byte count and consume the correct next argument.
@@ -68,3 +94,5 @@ Hexadecimal float %a/%A uses binary exponent and hexadecimal mantissa, honors ca
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `timed_read_keeps_the_partial_record_and_cancels_its_timer` to [crates/vfs-shell/tests/laws.rs](../../crates/vfs-shell/tests/laws.rs). Update [documentation/reference/shell.md](../../documentation/reference/shell.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.

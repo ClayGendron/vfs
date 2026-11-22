@@ -10,7 +10,25 @@ A line can be refused before guest construction, expire while queued or waiting 
 
 Own the Python driver and native construction/step boundary, the Wasmtime epoch callback, worker lifecycle, and shared fatal state in machine/exec.rs and machine/io.rs. Preserve AsyncVirtualFileSystem, session and sync facade result semantics. Build atop current Deadline and offload APIs. The proposed verb-count budget and pool isolation in the existing November 21 budget spec are independent future work. This spec applies to the currently shared pool.
 
-Implementation prerequisites in this change (specified, pending implementation): [Shell wire messages are exact and instance transitions are explicit](../2026-11-22-shell-wire-and-instance-lifecycle/spec.md).
+These contracts are implementation prerequisites. [Shell wire messages are exact and instance transitions are explicit](../2026-11-22-shell-wire-and-instance-lifecycle/spec.md).
+
+## Design
+
+```mermaid
+flowchart TD
+    A["Admission"]
+    B["Queued"]
+    C["Guest step"]
+    D["VFS verb"]
+    E["Terminal state"]
+    A --> B
+    B --> C
+    B -->|deadline| E
+    C --> D
+    D -->|reply| C
+    D -->|cancel or timeout| E
+    C --> E
+```
 
 ## The problem
 
@@ -26,7 +44,7 @@ It carries an immutable absolute Python monotonic deadline and a thread-safe can
 
 ### 2. A published VM/host fatal stop is line-wide, first observed wins.
 
-Before dispatch, prefer externally requested cancellation, then expired deadline, then new execution. Latch a background interpreter budget just as in foreground. Stop polling other jobs for effects, discard undispatched requests, release descriptors and staged buffers without final data writes, retain output and pipeline statuses completed before the stop. Never replay an in-flight mutation. Cancel its await under the storage cancellation protocol. A write committed before an interrupt stays committed; the line can report timeout while that effect exists. Stop admitting new work even during cleanup. Cleanup of an already-in-flight transaction follows the storage contract and may outlive the returned result; retain a supervised reference, consume any exception and release resources when it settles.
+Before dispatch, prefer externally requested cancellation, then expired deadline, then new execution. Latch a background interpreter budget just as in foreground. Stop polling other jobs for effects, discard undispatched requests, release descriptors and staged buffers without final data writes, retain output and pipeline statuses completed before the stop. Never replay an in-flight mutation. Cancel its await under the storage cancellation protocol. A write committed before an interrupt stays committed; the line can report timeout while that effect exists. Stop admitting new work even during cleanup. Settle in-flight work according to the engine-specific rules below; the clock cannot undo a storage commit.
 
 ### 3. Bound shell-owned native buffers separately from the guest’s hard memory ceiling.
 
@@ -34,7 +52,7 @@ Use the configured memory_bytes value for the per-line total of live copied host
 
 ### 4. Validate fuel before native extraction as a Python integer in [0, 2^64−1], excluding bool; None retains the current default.
 
-Invalid input returns invalid/2. Parse search -n by a bounded decimal scan, with lexical treatment of non-ASCII or non-digit words unchanged. For recognized decimal values allow 1 through 2^63−1, reject zero/overflow with usage diagnostic and status 2, and make zero search requests on refusal. Count leading zeros without building a large integer. Keep the existing ordinary command-versus-call success convention.
+Invalid input returns invalid/2. Parse search -n by a bounded decimal scan, with lexical treatment of non-ASCII or non-digit words unchanged. For recognized decimal values use the search PARAMS maximum, currently 1 through 2^31−1, reject zero/overflow with usage diagnostic and status 2, and make zero search requests on refusal. Count leading zeros without building a large integer. Keep the existing ordinary command-versus-call success convention.
 
 ### 5. Preserve typed startup causes across binding and Python: syntax/refusal/parse budget use 2 with the existing classifications; execution fuel, module/host/logical memory use 137 and budget_exhausted; deadline uses 124; external machine cancel uses 130; unexpected runtime failure uses 1/internal.
 
@@ -43,6 +61,22 @@ Initialization failure before any step yields empty statuses and no filesystem e
 ### 6. A supported Unix child must start a fresh pool, engine singleton, epoch record, ticker and process-local synchronization.
 
 Use a PID-tagged native runtime holder with a newly allocated per-process initialization cell published by atomic compare/exchange before any inherited lock can be entered. Initializers that lose the race use the published cell. In the forked child abandon inherited cells without locking, destroying or joining inherited Wasmtime state. The parent retains its own cells and ticker. Inherited machine objects reject step/cancel under a different creator PID before touching their mutex; return the existing internal failure for a stale step and make stale cancel a no-op. Public fs.cli in a child creates a new instance; warm and concurrent parent initialization must not change that contract.
+
+## Interfaces and edge cases
+
+### Queueing, transactions and validation
+
+Expose a private construct/step path that takes the pre-created control token. A queued work item checks it immediately before doing any conversion or starting the engine. If an externally cancelled await abandons a queued constructor, the worker observes the cancelled token when dequeued and releases the slot without constructing an instance. A running constructor can observe the token before encoding, between bounded encoding chunks, before guest start and from the epoch callback. Code compilation that Wasmtime cannot interrupt is shared process setup; it owns no caller data or authority and cannot issue VFS effects.
+
+Follow the [storage cancellation contract](../../documentation/maintainers/cancellation.md) on **external cancellation**. Signal the verb task and await settlement through the existing database cancellation path. A SQLite statement ends and its transaction has rolled back (or a commit already started has completed) before re-raising the identical external exception. Preserve additional external cancellation requests; cleanup must not replace or suppress the caller's exception. Test in-memory SQLite, file SQLite and PostgreSQL with the existing storage cancellation barriers. A shell **deadline** stops dispatch at expiry. Where no storage attempt is in flight, return timeout/124 immediately. Where an attempt is in flight, cancel it and await its storage settlement before exposing the timeout; a database cleanup tail can therefore extend elapsed time beyond the deadline. Distinguish the deadline for starting work from database cleanup completion explicitly in the public reference. On an uncooperative third-party router await that cannot confirm settlement, abandon its return value, register it with the router’s close-time drain, forbid new dispatch by the line, and document the possible committed outcome. A later external cancellation during settlement takes precedence for the Python await. Never run a detached retry.
+
+Use checked envelope sizing before constructing PyO3-owned copies. Validate source_bytes independently, then size quoted UTF-8 source and strings, base64 payload, fixed syntax, collection entries and live return buffers. Count retained capacities including key and metadata slots at the point of allocation; release promptly. A host that receives a custom Router’s already-built oversized object can refuse to copy it, but cannot bound that external router’s private allocation. Document that distinction. With both native and interpreter live budgets set from memory_bytes, each applies separately; the process total can exceed one such allowance. Long-lived allocator/runtime and process-wide concurrency need separate accounting.
+
+For search use the actual search limit from src/vfs/params.py, including its minimum and maximum. The first decimal outside this range is usage 2, with no underlying search call. On CLI budget failures preserve successful preceding pipeline history, never invent an entry for a command that was not started, and retain a precise stop tag (parse budget vs execution budget vs host memory). The Python ShellMachine constructor’s existing four-element ValueError for parse failures stays accepted; carry runtime stops across a distinct internal exception with reason, status and measured fuel, and translate it only at the public run_line boundary.
+
+On a closed/rejected executor, obtain a fresh live pool and submit once under the same deadline. If still rejected return internal/1 without guest work. The shell never uses the generic executor’s inline fallback for native construction or stepping on an event-loop thread. The adapter owning the router keeps a set of unsettled third-party verb tasks. Router close first stops admission, requests cancellation and drains this set before storage shutdown; direct run_line against a third-party Router uses an equivalent externally owned driver or awaits settlement in the call itself if the router supplies no drain owner. For PostgreSQL a transaction that had entered commit can have landed; wait for the database attempt’s own terminal result before reuse of a connection. On SQLite protect cleanup from repeat cancellation as the existing storage helper does. Verify immediate subsequent use of the same storage after external cancel.
+
+Post-fork disposal is PID-gated, including Python deallocation, Rust Drop and interpreter/process teardown. In the child deliberately abandon inherited native objects without running destructors for parent-owned stores, mutexes, threads or engines. Store them behind a process-tagged owner supporting this behavior; a mere PID test inside step is insufficient. The OS reclaims inherited allocations at child exit. Native objects newly created in the child take normal destruction paths. Test child collection of the last inherited wrapper, cold and warm parent initialization, parent reuse, and a new line in the child. Applies to Unix fork on supported CPython hosts; spawn/exec creates ordinary fresh state. This does not add fork support to unrelated rayon operations.
 
 ## Acceptance criteria
 
@@ -65,3 +99,5 @@ Use a PID-tagged native runtime holder with a newly allocated per-process initia
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `deadline_and_external_cancel_settle_at_commit` to [tests/shell/test_host.py](../../tests/shell/test_host.py). Update [documentation/maintainers/cancellation.md](../../documentation/maintainers/cancellation.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.

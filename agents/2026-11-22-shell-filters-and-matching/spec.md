@@ -10,7 +10,22 @@ Filters preserve distinct records through redirection, and every pattern consume
 
 Own machine/{pattern,regex,expand,test}.rs and programs/{grep,sed,text}.rs for matching and byte representation. “Sed edits” owns publication and restricted scripts. “File commands” owns recursive traversal errors. Coordinate matcher API changes with the active linear-time matcher spec; this contract applies to either algorithm.
 
-Implementation prerequisites in this change (specified, pending implementation): [The parser and interpreter account for depth and live storage](../2026-11-22-shell-parsing-and-memory/spec.md), [Sed validates its script and commits completed edits in order](../2026-11-22-shell-sed-edits/spec.md).
+These contracts are implementation prerequisites. [The parser and interpreter account for depth and live storage](../2026-11-22-shell-parsing-and-memory/spec.md), [Sed validates its script and commits completed edits in order](../2026-11-22-shell-sed-edits/spec.md).
+
+## Design
+
+```mermaid
+flowchart TD
+    A["Input records"]
+    B["Raw units and keys"]
+    C["Match or comparison"]
+    D["Emit original or selected units"]
+    E["Incomplete search"]
+    A --> B
+    B --> C
+    C --> D
+    C --> E
+```
 
 ## The problem
 
@@ -22,7 +37,7 @@ Implementation prerequisites in this change (specified, pending implementation):
 
 ### 1. Keep raw records and separators through sort, uniq and tr.
 
-Sort and uniq compare their normal keys and emit original bytes, including invalid UTF-8. Distinct opaque units can never collapse to a replacement scalar. Use the reversible scalar/opaque-byte representation defined by “Sed edits” for character operations; raw unsigned-byte lexicographic order is the deterministic fallback for records that do not decode under the corpus locale. For tr, retain the original bytes for units not selected, and apply explicit byte translations/deletions before reassembly. Keep the GNU handling of a final unterminated record per utility. Only the final Python CLI display decodes with replacement.
+Sort and uniq compare their normal keys and emit original bytes, including invalid UTF-8. Distinct opaque units can never collapse to a replacement scalar. Use the reversible scalar/opaque-byte representation defined by “Sed edits” for character operations; apply one total order to every input record as specified below, including when a record contains opaque units. For tr, retain the original bytes for units not selected, and apply explicit byte translations/deletions before reassembly. Keep the GNU handling of a final unterminated record per utility. Only the final Python CLI display decodes with replacement.
 
 ### 2. Numeric sort -n scans the signed decimal prefix under LC_ALL=C.UTF-8, ignoring leading blanks and insignificant leading/trailing zeroes.
 
@@ -39,6 +54,12 @@ On exhausted search discard partial best captures, propagate exhaustion before n
 ### 5. Implement case-insensitive bracket ranges with the same character equivalence as literals in the pinned C.UTF-8 locale, including matching uppercase ASCII against a lowercase ASCII range in grep, sed and Bash regex conditions.
 
 Pass the live nocasematch option into shell parameter replacements; leave case-sensitive behavior when disabled. Match Bash’s GLOBIGNORE state transitions: a fresh empty assignment does not set dotglob, a nonempty value enables it, unsetting removes the implicit enabling, and explicit shopt changes are applied in program order. Use fixture comparisons for empty-after-nonempty, explicit setting/resetting and the special dot entries, checking actual expanded filenames before any command runs.
+
+## Interfaces and edge cases
+
+An empty GLOBIGNORE assignment leaves the current dotglob bit alone, a nonempty assignment sets it, and unset clears it even if explicitly set beforehand. An explicit shopt operation afterward sets the requested state. Test the full sequence as well as the fresh-shell case. The pinned recorder fixes locale and program versions. In numeric sort -n, accept optional minus and the C-locale decimal point, do not interpret a leading plus or exponent as part of the numeric key, and compare normalized signed digit spans without expanding zero padding. Preserve equal-key input order where GNU requires it.
+
+Numeric comparison always applies the same parsed numeric-key function to every record, irrespective of its encoding. An opaque byte ends the ASCII numeric prefix like any other nonnumeric byte. Never switch comparator based on the pair being compared. For the default textual comparator, compare sequences of uniformly ordered units, valid scalars by their corpus collation order and opaque units after valid scalars, ordered by unsigned byte. Use bytes only as a final whole-record tie-breaker after equal primary keys when GNU requires one; -u determines equality from the selected keys and retains the first eligible record. Test transitivity over triples mixing valid numeric prefixes and opaque bytes, and sort the same input in all six permutations.
 
 ## Acceptance criteria
 
@@ -61,3 +82,5 @@ Pass the live nocasematch option into shell parameter replacements; leave case-s
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `numeric_record_comparator_is_transitive_for_mixed_bytes` to [crates/vfs-shell/tests/laws.rs](../../crates/vfs-shell/tests/laws.rs). Update [documentation/reference/shell.md](../../documentation/reference/shell.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.

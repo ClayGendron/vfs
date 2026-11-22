@@ -10,7 +10,24 @@ A fresh open sees current authority and version. A read in progress either yield
 
 Own src/vfs/shell/host.py read/list/stat requests, the Rust Request/Reply model and corresponding codec changes, AsyncVirtualFileSystem routing and the storage-side read/projection paths. Coordinate wire shapes with “Wire and instance lifecycle”, and stream errors with “Redirections and pipelines”. This work adds governed read/stat projections, reuses the existing paged ls verb and adds a guarded-write request for sed. Include protocol adapters, MemoryHost, database storage, testing hosts and public documentation in the same landing.
 
-Implementation prerequisites in this change (specified, pending implementation): [Shell wire messages are exact and instance transitions are explicit](../2026-11-22-shell-wire-and-instance-lifecycle/spec.md), [A shell line has one admission budget and one terminal outcome](../2026-11-22-shell-runtime-termination/spec.md).
+These contracts are implementation prerequisites. [Shell wire messages are exact and instance transitions are explicit](../2026-11-22-shell-wire-and-instance-lifecycle/spec.md), [A shell line has one admission budget and one terminal outcome](../2026-11-22-shell-runtime-termination/spec.md).
+
+## Design
+
+```mermaid
+flowchart TD
+    A["Shell descriptor"]
+    B["Governed open"]
+    C["Identity and byte window"]
+    D["Next authorized range"]
+    E["Close or conflict"]
+    A --> B
+    B --> C
+    C --> D
+    D -->|same version| C
+    D --> E
+    C --> E
+```
 
 ## The problem
 
@@ -24,13 +41,13 @@ Implementation prerequisites in this change (specified, pending implementation):
 
 Add ReadOpen(path,length), ReadNext(reader,offset,length) and ReadClose(reader) controls. Replies carry the current data bytes, eof and an opaque stable identity on open. The initial chunk and identity derive from the same authorized read. Seekless continuation requires the next sequential byte offset; unknown, closed or mismatched reader returns Invalid. A duplicate fd shares the reader and cursor. Close releases the descriptor on last use and line teardown releases all remaining handles. Each independent open goes through the router, including offset zero at the same path. No cross-line cache.
 
-### 2. Extend the public read verb with optional keyword-only offset, length and expected identity, on the single-path form.
+### 2. Reuse the planned public read(range=ByteRange(offset, length)) spelling and public range_start/range_length fields.
 
-Offset and length are nonnegative bounded integers; both are required for a range and existing whole-read semantics stay unchanged. A shell chunk is at most 64 KiB. Return data as bytes, including for stored text, with offset measured in canonical UTF-8 bytes. Use a new optional range metadata object carrying opaque identity, bytes returned and eof; for zero length, eof means offset at or beyond the end. The identity binds mounted storage instance, stable entry ID and version, so path reuse cannot join different objects. Compare expected identity and select the slice under the same rights-checked statement/transaction. Report a visible version mismatch as conflict; hide inaccessible paths under normal VFS masking. Recheck read access on every continuation. Old handles confer no continuing read right. A conflict/refusal is final for that reader.
+Add keyword-only exact_bytes=False and if_identity=None to the read faces. Exact mode requires one path, one range and a backend advertising exact_read_v1. It serves only raw canonical file bytes in data, regardless of whether the row is text or bytes-sourced; a binary row's text rendering is never the source. For text files, use the stored text encoded as UTF-8. Ordinary public ranged text reads retain the existing proposal’s outward character widening and its default fallback. Exact shell reads never invoke that whole-body fallback. Source identity, authority and bytes must be observed together. Recheck access on each continuation and return conflict only after normal masked admission succeeds. A conflict or refusal is final for that reader.
 
-### 3. On SQLite slice the canonical UTF-8 byte representation as a BLOB, and on PostgreSQL use bytea or UTF-8 conversion before byte slicing.
+### 3. Use a bounded, offset-indexed byte source on each supported database and preserve whole-file API behavior for existing files.
 
-Project only the slice, identity and length/EOF metadata across the DB boundary; preserve grants, routing and mount column masks. A backend incapable of a bounded atomic range returns unsupported before fetching a whole body. Keep the old whole-read API available to ordinary callers and legacy wire clients. Replace the path body cache with per-reader metadata and at most one active chunk, keyed by ID with O(1) insert/close. Charge keys, retained bytes and entries to the host buffer allowance; evict optional cached data only. Count refused admission for a new reader rather than evicting a live identity. MemoryHost slices the stored bytes with the same scope and errors.
+The engine implementations, upgrade and field definitions below are part of this landing. Replace the Python path-body cache with per-reader metadata and one active chunk. Use O(1) insertion and close, charge metadata even for empty files, and release the state on EOF, error, last close or teardown. When admission fails, preserve existing readers and terminate the line on the host-memory budget. MemoryHost implements the same identities and byte offsets.
 
 ### 4. Page shell listings with the public cursor.
 
@@ -43,6 +60,33 @@ A visible regular file’s read bit uses the same admission as body read, and wr
 ### 6. Add GuardedWrite(path,expected_identity,bytes) for publishing a completed edit.
 
 Route to a conditional write that checks both stable identity and version in the mutation transaction; extend the current if_version path where it lacks identity. A conflict leaves the target intact. Engines that cannot check the precondition atomically return unsupported. Use an opaque token: possession alone never authorizes access. Host reply shapes and stat fields are negotiated before use under the wire spec.
+
+## Interfaces and edge cases
+
+### Public surfaces and representation
+
+Extend the parameter registry, validation, all four router/session faces, result projection, storage protocols, native stub and API drift tests together. Use the active [ranged-read specification](../../context/specifications/active/178-the-ranged-read/spec.md) for ordinary range validation, widening, batch behavior and fallback on the two supported engines. If that API lands separately, reuse it. If it is still pending, land its shared signature and ordinary contract first. Exact mode is an additive single-path storage capability. Do not pass new keywords to old backends in ordinary calls. An unsupported exact call returns a classified unsupported result. Implement the derived r/w fields using the [file mode and rights proposal](../2026-11-22-a-file-carries-its-executable-bit/spec.md); its executable bit and chmod are independent future work.
+
+| Interface | Contract |
+|---|---|
+| Exact read input | `read(path, range=(offset,length), exact_bytes=True, if_identity=token, authority=who)`. On first read omit the token. Accept non-bool counts 0 to 2^63−1; cap the selected end at file size using checked arithmetic. Exact mode accepts omitted columns or a subset of data and required range/identity metadata. Content, observations, and if_identity without exact mode return invalid before backend dispatch. |
+| Exact read result | One observation carries `data: bytes`, `range_start`, `range_length`, `size_bytes` of the canonical body, `version`, `source` and `read_identity: str`. Empty/past-end reads still carry identity. EOF means offset ≥ size or returned length reaches the remaining size. No digest of the complete body is calculated on a range. |
+| Identity and guarded writes | Mint an opaque router token for mount registration generation, storage entry ID and committed version. Validate structure and equality under normal authority, route and row preconditions. Bind it to the addressed path as resolved by that registration. A remount or new entry at the same spelling cannot satisfy it. Add `if_identity: str \| None` to single-target write and noncascade delete, mutually exclusive with other preconditions except the ordinary payload. Gate the row identity/version in the transaction performing the write or delete, checking the affected row count. Malformed form → invalid, authorized mismatch → conflict, inaccessible target → existing masked refusal. The internal reference host keeps a fresh ID on re-creation and increments a monotonic version on changes. |
+| Stat projections | Reuse `updated_at` on Python observations. Map it to signed UTC microseconds on the wire. Add optional booleans `can_read`, `can_write` and optional `read_identity` to opt-in stat columns only. Where data access is masked, redact identities and timestamps as existing projection rules require; permit an identity-only token for an authorized deletion through the same delete gate, with no body permission conveyed. |
+
+### Physical byte reads and upgrade
+
+SQLite uses an immutable-for-the-statement row identity and the SQLite incremental BLOB reader on the same checked-out database connection and transaction as the access/version query. Resolve the rowid of the current text or bytes content row, check file kind, then use sqlite3_blob_open/bytes/read/close to read exactly the requested byte window. It supports TEXT and BLOB columns in ordinary rowid tables. Database encoding must be UTF-8 for text. Run the operation on the owning aiosqlite worker through a supported adapter or a registered native SQLite function on that connection; never share sqlite handles between threads. Close the blob and transaction before another shell await. Detect eligibility at backend construction. For another SQLite database encoding use the bounded canonical-byte projection described below instead of silently changing bytes.
+
+PostgreSQL bytes files use the existing EXTERNAL bytea column and indexed entry_id. For text files, add a current UTF-8 bytea projection, keyed by entry_id with matching version, stored EXTERNAL. Populate/replace that projection inside the transaction that creates or changes canonical text, including append, edit, restore, kind transitions and copied entries. A move that preserves identity reuses the projection if the version still agrees. Join on entry_id and version; use bytea substring on the selected projection, with one-based arguments, without whole-text conversion per chunk. On a missing projection, initialize exactly once for the committed version as on-demand backfill using INSERT…SELECT from authorized canonical text, guarded by entry_id/version under the entry lock. Recheck identity after acquiring the lock. If a current projection cannot be installed (including on a database replica), return a classified unsupported/refusal rather than fetching a complete body in Python. Run batched resumable backfill ordered by entry_id before enabling strict reads on read-only replicas. Deployment order is additive table/index, dual write, backfill, capability advertisement. Retain old columns for existing callers; rolling workers that predate dual-write can leave version-mismatched projections, which are never served. Stale projections are reclaimed on body replacement or purge. Budget one additional current text body per text file, plus index overhead. Measure first conversion separately from repeated windows; over a full sequential read count at most one full-body conversion per immutable version and O(file bytes + number of requests) DB byte work. Count slice bytes entering Python and verify zero full-body payloads. This explicitly addresses the whole-value costs described in §4 of the earlier range spec.
+
+Range/capability metadata and read ownership are confined to a single router/line. For paging allocate at most 128 rows per request, shrink the requested count down to 1 as available host memory decreases; an entry that cannot fit returns a budget failure before materialization. The storage adapter must also enforce a per-page encoded-byte cap (return the prior cursor and remaining names on later pages); a single over-budget name yields budget failure instead of a nonprogressing page. A directory node with a suppressed child or concurrent change follows normal ls visibility rules. Track the last cursor only and require strict increasing path order, using the router’s existing cursor comparator.
+
+Return already-authorized bytes held in an open description’s current chunk even if a subsequent grant change has occurred; those bytes were delivered at the earlier read. Recheck authority on the next host fetch and on every fresh open. Never prefetch a second chunk. Close reader state at EOF or failure; a buffered final suffix remains owned by the descriptor until drained. Fatal teardown releases all line-local state without routing any new close through storage. A duplicate close of an issued line-local reader is a successful no-op without needing an unbounded tombstone table. Reject structurally malformed or cross-line identifiers. A caller sending a syntactically valid close for an unknown reader in this line also gets success; next on any absent reader is invalid.
+
+For page admission the adapter passes max_bytes before querying. Charge a fixed 32 bytes per returned entry plus its UTF-8 name length and 1 byte for its kind, and also charge the actual serialization workspace separately. SQL first fetches only indexed path metadata and byte lengths of at most page_size candidate rows, using the existing authorized keyset traversal. Fetch names for the fitting contiguous prefix only and preserve any earlier cursor if the first row alone is too large (budget failure; no retry of that page). Include the cursor in wire preflight. Advancing pages must use the existing router’s ordering across synthetic mount children and ordinary children, including its per-mount warning merging. Cover remounts, closed storage, an empty page with a valid next cursor, and a legal huge single name with the limit set deliberately small.
+
+With verify-on-read enabled under the proposed integrity feature, a range is identified by entry/version but is not advertised as full-body checksum verified. Never fetch a full body solely to claim range verification. Expose whole-object verification status only when a verified snapshot independently covers that version; otherwise retain the ranged-read proposal’s partial/unverified semantics. Filtering a bytes-sourced row by permissions can never fall back silently to its text rendering. Old backends receive their current public signatures unless they advertise the optional capability; add conformance for all four public read faces and a protocol-only legacy backend.
 
 ## Acceptance criteria
 
@@ -63,3 +107,5 @@ Route to a conditional write that checks both stable identity and version in the
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `range_rechecks_identity_and_access_on_both_engines` to [tests/shell/test_engines.py](../../tests/shell/test_engines.py). Update [documentation/reference/shell.md](../../documentation/reference/shell.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.

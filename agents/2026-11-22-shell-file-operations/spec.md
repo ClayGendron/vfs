@@ -10,7 +10,23 @@ A cleanup command may delete only the paths selected by its validated arguments 
 
 Own option parsing and dispatch in programs/files.rs, the typed metadata lookup in programs/mod.rs, recursive traversal in programs/grep.rs, and MemoryHost’s copy, move and mkdir semantics. The production transfer policy already refuses occupied destinations. Use the storage access and stat outcome contract in “File reads and metadata” for backend tests. The program-layer cases can land first with a typed host double.
 
-Implementation prerequisites in this change (specified, pending implementation): [File reads and metadata remain bounded and caller-authorized](../2026-11-22-shell-file-reads-and-metadata/spec.md).
+These contracts are implementation prerequisites. [File reads and metadata remain bounded and caller-authorized](../2026-11-22-shell-file-reads-and-metadata/spec.md).
+
+## Design
+
+```mermaid
+flowchart TD
+    A["argv and verb flags"]
+    B["Operand validation"]
+    C["Confirmation and identity"]
+    D["Governed mutation"]
+    E["Refusal or skip"]
+    A --> B
+    B --> C
+    C --> D
+    B --> E
+    C --> E
+```
 
 ## The problem
 
@@ -40,6 +56,14 @@ Recognize attached and separate values, --mode and --reference, mixed flags and 
 
 Forced rm suppresses NotFound including deliberately masked absence. On another error emit the program diagnostic and status 1. For a failed subtree listing/stat, find keeps admitted results, emits a diagnostic and exits 1. Grep keeps admissible matches, reports a traversal error with status 2 unless GNU -q has already found a match, and -s suppresses the diagnostic only. An unknown size cannot satisfy -empty. Store the classified warning under the host evidence rules. These outcomes preserve information about partial results without naming hidden rows.
 
+## Interfaces and edge cases
+
+Interactive removal works on an observed entry identity. Immediately before a prompt obtain the optional metadata identity from the stat path under current authority. On acceptance dispatch a noncascade guarded remove with the approved identity; recheck rights and compare identity/version atomically in the delete transaction. A replaced name or remount returns conflict and the replacement survives. Track which child names were visited, skip declined children and retain a parent containing skipped or new children. A directory version changed solely by this command’s own child removals may be restatted before the final independent directory prompt; compare stable object identity as well as the newly approved version. When guarded removal is unsupported refuse the interactive operation with status 1 before dispatching deletes. For a recursive -I confirmation, enumerate and bind the authorized traversal snapshot before the prompt; store it under the logical memory budget and refuse before any delete if it does not fit. Remove only approved identities from that snapshot, deepest first. GNU prompt spelling/order comes from the pinned GNU image under LC_ALL=C.UTF-8.
+
+For -i traversal, decline descent → preserve the subtree without enumerating it. Decline a child → retain that object, continue siblings and never delete its parent by cascade. Open each target under current authority. If its identity cannot be obtained, produce one operational failure and leave it untouched. For -u, both the initial source and occupied destination need known times; unknown time yields status 1. For combined -i/-n/-f prefer the pinned GNU utility’s per-command precedence, recording a fixture for each ordered pair. A move or copy that would overwrite is still refused by the VFS transfer verb. Exact fixture stdout/stderr/status describe GNU behavior; add a VFS-specific result with a rationale where the no-overwrite rule changes it.
+
+Declining a child in per-file -i mode suppresses removal of its parent; skip the final parent delete and its prompt when retained children are already known. For -I, take one snapshot before the single confirmation, then remove only the same identities, with unchanged versions where required. If an existing node disappeared or changed identity while paginating or awaiting confirmation, skip its removal and report a conflict (status 1) if the observed object cannot be confirmed again. A newly observed child outside the snapshot stays. Verify same-name replacement by another session between confirmation and deletion as well as insertion of a differently named child. Update the GNU comparison fixture with an explicit safety delta if this concurrent or declined-child behavior differs.
+
 ## Acceptance criteria
 
 1. Assert the exact list of (operation, path, cascade) requests for a declined child in an otherwise accepted recursive run. Change directory membership between listing and removal and assert the new child survives. Confirm that a valid sibling can still be processed after an invalid operand. Use the existing Bash/GNU recorder for prompts and statuses with stable fixture paths.
@@ -62,3 +86,5 @@ Forced rm suppresses NotFound including deliberately masked absence. On another 
 ## Verification
 
 Use the pinned recorder and its environment in [the shell corpus](../../tests/shell/README.md) for observable Bash/GNU behavior. Run the affected crate laws and the release corpus with `cargo test --release -p vfs-shell -p vfs-shell-wasm`. Exercise public-host behavior with `uv run pytest tests/shell` and the PostgreSQL-marked engine cases when a storage contract changes. Record intentional VFS deviations alongside the corpus fixtures. A case moves out of the known-failure list only when its recorded assertions pass.
+
+Add the regression `interactive_delete_preserves_replaced_entry` to [tests/shell/test_engines.py](../../tests/shell/test_engines.py). Update [documentation/reference/shell.md](../../documentation/reference/shell.md) in the implementation change with the observable contract and intentional VFS differences. For a Python test use the standard test_ prefix.
