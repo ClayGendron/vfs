@@ -7,7 +7,7 @@ import pytest
 
 from vfs import AsyncVirtualFileSystem
 from vfs.authority import Authority, Principal
-from vfs.shell.patterns import fnmatch_safe, glob_safe, verb_regex, word_served
+from vfs.shell.patterns import case_folds_alike, fnmatch_safe, glob_safe, verb_regex
 
 SYSTEM = Authority.system()
 ADA = Authority.of(Principal("ada"))
@@ -108,11 +108,18 @@ def test_a_pattern_with_no_operator_keeps_its_text() -> None:
 
 
 @pytest.mark.parametrize(
-    ("literal", "served"),
-    [("word", True), ("two-words", True), ("-dash", False), ("x ", False), ("", False), (None, False)],
+    ("pattern", "served"),
+    [
+        ("TODO", True),
+        ("beta|gamma", True),
+        ("pipe", False),
+        ("TIME", False),
+        ("[a-c]x", False),
+        ("\u00e9t\u00e9", False),
+    ],
 )
-def test_w_is_served_only_where_the_verbs_boundaries_mean_gnus(literal: str | None, served: bool) -> None:
-    assert word_served(literal) is served
+def test_i_is_served_only_where_glibc_and_the_verb_fold_alike(pattern: str, served: bool) -> None:
+    assert case_folds_alike(pattern) is served
 
 
 @pytest.mark.parametrize(
@@ -174,10 +181,9 @@ DIFFERENTIAL = (
     ("t.b", "basic", False),
     ("[0-9][0-9]*$", "basic", False),
     ("^(UPPER|lower)", "extended", False),
-    ("upper", "basic", True),
-    ("MIXED|été", "extended", True),
-    ("[a-c]B", "basic", True),
-    ("Alpha", "fixed", True),
+    ("UPPER", "basic", True),
+    ("BETA|GAMMA", "extended", True),
+    ("ALPHA", "fixed", True),
 )
 
 

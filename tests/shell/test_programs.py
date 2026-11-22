@@ -32,7 +32,14 @@ async def _hand_back(caller: Any, words: list[str], cwd: str) -> None:
 
 async def _world() -> AsyncVirtualFileSystem:
     fs = await _seeded(seed=True)
-    for path in ("/work/tree/a/x.txt", "/work/tree/a.md", "/work/tree/a-b.txt", "/work/tree/B.txt", "/work/tree/_u"):
+    for path in (
+        "/work/tree/a/x.txt",
+        "/work/tree/a.md",
+        "/work/tree/a-b.txt",
+        "/work/tree/B.txt",
+        "/work/tree/_u",
+        "/work/tree/\u0130.md",
+    ):
         ok(await fs.write(path=path, content="x marks\nno\n", parents=True, authority=SYSTEM))
     ok(await fs.mkdir("/work/tree/z/empty", parents=True, authority=SYSTEM))
     return fs
@@ -75,8 +82,8 @@ SERVED_GREP = (
     "grep -r return src/lib",
     "grep -rh alpha docs",
     "grep -rH alpha docs/a.md",
-    "grep -rni ALPHA docs",
-    "grep -rw add src",
+    "grep -rn -y BETA docs",
+    "grep -rc -i TODO .",
     "grep -rF 'a, b' src",
     "grep -rE 'al(pha|so)' docs",
     "grep -r -e alpha -e beta docs",
@@ -90,7 +97,7 @@ SERVED_GREP = (
     "grep -r alpha docs docs/a.md",
     "grep -rl alpha docs src",
     "grep -R alpha docs",
-    "grep --recursive --line-number --ignore-case ALPHA docs",
+    "grep --recursive --line-number --ignore-case BETA docs",
     "grep -rn '^$' .",
     "grep -r '' data",
     "cd docs && grep -r alpha",
@@ -132,8 +139,11 @@ LIBRARY_GREP = (
     "grep -rL alpha docs",
     "grep -r '\\<alpha' docs",
     "grep -r '[[:digit:]]' data",
+    "grep -rw add src",
     "grep -rw 'a.b' src",
     "grep -ri 'été' docs",
+    "grep -ri INTRO docs",
+    "grep -ri '[a-c]lpha' docs",
     "grep -r alpha - < docs/a.md",
     "grep -rf docs/a.md docs",
     "echo alpha | grep alpha",
@@ -258,6 +268,8 @@ SERVED_FIND = (
     "find . -name '[ab].md'",
     "find . -name '????.txt'",
     "find . -iname 'A*'",
+    "find tree -iname '?.md'",
+    "find tree -ipath 'TREE/?.MD'",
     "find src -path '*lib*'",
     "find . -wholename './src/*.py'",
     "find . -ipath './DOCS/*'",
@@ -560,7 +572,7 @@ def _truncating(fs: AsyncVirtualFileSystem, verb: str, monkeypatch: pytest.Monke
     async def truncated(*args: Any, **kwargs: Any) -> Result:
         answer = await original(*args, **kwargs)
         cut = classified(ErrorKind.truncated, detail="the stage's time budget", severity=Severity.warning)
-        return answer.model_copy(update={"errors": [*answer.errors, cut]})
+        return answer.model_copy(update={"observations": answer.observations[:1], "errors": [*answer.errors, cut]})
 
     monkeypatch.setattr(fs, verb, truncated)
 

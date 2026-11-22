@@ -5,13 +5,19 @@ GNU's output. The host serves a form from the indexed verbs when the verbs' answ
 GNU's program prints: ``grep -r`` is one call of ``grep``, where the shell's library reads every
 file beneath its roots, and ``find`` is one call of ``glob`` for each directory it starts from,
 where the library lists every directory and stats every file. Any other form, or a form whose
-answer came back truncated, is handed back to the library, which reads every construct, so a
-caller sees GNU's output either way and only the cost differs.
+answer came back cut short, is handed back to the library, so a served form prints what the
+library prints for it and only the cost differs. The library prints GNU's output for every option
+it knows; it knows no ``--include`` or ``--exclude``, so a form of those it is handed back ends in
+GNU's ``unrecognized option``.
+
+A served program holds its whole answer before the line reads a byte of it, so its memory follows
+what it matched, not the size of the tree, and ``| head`` does not bound it as it bounds the library.
 
 Two things a served ``grep -r`` cannot print as GNU's would, since no verb tells them apart
-without reading every file. A file the caller may list but not read is left out without a word,
-where GNU prints ``Permission denied`` and exits 2. A body stored as bytes is never matched,
-where GNU matches its raw bytes and prints ``Binary file ... matches``.
+without reading every file. A file the caller may list but not read is left out of its matches
+without a word, and counted 0 by ``-c``, where GNU prints ``Permission denied`` and exits 2. A
+body stored as bytes is never matched, where GNU matches its raw bytes and prints ``Binary file
+... matches``.
 
 The verbs with no Unix name are programs in the shape of a GNU tool: ``glob``, ``search``,
 ``traverse``, ``grant``, ``revoke``, ``grants``, ``edit``, ``mkedge`` and ``rmedge``. Each takes
@@ -28,14 +34,15 @@ something, 1 when they found nothing and 2 on trouble, as ``grep`` does.
 from __future__ import annotations
 
 import posixpath
-from fnmatch import fnmatchcase
+import re
+from fnmatch import translate
 from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 from vfs.models import Observation
 from vfs.ops import RUNGS, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, TRAVERSE_METHODS
 from vfs.results import ErrorKind
 from vfs.results.kinds import KIND_CONTRACTS
-from vfs.shell.patterns import ascii_letters_only, fnmatch_safe, glob_safe, verb_regex, word_served
+from vfs.shell.patterns import case_folds_alike, fnmatch_safe, glob_safe, verb_regex
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -96,7 +103,6 @@ _GREP_FLAGS: Final[dict[str, str]] = {
     "c": "count",
     "r": "recursive",
     "R": "recursive",
-    "w": "word",
     "h": "no_name",
     "H": "with_name",
     "s": "silent",
@@ -114,7 +120,6 @@ _GREP_LONG: Final[dict[str, str]] = {
     "count": "c",
     "recursive": "r",
     "dereference-recursive": "R",
-    "word-regexp": "w",
     "no-filename": "h",
     "with-filename": "H",
     "no-messages": "s",
@@ -171,7 +176,6 @@ class Router(Protocol):
         globs_not: tuple[str, ...],
         case_mode: CaseMode,
         fixed_strings: bool,
-        word_regexp: bool,
         output_mode: GrepOutputMode,
         allow_scan: bool,
         authority: Authority | None,
@@ -308,7 +312,6 @@ async def grep(caller: Caller, words: list[str], cwd: str) -> Ran | None:
             globs_not=form.excludes,
             case_mode="insensitive" if "ignore_case" in form.options else "sensitive",
             fixed_strings=one,
-            word_regexp="word" in form.options,
             output_mode=mode,
             allow_scan=True,
             authority=caller.authority,
@@ -444,9 +447,7 @@ def _grep_pattern(form: _GrepForm) -> Translated | None:
         translated = verb_regex(pattern, form.dialect)
         if translated is None:
             return None
-        if "ignore_case" in form.options and not ascii_letters_only(pattern):
-            return None
-        if "word" in form.options and not word_served(translated.literal):
+        if "ignore_case" in form.options and not case_folds_alike(pattern):
             return None
         parts.append(translated)
     if len(parts) == 1:
@@ -472,11 +473,19 @@ def _shown_beneath(shown: str, root: str, path: str) -> str:
 
 
 class _FindTest(NamedTuple):
-    """One test of a served ``find``: what it reads and the pattern or kind it compares."""
+    """One test of a served ``find``: what it reads, the kind it compares, or the pattern it matches.
+
+    A pattern is matched as GNU ``fnmatch`` reads it with no flags; with ``nocase``, each character
+    is folded alone, as ``FNM_CASEFOLD`` folds it, so a ``?`` still matches a letter that lowercases to two.
+    """
 
     reads: str
     value: str
     nocase: bool = False
+
+    @property
+    def matcher(self) -> re.Pattern[str]:
+        return re.compile(translate(self.value), re.IGNORECASE if self.nocase else 0)
 
 
 async def find(caller: Caller, words: list[str], cwd: str) -> Ran | None:
@@ -575,9 +584,7 @@ def _find_passes(test: _FindTest, shown: str, directory: bool) -> bool:
     if test.reads == "type":
         return directory == (test.value == "d")
     subject = shown if test.reads == "path" else ("/" if shown == "/" else shown.rstrip("/").rsplit("/", 1)[-1])
-    if test.nocase:
-        return fnmatchcase(subject.lower(), test.value.lower())
-    return fnmatchcase(subject, test.value)
+    return test.matcher.match(subject) is not None
 
 
 # ---------------------------------------------------------------------------

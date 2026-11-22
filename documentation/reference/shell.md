@@ -79,16 +79,16 @@ These programs run inside the shell and print what GNU coreutils, grep, sed and 
 
 vfs serves `grep -r` and `find` from its indexed verbs, so a search of a large tree costs one call, not one call per file.
 
-- `grep -r` is one call of `grep`. It is served with the options `-E`, `-F`, `-G`, `-i`, `-n`, `-l`, `-c`, `-w`, `-h`, `-H`, `-s`, `-q`, `-e` and `-R`, their long forms, and `--include` and `--exclude`. `-c` adds one call of `glob`, to print the files that hold no match.
+- `grep -r` is one call of `grep`. It is served with the options `-E`, `-F`, `-G`, `-n`, `-l`, `-c`, `-h`, `-H`, `-s`, `-q`, `-e` and `-R`, their long forms, and `--include` and `--exclude`. `-i` is served for a pattern of ASCII that holds no `i` and no bracket, since GNU folds `i` with the dotless `ı` and the indexed `grep` does not. `-c` adds one call of `glob`, to print the files that hold no match.
 - `find` is one `stat` and one call of `glob` for each place it starts from. It is served with `-name`, `-iname`, `-path`, `-ipath`, `-wholename`, `-type f`, `-type d`, `-maxdepth`, `-mindepth`, `-true` and `-print`, joined by `-a`.
 
-Any other form runs as the shell's own program, which reads the tree with one `read`, `ls` or `stat` for each entry. That includes `grep`'s `-v`, `-o`, `-x` and context lines, `find`'s `-o`, `!` and `-prune`, and a pattern construct the two matchers read differently, such as `\<`, `\w` or `[[:alpha:]]`. Either way the output is GNU's, in the order the shell's own program prints it. Only the cost differs.
+Any other form runs as the shell's own program, which reads the tree with one `read`, `ls` or `stat` for each entry. That includes `grep`'s `-v`, `-o`, `-x`, `-w` and context lines, `find`'s `-o`, `!` and `-prune`, and a pattern construct the two matchers read differently, such as `\<`, `\w` or `[[:alpha:]]`. Either way the output is what the shell's own program prints, in its order. Only the cost differs. The shell's own `grep` knows no `--include` or `--exclude`, so a form of those that is not served ends in `unrecognized option`, as when a `--include` follows an `--exclude`.
 
 A served `grep -r` differs from GNU grep in two cases. No verb can tell these cases apart without reading every file:
 
 | Case | GNU grep | A served `grep -r` |
 |---|---|---|
-| A file the caller may list but not read | prints `Permission denied` and exits 2 | leaves the file out |
+| A file the caller may list but not read | prints `Permission denied` and exits 2 | leaves the file out, and `-c` counts it 0 |
 | A body stored as bytes, not as text | matches its raw bytes and prints `Binary file ... matches` | never matches it |
 
 A file the shell writes is stored as text when it is UTF-8. So the second case meets only bodies a caller wrote as bytes.
@@ -150,7 +150,7 @@ A line runs under budgets. `cli` runs every line at these defaults; `vfs.shell.r
 | Memory of the module | 256 MiB |
 | Seconds from the line's start to its end, its verbs included | 30 |
 
-Moving bytes between the interpreter and vfs costs instructions too: about 270 for each byte `cat` reads, and about 1,100 for each byte `grep` searches. So under the default budget a line reads tens of megabytes, not more. A served `grep -r` or `find` moves only what it prints, so its cost follows its output, not the size of the tree. A form the shell's own program runs reads every entry beneath its root, which bounds it to thousands of files a line.
+Moving bytes between the interpreter and vfs costs instructions too: about 270 for each byte `cat` reads, and about 1,100 for each byte `grep` searches. So under the default budget a line reads tens of megabytes, not more. A served `grep -r` or `find` moves only what it matches, so its cost follows its matches, not the size of the tree. It holds all of them before the line reads the first, so `| head` does not make it stop early, as it does the shell's own program. A form the shell's own program runs reads every entry beneath its root, which bounds it to thousands of files a line.
 
 The instruction count is a function of the line and its replies, and the result reports it as `fuel_used`. An arithmetic expression or a `[[ ]]` condition counts each link of a long chain, such as `1+1+1`, against the parse depth, so a chain thousands of links long is an error rather than a crash. A regular expression that cannot be matched within its own budget fails with status 2 and says so; it never answers "no match".
 

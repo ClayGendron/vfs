@@ -37,7 +37,8 @@ _ERE_ESCAPABLE: Final = frozenset("\\.[]()*+?{}|^$")
 _BRE_ESCAPABLE: Final = frozenset("\\.[]*^$/")
 """Characters a basic pattern may escape to mean themselves."""
 
-_WORD_PUNCTUATION: Final = "_"
+_UNFOLDED: Final = frozenset("iI[")
+"""What keeps an ASCII pattern from ``-i``: the letter glibc folds with the dotless i (U+0131), and a bracket."""
 
 
 class Translated(NamedTuple):
@@ -64,20 +65,14 @@ def verb_regex(pattern: str, dialect: Dialect) -> Translated | None:
     return Translated(regex, reader.literal())
 
 
-def word_served(literal: str | None) -> bool:
-    """Whether ``-w`` over this pattern means what the verb's word boundaries mean.
+def case_folds_alike(pattern: str) -> bool:
+    """Whether ``-i`` over ``pattern`` folds each letter as glibc's ``towlower`` and the verb both do.
 
-    It does for a pattern with no operator whose first and last characters are word
-    characters; elsewhere GNU's retry after a failed boundary and the verb's ``\\b`` part.
+    The two fold every ASCII letter alike, ``k`` with the Kelvin sign and ``s`` with the long s (U+017F)
+    included, except ``i``, which glibc also folds with the dotless i (U+0131). So a pattern is
+    served under ``-i`` when it is ASCII and holds no ``i`` and no bracket, whose range may.
     """
-    if not literal:
-        return False
-    return _is_word(literal[0]) and _is_word(literal[-1])
-
-
-def ascii_letters_only(pattern: str) -> bool:
-    """Whether ``pattern`` holds only ASCII, so ``-i`` folds it by one table on both sides."""
-    return pattern.isascii()
+    return pattern.isascii() and not (_UNFOLDED & set(pattern))
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +349,3 @@ def _escaped(ch: str) -> str:
 
 def _class_escaped(ch: str) -> str:
     return "\\" + ch if ch in _CLASS_META else ch
-
-
-def _is_word(ch: str) -> bool:
-    return ch.isalnum() or ch in _WORD_PUNCTUATION
