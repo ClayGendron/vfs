@@ -22,6 +22,7 @@ Section titles in this file are cited by name from `context/standards/` and the 
 ## Commands
 
 ```bash
+rustup target add wasm32-unknown-unknown  # once: the extension embeds the shell's WebAssembly module
 uv sync --all-extras --group dev          # install; the extras carry the database drivers
 uv run pytest                             # the whole suite, in parallel, about a minute
 uv run pytest -m "not slow"               # leave out the heavy tests while iterating

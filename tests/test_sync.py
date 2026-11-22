@@ -25,7 +25,7 @@ from tests.support.statements import is_statistics_statement
 from vfs.base import AsyncVirtualFileSystem
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Match, Observation
-from vfs.ops import ALL_OPS, MANAGEMENT_METHODS, Op
+from vfs.ops import ALL_OPS, FRONT_METHODS, MANAGEMENT_METHODS, Op
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result
 from vfs.session import AsyncSession
@@ -228,7 +228,7 @@ async def test_close_works_from_inside_a_running_loop() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", sorted(ALL_OPS | MANAGEMENT_METHODS))
+@pytest.mark.parametrize("name", sorted(ALL_OPS | MANAGEMENT_METHODS | FRONT_METHODS))
 def test_every_router_coroutine_has_a_sync_twin(name: str) -> None:
     """A verb that joins the router without its twin fails here by name."""
     original = getattr(AsyncVirtualFileSystem, name)
@@ -251,7 +251,7 @@ def test_every_session_coroutine_has_a_sync_twin(name: str) -> None:
 
 
 def test_the_constructors_and_the_context_managers_are_twins() -> None:
-    assert len(SESSION_COROUTINES) == len(ALL_OPS) + 1
+    assert len(SESSION_COROUTINES) == len(ALL_OPS) + 2  # close, and cli, which is no op
     _assert_twins(AsyncVirtualFileSystem.__init__, VirtualFileSystem.__init__)
     _assert_twins(AsyncSession.__init__, Session.__init__)
     _assert_twins(AsyncVirtualFileSystem.open_session, VirtualFileSystem.open_session)
@@ -685,6 +685,7 @@ def test_sync_closed_is_final() -> None:
 def test_the_management_allowlist_is_owned_by_ops() -> None:
     expected = {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
     assert frozenset(expected) == MANAGEMENT_METHODS
+    assert frozenset({"cli"}) == FRONT_METHODS
     assert "MANAGEMENT_METHODS = " not in (REPO / "tests" / "test_ops.py").read_text()
 
 

@@ -62,13 +62,9 @@ from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
 from vfs.listing import SCOPED_REFINE_GUIDANCE, MountListing, PathFilters, gather_settled, skip_record
 from vfs.models import (
-    MEASURE_OFFLOAD_BYTES,
-    MEASURED_BODY,
     Edge,
     Entry,
     Observation,
-    measure_bytes,
-    measure_text,
 )
 from vfs.mounts import (
     EdgeLocation,
@@ -91,7 +87,7 @@ from vfs.mounts import (
     validate_deny_ops,
     validate_posture,
 )
-from vfs.offload import call_offloaded, judge_rows, offload_pool, wall_truncation
+from vfs.offload import judge_rows, measured_entry, offload_pool, wall_truncation
 from vfs.ops import (
     MUTATING_OPS,
     TRAVERSE_DEPTH_DEFAULT,
@@ -120,6 +116,7 @@ from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity
 from vfs.session import AsyncSession
+from vfs.shell import LineResult, run_line
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -232,24 +229,6 @@ class _FileSite(NamedTuple):
 
     mount: Path
     local: Path
-
-
-async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
-    """Build the :term:`entry` that a write to one path makes.
-
-    A small body is hashed in place by the model's own validator, because the hash costs less than a hop
-    to another thread. A body at or past ``MEASURE_OFFLOAD_BYTES`` is measured on the process pool first
-    and handed to the validator already measured. One caller's 16 MB write then never stalls every other
-    coroutine for the length of a SHA-256.
-    """
-    body: str | bytes | None = data if data is not None else content
-    if body is None or len(body) < MEASURE_OFFLOAD_BYTES:
-        return Entry(path=str(path), content=content, data=data)
-    if isinstance(body, bytes):
-        metrics = await call_offloaded(offload_pool(), partial(measure_bytes, body))
-    else:
-        metrics = await call_offloaded(offload_pool(), partial(measure_text, body))
-    return Entry.model_validate({"path": str(path), "content": content, "data": data}, context={MEASURED_BODY: metrics})
 
 
 def _rebase_grant_rows(result: Result, mount: Path) -> Result:
@@ -1035,7 +1014,7 @@ class AsyncVirtualFileSystem:
         if resolved.path is None:
             return self._invalid_path(resolved, path, "write")
         try:
-            entry = await _authored_entry(resolved.path, content, data)
+            entry = await measured_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
         expected = None if if_version is None else {path: if_version}
@@ -1685,6 +1664,17 @@ class AsyncVirtualFileSystem:
     # -------------------------------------------------------------------
     # public methods — execution
     # -------------------------------------------------------------------
+
+    async def cli(
+        self, line: str, *, cwd: str = "/", stdin: bytes = b"", authority: Authority | None = None
+    ) -> LineResult:
+        """Run a line of bash as the caller, every file it reads, lists or writes a call of a public verb.
+
+        A line that does not parse, holds a refused word or spends a parse budget fails and changes nothing.
+        A line never runs as the system actor. :mod:`vfs.shell` holds the whole contract.
+        """
+        who = caller_for(authority, self._default_authority, op="cli")
+        return await run_line(self, line, who, cwd=cwd, stdin=stdin)
 
     async def run(
         self,

@@ -43,8 +43,12 @@ These are the tree's deliberate threads, and there are no others: the
 process pool; the engine's rayon workers, a global pool the Rust kernels
 start on their first parallel call, as wide as the machine, which the
 Python side neither owns nor re-makes; the synchronous face's loop
-thread (``vfs.sync``); and the executor a local embedding provider is
-constructed with.
+thread (``vfs.sync``); the executor a local embedding provider is
+constructed with; and the shell runtime's epoch thread, one per process
+in the extension, which advances the WebAssembly engine's clock every
+10 ms so a deadline or a cancel ends a running slice of a line; and the
+short-lived thread each slice of a line runs on, started by the extension
+from a pool worker with a stack of the module's own size.
 
 Across a fork, a child forgets the inherited pool and makes its own on
 its first hop. The engine's pool is not covered. A forked child may
@@ -61,9 +65,11 @@ import asyncio
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import TYPE_CHECKING, Final, TypeVar
 
 from vfs.deadline import WALL_TIME_CAUSE
+from vfs.models import MEASURE_OFFLOAD_BYTES, MEASURED_BODY, Entry, measure_bytes, measure_text
 from vfs.results import classified
 from vfs.results.kinds import ErrorKind, Severity
 
@@ -72,6 +78,7 @@ if TYPE_CHECKING:
     from concurrent.futures import Executor
 
     from vfs.deadline import Deadline
+    from vfs.paths import Path
     from vfs.pattern_matching import Body, ContentMatcher, GlobGates
     from vfs.pattern_matching.glob import GlobRow
     from vfs.pattern_matching.grep import MatchSpan
@@ -155,6 +162,24 @@ async def call_offloaded(executor: Executor, work: Callable[[], T]) -> T:
     except RuntimeError:
         return work()
     return await asyncio.wrap_future(future)
+
+
+async def measured_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
+    """Build the :term:`entry` that a write to one path makes.
+
+    A small body is hashed in place by the model's own validator, because the hash costs less than a hop
+    to another thread. A body at or past ``MEASURE_OFFLOAD_BYTES`` is measured on the process pool first
+    and handed to the validator already measured. One caller's 16 MB write then never stalls every other
+    coroutine for the length of a SHA-256.
+    """
+    body: str | bytes | None = data if data is not None else content
+    if body is None or len(body) < MEASURE_OFFLOAD_BYTES:
+        return Entry(path=str(path), content=content, data=data)
+    if isinstance(body, bytes):
+        metrics = await call_offloaded(offload_pool(), partial(measure_bytes, body))
+    else:
+        metrics = await call_offloaded(offload_pool(), partial(measure_text, body))
+    return Entry.model_validate({"path": str(path), "content": content, "data": data}, context={MEASURED_BODY: metrics})
 
 
 async def judge_rows(

@@ -25,11 +25,11 @@ from tests.support.base_doubles import (
     TransportFailStorage,
     _fan,
 )
-from vfs import base as base_module
+from vfs import offload as offload_module
 from vfs.authority import Authority
-from vfs.base import MEASURE_OFFLOAD_BYTES, AsyncVirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
-from vfs.models import Edge, Entry, Observation
+from vfs.models import MEASURE_OFFLOAD_BYTES, Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.pattern_matching import ScopeChannel
@@ -66,13 +66,13 @@ async def test_a_large_body_is_measured_off_the_loop(monkeypatch) -> None:
     # the hash. A body at the threshold hops once, and the entry storage
     # receives carries the same metrics the validator would have measured.
     hops: list[str] = []
-    real_hop = base_module.call_offloaded
+    real_hop = offload_module.call_offloaded
 
     async def counted(executor: Any, work: Any) -> Any:
         hops.append(work.func.__name__)
         return await real_hop(executor, work)
 
-    monkeypatch.setattr(base_module, "call_offloaded", counted)
+    monkeypatch.setattr(offload_module, "call_offloaded", counted)
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")

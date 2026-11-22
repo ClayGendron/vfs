@@ -3,7 +3,8 @@ name: Publish to PyPI
 # Pendulum-model release: every wheel carries the full pure-Python tree plus
 # the compiled vfs._native (abi3-py311 — five wheels, one per platform,
 # CPython 3.11+). Installers never compile; the sdist is the wheel-less-platform
-# fallback, where maturin >= 1.8.4 self-bootstraps a Rust toolchain. No musl
+# fallback, where maturin >= 1.8.4 self-bootstraps a Rust toolchain; building it
+# also needs the wasm32-unknown-unknown target, for the shell's module. No musl
 # wheel: sqlite-vec, a core dependency, ships none, so Alpine cannot resolve.
 #
 # A published release builds and uploads. A manual dispatch builds every
@@ -45,10 +46,15 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: uv run --no-project python scripts/check_release_tag.py "$TAG"
 
+      - name: The shell module's target, which the extension's build compiles for
+        run: rustup target add wasm32-unknown-unknown
+
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           manylinux: ${{ matrix.platform.manylinux }}
+          # The manylinux container has its own toolchain, which needs the target too.
+          before-script-linux: rustup target add wasm32-unknown-unknown
           args: --release --out dist
 
       - uses: actions/upload-artifact@v7

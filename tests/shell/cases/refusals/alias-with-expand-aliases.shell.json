@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 4: alias: refused: aliases are not expanded in a non-interactive shell\n"
+}

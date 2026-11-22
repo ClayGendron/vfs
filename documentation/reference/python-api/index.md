@@ -36,6 +36,7 @@ Every name that `import vfs` makes public, grouped by what it is for. Each one l
 
 - [`Result`](results.md#vfs.Result): what every call returns.
 - [`ResultError`](results.md#vfs.ResultError): one failure carried on a result.
+- [`LineResult`](results.md#vfs.LineResult): what a line of the shell printed and exited with.
 - [`ErrorKind`](results.md#vfs.ErrorKind): what went wrong.
 - [`Severity`](results.md#vfs.Severity): how much to trust the rest of the result.
 - [`RetryClass`](results.md#vfs.RetryClass): whether trying again can help.

@@ -1,0 +1,7 @@
+2026-01-01 10:00:00 INFO start
+2026-01-01 10:00:01 WARN disk at 80%
+2026-01-01 10:00:02 INFO request id=1
+2026-01-01 10:00:03 ERROR request id=2 failed
+2026-01-01 10:00:04 INFO request id=3
+2026-01-01 10:00:05 ERROR timeout id=4
+2026-01-01 10:00:06 INFO stop

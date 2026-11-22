@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vfs-core"]
+members = ["crates/vfs-core", "crates/vfs-shell", "crates/vfs-shell-wasm"]
 
 [workspace.package]
 edition = "2024"

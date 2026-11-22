@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "unbalanced: status=2\nbad interval: status=2\n",
+  "stderr": "bash: line 4: [[: invalid regular expression `(': Unmatched ( or \\(\nbash: line 7: [[: invalid regular expression `a{2,1}': Invalid content of \\{\\}\n"
+}

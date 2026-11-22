@@ -67,6 +67,9 @@ jobs:
 
       # The conformance contract renders real documents, so the document
       # libraries install beside the driver.
+      - name: The shell module's target, which the extension's build compiles for
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install dependencies
         run: uv sync --extra postgres --extra documents --group dev
 

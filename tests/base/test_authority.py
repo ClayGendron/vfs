@@ -311,13 +311,13 @@ async def test_closed_is_final() -> None:
 @pytest.mark.parametrize("face", [AsyncSession, Session])
 def test_a_session_cannot_reach_a_mount(face: type) -> None:
     # A mount carries its storage, and reaching the storage would go around
-    # permissions: a session is the verbs and its own lifecycle, nothing else.
+    # permissions: a session is the verbs, cli and its own lifecycle, nothing else.
     public = {name for name in dir(face) if not name.startswith("_")}
-    assert public == ALL_OPS | {"authority", "closed", "close"}
+    assert public == ALL_OPS | {"authority", "closed", "close", "cli"}
     for name in sorted(public):
         member = inspect.getattr_static(face, name)
         returns = inspect.signature(member.fget if isinstance(member, property) else member).return_annotation
-        assert returns in {"Result", "Authority", "bool", "None"}, name
+        assert returns in {"Result", "LineResult", "Authority", "bool", "None"}, name
 
 
 async def test_a_session_needs_no_default_on_the_filesystem() -> None:

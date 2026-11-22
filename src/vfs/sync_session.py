@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
+from vfs.shell import refused_line
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.results import Result
+    from vfs.shell import LineResult
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
     from vfs.sync import VirtualFileSystem
@@ -358,6 +360,11 @@ class Session:
 
     def run(self, path: str, *, arguments: dict[str, Any] | None = None) -> Result:
         return self._result("run", self._session.run, path, arguments=arguments)
+
+    def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"") -> LineResult:
+        if self._session.closed:
+            return refused_line(closed_refusal("cli").errors[0])
+        return self._facade._line(self._session.cli, line, cwd=cwd, stdin=stdin)
 
     # -------------------------------------------------------------------
     # grants

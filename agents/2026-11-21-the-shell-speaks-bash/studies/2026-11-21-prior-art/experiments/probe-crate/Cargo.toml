@@ -1,0 +1,14 @@
+[package]
+name = "shellprobe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+vfs-shell = { path = "../../../../../../crates/vfs-shell" }
+
+[profile.release]
+opt-level = 3
+
+# Its own workspace: a probe, never a member of the repository's.
+[workspace]

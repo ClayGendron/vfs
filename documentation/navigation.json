@@ -57,6 +57,7 @@
           ]
         },
         { "title": null, "pages": ["/reference/access-levels"] },
+        { "title": null, "pages": ["/reference/shell"] },
         { "title": null, "pages": ["/reference/glossary"] }
       ]
     },

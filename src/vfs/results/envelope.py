@@ -318,7 +318,8 @@ class Result(BaseModel):
 
     - **Envelope:** ``ops`` records every op whose rows were merged in
       (ordered union under ``|``) — one vocabulary with the router's
-      ``vfs.ops``, kept open ``str`` because a peer may report ops this
+      ``vfs.ops``, where a front such as ``cli`` also names the call it
+      made, kept open ``str`` because a peer may report ops this
       client predates. The ``.op`` property yields the sole op, or
       ``None`` for a cross-op merge — renderers fall back to a generic
       arrangement on ``None``.
@@ -763,12 +764,7 @@ class Result(BaseModel):
         """
         target = self
         if max_errors is not None and len(self.errors) > max_errors:
-            target = Result(
-                ops=self.ops,
-                observations=self.observations,
-                errors=self._rolled_errors(),
-                next_after=self.next_after,
-            )
+            target = self.model_copy(update={"errors": self._rolled_errors()})
         payload = json.loads(target.model_dump_json(exclude_none=exclude_none))
         payload.pop("success", None)
         return {"success": self.success} | payload

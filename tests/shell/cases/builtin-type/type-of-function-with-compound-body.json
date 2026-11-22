@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "check is a function\ncheck () \n{ \n    if [ -z \"$1\" ]; then\n        return 1;\n    fi;\n    case $1 in \n        a*)\n            echo \"starts with a\"\n        ;;\n        *)\n            echo other\n        ;;\n    esac\n}\n",
+  "stderr": ""
+}

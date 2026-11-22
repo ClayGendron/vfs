@@ -61,7 +61,7 @@ LAYERS: Ladder = (
         "vfs.chain",
     ),
     ("vfs.mounts",),
-    ("vfs.listing", "vfs.cursor"),
+    ("vfs.listing", "vfs.cursor", "vfs.shell"),
     ("vfs.base",),
     ("vfs.session", "vfs.skills"),
     ("vfs.sync_session",),

@@ -27,6 +27,8 @@ mod verify;
 
 #[cfg(feature = "python")]
 mod python;
+#[cfg(feature = "python")]
+mod shell_binding;
 
 pub use chunk::{GRAMMAR_NAMES, SpanRow, split_batch};
 pub use deadline::{BatchOutcome, CHECK_EVERY, Deadline, par_batch};

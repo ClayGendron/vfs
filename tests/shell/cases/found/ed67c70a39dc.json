@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "p= q= r=\n\nh:\"${arr[@]}\" ${!arr[@]}\nh:plain $x\na/b/c\na/b/c\ntwo\\ words\n\nr:g:?b\nr:g:a.txt\nr:g:b.txt\nr:g:out.txt\nr:<><two> 2\none \n\ng:a.txt\ng:ab\ng:b.txt\ng:c\ng:out.txt\nx=\n",
+  "stderr": ""
+}

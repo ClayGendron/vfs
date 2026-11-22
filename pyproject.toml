@@ -96,6 +96,8 @@ docs = [
 line-length = 120
 target-version = "py311"
 src = ["src", "tests"]
+# The shell corpus's seed tree is data the cases read, not code.
+extend-exclude = ["tests/shell/world"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -139,6 +141,7 @@ known-first-party = ["vfs"]
 
 [tool.ty.src]
 include = ["src", "tests"]
+exclude = ["tests/shell/world"]
 
 [tool.ty.environment]
 python-version = "3.11"

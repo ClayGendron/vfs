@@ -34,6 +34,7 @@ from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
+from vfs.shell import refused_line
 from vfs.sync_session import Session
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind
     from vfs.permissions import Permission, PermissionMap
     from vfs.rerank import Reranker
+    from vfs.shell import LineResult
     from vfs.storage import StorageBackend
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
@@ -593,6 +595,9 @@ class VirtualFileSystem:
     ) -> Result:
         return self._result("run", self._fs.run, path, arguments=arguments, authority=authority)
 
+    def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"", authority: Authority | None = None) -> LineResult:
+        return self._line(self._fs.cli, line, cwd=cwd, stdin=stdin, authority=authority)
+
     # -------------------------------------------------------------------
     # grants
     # -------------------------------------------------------------------
@@ -690,6 +695,15 @@ class VirtualFileSystem:
         if threading.get_ident() == self._thread.ident:
             return Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL)])
         self._warn_if_blocking_a_foreign_loop(op)
+        return self._submit(call(*args, **kwargs))
+
+    def _line(self, call: Callable[..., Coroutine[Any, Any, LineResult]], *args: Any, **kwargs: Any) -> LineResult:
+        """The shell's hop: refuse as a classified line, as a verb refuses, else run it on the loop and wait."""
+        if self._closed:
+            return refused_line(classified(ErrorKind.backend_unavailable, detail=CLOSED_DETAIL))
+        if threading.get_ident() == self._thread.ident:
+            return refused_line(classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL))
+        self._warn_if_blocking_a_foreign_loop("cli")
         return self._submit(call(*args, **kwargs))
 
     def _await(self, name: str, call: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:

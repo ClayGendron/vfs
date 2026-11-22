@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 3: coproc: refused: coprocesses are job control past the call\n"
+}

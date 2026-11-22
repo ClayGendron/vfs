@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
+from vfs.shell import LineResult, refused_line
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.base import AsyncVirtualFileSystem
     from vfs.models import Edge, Entry, Observation
-    from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
+    from vfs.ops import CaseMode, GrepOutputMode, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
@@ -42,7 +43,7 @@ CLOSED_SESSION_DETAIL: Final = "the session is closed and cannot reopen; open a 
 """The one sentence of the closed fact: the refusal's detail and the reopen error's message, in either shape."""
 
 
-def closed_refusal(op: Op) -> Result:
+def closed_refusal(op: str) -> Result:
     """The one refusal a closed session answers every verb with, in either shape."""
     fact = classified(ErrorKind.invalid, detail=CLOSED_SESSION_DETAIL)
     return Result(ops=(op,), errors=[fact])
@@ -410,6 +411,11 @@ class AsyncSession:
             authority=self._authority,
         )
 
+    async def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"") -> LineResult:
+        if (refusal := self._refuse_closed("cli")) is not None:
+            return refused_line(refusal.errors[0])
+        return await self._fs.cli(line, cwd=cwd, stdin=stdin, authority=self._authority)
+
     async def run(self, path: str, *, arguments: dict[str, Any] | None = None) -> Result:
         if (refusal := self._refuse_closed("run")) is not None:
             return refusal
@@ -457,6 +463,6 @@ class AsyncSession:
         """The one line of closing, synchronous so the sync twin can close without a loop."""
         self._closed = True
 
-    def _refuse_closed(self, op: Op) -> Result | None:
+    def _refuse_closed(self, op: str) -> Result | None:
         """The structured refusal a closed session answers every verb with."""
         return None if not self._closed else closed_refusal(op)
