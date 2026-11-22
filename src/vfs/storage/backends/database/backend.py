@@ -1,8 +1,9 @@
 """``DatabaseStorage`` — the portable SQL backend (reads, glob, mutation core).
 
 Runs on any SQLAlchemy URL: SQLite and Postgres carry tuned policy, any other dialect the generic floor.
-Point reads with projection push-down, ``parent_id`` listings and glob's
-batched pattern fan are in ``reads.py``, on the descent ladder of
+Point reads with projection push-down and glob's batched pattern fan are
+in ``reads.py``, and the ``parent_id`` and subtree listings, whole or a
+page at a time, in ``listings.py``, both on the descent ladder of
 ``descent.py``; grep's indexed pipeline in ``grep.py``; write, edit and
 mkdir batches, each planned and executed as one transaction, in
 ``writes.py``; move and copy in ``topology.py`` and delete, restore and
@@ -21,22 +22,21 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from vfs.authority import Authority
-from vfs.deadline import WALL_TIME_BUDGET, Deadline
+from vfs.deadline import WALL_TIME_BUDGET
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
-from vfs.offload import call_offloaded, offload_pool
+from vfs.offload import offload_pool
 from vfs.ops import ADDITIVE_WRITE, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
-from vfs.storage.backends.database.addressing import addressed_by, scope_judged
+from vfs.storage.backends.database.addressing import addressed_by
 from vfs.storage.backends.database.authorized import admit_destinations, fenced, opening, remember
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
@@ -50,17 +50,17 @@ from vfs.storage.backends.database.edges import mkedge_rows, rmedge_rows
 from vfs.storage.backends.database.embed import EMBED_CONCURRENCY, EMBED_TIMEOUT_SECONDS, unit_vector
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.grep import grep_rows
-from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
+from vfs.storage.backends.database.keyset import page_refused
+from vfs.storage.backends.database.labels import Relabel, Relabeller
+from vfs.storage.backends.database.listings import ls_rows, tree_rows
 from vfs.storage.backends.database.maintenance import MaintenanceContext, rebuild, refresh
 from vfs.storage.backends.database.reads import (
     AdmittedScope,
     admit_scope,
     effective_columns,
     glob_rows,
-    ls_rows,
     read_rows,
     stat_rows,
-    tree_rows,
 )
 from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.backends.database.rights import (
@@ -70,9 +70,6 @@ from vfs.storage.backends.database.rights import (
     add_member_rows,
     denied,
     grant_rows,
-    posture_chain,
-    posture_refusals,
-    posture_wall_refusal,
     remove_member_rows,
     resolve_authority,
     revoke_rows,
@@ -80,6 +77,7 @@ from vfs.storage.backends.database.rights import (
     unauthenticated_refusals,
 )
 from vfs.storage.backends.database.rights_reads import held, listed_grants
+from vfs.storage.backends.database.scoped_gate import ScopedGate, scoped_refusals
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.search import VectorLeg, search_rows
 from vfs.storage.backends.database.topology import transfer_rows
@@ -113,20 +111,6 @@ QUERY_VECTOR_CACHE = 256
 """Embedded queries remembered per mount — a re-asked question costs no provider call."""
 
 
-class _ScopedGate(NamedTuple):
-    """An anonymous scoped call's posture gate: what composition would have judged, and the verb's wall.
-
-    ``patterns`` is the entry-wide channel, ``scope`` the admitted scope
-    (roots in entry coordinates, arms expanded), ``piped`` the paths of
-    rows piped into the call, judged after the patterns' paths.
-    """
-
-    patterns: tuple[str, ...]
-    scope: ScopeChannel
-    piped: tuple[str, ...]
-    wall_seconds: float
-
-
 class DatabaseStorage:
     """One mount's portable database backend over SQLAlchemy Core.
 
@@ -137,13 +121,15 @@ class DatabaseStorage:
     ``private``. It is planted once, at first touch: a mount that already exists keeps its stored posture,
     and only the ``set_posture`` verb changes it.
 
-    *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside
-    the URL: the pool's class and size, ``pool_pre_ping``, ``connect_args``.
-    A ``ValueError`` refuses autocommit, another value for an argument VFS requires, and, on an in-memory
-    URL that SQLAlchemy gives one connection, another pool. The ``file::memory:`` spellings are not covered.
+    *engine_arguments* go to SQLAlchemy's ``create_async_engine`` beside the URL: the pool's class and size,
+    ``pool_pre_ping``, ``connect_args``. A ``ValueError`` refuses autocommit, another value for an argument VFS
+    requires, and, on an in-memory URL SQLAlchemy gives one connection, another pool, ``file::memory:`` spellings aside.
 
-    On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait
-    for a connection, and is rolled back. A cancelled write changes nothing unless its commit had begun.
+    On SQLite a cancelled caller waits while its call ends the statement in flight, or its wait for a connection, and
+    is rolled back. A cancelled write changes nothing unless its commit had begun. One writer holds the file at a
+    time: a write behind another writer's lock waits five seconds a try for four tries, so beside a long writer, such
+    as a 10,000-file batch, it can give up after about twenty seconds, change nothing, and return a retryable
+    ``conflict``, which succeeds once that writer has committed.
     """
 
     def __init__(
@@ -169,12 +155,10 @@ class DatabaseStorage:
     ) -> None:
         if trash_days < 0:
             raise ValueError(f"trash_days must be non-negative, got {trash_days}")
-        if grep_wall_seconds <= 0:
-            raise ValueError(f"grep_wall_seconds must be positive, got {grep_wall_seconds}")
-        if search_wall_seconds <= 0:
-            raise ValueError(f"search_wall_seconds must be positive, got {search_wall_seconds}")
-        if glob_wall_seconds <= 0:
-            raise ValueError(f"glob_wall_seconds must be positive, got {glob_wall_seconds}")
+        walls = {"grep": grep_wall_seconds, "search": search_wall_seconds, "glob": glob_wall_seconds}
+        for verb, seconds in walls.items():
+            if seconds <= 0:
+                raise ValueError(f"{verb}_wall_seconds must be positive, got {seconds}")
         if embed_concurrency < 1:
             raise ValueError(f"embed_concurrency must be at least 1, got {embed_concurrency}")
         if embed_timeout_seconds <= 0:
@@ -261,6 +245,7 @@ class DatabaseStorage:
             "grep_staleness": "overlay",
             "search_signals": "hybrid" if self._host.embedder is not None else "lexical",
             "search_staleness": "overlay",
+            "listing_cursor": "keyset",
         }
         # Tuned engines are the measured ones, and only they claim full durability: an unknown dialect is not one.
         if self._host.profile.name in PROFILES:
@@ -320,10 +305,14 @@ class DatabaseStorage:
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
+        after: Path | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations, default=ROOT)
+        if (refused := page_refused("ls", targets, after=after, limit=limit)) is not None:
+            return refused
         host = self._host
         return await self._execute(
             "ls",
@@ -332,7 +321,15 @@ class DatabaseStorage:
                 authority,
                 [str(target) for target in targets],
                 lambda session, view: ls_rows(
-                    session, host.tables, host.profile, host.membership_budget, targets, columns, view
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.membership_budget,
+                    targets,
+                    columns,
+                    view,
+                    after=after,
+                    limit=limit,
                 ),
             ),
         )
@@ -342,14 +339,13 @@ class DatabaseStorage:
         *,
         path: Path,
         max_depth: int | None = None,
+        after: Path | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        if max_depth is not None and max_depth < 1:
-            return Result(
-                ops=("tree",),
-                errors=[classified(ErrorKind.invalid, detail=f"max_depth must be >= 1, got {max_depth}")],
-            )
+        if (refused := page_refused("tree", [path], after=after, limit=limit, max_depth=max_depth)) is not None:
+            return refused
         host = self._host
         return await self._execute(
             "tree",
@@ -358,7 +354,16 @@ class DatabaseStorage:
                 authority,
                 [str(path)],
                 lambda session, view: tree_rows(
-                    session, host.tables, host.profile, host.membership_budget, path, max_depth, columns, view
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.membership_budget,
+                    path,
+                    max_depth,
+                    columns,
+                    view,
+                    after=after,
+                    limit=limit,
                 ),
             ),
         )
@@ -433,10 +438,14 @@ class DatabaseStorage:
         ext_not: tuple[str, ...] = (),
         kind: ObjectKind | None = None,
         max_count: int | None = None,
+        after: Path | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result:
+        if (refused := page_refused("glob", [], after=after, limit=limit, max_count=max_count)) is not None:
+            return refused
         try:
             admitted = admit_scope(scope, "pattern")
         except PatternError as exc:
@@ -462,6 +471,8 @@ class DatabaseStorage:
                     ext_not=ext_not,
                     kind=kind,
                     max_count=max_count,
+                    after=after,
+                    limit=limit,
                     columns=columns,
                     wall_seconds=self._glob_wall_seconds,
                     view=view,
@@ -1190,7 +1201,7 @@ class DatabaseStorage:
         addressed: Iterable[str],
         build: Callable[[AsyncSession, Visibility | None], Awaitable[Result]],
         *,
-        scoped: _ScopedGate | None = None,
+        scoped: ScopedGate | None = None,
     ) -> Callable[[AsyncSession], Awaitable[Result]]:
         """A read body run under the call's view — ``None`` when the view is the whole mount.
 
@@ -1199,7 +1210,7 @@ class DatabaseStorage:
         against the posture rows at the verb's rung before any row is
         read; a trash-view path is judged where its row sits. An
         anonymous call with a scope channel is judged by *scoped* instead,
-        at the paths composition would have judged (:meth:`_scoped_refusals`).
+        at the paths composition would have judged (:func:`scoped_refusals`).
         A verb that
         declares a ``passing`` rung (the graph walk) reads at that rung:
         the view narrows at it, the anonymous check judges at it, and the
@@ -1216,7 +1227,7 @@ class DatabaseStorage:
             if isinstance(resolution, ResultError):
                 return Result(ops=(op,), errors=[resolution])
             if scoped is not None:
-                refused = await self._scoped_refusals(session, who, scoped, rung)
+                refused = await scoped_refusals(session, host, who, scoped, rung)
             else:
                 refused = await unauthenticated_refusals(
                     session, host.tables, host.profile, host.membership_budget, who, judged, rung
@@ -1246,7 +1257,7 @@ class DatabaseStorage:
         scope: AdmittedScope | None,
         piped: tuple[str, ...],
         wall_seconds: float,
-    ) -> _ScopedGate | None:
+    ) -> ScopedGate | None:
         """The posture gate of an anonymous call with a scope channel; ``None`` for every other call.
 
         Only a caller judged by posture needs the scope's judged paths, so
@@ -1255,46 +1266,7 @@ class DatabaseStorage:
         """
         if scope is None or not self._named(authority).is_anonymous:
             return None
-        return _ScopedGate(patterns, scope.channel, piped, wall_seconds)
-
-    async def _scoped_refusals(
-        self, session: AsyncSession, who: Authority, gate: _ScopedGate, rung: Rung
-    ) -> list[ResultError]:
-        """An anonymous scoped call's refusals, judged where composition judges, under the verb's wall.
-
-        The judged paths are :func:`scope_judged`'s: the entry-wide patterns'
-        beside each root's literal directory joined with each arm's. They are
-        a product of the caller's inputs, so the pure work runs on the offload
-        pool in two hops around the one chunked posture read: the judged paths
-        and their sorted, chunked ancestor chain first, each path's refusal
-        after. Each hop and the read check the wall, read when the gate
-        starts; a gate that reaches it refuses the whole call as
-        ``unauthenticated``, because a rights check never serves part of a
-        call. The direction is judging each root once from the posture in
-        force at it and the posture rows beneath it, linear in the roots.
-        """
-        host = self._host
-        deadline = Deadline.after(gate.wall_seconds)
-        budget = host.membership_budget
-
-        def chained() -> tuple[list[str], list[list[str]]] | None:
-            addressed = scope_judged(gate.patterns, gate.scope, deadline=deadline)
-            if addressed is None:
-                return None
-            judged = list(dict.fromkeys(address_of(path).stored for path in (*addressed, *gate.piped)))
-            chunks = posture_chain(judged, budget, deadline=deadline)
-            return None if chunks is None else (judged, chunks)
-
-        planned = await call_offloaded(offload_pool(), chained)
-        if planned is None:
-            return [posture_wall_refusal()]
-        judged, chunks = planned
-        postures = await posture_rows_for_chunks(session, host.tables, host.profile, chunks, deadline=deadline)
-        if postures is None:
-            return [posture_wall_refusal()]
-        judge = partial(posture_refusals, who, postures, judged, rung, deadline=deadline)
-        refusals = await call_offloaded(offload_pool(), judge)
-        return [posture_wall_refusal()] if refusals is None else refusals
+        return ScopedGate(patterns, scope.channel, piped, wall_seconds)
 
     async def _gate(
         self, session: AsyncSession, authority: Authority | None, needs: Needs, *, cached: bool = True

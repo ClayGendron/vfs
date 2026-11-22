@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.support.database_helpers import begin_as_writer
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.models.rows import build_vfs_tables
@@ -555,6 +556,7 @@ async def test_every_gated_verb_refuses_a_closure_past_the_nesting_bound(storage
     host = storage._host
     chain = ["ann", *(f"group:g{n}" for n in range(12))]
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(
             host.tables.memberships.insert(),
             [

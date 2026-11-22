@@ -1,0 +1,163 @@
+{
+  "script": "scripts/measure_growth.py",
+  "arguments": {
+    "engine": "sqlite",
+    "days": 30,
+    "chunk_rows": 5000,
+    "deadline": 1200.0
+  },
+  "environment": {
+    "commit": "8624926",
+    "src_dirty": false,
+    "date": "2026-11-21T20:14:11+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39"
+  },
+  "seconds": 164.1,
+  "rows_per_day": 150000,
+  "first_day_fill": {
+    "seconds": 17.52,
+    "statements": 586
+  },
+  "sizes": {
+    "after_1_day": {
+      "rows": 150000,
+      "heap_bytes": 70762496,
+      "index_bytes": 14827520,
+      "bytes": 85590016,
+      "bytes_per_row": 570.6,
+      "file_bytes": 98353152,
+      "freelist_bytes": 0,
+      "index_bytes_by_name": {
+        "l0_call_log_run_id": 2867200,
+        "l0_call_log_started_at": 5980160,
+        "sqlite_autoindex_l0_call_log_1": 5980160
+      }
+    },
+    "after_30_days": {
+      "rows": 4500000,
+      "heap_bytes": 2125201408,
+      "index_bytes": 447070208,
+      "bytes": 2572271616,
+      "bytes_per_row": 571.6,
+      "file_bytes": 2585051136,
+      "freelist_bytes": 0,
+      "index_bytes_by_name": {
+        "l0_call_log_run_id": 86491136,
+        "l0_call_log_started_at": 180289536,
+        "sqlite_autoindex_l0_call_log_1": 180289536
+      }
+    },
+    "after_reclaiming_1_day": {
+      "rows": 4350289,
+      "heap_bytes": 2054553600,
+      "index_bytes": 432373760,
+      "bytes": 2486927360,
+      "bytes_per_row": 571.7,
+      "file_bytes": 2585182208,
+      "freelist_bytes": 85327872,
+      "index_bytes_by_name": {
+        "l0_call_log_run_id": 83656704,
+        "l0_call_log_started_at": 174358528,
+        "sqlite_autoindex_l0_call_log_1": 174358528
+      }
+    },
+    "after_one_more_day": {
+      "rows": 4500289,
+      "heap_bytes": 2125316096,
+      "index_bytes": 447283200,
+      "bytes": 2572599296,
+      "bytes_per_row": 571.7,
+      "file_bytes": 2585526272,
+      "freelist_bytes": 0,
+      "index_bytes_by_name": {
+        "l0_call_log_run_id": 86540288,
+        "l0_call_log_started_at": 180371456,
+        "sqlite_autoindex_l0_call_log_1": 180371456
+      }
+    }
+  },
+  "reclaim": {
+    "chunk_rows": 5000,
+    "chunks": 31,
+    "rows_deleted": 150000,
+    "statements": 31,
+    "seconds": 1.21,
+    "chunk_seconds": {
+      "n": 31,
+      "median_ms": 21.4,
+      "p95_ms": 150.4,
+      "max_ms": 201.6
+    },
+    "probes_baseline": {
+      "read": {
+        "n": 224,
+        "median_ms": 68.958,
+        "p95_ms": 110.22,
+        "max_ms": 146.84,
+        "failures": 0
+      },
+      "write": {
+        "n": 11,
+        "median_ms": 175.843,
+        "p95_ms": 320.158,
+        "max_ms": 320.158,
+        "failures": 0
+      },
+      "log_row": {
+        "n": 13,
+        "median_ms": 111.821,
+        "p95_ms": 184.908,
+        "max_ms": 184.908,
+        "failures": 0
+      }
+    },
+    "probes_during_delete": {
+      "read": {
+        "n": 150,
+        "median_ms": 66.738,
+        "p95_ms": 95.174,
+        "max_ms": 111.765,
+        "failures": 0
+      },
+      "write": {
+        "n": 6,
+        "median_ms": 242.15,
+        "p95_ms": 320.158,
+        "max_ms": 320.158,
+        "failures": 0
+      },
+      "log_row": {
+        "n": 5,
+        "median_ms": 40.529,
+        "p95_ms": 983.198,
+        "max_ms": 983.198,
+        "failures": 0
+      }
+    }
+  },
+  "row_shape": {
+    "verb_mix": {
+      "read": 40,
+      "ls": 12,
+      "glob": 8,
+      "grep": 15,
+      "stat": 0,
+      "write": 15,
+      "edit": 6,
+      "search": 4
+    },
+    "many_path_verbs": [
+      "glob",
+      "grep",
+      "ls",
+      "search"
+    ],
+    "paths_for_many": "uniform 1 to 40, first 16 stored",
+    "share_in_a_run": 0.3
+  }
+}

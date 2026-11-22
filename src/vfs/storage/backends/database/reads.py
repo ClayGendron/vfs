@@ -10,32 +10,32 @@ or commits — the protocol method in ``backend.py`` owns its one
 transaction.
 
 The shapes: point reads are ``path IN`` column selects, content joined
-from the content table; ``ls`` is ``parent_id`` equality only, never a
-prefix scan; ``tree`` prefilters with one sargable escaped ``LIKE`` on
-the path cache. Glob executes the batched pattern contract: every
+from the content table, and the fetch and verdict they share with the
+listings of ``listings.py`` live here. Glob executes the batched pattern contract: every
 pattern contributes one self-contained OR-arm (its sargable ``LIKE``
 prefilter with all ext and liveness facts inside the arm), every scope
 root one root clause (its strict-descendant ``LIKE``), arms and clauses
 chunk by the dialect's budgets in one snapshot, and the compiled
 segment-aware patterns (``vfs.pattern_matching``) verify every candidate
-authoritatively. Listings order by the binary-collated ``name`` column
-and subtrees by ``path`` — byte-identical across engines.
+authoritatively, in path order on the binary-collated ``path`` column,
+byte-identical across engines; a page of it seeks strictly after a key.
 
 A deleted row stays at its path with a tombstone, and every read here
 reads around it: a point read classifies a tombstoned row as absent
-with the trashed hint, and every listing carries the liveness term.
+with the trashed hint, and every glob carries the liveness term.
 The ``/.vfs/trash`` head is a view over the tombstoned rows: a target
 or pattern under it is stripped to the path it names, the liveness
 term flips, and each row answers at its own path with ``deleted_at``
 projected. ``/.vfs/trash`` itself is a synthesized directory, never a
-stored row — ``ls`` of it lists the tombstoned roots at every depth.
+stored row.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import LargeBinary, and_, cast, func, or_, select
+from sqlalchemy import LargeBinary, and_, cast, or_, select
 
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
@@ -72,24 +72,25 @@ from vfs.storage.backends.database.descent import (
     liveness_filters,
     rows_by_path,
     targets_with_ancestors,
-    tombstoned_roots,
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
+from vfs.storage.backends.database.keyset import filled, first_unjudged, keyed
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import Column, ColumnElement, FromClause, Select, Table
+    from sqlalchemy import Column, ColumnElement, FromClause, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import EntryId, VFSTables
     from vfs.pattern_matching import Body, GlobChannel
     from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.storage.backends.database.keyset import Fetch
     from vfs.storage.backends.database.rights import Visibility
 
 # Observation fields served directly by entries-table columns (the two
@@ -188,110 +189,116 @@ async def stat_rows(
 
 
 # ---------------------------------------------------------------------------
-# Listings — ls and tree
+# Row screening — the fetch and the verdict point reads and listings share
 # ---------------------------------------------------------------------------
 
 
-async def ls_rows(
+class Fetched(NamedTuple):
+    """The point fetch: the row each target addresses, keyed by the target, and every row fetched, by stored path."""
+
+    by_target: dict[str, RowMapping]
+    rows: dict[str, RowMapping]
+
+
+async def mappings_by_path(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
-    columns: frozenset[str] | None,
-    view: Visibility | None = None,
-) -> Result:
-    """Each directory target's children, each file target itself.
+    fetched: frozenset[str],
+    *,
+    with_entry_id: bool,
+    judged: bool = False,
+) -> Fetched:
+    """One bounded fetch for the batch and its ancestor chain; *judged* rows carry the rights fields.
 
-    Under a partial view a road directory lists like any directory, a
-    row the caller holds only ``list`` on shows bare, and a hidden child
-    directory shows as a bare name only when it is itself on the road; a
-    hidden file never shows.
+    Every row carries its tombstone beside *fetched*, so the caller can
+    tell which side of it the row sits on; a trash-view target fetches
+    the row at the path beneath the head. The targets' ancestors ride in
+    the same membership, so the descent ladder classifies every miss from
+    this one fetch — a tombstoned or hidden target costs no second query.
     """
-    fetched = effective_columns(columns, content=False)
-    found = await _mappings_by_path(
-        session, tables, profile, membership_budget, targets, fetched, with_entry_id=True, judged=view is not None
-    )
-    shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
-    directories = [t for t in targets if t in road or ((f := shown.get(t)) is not None and f["kind"] == "directory")]
-    children = await _children_by_parent(
-        session, tables.entry, profile, membership_budget, directories, found.by_target, fetched, view=view
-    )
-    roots: list[Observation] | None = None
-    rows: list[Observation] = []
-    errors: list[ResultError] = []
-    for target in targets:
-        mapping = shown.get(target)
-        if target == TRASH_ROOT:
-            if roots is None:
-                roots = await _trash_roots(session, tables, profile, fetched, view)
-            rows.extend(roots)
-        elif mapping is None and target not in road:
-            errors.append(missing[target])
-        elif mapping is not None and mapping["kind"] != "directory":
-            rows.append(_observe_for(view, mapping, fetched))
-        else:
-            listed = list(children.get(found.by_target[target]["entry_id"], ()))
-            if target == METADATA_ROOT:
-                listed = _with_trash_view(listed)
-            rows.extend(listed)
-    return Result(ops=("ls",), observations=rows, errors=errors)
+    columns, source = _entry_projection(tables, fetched | {"deleted_at"}, with_entry_id=with_entry_id)
+    if judged:
+        columns = [*columns, *(tables.entry.c[field] for field in sorted(RIGHTS_FIELDS))]
+    addresses = {str(target): address_of(str(target)) for target in targets}
+    stored = targets_with_ancestors(Path._brand(address.stored) for address in addresses.values())
+    rows = await rows_by_path(session, tables.entry, stored, columns, profile, membership_budget, source=source)
+    by_target = {key: rows[address.stored] for key, address in addresses.items() if address.stored in rows}
+    return Fetched(by_target, rows)
 
 
-async def tree_rows(
+async def screen(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
-    path: Path,
-    max_depth: int | None,
-    columns: frozenset[str] | None,
-    view: Visibility | None = None,
-) -> Result:
-    """Every row beneath *path*, in path order, to *max_depth* levels.
+    targets: Sequence[Path],
+    found: Fetched,
+    view: Visibility | None,
+) -> tuple[dict[str, RowMapping], set[str], dict[Path, ResultError]]:
+    """Split fetched targets into shown rows and road directories, and classify the rest.
 
-    Under a partial view the subtree read carries the visibility clauses
-    at ``list`` (once per clause, merged), every row still passes the
-    view — bare where the caller holds only ``list`` — and each named
-    row's hidden ancestors inside the tree show as bare names, the road
-    down to it.
+    A row shows only on the side of the tombstone its target addresses:
+    a live target's tombstoned row is a miss, a trash-view target's live
+    row a plain one. With no view every row on its side shows; under a
+    view a hidden row is a miss too, and a hidden directory shows as a
+    bare name when it is on the road. Every miss then climbs the descent
+    ladder on its own side, so a hidden row and an absent one answer at
+    the same component and the hint rides only on a tombstone the view
+    admits. The view's head is synthesized, never fetched: the callers
+    answer it themselves.
     """
-    fetched = effective_columns(columns, content=False)
-    entry = tables.entry
-    found = await _mappings_by_path(
-        session, tables, profile, membership_budget, [path], fetched, with_entry_id=False, judged=view is not None
-    )
-    shown, road, missing = await _screen(session, tables, profile, membership_budget, [path], found, view)
-    target = shown.get(path)
-    if target is None and path not in road and path != TRASH_ROOT:
-        return Result(ops=("tree",), errors=[missing[path]])
-    if target is not None and target["kind"] != "directory":
-        return Result(ops=("tree",), observations=[_observe_for(view, target, fetched)])
-    address = address_of(str(path))
-    wanted = fetched | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
-    stmt = (
-        select(*_entry_columns(entry, wanted))
-        .where(
-            descendant_filter(entry, address.stored, profile),
-            *liveness_filters(entry, profile, include_meta=address.meta, trashed=address.trashed),
-        )
-        .order_by(entry.c.path)
-    )
-    if max_depth is not None:
-        stmt = stmt.where(_slash_count(entry) <= _depth(address.stored) + max_depth)
+    candidates: dict[Path, RowMapping] = {}
+    unresolved: list[Path] = []
+    for target in dict.fromkeys(targets):
+        key = str(target)
+        if key == TRASH_ROOT:
+            continue
+        mapping = found.by_target.get(key)
+        if mapping is not None and (mapping["deleted_at"] is not None) == address_of(key).trashed:
+            candidates[target] = mapping
+        else:
+            unresolved.append(target)
+    road: set[str] = set()
     if view is None:
-        rows = [_observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
-        return Result(ops=("tree",), observations=rows)
-    visible = await _visible_rows(session, stmt, view, address.stored)
-    bare = {
-        ancestor
-        for mapping_path in visible
-        for ancestor in _ancestors_below(mapping_path, address.stored)
-        if ancestor not in visible
-    }
-    observed = {p: _observe_for(view, m, fetched) for p, m in visible.items()}
-    observed |= {p: road_observation(p) for p in bare}
-    return Result(ops=("tree",), observations=[observed[p] for p in sorted(observed)])
+        shown = {str(target): mapping for target, mapping in candidates.items()}
+    else:
+        shown = {str(target): mapping for target, mapping in candidates.items() if view.shows(mapping)}
+        hidden = {target: address_of(str(target)) for target in candidates if str(target) not in shown}
+        for trashed in (False, True):
+            stored = {address.stored: target for target, address in hidden.items() if address.trashed == trashed}
+            doors = [path for path, target in stored.items() if candidates[target]["kind"] == "directory"]
+            if doors:
+                road |= {str(stored[path]) for path in await view.road(session, doors, trashed=trashed)}
+        unresolved.extend(target for target in hidden if str(target) not in road)
+    misses = await _classify_unresolved(session, found.rows, unresolved, view)
+    return shown, road, misses
+
+
+def observe_for(view: Visibility | None, mapping: RowMapping, fetched: frozenset[str]) -> Observation:
+    """The row whole when *view* reads it (or there is no view), else bare: path and kind, no ``deleted_at``."""
+    if view is None or view.reads(mapping):
+        return observe(mapping, fetched)
+    return bare_observation(mapping["path"], mapping["kind"])
+
+
+def observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:
+    """The fetched row as an observation, its mask the fields fetched; a tombstoned row adds ``deleted_at``."""
+    # A tombstoned row reaches here only through the trash view, which projects when it was deleted.
+    if mapping.get("deleted_at") is not None:
+        fetched = fetched | {"deleted_at"}
+    # Stored paths are canonical by invariant: re-brand, never re-gate.
+    values: dict[str, object] = {field: mapping[field] for field in fetched}
+    values["path"] = Path._brand(mapping["path"])
+    values["populated"] = fetched
+    return Observation.model_validate(values)
+
+
+def entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]]:
+    """The entries-table columns that serve the fields in *fetched*, the body fields left to their own tables."""
+    return [entry.c[field] for field in sorted(fetched - BODY_FIELDS)]
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +313,9 @@ ARM_FIXED_BINDS: Final = 7
 # Ceiling of one scope root clause's fixed bind slots: the root-row
 # exclusion, the strict-descendant LIKE, the kind fact, the meta-liveness pair.
 ROOT_ARM_BINDS: Final = 5
+
+# The bind a page's key adds to each arm and each root clause; charged only on a paged call.
+PAGE_KEY_BINDS: Final = 1
 
 # At most this many composed patterns on a side, a scope prefilters as composition did:
 # within one statement's measured OR-fan sweet spot, and a tighter fetch than the roots alone.
@@ -336,8 +346,10 @@ async def glob_rows(
     wall_seconds: float = WALL_TIME_BUDGET,
     view: Visibility | None = None,
     scope: AdmittedScope | None = None,
+    after: Path | None = None,
+    limit: int | None = None,
 ) -> Result:
-    """Rows matching **any** pattern, one snapshot, statements chunked by budget.
+    """Rows matching **any** pattern, one snapshot, statements chunked by budget; or one page of them.
 
     Scoping arrives in one shape. *patterns* and *globs_not* are the
     entry-wide channel, and every root strictly beneath the entry rides
@@ -376,7 +388,20 @@ async def glob_rows(
     exclusion, and the call carries one ``truncated`` warning; which
     rows are missing then depends on scheduling. *max_count* cuts the
     judged rows by path order, and the warning stays whatever it cuts.
+
+    With *after* or *limit* the call serves one page in path order; the
+    storage has refused a page beside *max_count* before any read. The key rides inside every arm and every root
+    clause as ``path > :after``, never beside the fan, and each chunk
+    statement is a stream ordered by path with its own limit, filled as
+    :mod:`~vfs.storage.backends.database.keyset` says. The ``LIKE``
+    prefilter over-admits and a pattern with no literal prefix has no
+    path range, so a page visits the candidates in its path range, not
+    ``limit + 1`` rows: a sparse pattern over a large corpus reads many
+    rows per page, as one whole call does, and each candidate about once
+    across a listing. One branch per arm, each with its own limit, would
+    bound a prefixed arm, and waits for a measured need.
     """
+    paged = after is not None or limit is not None
     try:
         addresses = address_channel("pattern", patterns)
         excluded = address_channel("globs_not", globs_not)
@@ -397,8 +422,13 @@ async def glob_rows(
     facts = NO_SCOPE_FACTS
     if scope is not None and (scope.live or scope.trashed):
         facts = scope_facts(entry, profile, parameter_budget, membership_budget, scope.channel.arms)
-    arms: list[ColumnElement[bool]] = []
-    clauses: list[ColumnElement[bool]] = []
+    ride = ext_membership(entry, wanted, membership_budget)
+    keyed_binds = PAGE_KEY_BINDS if paged else 0
+    chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + keyed_binds)
+
+    # One builder per statement of the fan, so a stream rebuilds its own arms alone at each position it reads from.
+    builders: list[Callable[[str | None], ColumnElement[bool]]] = []
+    live_arms: list[tuple[GlobFilter, bool, ColumnElement[bool]]] = []
     for trashed, gates in sides.items():
         prefilter = list(gates.admissions)
         composed = None if scope is None else scope.composed(trashed=trashed)
@@ -406,52 +436,65 @@ async def glob_rows(
             prefilter += [compile_filter(pattern) for pattern in composed]
         elif scope is not None:
             roots = scope.roots(trashed=trashed)
-            clauses += scope_fan(
-                entry, profile, parameter_budget, membership_budget, roots, facts, wanted, kind=kind, trashed=trashed
-            )
-        built = (
-            pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed)
-            for glob in prefilter
-        )
-        arms += [arm for arm in built if arm is not None]
-    ride = ext_membership(entry, wanted, membership_budget)
-    chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
+            per_statement = scope_chunk(entry, profile, parameter_budget, membership_budget, facts, wanted, keyed=paged)
+            budgets = (parameter_budget, membership_budget)
+            builders += [
+                partial(_scope_where, entry, profile, budgets, part, facts, wanted, kind, trashed, paged)
+                for part in chunked(list(roots), per_statement)
+            ]
+        for glob in prefilter:
+            arm = pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed)
+            if arm is not None:
+                live_arms.append((glob, trashed, arm))
+    arm_builders = [
+        partial(_arms_where, entry, part, wanted, profile, membership_budget, kind)
+        for part in chunked(live_arms, chunk)
+    ]
+    builders = [*arm_builders, *builders]
+
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
     queried = fetched | ROW_GATE_FIELDS | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
-    candidates: dict[bool, list[RowMapping]] = {False: [], True: []}
-    for mapping in await _pattern_candidates(session, entry, chunk, arms, queried, clauses):
-        candidates[mapping["deleted_at"] is not None].append(mapping)
-    matched: dict[str, RowMapping] = {}
-    hidden: dict[bool, list[str]] = {False: [], True: []}
-    finished = True
-    for trashed, side in candidates.items():
-        gates = sides[trashed]
-        if not side or not (gates.admissions or gates.scoped):
-            continue
-        rows = [(mapping["path"], mapping["name"]) for mapping in side]
-        verdicts, completed = await judge_rows(executor, gates, rows, deadline=deadline)
-        finished = finished and completed
-        for mapping, verdict in zip(side, verdicts, strict=True):
-            if not gates.admits(verdict, mapping["ext"], marked_only=_under_meta_root(mapping["path"])):
+    finished = [True]
+    # The first path the batch judged last left unjudged at the wall, on either side: where a page's fill stops.
+    cut: list[str | None] = [None]
+
+    async def judged(candidates: Sequence[RowMapping]) -> list[Observation]:
+        """The candidates the compiled patterns and the view admit, in path order, roads included."""
+        cut[0] = None
+        matched: dict[str, RowMapping] = {}
+        hidden: dict[bool, list[str]] = {False: [], True: []}
+        for trashed, gates in sides.items():
+            side = [mapping for mapping in candidates if (mapping["deleted_at"] is not None) == trashed]
+            if not side or not (gates.admissions or gates.scoped):
                 continue
-            if view is None or view.shows(mapping):
-                matched.setdefault(mapping["path"], mapping)
-            elif mapping["kind"] == "directory":
-                hidden[trashed].append(mapping["path"])
-    observed = {path: _observe_for(view, mapping, fetched) for path, mapping in matched.items()}
-    if view is not None:
+            rows = [(mapping["path"], mapping["name"]) for mapping in side]
+            verdicts, completed = await judge_rows(executor, gates, rows, deadline=deadline)
+            finished[0] = finished[0] and completed
+            cut[0] = first_unjudged(cut[0], side, verdicts)
+            for mapping, verdict in zip(side, verdicts, strict=True):
+                if not gates.admits(verdict, mapping["ext"], marked_only=_under_meta_root(mapping["path"])):
+                    continue
+                if view is None or view.shows(mapping):
+                    matched.setdefault(mapping["path"], mapping)
+                elif mapping["kind"] == "directory":
+                    hidden[trashed].append(mapping["path"])
+        observed = {path: observe_for(view, mapping, fetched) for path, mapping in matched.items()}
         for trashed, paths in hidden.items():
-            if paths:
-                road = await view.road(session, paths, trashed=trashed)
-                observed |= {path: road_observation(path) for path in road}
-    served = [observed[path] for path in sorted(observed)]
-    if max_count is not None:
-        served = served[:max_count]
-    errors: list[ResultError] = []
-    if not finished:
-        errors.append(wall_truncation(GLOB_REFINE_GUIDANCE))
-    return Result(ops=("glob",), observations=served, errors=errors)
+            if view is not None and paths:
+                observed |= {path: road_observation(path) for path in await view.road(session, paths, trashed=trashed)}
+        return [observed[path] for path in sorted(observed)]
+
+    key: Path | None = None
+    if paged:
+        streams = _candidate_streams(session, entry, queried, builders)
+        found = await filled(streams, judged, after=after, limit=limit, cut=lambda: cut[0])
+        served, key = keyed(found.rows, found.frontier, after=after, limit=limit)
+    else:
+        served = await judged(await _pattern_candidates(session, entry, queried, [build(None) for build in builders]))
+        served = served if max_count is None else served[:max_count]
+    errors = [] if finished[0] else [wall_truncation(GLOB_REFINE_GUIDANCE)]
+    return Result(ops=("glob",), observations=served, errors=errors, next_after=key)
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +621,7 @@ def scope_root_arm(
     *,
     kind: str | None = None,
     trashed: bool = False,
+    after: str | None = None,
 ) -> ColumnElement[bool]:
     """One scope root's clause: the rows strictly beneath *root*, with the call's per-row facts.
 
@@ -589,6 +633,8 @@ def scope_root_arm(
     order is not a contract on every engine.
     """
     terms: list[ColumnElement[bool]] = [entry.c.path != "/", descendant_filter(entry, root, profile)]
+    if after is not None:
+        terms.append(entry.c.path > after)
     if kind is not None:
         terms.append(entry.c.kind == kind)
     ride = ext_membership(entry, wanted, membership_budget)
@@ -610,25 +656,48 @@ def scope_fan(
     kind: str | None = None,
     trashed: bool = False,
     reserved: int = 0,
+    after: str | None = None,
+    keyed: bool = False,
 ) -> list[ColumnElement[bool]]:
     """One WHERE per statement: an OR of root clauses, chunked by budget, the arms' facts beside each OR.
 
     The facts' binds are charged once per statement and the root
     clause's per root, so the chunk is the arm budget over what the
     facts and the caller's *reserved* binds leave: no statement grows
-    with the roots, on the least generous engine.
+    with the roots, on the least generous engine. *after* puts a page's
+    key in every root clause, and *keyed* charges its bind on every page
+    of a paged call, the first included, so the chunks never move.
     """
     if not roots:
         return []
-    ride = ext_membership(entry, wanted, membership_budget)
-    chunk = arm_budget(profile, parameter_budget - facts.binds - reserved, ROOT_ARM_BINDS + ride.binds)
+    chunk = scope_chunk(
+        entry, profile, parameter_budget, membership_budget, facts, wanted, reserved=reserved, keyed=keyed
+    )
     built = [
-        scope_root_arm(entry, root, wanted, profile, membership_budget, kind=kind, trashed=trashed) for root in roots
+        scope_root_arm(entry, root, wanted, profile, membership_budget, kind=kind, trashed=trashed, after=after)
+        for root in roots
     ]
     fans = [or_(*part) for part in chunked(built, chunk)]
     if facts.predicate is None:
         return fans
     return [and_(fan, facts.predicate) for fan in fans]
+
+
+def scope_chunk(
+    entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    facts: ScopeFacts,
+    wanted: frozenset[str],
+    *,
+    reserved: int = 0,
+    keyed: bool = False,
+) -> int:
+    """The most root clauses one statement of :func:`scope_fan` holds, on what the facts and *reserved* leave."""
+    ride = ext_membership(entry, wanted, membership_budget)
+    per_root = ROOT_ARM_BINDS + ride.binds + (PAGE_KEY_BINDS if keyed else 0)
+    return arm_budget(profile, parameter_budget - facts.binds - reserved, per_root)
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +779,7 @@ def pattern_arm(
     *,
     kind: str | None = None,
     trashed: bool = False,
+    after: str | None = None,
 ) -> ColumnElement[bool] | None:
     """One pattern's self-contained OR-arm, or ``None`` when provably empty.
 
@@ -729,6 +799,8 @@ def pattern_arm(
     like = _glob_like(glob.pattern)
     prefilter = like if like is not None else escape_like(literal_prefix(glob.pattern), profile) + "%"
     terms: list[ColumnElement[bool]] = [entry.c.path != "/", subject.like(prefilter, escape=LIKE_ESCAPE)]
+    if after is not None:
+        terms.append(entry.c.path > after)
     if kind is not None:
         terms.append(entry.c.kind == kind)
     ride = ext_membership(entry, wanted, membership_budget)
@@ -832,10 +904,10 @@ async def _point_rows(
     row the caller holds only ``list`` on answers bare to ``stat`` and
     ``permission_denied`` to ``read``.
     """
-    found = await _mappings_by_path(
+    found = await mappings_by_path(
         session, tables, profile, membership_budget, targets, fetched, with_entry_id=False, judged=view is not None
     )
-    shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
+    shown, road, missing = await screen(session, tables, profile, membership_budget, targets, found, view)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
@@ -858,7 +930,7 @@ async def _point_rows(
             # A row the caller may name but not read: the refusal confirms only what a listing shows.
             errors.append(denied(target))
             continue
-        rows.append(_observe_for(view, mapping, fetched))
+        rows.append(observe_for(view, mapping, fetched))
     return rows, errors
 
 
@@ -910,54 +982,6 @@ def bare_observation(path: str, kind: str) -> Observation:
     return Observation.model_validate({"path": Path._brand(path), "kind": kind, "populated": LIST_FIELDS})
 
 
-async def _screen(
-    session: AsyncSession,
-    tables: VFSTables,
-    profile: DialectProfile,
-    membership_budget: int,
-    targets: Sequence[Path],
-    found: _Fetched,
-    view: Visibility | None,
-) -> tuple[dict[str, RowMapping], set[str], dict[Path, ResultError]]:
-    """Split fetched targets into shown rows and road directories, and classify the rest.
-
-    A row shows only on the side of the tombstone its target addresses:
-    a live target's tombstoned row is a miss, a trash-view target's live
-    row a plain one. With no view every row on its side shows; under a
-    view a hidden row is a miss too, and a hidden directory shows as a
-    bare name when it is on the road. Every miss then climbs the descent
-    ladder on its own side, so a hidden row and an absent one answer at
-    the same component and the hint rides only on a tombstone the view
-    admits. The view's head is synthesized, never fetched: the callers
-    answer it themselves.
-    """
-    candidates: dict[Path, RowMapping] = {}
-    unresolved: list[Path] = []
-    for target in dict.fromkeys(targets):
-        key = str(target)
-        if key == TRASH_ROOT:
-            continue
-        mapping = found.by_target.get(key)
-        if mapping is not None and (mapping["deleted_at"] is not None) == address_of(key).trashed:
-            candidates[target] = mapping
-        else:
-            unresolved.append(target)
-    road: set[str] = set()
-    if view is None:
-        shown = {str(target): mapping for target, mapping in candidates.items()}
-    else:
-        shown = {str(target): mapping for target, mapping in candidates.items() if view.shows(mapping)}
-        hidden = {target: address_of(str(target)) for target in candidates if str(target) not in shown}
-        for trashed in (False, True):
-            stored = {address.stored: target for target, address in hidden.items() if address.trashed == trashed}
-            doors = [path for path, target in stored.items() if candidates[target]["kind"] == "directory"]
-            if doors:
-                road |= {str(stored[path]) for path in await view.road(session, doors, trashed=trashed)}
-        unresolved.extend(target for target in hidden if str(target) not in road)
-    misses = await _classify_unresolved(session, found.rows, unresolved, view)
-    return shown, road, misses
-
-
 async def _classify_unresolved(
     session: AsyncSession, chain: dict[str, RowMapping], targets: Sequence[Path], view: Visibility | None
 ) -> dict[Path, ResultError]:
@@ -996,144 +1020,98 @@ async def _classify_unresolved(
     return misses
 
 
-async def _visible_rows(
-    session: AsyncSession, stmt: Select[Any], view: Visibility, scope: str | None
-) -> dict[str, RowMapping]:
-    """*stmt* narrowed by the view (one statement, or one per clause), merged by path, every row passing it."""
-    merged: dict[str, RowMapping] = {}
-    for statement in view.narrow(stmt, scope):
-        for mapping in (await session.execute(statement)).mappings():
-            if view.holds(mapping, view.need):
-                merged[mapping["path"]] = mapping
-    return merged
-
-
-def _ancestors_below(path: str, root: str) -> list[str]:
-    """*path*'s proper ancestors strictly beneath *root*."""
-    out: list[str] = []
-    node = path.rsplit("/", 1)[0] or "/"
-    while node != root and node != "/" and (root == "/" or node.startswith(root + "/")):
-        out.append(node)
-        node = node.rsplit("/", 1)[0] or "/"
-    return out
-
-
-class _Fetched(NamedTuple):
-    """The point fetch: the row each target addresses, keyed by the target, and every row fetched, by stored path."""
-
-    by_target: dict[str, RowMapping]
-    rows: dict[str, RowMapping]
-
-
-async def _mappings_by_path(
-    session: AsyncSession,
-    tables: VFSTables,
-    profile: DialectProfile,
-    membership_budget: int,
-    targets: Sequence[Path],
-    fetched: frozenset[str],
-    *,
-    with_entry_id: bool,
-    judged: bool = False,
-) -> _Fetched:
-    """One bounded fetch for the batch and its ancestor chain; *judged* rows carry the rights fields.
-
-    Every row carries its tombstone beside *fetched*, so the caller can
-    tell which side of it the row sits on; a trash-view target fetches
-    the row at the path beneath the head. The targets' ancestors ride in
-    the same membership, so the descent ladder classifies every miss from
-    this one fetch — a tombstoned or hidden target costs no second query.
-    """
-    columns, source = _entry_projection(tables, fetched | {"deleted_at"}, with_entry_id=with_entry_id)
-    if judged:
-        columns = [*columns, *(tables.entry.c[field] for field in sorted(RIGHTS_FIELDS))]
-    addresses = {str(target): address_of(str(target)) for target in targets}
-    stored = targets_with_ancestors(Path._brand(address.stored) for address in addresses.values())
-    rows = await rows_by_path(session, tables.entry, stored, columns, profile, membership_budget, source=source)
-    by_target = {key: rows[address.stored] for key, address in addresses.items() if address.stored in rows}
-    return _Fetched(by_target, rows)
-
-
 async def _pattern_candidates(
-    session: AsyncSession,
-    entry: Table,
-    chunk_size: int,
-    arms: Sequence[ColumnElement[bool]],
-    fetched: frozenset[str],
-    scope_clauses: Sequence[ColumnElement[bool]] = (),
+    session: AsyncSession, entry: Table, fetched: frozenset[str], wheres: Sequence[ColumnElement[bool]]
 ) -> list[RowMapping]:
     """Prefiltered candidates from the chunked OR fan and the scope's root fan, in path order.
 
     Each pattern chunk's WHERE is the pure OR of its arms — nothing
-    rides beside that fan; each scope statement's WHERE is one of
-    *scope_clauses*, already chunked. Overlapping arms yield a row once
+    rides beside that fan; each scope statement's WHERE is one of the
+    scope's clauses, already chunked. Overlapping arms yield a row once
     per statement; the merge dict dedups across statements, and one
     Python sort restores path order — codepoint order equals the
     binary-collated byte order.
     """
-    columns = _entry_columns(entry, fetched)
+    columns = entry_columns(entry, fetched)
     merged: dict[str, RowMapping] = {}
-    wheres = [*(or_(*chunk) for chunk in chunked(list(arms), chunk_size)), *scope_clauses]
     for where in wheres:
         result = await session.execute(select(*columns).where(where))
         merged.update({mapping["path"]: mapping for mapping in result.mappings()})
     return [merged[path] for path in sorted(merged)]
 
 
-async def _children_by_parent(
+def _candidate_streams(
     session: AsyncSession,
     entry: Table,
+    fetched: frozenset[str],
+    builders: Sequence[Callable[[str | None], ColumnElement[bool]]],
+) -> list[Fetch]:
+    """One stream for each statement of the fan, in path order, its key inside every arm of that statement alone."""
+    columns = entry_columns(entry, fetched)
+
+    def stream(build: Callable[[str | None], ColumnElement[bool]]) -> Fetch:
+        async def fetch(position: str | None, batch: int | None) -> Sequence[RowMapping]:
+            stmt = select(*columns).where(build(position)).order_by(entry.c.path)
+            return (await session.execute(stmt if batch is None else stmt.limit(batch))).mappings().all()
+
+        return fetch
+
+    return [stream(build) for build in builders]
+
+
+def _arms_where(
+    entry: Table,
+    arms: Sequence[tuple[GlobFilter, bool, ColumnElement[bool]]],
+    wanted: frozenset[str],
     profile: DialectProfile,
     membership_budget: int,
-    directories: Sequence[Path],
-    found: dict[str, RowMapping],
-    fetched: frozenset[str],
-    *,
-    view: Visibility | None = None,
-) -> dict[str, list[Observation]]:
-    """Chunked ``parent_id IN`` children selects, regrouped per parent.
+    kind: str | None,
+    position: str | None,
+) -> ColumnElement[bool]:
+    """One statement's OR of pattern arms, each on its side of the tombstone, the key inside each; none is dead.
 
-    One scope per liveness class: meta-addressed targets see meta rows,
-    and trash-view targets see the tombstoned children of the tombstoned
-    directory beneath the head. Chunks partition parents, so each
-    parent's children arrive whole and name-ordered; the dict preserves
-    that order per parent. Under a view a child the caller holds only
-    ``list`` on shows bare, a hidden child directory stays in its place
-    as a bare name when it is on the road, and every other hidden child
-    drops.
+    Each arm comes built with no key, which serves a read from the start; a read from a key builds them again.
     """
-    wanted = fetched | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
-    scopes: dict[tuple[bool, bool], set[str]] = {}
-    for target in directories:
-        address = address_of(str(target))
-        scopes.setdefault((address.meta, address.trashed), set()).add(found[str(target)]["entry_id"])
-    children: dict[str, list[Observation]] = {}
-    for (include_meta, trashed), parents in sorted(scopes.items()):
-        listed: dict[str, list[RowMapping]] = {}
-        for chunk in chunked(sorted(parents), membership_budget):
-            stmt = (
-                select(entry.c.parent_id, *_entry_columns(entry, wanted))
-                .where(
-                    membership(entry.c.parent_id, chunk, profile),
-                    *liveness_filters(entry, profile, include_meta=include_meta, trashed=trashed),
-                )
-                .order_by(entry.c.parent_id, entry.c.name)
-            )
-            for mapping in (await session.execute(stmt)).mappings():
-                listed.setdefault(mapping["parent_id"], []).append(mapping)
-        if view is None:
-            children |= {parent: [_observe(m, fetched) for m in rows] for parent, rows in listed.items()}
-            continue
-        mappings = [m for rows in listed.values() for m in rows]
-        hidden = [m["path"] for m in mappings if m["kind"] == "directory" and not view.shows(m)]
-        road = await view.road(session, hidden, trashed=trashed) if hidden else set()
-        for parent, rows in listed.items():
-            for mapping in rows:
-                if view.shows(mapping):
-                    children.setdefault(parent, []).append(_observe_for(view, mapping, fetched))
-                elif mapping["path"] in road:
-                    children.setdefault(parent, []).append(road_observation(mapping["path"]))
-    return children
+    if position is None:
+        return or_(*(arm for _glob, _trashed, arm in arms))
+    built = [
+        pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed, after=position)
+        for glob, trashed, _arm in arms
+    ]
+    return or_(*(arm for arm in built if arm is not None))
+
+
+def _scope_where(
+    entry: Table,
+    profile: DialectProfile,
+    budgets: tuple[int, int],
+    roots: Sequence[str],
+    facts: ScopeFacts,
+    wanted: frozenset[str],
+    kind: str | None,
+    trashed: bool,
+    keyed: bool,
+    position: str | None,
+) -> ColumnElement[bool]:
+    """One statement's root clauses: ``roots`` fit one statement of the scope fan, so it builds exactly one.
+
+    ``budgets`` is the parameter budget and the membership budget, in that order.
+    """
+    parameter_budget, membership_budget = budgets
+    [where] = scope_fan(
+        entry,
+        profile,
+        parameter_budget,
+        membership_budget,
+        roots,
+        facts,
+        wanted,
+        kind=kind,
+        trashed=trashed,
+        after=position,
+        keyed=keyed,
+    )
+    return where
 
 
 def _entry_projection(
@@ -1141,7 +1119,7 @@ def _entry_projection(
 ) -> tuple[list[ColumnElement[Any]], FromClause | None]:
     """The select list serving *fetched*, plus the FROM override when a body joins."""
     entry = tables.entry
-    columns: list[ColumnElement[Any]] = list(_entry_columns(entry, fetched))
+    columns: list[ColumnElement[Any]] = list(entry_columns(entry, fetched))
     if with_entry_id:
         columns = [entry.c.entry_id, *columns]
     bodies = fetched & BODY_FIELDS
@@ -1152,63 +1130,6 @@ def _entry_projection(
     if "data" in bodies:
         columns.append(tables.blobs.c.data)
     return columns, tables.bodies_joined(content="content" in bodies, data="data" in bodies)
-
-
-def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]]:
-    return [entry.c[field] for field in sorted(fetched - BODY_FIELDS)]
-
-
-def _observe_for(view: Visibility | None, mapping: RowMapping, fetched: frozenset[str]) -> Observation:
-    """The row whole when *view* reads it (or there is no view), else bare: path and kind, no ``deleted_at``."""
-    if view is None or view.reads(mapping):
-        return _observe(mapping, fetched)
-    return bare_observation(mapping["path"], mapping["kind"])
-
-
-def _observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:
-    # A tombstoned row reaches here only through the trash view, which projects when it was deleted.
-    if mapping.get("deleted_at") is not None:
-        fetched = fetched | {"deleted_at"}
-    # Stored paths are canonical by invariant: re-brand, never re-gate.
-    values: dict[str, object] = {field: mapping[field] for field in fetched}
-    values["path"] = Path._brand(mapping["path"])
-    values["populated"] = fetched
-    return Observation.model_validate(values)
-
-
-async def _trash_roots(
-    session: AsyncSession, tables: VFSTables, profile: DialectProfile, fetched: frozenset[str], view: Visibility | None
-) -> list[Observation]:
-    """``ls`` of the trash view's head: every tombstoned root, at its own path, in path order."""
-    entry = tables.entry
-    wanted = fetched | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
-    stmt = (
-        select(*_entry_columns(entry, wanted))
-        .where(
-            tombstoned_roots(entry),
-            *liveness_filters(entry, profile, include_meta=False, trashed=True),
-        )
-        .order_by(entry.c.path)
-    )
-    if view is None:
-        return [_observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
-    visible = await _visible_rows(session, stmt, view, None)
-    return [_observe_for(view, visible[path], fetched) for path in sorted(visible)]
-
-
-def _with_trash_view(listed: list[Observation]) -> list[Observation]:
-    """The meta root's listing with the synthesized trash view in its name order — no row is ever stored there."""
-    return sorted([*listed, road_observation(TRASH_ROOT)], key=lambda row: row.path.name)
-
-
-def _depth(stored: str) -> int:
-    """Segment depth of a stored path string: 0 for the root."""
-    return 0 if stored == "/" else stored.count("/")
-
-
-def _slash_count(entry: Table) -> ColumnElement[int]:
-    """Portable segment-depth expression: slashes in the path column."""
-    return func.char_length(entry.c.path) - func.char_length(func.replace(entry.c.path, "/", ""))
 
 
 def _glob_like(pattern: str) -> str | None:

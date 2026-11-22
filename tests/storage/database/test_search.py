@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import event, func, select, true
 from sqlalchemy.dialects import sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
 from tests.support.oracles.postings import decode_postings, decode_varints
 from tests.support.partial_callers import BOB, SYSTEM, partial_store
@@ -495,7 +495,7 @@ class TestRounds:
         files = {f"/z/{i:04}.txt": f"zeta word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
         files |= {f"/a/{i:04}.txt": f"alpha word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
         storage = await _indexed(tmp_path, files)
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.exec_driver_sql("ANALYZE")
             stat_rows = (await conn.exec_driver_sql("SELECT count(*) FROM sqlite_stat1")).scalar_one()
         assert stat_rows > 0
@@ -1037,7 +1037,7 @@ class TestBudgets:
     ) -> None:
         """Guards: the kernel's completion flag ignored, a stopped batch's postings dropped,
         or the wall recorded once per batch instead of once per call."""
-        storage = await _indexed(tmp_path)
+        storage = await _indexed(tmp_path, search_wall_seconds=WALL_TIME_BUDGET)
         dirty = [
             Entry(path=Path("/dirty/a.txt"), content="tokens early\n"),
             Entry(path=Path("/dirty/b.txt"), content="tokens later\n"),
@@ -1052,11 +1052,12 @@ class TestBudgets:
             return OverlayPostings(counted.postings, 1, counted.total_dl, False)
 
         monkeypatch.setattr(search_module, "overlay_postings", stopping)
+        # A clock that stands still: only the kernel's own stop ends the call, however slow the machine.
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 0.0)
         result = await storage.search(query="tokens")
         assert result.success is True
         # The hop's budget is the wall's remainder cut at worker start, never unbounded.
-        [budget] = budgets
-        assert budget is not None and 0.0 <= budget <= WALL_TIME_BUDGET
+        assert budgets == [WALL_TIME_BUDGET]
         [wall] = _walls(result)
         assert (wall.kind, wall.severity, wall.data) == (ErrorKind.truncated, Severity.warning, None)
         indexed = {"/notes.txt", "/src/lexer.py", "/src/parser.py", "/docs/tokens.md"}
@@ -1069,19 +1070,16 @@ class TestBudgets:
         """Guards: the deadline unread between batches, so an expired call keeps fetching bodies,
         or the batches counted before the wall dropped from the answer."""
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
-        storage = await _fresh(tmp_path, files)
+        storage = await _fresh(tmp_path, files, search_wall_seconds=WALL_TIME_BUDGET)
         monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
-        real_clock, real_kernel = deadline_module.monotonic, search_module.overlay_postings
-        skew = {"seconds": 0.0}
-
-        def skewed_clock() -> float:
-            return real_clock() + skew["seconds"]
+        real_kernel = search_module.overlay_postings
+        now = {"seconds": 0.0}
 
         def counting_kernel(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
-            skew["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
+            now["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
             return real_kernel(docs, terms, budget=budget)
 
-        monkeypatch.setattr(deadline_module, "monotonic", skewed_clock)
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: now["seconds"])
         monkeypatch.setattr(search_module, "overlay_postings", counting_kernel)
         with _recorded(storage) as statements:
             result = await storage.search(query="tokens")

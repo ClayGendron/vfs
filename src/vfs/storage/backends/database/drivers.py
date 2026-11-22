@@ -7,7 +7,8 @@ needs something. SQLite needs its connections opened as
 ``ClosingConnection``, whose cursors close themselves when a statement
 fails, and an in-memory SQLite database that SQLAlchemy gives one
 connection needs to keep it. ``load_sqlite_vec`` loads the vector
-extension into each SQLite connection. No engine may autocommit.
+extension into each SQLite connection that ``has_sqlite_vec`` finds
+without it. No engine may autocommit.
 
     create_async_engine(url, **merge_engine_arguments(url, given))
 
@@ -45,6 +46,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.util.concurrency import await_only
+
+from vfs.storage.backends.database.dialects import SQLITE_VEC_PROBE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -232,6 +235,16 @@ def load_sqlite_vec(dbapi_connection: Any) -> None:
         await_only(inner.load_extension(SQLITE_VEC_PATH))
     finally:
         await_only(inner.enable_load_extension(False))
+
+
+def has_sqlite_vec(cursor: Any) -> bool:
+    """Whether one SQLite connection already answers the extension's version function, so it needs no load."""
+    try:
+        cursor.execute(SQLITE_VEC_PROBE)
+    except sqlite3.OperationalError:
+        return False
+    cursor.fetchall()
+    return True
 
 
 # ---------------------------------------------------------------------------

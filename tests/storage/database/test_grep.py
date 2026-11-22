@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.partial_callers import BOB, SYSTEM, RecordingSession, partial_store
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import WALL_TIME_CAUSE, Deadline
@@ -339,7 +339,7 @@ class TestOverlayPartition:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.rebuild()).success is True
         posting = storage._host.tables.posting_list
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(posting).values(postings=blob))
         result = await storage.grep(pattern="needle")
         assert result.success is False
@@ -1168,6 +1168,7 @@ class TestOverlayGate:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         host = storage._host
         async with host.session_factory() as session:
+            await begin_as_writer(session)
             await session.execute(host.tables.index_state.delete())
             missing = indexing_module.IndexSnapshot(None, 0, False)
             assert await grep_module.pointer_with_overlay(session, host.tables) == missing

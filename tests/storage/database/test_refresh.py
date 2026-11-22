@@ -22,7 +22,7 @@ import pytest
 import sqlite_vec
 from sqlalchemy import event, func, select, text, update
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.documents import pdf_bytes
 from tests.support.embedding_doubles import ScriptedProvider
 from tests.support.oracles.postings import decode_postings
@@ -164,7 +164,7 @@ async def _stranded(storage: DatabaseStorage) -> int:
 
 async def _set_lease(storage: DatabaseStorage, holder: str | None, heartbeat: int | None) -> None:
     index_state = storage._host.tables.index_state
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_holder=holder, lease_heartbeat=heartbeat))
 
 
@@ -172,7 +172,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """The running lease backdated past its TTL; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -308,7 +308,7 @@ class TestDeltaBuild:
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)
         await _written(storage, {"/b.txt": "bravo body words"})
         stats = storage._host.tables.lex_stats
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(stats.insert().values(epoch=2, n_docs=0, avg_dl=0.0, k1=1.2, b=0.75))
         result = await storage.refresh()
         error = _only(result)
@@ -999,7 +999,7 @@ async def _seek_store(tmp_path: Any, files: int, *, analyzed: bool) -> tuple[Dat
     await _written(storage, {f"/w/n{n}.txt": f"new body {n}" for n in range(5)})
     await storage._host.settle_statistics()
     if analyzed:
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(text("ANALYZE"))
     return storage, url.split("///", 1)[1]
 
@@ -1106,7 +1106,7 @@ class TestSeeks:
             await _written(storage, {"/a.txt": "alpha body words", "/o.txt": "outside body words"})
             assert (await storage.rebuild()).success is True
             entry = storage._host.tables.entry
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 outside = update(entry).where(entry.c.path == "/o.txt")
                 await conn.execute(outside.values(encoded=True, chunked=False, indexable=True))
             await _written(storage, {"/b.txt": "bravo body words"})
@@ -1209,7 +1209,7 @@ async def _pass_replay(tmp_path: Any, files: int, *, analyzed: bool, embedder: b
     await _changed(storage, refused=embedder)
     await storage._host.settle_statistics()
     if analyzed:
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(text("ANALYZE"))
     before = max(await _all_chunk_ids(storage))
     storage, result, statements = await _refresh_replayed(storage, tmp_path, options)
@@ -1256,7 +1256,7 @@ async def _stale_replay(tmp_path: Any, files: int, monkeypatch: pytest.MonkeyPat
     await _written(storage, {f"/s/f{n:02}.txt": f"seed body {n} words" for n in range(20)})
     assert (await storage.rebuild()).success is True
     await storage._host.settle_statistics()
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(text("ANALYZE"))
     monkeypatch.setattr(EngineHost, "request_analysis", lambda _self: None)
     await _written(storage, {f"/c/f{n:05}.txt": f"corpus body {n} words" for n in range(files)})
@@ -1357,7 +1357,7 @@ class TestScale:
             if store == "mixed-analyzed":
                 storage = await _seeded_store(tmp_path / str(files), files, {})
                 await _changed(storage, refused=False)
-                async with storage._host.engine.begin() as conn:
+                async with writer_engine(storage._host.engine).begin() as conn:
                     await conn.execute(text("ANALYZE"))
             else:
                 bodies = {f"/c/f{n:05}.txt": f"body {n} words" for n in range(files)}
@@ -1402,7 +1402,7 @@ async def _stragglers(tmp_path: Any) -> None:
     assert _embedding(await storage.rebuild())["unembedded"] == 0
     [(straggler, _vector)] = await _chunk_rows(storage, "/a.txt")
     chunks = storage._host.tables.chunks
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(chunks).where(chunks.c.id == straggler).values(embedding=None))
     await _written(storage, {"/c.txt": "charlie fresh words", "/d.txt": "delta fresh words"})
     with _recorded(storage) as statements:

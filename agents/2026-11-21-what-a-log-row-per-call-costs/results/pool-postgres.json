@@ -1,0 +1,149 @@
+{
+  "script": "scripts/measure_pool.py",
+  "arguments": {
+    "engine": "postgres",
+    "repeats": 3,
+    "deadline": 600.0
+  },
+  "environment": {
+    "commit": "12f4941",
+    "src_dirty": false,
+    "date": "2026-11-21T21:12:59+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39",
+    "postgres": "PostgreSQL 19.0 (Debian 19.0-1.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit; pgvector 0.8.7"
+  },
+  "seconds": 18.5,
+  "median_of_medians_ms": {
+    "default|read": 49.976,
+    "default|grep": 356.088,
+    "32|read": 43.251,
+    "32|grep": 388.322
+  },
+  "cells": [
+    {
+      "pool": "default",
+      "verb": "read",
+      "repeat": 0,
+      "n": 160,
+      "median_ms": 40.794,
+      "p95_ms": 269.205,
+      "max_ms": 393.371,
+      "calls_per_second": 333.6
+    },
+    {
+      "pool": "default",
+      "verb": "read",
+      "repeat": 1,
+      "n": 160,
+      "median_ms": 65.402,
+      "p95_ms": 197.176,
+      "max_ms": 272.613,
+      "calls_per_second": 327.2
+    },
+    {
+      "pool": "default",
+      "verb": "read",
+      "repeat": 2,
+      "n": 160,
+      "median_ms": 49.976,
+      "p95_ms": 186.114,
+      "max_ms": 284.638,
+      "calls_per_second": 384.1
+    },
+    {
+      "pool": "default",
+      "verb": "grep",
+      "repeat": 0,
+      "n": 160,
+      "median_ms": 364.676,
+      "p95_ms": 704.532,
+      "max_ms": 998.041,
+      "calls_per_second": 76.0
+    },
+    {
+      "pool": "default",
+      "verb": "grep",
+      "repeat": 1,
+      "n": 160,
+      "median_ms": 356.088,
+      "p95_ms": 654.34,
+      "max_ms": 911.883,
+      "calls_per_second": 77.9
+    },
+    {
+      "pool": "default",
+      "verb": "grep",
+      "repeat": 2,
+      "n": 160,
+      "median_ms": 348.86,
+      "p95_ms": 696.136,
+      "max_ms": 854.303,
+      "calls_per_second": 77.6
+    },
+    {
+      "pool": "32",
+      "verb": "read",
+      "repeat": 0,
+      "n": 160,
+      "median_ms": 47.229,
+      "p95_ms": 462.855,
+      "max_ms": 471.137,
+      "calls_per_second": 246.5
+    },
+    {
+      "pool": "32",
+      "verb": "read",
+      "repeat": 1,
+      "n": 160,
+      "median_ms": 42.976,
+      "p95_ms": 48.264,
+      "max_ms": 49.617,
+      "calls_per_second": 726.7
+    },
+    {
+      "pool": "32",
+      "verb": "read",
+      "repeat": 2,
+      "n": 160,
+      "median_ms": 43.251,
+      "p95_ms": 45.793,
+      "max_ms": 47.972,
+      "calls_per_second": 728.9
+    },
+    {
+      "pool": "32",
+      "verb": "grep",
+      "repeat": 0,
+      "n": 160,
+      "median_ms": 379.962,
+      "p95_ms": 504.251,
+      "max_ms": 680.775,
+      "calls_per_second": 80.4
+    },
+    {
+      "pool": "32",
+      "verb": "grep",
+      "repeat": 1,
+      "n": 160,
+      "median_ms": 423.837,
+      "p95_ms": 617.91,
+      "max_ms": 702.02,
+      "calls_per_second": 73.4
+    },
+    {
+      "pool": "32",
+      "verb": "grep",
+      "repeat": 2,
+      "n": 160,
+      "median_ms": 388.322,
+      "p95_ms": 571.786,
+      "max_ms": 636.506,
+      "calls_per_second": 78.7
+    }
+  ]
+}

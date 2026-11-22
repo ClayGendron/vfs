@@ -16,7 +16,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from concurrent.futures import Executor, ThreadPoolExecutor
 from time import monotonic
 from typing import TYPE_CHECKING, Any
@@ -85,10 +84,10 @@ class _RecordingMatcher:
 
 
 class _GatedMatcher:
-    """A matcher double that blocks until its gate opens, tracing its life."""
+    """A matcher double that blocks until its gate opens, tracing its life; the test's teardown opens the gate too."""
 
-    def __init__(self) -> None:
-        self.gate = threading.Event()
+    def __init__(self, gate: threading.Event) -> None:
+        self.gate = gate
         self.started = threading.Event()
         self.finished = False
 
@@ -96,7 +95,7 @@ class _GatedMatcher:
         self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[int], bool]:
         self.started.set()
-        assert self.gate.wait(timeout=5.0)
+        self.gate.wait()
         self.finished = True
         return [0] * len(texts), True
 
@@ -110,7 +109,7 @@ class _GatedMatcher:
         invert: bool,
         budget: float | None,
     ) -> tuple[list[list[MatchSpan]], bool]:  # pragma: no cover - protocol completeness
-        assert self.gate.wait(timeout=5.0)
+        self.gate.wait()
         return [[] for _ in texts], True
 
 
@@ -124,29 +123,35 @@ class _QueueClock:
     """A queue wait the deadline's clock can see without anyone sleeping.
 
     One job holds the pool's single worker while the clock stands at the
-    submit instant, until the next job waits in the queue behind it; the
-    job then moves the clock forward by *wait* and returns, so the next
-    job starts on a worker that reads a later time. A budget cut at worker
-    start reads ``left_at_worker_start``; one hoisted to submit time would
-    read the whole span.
+    submit instant, until the next job is queued behind it; the job then
+    moves the clock forward by *wait* and returns, so the next job starts
+    on a worker that reads a later time. A budget cut at worker start
+    reads ``left_at_worker_start``; one hoisted to submit time would read
+    the whole span. *queued* is set by the next submit, or at teardown.
     """
 
     span = 100.0
     wait = 60.0
 
-    def __init__(self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch, queued: threading.Event) -> None:
         self._now = monotonic()
-        self._pool = pool
+        self._queued = queued
         monkeypatch.setattr(deadline_module, "monotonic", lambda: self._now)
         self.deadline = Deadline(at=self._now + self.span)
         self.left_at_worker_start = self.span - self.wait
         pool.submit(self._hold_then_advance)
+        submit = pool.submit
+
+        def queueing(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+            future = submit(fn, *args, **kwargs)
+            queued.set()
+            return future
+
+        monkeypatch.setattr(pool, "submit", queueing)
 
     def _hold_then_advance(self) -> None:
         # Held until the measured job is queued, so a submit-time cut reads the clock before it moves.
-        patience = time.monotonic() + 5.0
-        while self._pool._work_queue.qsize() < 1 and time.monotonic() < patience:
-            time.sleep(0.001)
+        self._queued.wait()
         self._now += self.wait
 
 
@@ -190,34 +195,36 @@ class TestVerifyOffload:
         assert offloaded == direct
 
     async def test_queue_wait_shortens_the_budget_never_the_wall(
-        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch, thread_gate: Callable[[], threading.Event]
     ) -> None:
         """Guards: the budget cut moves to submit time (deadline.remaining()
         hoisted out of the worker fn), silently extending the wall by the
         queue wait."""
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
-        clock = _QueueClock(pool, monkeypatch)
+        clock = _QueueClock(pool, monkeypatch, thread_gate())
         await offload.count_lines(["text"], cap=None, invert=False, deadline=clock.deadline)
         assert matcher.budgets == [pytest.approx(clock.left_at_worker_start)]
 
     async def test_hit_lines_budget_is_cut_at_worker_start_too(
-        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch, thread_gate: Callable[[], threading.Event]
     ) -> None:
         """Guards: the same submit-time hoist on the hit_lines arm."""
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
-        clock = _QueueClock(pool, monkeypatch)
+        clock = _QueueClock(pool, monkeypatch, thread_gate())
         await offload.hit_lines(["text"], before=0, after=0, cap=None, invert=False, deadline=clock.deadline)
         assert matcher.budgets == [pytest.approx(clock.left_at_worker_start)]
 
-    async def test_overlapping_calls_are_refused(self, pool: ThreadPoolExecutor) -> None:
+    async def test_overlapping_calls_are_refused(
+        self, pool: ThreadPoolExecutor, thread_gate: Callable[[], threading.Event]
+    ) -> None:
         """Guards: the one-in-flight guard is deleted, letting a second batch
         race the first onto the pool."""
-        matcher = _GatedMatcher()
+        matcher = _GatedMatcher(thread_gate())
         offload = VerifyOffload(matcher, pool)
         first = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
-        await asyncio.sleep(0.05)
+        await _until(matcher.started.is_set)
         with pytest.raises(RuntimeError, match="one batch in flight"):
             await offload.count_lines(["b"], cap=None, invert=False, deadline=Deadline.never())
         matcher.gate.set()
@@ -308,10 +315,12 @@ class _RecordingSet:
 
 
 class _CountingExecutor(Executor):
-    """An executor that counts submissions and records when each task starts."""
+    """An executor that counts submissions and records when each task starts, setting *second_start* at the second."""
 
-    def __init__(self, inner: ThreadPoolExecutor) -> None:
+    def __init__(self, inner: ThreadPoolExecutor, second_start: threading.Event | None = None) -> None:
         self._inner = inner
+        self._lock = threading.Lock()
+        self._second_start = second_start
         self.submitted = 0
         self.started = 0
 
@@ -319,7 +328,11 @@ class _CountingExecutor(Executor):
         self.submitted += 1
 
         def run() -> Any:
-            self.started += 1
+            with self._lock:
+                self.started += 1
+                second = self.started == 2
+            if second and self._second_start is not None:
+                self._second_start.set()
             return fn(*args, **kwargs)
 
         return self._inner.submit(run)
@@ -416,22 +429,21 @@ class TestJudgeRows:
         assert await judge_rows(executor, compile_gates((), ext=("py",)), _ROWS, deadline=past) == ([0, 0], True)
         assert executor.submitted == 0
 
-    async def test_concurrent_hops_build_the_set_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_concurrent_hops_build_the_set_once(
+        self, monkeypatch: pytest.MonkeyPatch, thread_gate: Callable[[], threading.Event]
+    ) -> None:
         """Guards: the build lock removed, so two hops racing on one call's gates
         both build the set."""
         inner = ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-judge")
-        executor = _CountingExecutor(inner)
-        both_started = threading.Event()
+        second_start = thread_gate()
+        executor = _CountingExecutor(inner, second_start)
         calls: list[object] = []
         real = glob_module.glob_set
 
         def held(*args: Any, **kwargs: Any) -> Any:
             calls.append(args)
             # The first builder waits for the second hop to start, so the two overlap.
-            deadline = time.monotonic() + 5.0
-            while executor.started < 2 and time.monotonic() < deadline:
-                time.sleep(0.001)
-            both_started.set()
+            second_start.wait()
             return real(*args, **kwargs)
 
         monkeypatch.setattr(glob_module, "glob_set", held)
@@ -442,7 +454,7 @@ class TestJudgeRows:
             judge_rows(executor, gates, _ROWS, deadline=deadline),
         )
         inner.shutdown(wait=True)
-        assert both_started.is_set() and executor.started == 2
+        assert executor.started == 2
         assert first == second == ([1, 0], True)
         assert len(calls) == 1
 
@@ -488,9 +500,9 @@ class TestJudgeRows:
 
 class TestAbandonment:
     async def test_a_cancelled_await_returns_while_the_worker_drains_into_the_void(
-        self, pool: ThreadPoolExecutor
+        self, pool: ThreadPoolExecutor, thread_gate: Callable[[], threading.Event]
     ) -> None:
-        matcher = _GatedMatcher()
+        matcher = _GatedMatcher(thread_gate())
         offload = VerifyOffload(matcher, pool)
         task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
         await _until(matcher.started.is_set)
@@ -501,24 +513,36 @@ class TestAbandonment:
         matcher.gate.set()
         await _until(lambda: matcher.finished)
 
-    async def test_a_cancel_before_the_worker_starts_never_runs_the_matcher(self, pool: ThreadPoolExecutor) -> None:
-        blocker = threading.Event()
-        pool.submit(blocker.wait, 5.0)
+    async def test_a_cancel_before_the_worker_starts_never_runs_the_matcher(
+        self, pool: ThreadPoolExecutor, thread_gate: Callable[[], threading.Event]
+    ) -> None:
+        # The one worker is held, so the batch waits in the queue when its caller is cancelled.
+        holding, blocker = threading.Event(), thread_gate()
+
+        def hold() -> None:
+            holding.set()
+            blocker.wait()
+
+        pool.submit(hold)
+        await _until(holding.is_set)
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
         task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
-        await asyncio.sleep(0.05)
+        await _until(lambda: pool._work_queue.qsize() == 1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         blocker.set()
-        await asyncio.sleep(0.05)
+        # The worker takes jobs in order, so this one ends after the cancelled batch was passed over.
+        await asyncio.wrap_future(pool.submit(lambda: None))
         assert matcher.budgets == []
 
-    async def test_a_superseded_worker_is_harmless_to_its_successor(self, pool: ThreadPoolExecutor) -> None:
+    async def test_a_superseded_worker_is_harmless_to_its_successor(
+        self, pool: ThreadPoolExecutor, thread_gate: Callable[[], threading.Event]
+    ) -> None:
         # The redrive shape at the seam: attempt one's worker drains
         # abandoned while attempt two, on a fresh instance, serves whole.
-        abandoned = _GatedMatcher()
+        abandoned = _GatedMatcher(thread_gate())
         first = VerifyOffload(abandoned, pool)
         task = asyncio.ensure_future(first.count_lines(["a"], cap=None, invert=False, deadline=Deadline.never()))
         await _until(abandoned.started.is_set)
@@ -535,13 +559,15 @@ class TestAbandonment:
         assert counts == [1, 0] and completed is True
         await _until(lambda: abandoned.finished)
 
-    async def test_a_cancelled_grep_leaves_the_next_call_whole(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_a_cancelled_grep_leaves_the_next_call_whole(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, thread_gate: Callable[[], threading.Event]
+    ) -> None:
         # The end-to-end law: the reissued grep answers correctly while the cancelled one's
         # worker still drains. On SQLite the cancelled caller waits for that worker to end.
         storage = DatabaseStorage(url=_url(tmp_path))
         entry = Entry(path=Path("/a.txt"), content="a needle body")
         assert (await storage.write(entries=[entry])).success is True
-        gated = _GatedMatcher()
+        gated = _GatedMatcher(thread_gate())
         real = grep_module.compile_verifier
         compiled = 0
 
@@ -628,14 +654,14 @@ def test_the_process_pool_is_lazy_shared_and_reminted(fresh_process_pool: None) 
     assert offload_pool() is first
     assert offload_module._pool is first
     assert first._max_workers == OFFLOAD_WORKERS
-    assert first.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
+    assert first.submit(_thread_name).result().startswith("vfs-offload")
     shutdown_offload_pool()
     assert offload_module._pool is None
     with pytest.raises(RuntimeError):
         first.submit(_thread_name)
     second = offload_pool()
     assert second is not first
-    assert second.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
+    assert second.submit(_thread_name).result().startswith("vfs-offload")
 
 
 async def test_every_hop_rides_the_process_pool(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -675,13 +701,13 @@ async def test_close_leaves_the_process_pool_alone(tmp_path: Any, fresh_process_
     assert pool is not None
     await built.close()
     assert offload_pool() is pool
-    assert pool.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
+    assert pool.submit(_thread_name).result().startswith("vfs-offload")
 
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     assert len((await fs.grep("needle", observations=[_held("/b.txt", "a needle")])).observations) == 1
     await fs.close()
     assert offload_pool() is pool
-    assert pool.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
+    assert pool.submit(_thread_name).result().startswith("vfs-offload")
 
 
 @pytest.mark.parametrize("verb", ["grep", "rebuild"])
@@ -721,13 +747,13 @@ async def test_a_hop_captured_before_shutdown_is_served_inline(
 
 
 async def test_queued_work_at_shutdown_is_served_never_cancelled(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, fresh_process_pool: None
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, fresh_process_pool: None, thread_gate: Callable[[], threading.Event]
 ) -> None:
     """Guards: the shutdown passing ``cancel_futures=True``, so a batch queued
     behind a running one dies as a raw CancelledError instead of being served."""
     monkeypatch.setattr(offload_module, "OFFLOAD_WORKERS", 1)
     storage = await _needle_storage(tmp_path)
-    gated = _GatedMatcher()
+    gated = _GatedMatcher(thread_gate())
     real = grep_module.compile_verifier
     compiled = 0
 

@@ -1,0 +1,197 @@
+"""Keyset pages of the listing verbs: the fill rule, and the keys a page may resume from.
+
+A listing page seeks strictly after a key, in path order, and never
+counts an offset. The key it hands back is always the path of a row on
+the page, so it names nothing the caller was not shown. Python drops
+some fetched rows (a row the caller may not name, a candidate the
+compiled pattern refuses), so the last row fetched cannot be the key.
+:func:`filled` fetches until the page is known:
+
+1. The first batch is ``limit + 1`` rows from each stream.
+2. While fewer than ``limit + 1`` rows are shown at or before the
+   frontier and a stream has more, each such stream fetches again from
+   its own last row, the batch twice the last, up to
+   :data:`LISTING_FILL_CEILING`.
+3. It stops at ``limit + 1`` shown rows or when every stream ran out.
+
+A stream is one statement in path order: the children of one directory,
+one subtree, one chunk of a glob's arms, or one clause of a view's
+pushdown. With nothing dropped, a page is one statement per stream.
+The fill bounds one statement's working set, and it is not a cap: the
+page keeps filling until it is whole.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple
+
+from vfs.paths import Path
+from vfs.results import ErrorKind, Result, classified
+from vfs.results.paging import FOREIGN_KEY, PAGE_BESIDE_MAX_COUNT, frontier_page, resumes
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
+
+    from sqlalchemy.engine import RowMapping
+
+    from vfs.models import Observation
+
+    # One stream: the rows strictly after a path, in path order, at most a batch of them (``None`` for all).
+    Fetch = Callable[[str | None, int | None], Awaitable[Sequence[RowMapping]]]
+    # The rows shown from one fetched batch, in path order.
+    Emit = Callable[[Sequence[RowMapping]], Awaitable[list[Observation]]]
+
+# The most rows one fill statement fetches after the first: grep's verify pass reads as many at once.
+LISTING_FILL_CEILING: Final = 10_000
+
+# ---------------------------------------------------------------------------
+# The fill rule
+# ---------------------------------------------------------------------------
+
+
+class Filled(NamedTuple):
+    """The rows a fill showed, in path order, and its frontier: ``None`` once every stream ran out."""
+
+    rows: list[Observation]
+    frontier: str | None
+
+
+async def filled(
+    streams: Sequence[Fetch],
+    emit: Emit,
+    *,
+    after: str | None,
+    limit: int | None,
+    cut: Callable[[], str | None] = lambda: None,
+) -> Filled:
+    """Fetch from ``streams`` until ``limit + 1`` shown rows lie at or before the frontier, or none has more.
+
+    ``emit`` turns one batch of fetched rows into the rows shown from it,
+    in path order. A row two streams both return is shown once. With
+    ``limit=None`` each stream is read whole in one statement. The
+    frontier is the last path the slowest unfinished stream fetched;
+    every row at or before it is in hand. A fill after the first batch
+    asks only the streams at the frontier. ``cut`` names the first path
+    the batch ``emit`` last handled left unjudged, as when its judge ran
+    out of time, or ``None``. Once a batch is cut, the fill ends with the
+    round: its stream stands at the last row it showed before that path,
+    every other is finished or stands where it last read, as with no cut,
+    and the frontier is the least of them, so the next page reads again
+    what was not judged and loses no row of another stream. A stop that leaves no row past ``after`` safe ends the fill
+    with no row and no frontier, and the caller's warning says the
+    listing was cut short.
+    """
+    positions: list[str | None] = [after] * len(streams)
+    unfinished = list(range(len(streams)))
+    shown: dict[str, Observation] = {}
+    wanted = None if limit is None else limit + 1
+    batch = wanted
+    frontier: str | None = None
+    due = list(unfinished)
+    halted = False
+    while due:
+        for index in due:
+            rows = await streams[index](positions[index], batch)
+            got = await emit(rows)
+            for row in got:
+                shown.setdefault(row.path, row)
+            if (unjudged := cut()) is not None:
+                # The stream stands before the first row its batch left unjudged; the next page reads on from there.
+                halted = True
+                positions[index] = max((row.path for row in got if row.path < unjudged), default=positions[index])
+            elif batch is None or len(rows) < batch:
+                unfinished.remove(index)
+            else:
+                positions[index] = rows[-1]["path"]
+        if halted:
+            return _held(shown, positions, unfinished, after)
+        frontier = min((position for index in unfinished if (position := positions[index]) is not None), default=None)
+        if wanted is None or batch is None or frontier is None or sum(path <= frontier for path in shown) >= wanted:
+            break
+        batch = min(2 * batch, LISTING_FILL_CEILING)
+        # Only the streams at the frontier hold it back; one further ahead has nothing to add yet.
+        due = [index for index in unfinished if positions[index] == frontier]
+    return Filled([shown[path] for path in sorted(shown)], frontier if unfinished else None)
+
+
+def _held(
+    shown: dict[str, Observation], positions: list[str | None], unfinished: list[int], after: str | None
+) -> Filled:
+    """The rows a cut fill can serve: those at or before the least position of every stream with rows left.
+
+    Each stream whose batch was cut is among them. When that least
+    position is no further than ``after``, nothing can be served safely.
+    """
+    bounds = [positions[index] for index in unfinished]
+    frontier = None if None in bounds else min(bound for bound in bounds if bound is not None)
+    if frontier is None or (after is not None and frontier <= after):
+        return Filled([], None)
+    return Filled([shown[path] for path in sorted(shown) if path <= frontier], frontier)
+
+
+def first_unjudged(cut: str | None, rows: Sequence[RowMapping], verdicts: Sequence[int | None]) -> str | None:
+    """The least of ``cut`` and the path of the first of ``rows`` its judge left unjudged, a ``None`` verdict.
+
+    One batch is judged a side of the tombstone at a time, so its cut is
+    the least such path over both calls.
+    """
+    first = next((row["path"] for row, verdict in zip(rows, verdicts, strict=True) if verdict is None), None)
+    return cut if first is None else first if cut is None else min(cut, first)
+
+
+def keyed(
+    rows: Iterable[Observation], frontier: str | None, *, after: str | None, limit: int | None
+) -> tuple[list[Observation], Path | None]:
+    """Return the page of ``rows`` under ``frontier`` and its key, by the frontier rule of :mod:`vfs.results.paging`."""
+    page, key = frontier_page(rows, [frontier], after=after, limit=limit, path_of=_path)
+    return page, None if key is None else Path._brand(key)
+
+
+# ---------------------------------------------------------------------------
+# The pages a listing may serve
+# ---------------------------------------------------------------------------
+
+
+def page_refused(
+    op: Literal["ls", "tree", "glob"],
+    targets: Sequence[Path],
+    *,
+    after: Path | None,
+    limit: int | None,
+    max_depth: int | None = None,
+    max_count: int | None = None,
+) -> Result | None:
+    """Return the ``invalid`` refusal of a listing call the storage cannot serve, before it reads a row, or ``None``.
+
+    A page holds at least one row and lists one target, and a ``glob``
+    page takes no ``max_count``. The key of ``ls`` names a child of the
+    directory, and the key of ``tree`` a path strictly beneath its root,
+    both at the stored address, so a target under the trash view's head
+    is read as the row it names. The head itself lists rows at every
+    depth and takes any key, and so does ``glob``, whose rows are in one
+    global order. A ``tree`` reaches at least one level.
+    """
+    detail = None
+    if max_depth is not None and max_depth < 1:
+        detail = f"max_depth must be >= 1, got {max_depth}"
+    elif after is None and limit is None:
+        return None
+    elif limit is not None and limit < 1:
+        detail = f"limit must be >= 1, got {limit}"
+    elif max_count is not None:
+        detail = PAGE_BESIDE_MAX_COUNT
+    elif op != "glob" and len(targets) != 1:
+        detail = "a page lists one directory"
+    elif after is not None and op != "glob" and not resumes(op, str(targets[0]), after):
+        detail = FOREIGN_KEY
+    return None if detail is None else Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=detail)])
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _path(row: Observation) -> str:
+    """Return the path of a shown row."""
+    return row.path

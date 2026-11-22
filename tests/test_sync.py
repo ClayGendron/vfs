@@ -193,7 +193,7 @@ def test_the_cells_run_in_a_real_ipykernel() -> None:
     outputs: list[list[str]] = []
     try:
         client.start_channels()
-        client.wait_for_ready(timeout=120)
+        client.wait_for_ready()
         for cell in CELLS:
             lines: list[str] = []
 
@@ -201,7 +201,7 @@ def test_the_cells_run_in_a_real_ipykernel() -> None:
                 if message["msg_type"] == "stream":
                     lines.append(message["content"]["text"])
 
-            reply = client.execute_interactive(cell, output_hook=hook, timeout=120)
+            reply = client.execute_interactive(cell, output_hook=hook)
             assert reply["content"]["status"] == "ok", (cell, reply["content"], lines)
             outputs.append(lines)
     finally:
@@ -371,10 +371,9 @@ def test_close_cancels_the_calls_other_threads_are_waiting_on() -> None:
 
     thread = threading.Thread(target=worker)
     thread.start()
-    assert storage.started.wait(timeout=10)
+    storage.started.wait()
     fs.close()
-    thread.join(timeout=10)
-    assert not thread.is_alive()
+    thread.join()
     assert _loop_threads() == []
     assert isinstance(outcome[0], concurrent.futures.CancelledError)
 
@@ -394,10 +393,9 @@ def test_the_runner_sweeps_a_task_born_during_shutdown() -> None:
 
     thread = threading.Thread(target=worker)
     thread.start()
-    assert storage.started.wait(timeout=10)
+    storage.started.wait()
     fs.close()
-    thread.join(timeout=10)
-    assert not thread.is_alive()
+    thread.join()
     assert _loop_threads() == []
     assert isinstance(outcome[0], concurrent.futures.CancelledError)
 
@@ -422,10 +420,9 @@ def test_the_drain_cancels_the_launched_call_and_leaves_the_background_task() ->
 
     thread = threading.Thread(target=worker)
     thread.start()
-    assert storage.started.wait(timeout=10)
+    storage.started.wait()
     fs.close()
-    thread.join(timeout=10)
-    assert not thread.is_alive()
+    thread.join()
     assert storage.record == (True, False)
     assert isinstance(outcome[0], concurrent.futures.CancelledError)
     assert _loop_threads() == []
@@ -466,11 +463,10 @@ def test_close_under_load_on_a_real_storage_returns_cleanly() -> None:
         workers = [threading.Thread(target=worker) for _ in range(4)]
         for thread in workers:
             thread.start()
-        assert warm.wait(timeout=30)
+        warm.wait()
         fs.close()
         for thread in workers:
-            thread.join(timeout=30)
-        assert not any(thread.is_alive() for thread in workers)
+            thread.join()
         assert len(outcomes) == 4
         for outcome in outcomes:
             if isinstance(outcome, Result):

@@ -28,6 +28,8 @@ from vfs.storage.backends.database.staging import StagedEntry
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+
     from vfs.storage.backends.database.staging import PersistenceState
 
 
@@ -73,6 +75,35 @@ def _template() -> pathlib.Path:
     with ThreadPoolExecutor(max_workers=1) as pool:
         pool.submit(asyncio.run, provision()).result()
     return target
+
+
+# ---------------------------------------------------------------------------
+# A test's own writing transaction
+# ---------------------------------------------------------------------------
+
+
+async def begin_as_writer(session: AsyncSession) -> AsyncConnection:
+    """Begin *session*'s transaction as a verb's writer does, ``BEGIN IMMEDIATE`` on SQLite; its first statement.
+
+    A plain ``BEGIN`` takes SQLite's write lock only at its first write. A
+    transaction that has read by then is refused at once with ``database
+    is locked`` if another connection committed after that read, such as
+    the host's background statistics pass, and no busy wait runs. A
+    writer's ``BEGIN IMMEDIATE`` takes the lock first and waits for it.
+    Every session a test opens by hand and writes through begins here;
+    ``tests/conftest.py`` fails a test whose plain transaction reads and
+    then writes. Off SQLite the option changes nothing.
+    """
+    return await session.connection(execution_options={"vfs_writer": True})
+
+
+def writer_engine(engine: AsyncEngine) -> AsyncEngine:
+    """*engine*, every transaction of which begins as a verb's writer does: ``writer_engine(e).begin()``.
+
+    The connection-level counterpart of :func:`begin_as_writer`, for a test
+    that writes through ``engine.begin()`` rather than a session.
+    """
+    return engine.execution_options(vfs_writer=True)
 
 
 UNBOUNDED_BUSY_MILLISECONDS = 2**31 - 1

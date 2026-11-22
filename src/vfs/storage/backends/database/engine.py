@@ -60,6 +60,7 @@ from sqlalchemy import event, func, insert, inspect, select
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.util import greenlet_spawn
 from ulid import ULID
 
 from vfs.authority import EVERYONE_NAME
@@ -74,7 +75,6 @@ from vfs.storage.backends.database.attempts import (
 )
 from vfs.storage.backends.database.dialects import (
     PROFILES,
-    SQLITE_VEC_PROBE,
     DialectProfile,
     StaleSnapshot,
     VectorFunction,
@@ -87,7 +87,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.drivers import load_sqlite_vec, merge_engine_arguments
+from vfs.storage.backends.database.drivers import has_sqlite_vec, load_sqlite_vec, merge_engine_arguments
 from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlalchemy.engine import URL, Connection, Dialect
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
-    from sqlalchemy.pool import PoolProxiedConnection
+    from sqlalchemy.pool import Pool, PoolProxiedConnection
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models.rows import VFSTables
@@ -145,12 +145,13 @@ def advisory_key(text: str) -> int:
 
 
 class _AnalysisPass:
-    """One analysis pass's handles for the task that owns it: the driver connection to interrupt, and whether it did."""
+    """One analysis pass's handles for the task that owns it: the driver connection, its pool, and an interrupt."""
 
-    __slots__ = ("driver", "interrupted")
+    __slots__ = ("driver", "interrupted", "pool")
 
     def __init__(self) -> None:
         self.driver: Any | None = None
+        self.pool: Pool | None = None
         self.interrupted = False
 
 
@@ -468,16 +469,16 @@ class EngineHost:
     async def stop_analysis(self) -> None:
         """Cancel the analysis task and await only its end, which its interrupt makes a rollback's length.
 
-        The wait is shielded: a caller whose own timeout fires, the
-        router's bounded close, is cancelled alone, and the pass task
-        keeps interrupting its statement until the inner task ends. A
-        cancel forwarded into the pass would end that loop early and
+        The wait is shielded and the task cancelled once: a caller whose own timeout fires, the router's
+        bounded close, is cancelled alone, and a retried close cancels nothing more, so the pass task keeps
+        interrupting its statement until the inner task ends. A second cancel would end that loop early and
         leave the inner task alive to commit on a disposed engine.
         """
         task = self._analysis
         if task is None or task.done():
             return
-        task.cancel()
+        if not task.cancelling():
+            task.cancel()
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -534,7 +535,8 @@ class EngineHost:
         the table stays due and the next write asks again. The dispose
         below runs either way, in a ``finally``, and the pass leaves no
         interrupt pending on a connection it closes: one would stop
-        SQLite's last close from folding the log in and deleting it.
+        SQLite's last close from folding the log in and deleting it. A
+        pass a close cut short leaves running closes its own connection.
         """
         try:
             await self.stop_analysis()
@@ -840,6 +842,10 @@ class EngineHost:
         failure would, without holding an advisory. No awaiter forwards
         a second cancellation into this loop (:meth:`stop_analysis`
         shields its wait), so the loop always outlives the inner task.
+
+        A close cut short by its caller replaces the pool under a running
+        pass, and nothing else closes the one the pass returns to, so the
+        pass disposes it once its last statement has run.
         """
         state = _AnalysisPass()
         inner = asyncio.create_task(self._analysis_transaction(state), name=f"{STATISTICS_NAME}-pass")
@@ -857,6 +863,9 @@ class EngineHost:
                     cursor = await state.driver.execute(STATISTICS_CLEAR)
                     await cursor.close()
             raise
+        finally:
+            if state.pool is not None and state.pool is not self.engine.sync_engine.pool:
+                await greenlet_spawn(state.pool.dispose)
 
     async def _analysis_transaction(self, state: _AnalysisPass) -> None:
         """One analysis transaction: the lock once, a reload if the fingerprint moved, the listing, the due analyses.
@@ -873,6 +882,7 @@ class EngineHost:
         pooled: PoolProxiedConnection | None = None
         try:
             async with self.session_factory() as session:
+                state.pool = self.engine.sync_engine.pool
                 conn = await session.connection(execution_options={"vfs_writer": True, STATISTICS_NAME: True})
                 pooled = _record_of(conn)
                 state.driver = pooled.dbapi_connection._connection  # ty: ignore[unresolved-attribute]
@@ -957,7 +967,7 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
         dbapi_connection.isolation_level = None
         cursor = dbapi_connection.cursor()
         # A connection already carrying the function skips the load.
-        if not _has_sqlite_vec(cursor):
+        if not has_sqlite_vec(cursor):
             load_sqlite_vec(dbapi_connection)
         for statement in profile.session_settings:
             cursor.execute(statement)
@@ -996,13 +1006,3 @@ def _failed_statement(exc: BaseException, fallback: str) -> str:
 def _version_tuple(raw: str) -> tuple[int, ...]:
     """A version string's numeric components: ``"0.8.1"`` and sqlite-vec's ``"v0.1.6"`` both parse."""
     return tuple(int(part) for part in raw.lstrip("v").split(".") if part.isdigit())
-
-
-def _has_sqlite_vec(cursor: Any) -> bool:
-    """Whether this connection already answers the extension's version function."""
-    try:
-        cursor.execute(SQLITE_VEC_PROBE)
-    except sqlite3.OperationalError:
-        return False
-    cursor.fetchall()
-    return True

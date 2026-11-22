@@ -1,0 +1,1618 @@
+{
+  "script": "scripts/measure_calls.py",
+  "arguments": {
+    "engine": "sqlite",
+    "repeats": 5,
+    "batch32_repeats": 2,
+    "single_calls": 60,
+    "concurrent_calls": 6,
+    "deadline": 3000.0
+  },
+  "environment": {
+    "commit": "9240a9d",
+    "src_dirty": false,
+    "date": "2026-11-21T19:48:32+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39"
+  },
+  "seconds": 1235.3,
+  "cells": [
+    {
+      "verb": "batch",
+      "sessions": 1,
+      "mode": "leaned",
+      "calls": 5,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "74": 5
+      },
+      "log_statements": {
+        "2": 5
+      },
+      "median_ms": 6017.891,
+      "median_spread_ms": 706.329,
+      "repeat_medians_ms": [
+        6131.783,
+        6231.998,
+        5533.039,
+        5525.669,
+        6017.891
+      ],
+      "p95_ms": 6017.891,
+      "repeat_p95s_ms": [
+        6131.783,
+        6231.998,
+        5533.039,
+        5525.669,
+        6017.891
+      ],
+      "pooled": {
+        "n": 5,
+        "median_ms": 6017.891,
+        "p95_ms": 6231.998,
+        "max_ms": 6231.998
+      }
+    },
+    {
+      "verb": "batch",
+      "sessions": 1,
+      "mode": "none",
+      "calls": 5,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "74": 5
+      },
+      "log_statements": {
+        "0": 5
+      },
+      "median_ms": 6123.441,
+      "median_spread_ms": 641.291,
+      "repeat_medians_ms": [
+        6337.226,
+        6123.441,
+        5695.935,
+        6125.495,
+        5804.027
+      ],
+      "p95_ms": 6123.441,
+      "repeat_p95s_ms": [
+        6337.226,
+        6123.441,
+        5695.935,
+        6125.495,
+        5804.027
+      ],
+      "pooled": {
+        "n": 5,
+        "median_ms": 6123.441,
+        "p95_ms": 6337.226,
+        "max_ms": 6337.226
+      }
+    },
+    {
+      "verb": "batch",
+      "sessions": 1,
+      "mode": "sync",
+      "calls": 5,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "74": 5
+      },
+      "log_statements": {
+        "1": 5
+      },
+      "median_ms": 5935.826,
+      "median_spread_ms": 1013.974,
+      "repeat_medians_ms": [
+        5935.826,
+        6407.71,
+        5868.43,
+        5444.921,
+        6458.896
+      ],
+      "p95_ms": 5935.826,
+      "repeat_p95s_ms": [
+        5935.826,
+        6407.71,
+        5868.43,
+        5444.921,
+        6458.896
+      ],
+      "pooled": {
+        "n": 5,
+        "median_ms": 5935.826,
+        "p95_ms": 6458.896,
+        "max_ms": 6458.896
+      }
+    },
+    {
+      "verb": "batch",
+      "sessions": 32,
+      "mode": "leaned",
+      "calls": 64,
+      "failures": 52,
+      "failure_kinds": [
+        "log_unavailable: claim failed",
+        "vfs.conflict: Conflict: write kept losing to concurrent changes: a retryable engine conflict outlived 4 attempts"
+      ],
+      "storage_statements": {
+        "0": 19,
+        "4": 33,
+        "58": 2,
+        "59": 2,
+        "60": 2,
+        "61": 4,
+        "75": 2
+      },
+      "log_statements": {
+        "1": 19,
+        "2": 45
+      },
+      "median_ms": 48334.038,
+      "median_spread_ms": 1093.203,
+      "repeat_medians_ms": [
+        47787.436,
+        48880.639
+      ],
+      "p95_ms": 59057.06,
+      "repeat_p95s_ms": [
+        57126.182,
+        60987.937
+      ],
+      "pooled": {
+        "n": 64,
+        "median_ms": 48108.682,
+        "p95_ms": 57821.39,
+        "max_ms": 61698.989
+      }
+    },
+    {
+      "verb": "batch",
+      "sessions": 32,
+      "mode": "none",
+      "calls": 64,
+      "failures": 48,
+      "failure_kinds": [
+        "vfs.conflict: Conflict: write kept losing to concurrent changes: a retryable engine conflict outlived 4 attempts"
+      ],
+      "storage_statements": {
+        "4": 48,
+        "58": 2,
+        "59": 3,
+        "60": 5,
+        "61": 4,
+        "74": 2
+      },
+      "log_statements": {
+        "0": 64
+      },
+      "median_ms": 60477.117,
+      "median_spread_ms": 1031.424,
+      "repeat_medians_ms": [
+        59961.405,
+        60992.829
+      ],
+      "p95_ms": 69409.209,
+      "repeat_p95s_ms": [
+        66988.462,
+        71829.955
+      ],
+      "pooled": {
+        "n": 64,
+        "median_ms": 60089.65,
+        "p95_ms": 69621.689,
+        "max_ms": 72361.607
+      }
+    },
+    {
+      "verb": "batch",
+      "sessions": 32,
+      "mode": "sync",
+      "calls": 64,
+      "failures": 48,
+      "failure_kinds": [
+        "vfs.conflict: Conflict: write kept losing to concurrent changes: a retryable engine conflict outlived 4 attempts"
+      ],
+      "storage_statements": {
+        "4": 48,
+        "58": 1,
+        "59": 4,
+        "60": 4,
+        "61": 5,
+        "74": 2
+      },
+      "log_statements": {
+        "1": 64
+      },
+      "median_ms": 64388.227,
+      "median_spread_ms": 45.407,
+      "repeat_medians_ms": [
+        64410.93,
+        64365.523
+      ],
+      "p95_ms": 72917.845,
+      "repeat_p95s_ms": [
+        74653.966,
+        71181.723
+      ],
+      "pooled": {
+        "n": 64,
+        "median_ms": 64365.523,
+        "p95_ms": 72716.654,
+        "max_ms": 74862.932
+      }
+    },
+    {
+      "verb": "grep",
+      "sessions": 1,
+      "mode": "leaned",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "14": 300
+      },
+      "log_statements": {
+        "0": 300
+      },
+      "median_ms": 17.528,
+      "median_spread_ms": 5.629,
+      "repeat_medians_ms": [
+        16.028,
+        19.05,
+        17.528,
+        21.657,
+        16.559
+      ],
+      "p95_ms": 21.659,
+      "repeat_p95s_ms": [
+        23.634,
+        21.659,
+        21.58,
+        26.12,
+        21.519
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 18.255,
+        "p95_ms": 23.74,
+        "max_ms": 31.14
+      }
+    },
+    {
+      "verb": "grep",
+      "sessions": 1,
+      "mode": "none",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "14": 300
+      },
+      "log_statements": {
+        "0": 300
+      },
+      "median_ms": 18.901,
+      "median_spread_ms": 7.655,
+      "repeat_medians_ms": [
+        16.561,
+        21.916,
+        18.901,
+        17.806,
+        24.217
+      ],
+      "p95_ms": 22.694,
+      "repeat_p95s_ms": [
+        20.851,
+        39.9,
+        22.694,
+        22.171,
+        33.607
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 19.716,
+        "p95_ms": 29.762,
+        "max_ms": 54.587
+      }
+    },
+    {
+      "verb": "grep",
+      "sessions": 1,
+      "mode": "sync",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "14": 300
+      },
+      "log_statements": {
+        "1": 300
+      },
+      "median_ms": 20.841,
+      "median_spread_ms": 5.443,
+      "repeat_medians_ms": [
+        22.462,
+        20.841,
+        22.553,
+        17.11,
+        19.119
+      ],
+      "p95_ms": 25.013,
+      "repeat_p95s_ms": [
+        34.085,
+        25.013,
+        27.873,
+        19.682,
+        24.585
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 20.846,
+        "p95_ms": 27.38,
+        "max_ms": 74.405
+      }
+    },
+    {
+      "verb": "grep",
+      "sessions": 32,
+      "mode": "leaned",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "14": 960
+      },
+      "log_statements": {
+        "0": 960
+      },
+      "median_ms": 3904.385,
+      "median_spread_ms": 524.828,
+      "repeat_medians_ms": [
+        4022.695,
+        3904.385,
+        4225.892,
+        3701.064,
+        3841.383
+      ],
+      "p95_ms": 4535.519,
+      "repeat_p95s_ms": [
+        4632.951,
+        4531.628,
+        5362.292,
+        4535.519,
+        4210.781
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 3908.986,
+        "p95_ms": 4637.481,
+        "max_ms": 6307.703
+      }
+    },
+    {
+      "verb": "grep",
+      "sessions": 32,
+      "mode": "none",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "14": 960
+      },
+      "log_statements": {
+        "0": 960
+      },
+      "median_ms": 3890.489,
+      "median_spread_ms": 368.083,
+      "repeat_medians_ms": [
+        3890.489,
+        3762.097,
+        4030.25,
+        4130.181,
+        3868.943
+      ],
+      "p95_ms": 4426.055,
+      "repeat_p95s_ms": [
+        4426.055,
+        4331.716,
+        4676.54,
+        5994.527,
+        4158.704
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 3931.227,
+        "p95_ms": 4528.251,
+        "max_ms": 7849.346
+      }
+    },
+    {
+      "verb": "grep",
+      "sessions": 32,
+      "mode": "sync",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "14": 960
+      },
+      "log_statements": {
+        "1": 960
+      },
+      "median_ms": 3747.144,
+      "median_spread_ms": 474.523,
+      "repeat_medians_ms": [
+        3700.097,
+        3638.896,
+        3840.874,
+        4113.419,
+        3747.144
+      ],
+      "p95_ms": 4437.72,
+      "repeat_p95s_ms": [
+        4927.404,
+        4115.272,
+        4563.738,
+        4437.72,
+        4088.535
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 3796.143,
+        "p95_ms": 4465.766,
+        "max_ms": 6657.504
+      }
+    },
+    {
+      "verb": "read",
+      "sessions": 1,
+      "mode": "leaned",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "4": 300
+      },
+      "log_statements": {
+        "0": 300
+      },
+      "median_ms": 5.099,
+      "median_spread_ms": 1.38,
+      "repeat_medians_ms": [
+        3.944,
+        5.099,
+        5.232,
+        5.324,
+        4.2
+      ],
+      "p95_ms": 5.873,
+      "repeat_p95s_ms": [
+        4.477,
+        5.873,
+        6.878,
+        6.384,
+        5.839
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 5.007,
+        "p95_ms": 6.07,
+        "max_ms": 8.328
+      }
+    },
+    {
+      "verb": "read",
+      "sessions": 1,
+      "mode": "none",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "4": 300
+      },
+      "log_statements": {
+        "0": 300
+      },
+      "median_ms": 3.924,
+      "median_spread_ms": 1.534,
+      "repeat_medians_ms": [
+        4.49,
+        3.924,
+        3.807,
+        3.746,
+        5.279
+      ],
+      "p95_ms": 4.781,
+      "repeat_p95s_ms": [
+        5.724,
+        4.4,
+        4.781,
+        4.364,
+        6.439
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 4.038,
+        "p95_ms": 5.929,
+        "max_ms": 7.136
+      }
+    },
+    {
+      "verb": "read",
+      "sessions": 1,
+      "mode": "sync",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "4": 300
+      },
+      "log_statements": {
+        "1": 300
+      },
+      "median_ms": 5.642,
+      "median_spread_ms": 1.452,
+      "repeat_medians_ms": [
+        5.675,
+        5.642,
+        6.678,
+        5.226,
+        5.328
+      ],
+      "p95_ms": 7.187,
+      "repeat_p95s_ms": [
+        7.187,
+        6.964,
+        8.425,
+        8.099,
+        6.72
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 5.723,
+        "p95_ms": 7.845,
+        "max_ms": 27.704
+      }
+    },
+    {
+      "verb": "read",
+      "sessions": 32,
+      "mode": "leaned",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "4": 960
+      },
+      "log_statements": {
+        "0": 960
+      },
+      "median_ms": 259.414,
+      "median_spread_ms": 79.542,
+      "repeat_medians_ms": [
+        220.458,
+        300.0,
+        293.075,
+        259.414,
+        228.166
+      ],
+      "p95_ms": 301.916,
+      "repeat_p95s_ms": [
+        255.072,
+        388.81,
+        378.812,
+        301.916,
+        283.342
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 256.592,
+        "p95_ms": 362.274,
+        "max_ms": 511.956
+      }
+    },
+    {
+      "verb": "read",
+      "sessions": 32,
+      "mode": "none",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "4": 960
+      },
+      "log_statements": {
+        "0": 960
+      },
+      "median_ms": 244.648,
+      "median_spread_ms": 71.841,
+      "repeat_medians_ms": [
+        242.745,
+        245.826,
+        244.648,
+        222.857,
+        294.698
+      ],
+      "p95_ms": 273.414,
+      "repeat_p95s_ms": [
+        273.414,
+        270.788,
+        271.863,
+        279.899,
+        346.755
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 247.33,
+        "p95_ms": 324.147,
+        "max_ms": 463.282
+      }
+    },
+    {
+      "verb": "read",
+      "sessions": 32,
+      "mode": "sync",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "4": 960
+      },
+      "log_statements": {
+        "1": 960
+      },
+      "median_ms": 286.259,
+      "median_spread_ms": 77.675,
+      "repeat_medians_ms": [
+        286.259,
+        316.04,
+        291.622,
+        238.365,
+        248.818
+      ],
+      "p95_ms": 400.555,
+      "repeat_p95s_ms": [
+        477.641,
+        441.858,
+        400.555,
+        342.51,
+        371.265
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 271.174,
+        "p95_ms": 410.589,
+        "max_ms": 898.995
+      }
+    },
+    {
+      "verb": "write",
+      "sessions": 1,
+      "mode": "leaned",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "21": 300
+      },
+      "log_statements": {
+        "2": 300
+      },
+      "median_ms": 18.671,
+      "median_spread_ms": 5.22,
+      "repeat_medians_ms": [
+        17.548,
+        21.67,
+        19.772,
+        16.45,
+        18.671
+      ],
+      "p95_ms": 27.31,
+      "repeat_p95s_ms": [
+        21.305,
+        40.39,
+        29.173,
+        23.923,
+        27.31
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 18.933,
+        "p95_ms": 27.015,
+        "max_ms": 105.893
+      }
+    },
+    {
+      "verb": "write",
+      "sessions": 1,
+      "mode": "none",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "21": 300
+      },
+      "log_statements": {
+        "0": 300
+      },
+      "median_ms": 17.267,
+      "median_spread_ms": 3.014,
+      "repeat_medians_ms": [
+        17.267,
+        17.866,
+        15.134,
+        18.148,
+        15.834
+      ],
+      "p95_ms": 24.594,
+      "repeat_p95s_ms": [
+        25.579,
+        24.594,
+        18.253,
+        24.645,
+        19.989
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 16.406,
+        "p95_ms": 23.359,
+        "max_ms": 46.83
+      }
+    },
+    {
+      "verb": "write",
+      "sessions": 1,
+      "mode": "sync",
+      "calls": 300,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "21": 300
+      },
+      "log_statements": {
+        "1": 300
+      },
+      "median_ms": 20.139,
+      "median_spread_ms": 7.516,
+      "repeat_medians_ms": [
+        22.12,
+        20.338,
+        16.224,
+        20.139,
+        14.604
+      ],
+      "p95_ms": 23.606,
+      "repeat_p95s_ms": [
+        25.916,
+        23.606,
+        22.207,
+        30.712,
+        18.524
+      ],
+      "pooled": {
+        "n": 300,
+        "median_ms": 19.207,
+        "p95_ms": 25.237,
+        "max_ms": 37.552
+      }
+    },
+    {
+      "verb": "write",
+      "sessions": 32,
+      "mode": "leaned",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "21": 960
+      },
+      "log_statements": {
+        "2": 960
+      },
+      "median_ms": 162.252,
+      "median_spread_ms": 113.483,
+      "repeat_medians_ms": [
+        162.252,
+        263.888,
+        161.167,
+        150.405,
+        224.462
+      ],
+      "p95_ms": 1932.681,
+      "repeat_p95s_ms": [
+        1932.681,
+        2018.975,
+        1957.483,
+        1566.424,
+        1876.943
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 185.243,
+        "p95_ms": 1880.109,
+        "max_ms": 3666.801
+      }
+    },
+    {
+      "verb": "write",
+      "sessions": 32,
+      "mode": "none",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "21": 960
+      },
+      "log_statements": {
+        "0": 960
+      },
+      "median_ms": 320.562,
+      "median_spread_ms": 57.315,
+      "repeat_medians_ms": [
+        277.459,
+        278.147,
+        326.507,
+        334.774,
+        320.562
+      ],
+      "p95_ms": 1233.296,
+      "repeat_p95s_ms": [
+        1233.296,
+        1285.342,
+        1061.405,
+        1038.353,
+        1408.52
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 297.209,
+        "p95_ms": 1226.385,
+        "max_ms": 4125.48
+      }
+    },
+    {
+      "verb": "write",
+      "sessions": 32,
+      "mode": "sync",
+      "calls": 960,
+      "failures": 0,
+      "failure_kinds": [],
+      "storage_statements": {
+        "21": 959,
+        "22": 1
+      },
+      "log_statements": {
+        "1": 960
+      },
+      "median_ms": 262.808,
+      "median_spread_ms": 99.79,
+      "repeat_medians_ms": [
+        298.037,
+        198.247,
+        262.808,
+        228.892,
+        276.253
+      ],
+      "p95_ms": 1418.495,
+      "repeat_p95s_ms": [
+        1418.495,
+        1551.249,
+        1221.824,
+        1782.699,
+        1271.732
+      ],
+      "pooled": {
+        "n": 960,
+        "median_ms": 252.639,
+        "p95_ms": 1458.074,
+        "max_ms": 5371.371
+      }
+    }
+  ],
+  "closing": [
+    {
+      "mode": "none",
+      "repeat": 0,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 0,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 1059,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 0,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1052,
+      "flushes": 3,
+      "flush_errors": 0,
+      "flush_max_parameters": 3840,
+      "flush_max_seconds": 0.0413,
+      "buffer_high_water": 256,
+      "buffer_overflowed": 0,
+      "log_failures": 1,
+      "log_failure_errors": [
+        "OperationalError: (sqlite3.OperationalError) database is locked"
+      ],
+      "log_failure_max_seconds": 5.093,
+      "log_engine_statements": 710,
+      "log_engine_unowned": 9,
+      "log_engine_max_parameters": 3840
+    },
+    {
+      "mode": "none",
+      "repeat": 0,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 0,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 7,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 0,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 8,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "none",
+      "repeat": 0,
+      "kind": "batch32",
+      "expected_rows": 32,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 0,
+      "kind": "batch32",
+      "expected_rows": 32,
+      "logged_rows": 11,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 21,
+      "log_failure_errors": [
+        "OperationalError: (sqlite3.OperationalError) database is locked"
+      ],
+      "log_failure_max_seconds": 5.29,
+      "log_engine_statements": 38,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 0,
+      "kind": "batch32",
+      "expected_rows": 32,
+      "logged_rows": 22,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 26,
+      "log_failure_errors": [
+        "OperationalError: (sqlite3.OperationalError) database is locked"
+      ],
+      "log_failure_max_seconds": 20.893,
+      "log_engine_statements": 60,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "sync",
+      "repeat": 1,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1052,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 1,
+      "log_failure_errors": [
+        "OperationalError: (sqlite3.OperationalError) database is locked"
+      ],
+      "log_failure_max_seconds": 5.016,
+      "log_engine_statements": 1059,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 1,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 3,
+      "flush_errors": 0,
+      "flush_max_parameters": 3840,
+      "flush_max_seconds": 0.0573,
+      "buffer_high_water": 256,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 711,
+      "log_engine_unowned": 9,
+      "log_engine_max_parameters": 3840
+    },
+    {
+      "mode": "none",
+      "repeat": 1,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 1,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 7,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 1,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 8,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "none",
+      "repeat": 1,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 1,
+      "kind": "batch32",
+      "expected_rows": 32,
+      "logged_rows": 10,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 22,
+      "log_failure_errors": [
+        "OperationalError: (sqlite3.OperationalError) database is locked"
+      ],
+      "log_failure_max_seconds": 6.147,
+      "log_engine_statements": 38,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 1,
+      "kind": "batch32",
+      "expected_rows": 32,
+      "logged_rows": 23,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 22,
+      "log_failure_errors": [
+        "OperationalError: (sqlite3.OperationalError) database is locked"
+      ],
+      "log_failure_max_seconds": 22.451,
+      "log_engine_statements": 61,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "none",
+      "repeat": 1,
+      "kind": "batch32",
+      "expected_rows": 32,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "leaned",
+      "repeat": 2,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 3,
+      "flush_errors": 0,
+      "flush_max_parameters": 3840,
+      "flush_max_seconds": 0.0519,
+      "buffer_high_water": 256,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 711,
+      "log_engine_unowned": 9,
+      "log_engine_max_parameters": 3840
+    },
+    {
+      "mode": "none",
+      "repeat": 2,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 2,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 1059,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 2,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 8,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "none",
+      "repeat": 2,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 2,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 7,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "none",
+      "repeat": 3,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 3,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 1059,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 3,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 3,
+      "flush_errors": 0,
+      "flush_max_parameters": 3840,
+      "flush_max_seconds": 0.0444,
+      "buffer_high_water": 256,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 711,
+      "log_engine_unowned": 9,
+      "log_engine_max_parameters": 3840
+    },
+    {
+      "mode": "none",
+      "repeat": 3,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 3,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 7,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 3,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 8,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "sync",
+      "repeat": 4,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 1059,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 4,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": 1053,
+      "flushes": 3,
+      "flush_errors": 0,
+      "flush_max_parameters": 3840,
+      "flush_max_seconds": 0.0453,
+      "buffer_high_water": 256,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 711,
+      "log_engine_unowned": 9,
+      "log_engine_max_parameters": 3840
+    },
+    {
+      "mode": "none",
+      "repeat": 4,
+      "kind": "agent",
+      "expected_rows": 1053,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    },
+    {
+      "mode": "sync",
+      "repeat": 4,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 7,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "leaned",
+      "repeat": 4,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": 1,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 8,
+      "log_engine_unowned": 6,
+      "log_engine_max_parameters": 15
+    },
+    {
+      "mode": "none",
+      "repeat": 4,
+      "kind": "batch1",
+      "expected_rows": 1,
+      "logged_rows": null,
+      "flushes": 0,
+      "flush_errors": 0,
+      "flush_max_parameters": 0,
+      "flush_max_seconds": 0.0,
+      "buffer_high_water": 0,
+      "buffer_overflowed": 0,
+      "log_failures": 0,
+      "log_failure_errors": [],
+      "log_failure_max_seconds": 0.0,
+      "log_engine_statements": 5,
+      "log_engine_unowned": 5,
+      "log_engine_max_parameters": 0
+    }
+  ]
+}

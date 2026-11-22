@@ -70,7 +70,7 @@ def test_every_int_channel_enforces_the_shared_ceiling() -> None:
             assert at_max is None or spec.name not in at_max, (op, spec.name, at_max)
             over = param_violation(op, {spec.name: INT_CEILING + 1})
             assert over is not None and spec.name in over and str(INT_CEILING) in over
-    assert swept == 9
+    assert swept == 12
 
 
 def test_violation_messages_name_the_parameter() -> None:

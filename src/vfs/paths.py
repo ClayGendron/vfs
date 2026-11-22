@@ -352,6 +352,40 @@ class Path(str):
         )
 
 
+class LocalAfter(NamedTuple):
+    """A listing key seen from one mount: where that mount's page starts.
+
+    ``state`` is ``"start"`` when every path in the mount follows the key,
+    ``"key"`` when the key lies in the mount, and ``"past"`` when no path
+    in the mount follows it. ``key`` is the key in the mount's own
+    coordinates, and it is set only in the ``"key"`` state.
+    """
+
+    state: Literal["start", "key", "past"]
+    key: Path | None
+
+
+def local_after(after: Path | None, mount: str) -> LocalAfter:
+    """Return the listing key ``after`` in the coordinates of the mount at ``mount``.
+
+    Paths sort in byte order, so the paths beneath a mount ``/m`` are one
+    run, from ``/m/`` up to ``/m0``, ``0`` being the byte after ``/``. A
+    key below that run starts the mount, a key in it is stripped of the
+    mount's path, and a key above it means the mount has nothing more to
+    give. A key equal to ``/m`` starts the mount, because the row at the
+    mount point itself is not inside it. The root mount is the identity.
+    """
+    if after is None:
+        return LocalAfter("start", None)
+    if mount == "/":
+        return LocalAfter("key", after)
+    if after.startswith(mount + "/"):
+        return LocalAfter("key", Path._brand(after[len(mount) :]))
+    if after < mount + "/":
+        return LocalAfter("start", None)
+    return LocalAfter("past", None)
+
+
 class ResolvedPath(NamedTuple):
     """Outcome of the path gate: a canonical path, or a rejection reason."""
 

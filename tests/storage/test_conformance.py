@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.ranking.pins import assert_top10_pin
+from tests.support.cursor_contract import CursorContract
 from tests.support.grants_contract import GrantsContract
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.plan_store import PlanBackend
@@ -55,11 +56,13 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from contextlib import AbstractAsyncContextManager
 
+    from sqlalchemy import Connection
+
     from vfs.results import Result
 
 
 @pytest.mark.slow
-class TestMemoryConformance(StorageContract, GrantsContract):
+class TestMemoryConformance(StorageContract, GrantsContract, CursorContract):
     """The contract on the in-memory backend, in the slow tier.
 
     It is the same ``DatabaseStorage`` over ``sqlite+aiosqlite:///:memory:``
@@ -96,7 +99,7 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return path
 
 
-class TestSqliteConformance(StorageContract, GrantsContract):
+class TestSqliteConformance(StorageContract, GrantsContract, CursorContract):
     plan_backend = PlanBackend("sqlite")
 
     @pytest.fixture
@@ -176,7 +179,7 @@ async def _closing(storage: DatabaseStorage) -> AsyncIterator[DatabaseStorage]:
 
 
 @pytest.mark.postgres
-class TestPostgresConformance(StorageContract, GrantsContract):
+class TestPostgresConformance(StorageContract, GrantsContract, CursorContract):
     plan_backend = PlanBackend("postgres", "VFS_TEST_POSTGRES_URL")
 
     @pytest.fixture
@@ -311,10 +314,10 @@ async def _serialization_point_blocks_a_rival_topology_verb(env_var: str) -> Non
     """A rival topology verb launched mid-window waits out the point.
 
     The rival move is spawned — never awaited — inside the delete's
-    post-snapshot window: it must block on the serialization point and
-    run only after the victim commits, so it finds its source already
-    trashed. Without the point the rival would commit mid-window and
-    both verbs would report success.
+    post-snapshot window, and the window stays open until the move waits
+    on a lock or ends. With the point it waits, runs only after the victim
+    commits, and finds its source already trashed. Without the point it
+    commits mid-window, and the delete misses its own target.
     """
     async with _server_storage(env_var) as storage:
         assert (await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])).success
@@ -322,18 +325,39 @@ async def _serialization_point_blocks_a_rival_topology_verb(env_var: str) -> Non
 
         async def rival() -> None:
             seams.clear("delete:post-snapshot")
+            backends: list[int] = []
+
+            def writer_reached(conn: Connection, options: dict[str, object]) -> None:
+                driver = conn.connection.driver_connection
+                if options.get("vfs_writer") and driver is not None:
+                    backends.append(driver.get_server_pid())
+
+            event.listen(storage._host.engine.sync_engine, "set_connection_execution_options", writer_reached)
             move = storage.move(operations=[ResolvedPair(src=Path("/x.txt"), dest=Path("/y.txt"))])
             tasks.append(asyncio.ensure_future(move))
-            # Give the rival time to reach — and block on — the point.
-            await asyncio.sleep(0.5)
+            await _waits_on_a_lock_or_ends(storage, backends, tasks[0])
 
         with seams.installed("delete:post-snapshot", rival):
             victim = await storage.delete(path=Path("/x.txt"))
-        rival_result = await asyncio.wait_for(tasks[0], timeout=60)
+        rival_result = await tasks[0]
         assert victim.success is True, victim.errors
         assert rival_result.success is False
         assert rival_result.errors[0].kind == ErrorKind.not_found
         assert (await storage.stat(path=Path("/y.txt"))).success is False
+
+
+_WAITING = text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid")
+"""What the backend with ``:pid`` waits on; ``Lock`` while it queues behind another transaction's lock."""
+
+
+async def _waits_on_a_lock_or_ends(storage: DatabaseStorage, backends: list[int], task: asyncio.Task[Result]) -> None:
+    """Return once *task* has ended or the server backend it writes on waits for a lock, whichever comes first."""
+    async with storage._host.engine.connect() as probe:
+        await probe.execution_options(isolation_level="AUTOCOMMIT")
+        while not task.done():
+            if backends and (await probe.execute(_WAITING, {"pid": backends[0]})).scalar() == "Lock":
+                return
+            await asyncio.sleep(0)
 
 
 @pytest.mark.postgres

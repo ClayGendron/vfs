@@ -15,6 +15,7 @@ from __future__ import annotations
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tests.support.database_helpers import writer_engine
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
@@ -38,7 +39,7 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
 
     # No verb authors the dependent stores yet: seed a version, a chunk,
     # and an edge keyed by the written entries' identities.
-    async with src._host.engine.begin() as conn:
+    async with writer_engine(src._host.engine).begin() as conn:
         keys = {
             row.path: row.entry_id for row in await conn.execute(select(tables.entry.c.path, tables.entry.c.entry_id))
         }

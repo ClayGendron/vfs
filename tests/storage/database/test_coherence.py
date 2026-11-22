@@ -18,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
-from tests.support.database_helpers import _ReturningSession, _staged_material, _url
+from tests.support.database_helpers import _ReturningSession, _staged_material, _url, begin_as_writer
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.offload import offload_pool
@@ -85,7 +85,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 stmt = update(entry).where(entry.c.path == "/d").values(path="/d-moved", name="d-moved")
@@ -115,7 +115,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 await session.execute(delete(entry).where(entry.c.path == "/d"))
@@ -172,7 +172,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 stmt = update(entry).where(entry.c.path == "/d/f.txt").values(path="/gone/f.txt")
@@ -207,7 +207,7 @@ class TestWriteVsTopologyCoherence:
         now = datetime.now(UTC)
         ghost_id = str(ULID())
         async with host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             d_id = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
             await conn.execute(
                 insert(entry).values(
@@ -245,7 +245,7 @@ class TestWriteVsTopologyCoherence:
         tables = host.tables
         entry = tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 src = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/src.txt"))).scalar_one()
@@ -282,7 +282,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 # A rival create's parent bump: the descendant list is stale.
@@ -311,7 +311,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 stmt = update(entry).where(entry.c.path == "/d").values(version=entry.c.version + 1)
@@ -339,7 +339,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 # An unserialized write revives the row after the ladder ran: the clear's guard must miss.
@@ -369,7 +369,7 @@ class TestWriteVsTopologyCoherence:
         tables = host.tables
         entry = tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             f_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/f.txt"))).scalar_one()
 
             async def rival() -> None:
@@ -408,7 +408,7 @@ class TestWriteVsTopologyCoherence:
         old_id, young_id, old_blob, young_blob = (str(ULID()) for _ in range(4))
         aged, fresh = datetime.now(UTC) - timedelta(hours=25), datetime.now(UTC) - timedelta(hours=1)
         async with host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(insert(tables.content).values(entry_id=old_id, created_at=aged, content="old orphan"))
             await conn.execute(insert(tables.content).values(entry_id=young_id, created_at=fresh, content="young"))
             await conn.execute(insert(tables.blobs).values(entry_id=old_blob, created_at=aged, data=b"\x00old"))
@@ -457,7 +457,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             found = await session.execute(select(entry.c.entry_id, entry.c.version).where(entry.c.path == "/a.txt"))
             row = found.one()
             stale = StagedEntry(
@@ -490,7 +490,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
@@ -531,7 +531,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
@@ -576,7 +576,7 @@ class TestWriteVsTopologyCoherence:
         host = storage._host
         entry = host.tables.entry
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 clear("purge:pre-entry-delete")
@@ -606,7 +606,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
@@ -650,7 +650,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             d_id = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
             await conn.execute(
                 insert(entry).values(
@@ -830,7 +830,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 sub_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/sub"))).scalar_one()
@@ -887,7 +887,7 @@ class TestWriteVsTopologyCoherence:
         # Fits as a live path; overflows once the longer destination prefix lands on /d.
         long_tail = "/d/sub/" + "x" * (MAX_PATH_LENGTH - len("/d/sub/") - 10)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
 
             async def rival() -> None:
                 sub_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d/sub"))).scalar_one()
@@ -930,7 +930,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             rival_id = str(ULID())
 
             async def rival() -> None:
@@ -988,7 +988,7 @@ class TestWriteVsTopologyCoherence:
         entry = host.tables.entry
         now = datetime.now(UTC)
         async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             root_before = (await session.execute(select(entry.c.version).where(entry.c.path == "/"))).scalar_one()
 
             async def rival() -> None:

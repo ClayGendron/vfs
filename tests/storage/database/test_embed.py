@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event, select, update
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.embedding_doubles import InputRefusedError, RateLimitedError, ResponseStatusError, ScriptedProvider
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.embedding import Embedded, HashEmbeddingProvider
@@ -100,7 +100,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -374,7 +374,7 @@ class TestStep:
         storage = await _fresh(tmp_path, embedder=provider)
         assert (await storage.rebuild()).success is True
         chunks = storage._host.tables.chunks
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(chunks).values(embedding=None))
         assert (await storage.delete(path=Path("/a.txt"))).success is True
         result = await storage.rebuild()
@@ -732,8 +732,8 @@ class TestRefusals:
         provider = ScriptedProvider(token_of=len, real_batch_tokens=300, max_batch_tokens=300, max_batch_inputs=64)
         files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
         storage = await _fresh(tmp_path, files, embedder=provider, embed_concurrency=1)
-        # A hang guard only: a split that held its slot would wait on itself forever.
-        result = await asyncio.wait_for(storage.rebuild(), 60)
+        # A split that held its slot would wait on itself forever, until the run's deadline ends the test.
+        result = await storage.rebuild()
         assert result.errors == [] and _extra(result)["unembedded"] == 0
         await storage.close()
 

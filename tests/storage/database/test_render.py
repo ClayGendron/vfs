@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from sqlalchemy import event, func, select, update
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.documents import (
     docx_bytes,
     encrypted_pdf_bytes,
@@ -235,7 +235,7 @@ class TestSkipLaw:
         await _put(storage, "/w.docx", WOMBAT_DOCX)
         assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).where(entry.c.mime_type == PDF).values(render_generation="pdf/0+old"))
         result = await storage.rebuild()
         assert _report(result) == _counts(rendered=2)
@@ -274,7 +274,7 @@ class TestSkipLaw:
         await _put(storage, "/one.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
         tables = storage._host.tables
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(tables.content.delete())
         await _put(storage, "/two.pdf", QUOKKA_PDF)
         result = await storage.rebuild()
@@ -493,7 +493,7 @@ class TestLanding:
         monkeypatch.setattr(maintenance_module, "land_renderings", counted)
 
         async def rival_claims() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(
                     update(index_state).values(lease_holder="RIVAL", lease_heartbeat=maintenance_module._now_ms())
                 )
@@ -559,6 +559,7 @@ class TestLanding:
         )
         report = RenderReport()
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             tables = storage._host.tables
             await land_renderings(session, tables, storage._host.profile, 500, [item], report)
         assert report.rendered == 0  # the guarded UPDATE reached no row: its rowcount is the proof
@@ -760,7 +761,7 @@ class TestRetryByType:
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).values(render_source_hash="f" * 64))
         assert _report(await storage.rebuild()) == _counts(rendered=1)
         row = await _row(storage, "/q.pdf")
