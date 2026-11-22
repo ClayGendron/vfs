@@ -1,7 +1,8 @@
-//! A line's statuses: one entry for each pipeline of its top level that ran,
-//! in order, each the `PIPESTATUS` bash reads right after that pipeline. A
-//! pipeline inside a compound command, a function, a subshell or a job adds
-//! none of its own, so the count is bounded by the source, never by a loop.
+//! A line's statuses: one entry for each pipeline of its top level that set
+//! `PIPESTATUS`, in order, each the machine's `PIPESTATUS` right after it,
+//! which the recorded cases pin against bash. A pipeline inside a compound
+//! command, a function, a subshell or a job adds none of its own, so the count
+//! is bounded by the source, never by a loop.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -72,6 +73,14 @@ fn the_last_entry_is_where_the_line_stopped() {
         vec![vec![0], vec![0], vec![1]]
     );
     assert_eq!(statuses("true; exit 3; true"), vec![vec![0], vec![3]]);
+}
+
+/// A conditional and an arithmetic command set `PIPESTATUS` as a simple command does.
+#[test]
+fn a_test_or_arithmetic_command_is_one_status() {
+    assert_eq!(statuses("[[ -f /nope ]]"), vec![vec![1]]);
+    assert_eq!(statuses("true | false; (( 0 ))"), vec![vec![0, 1], vec![1]]);
+    assert_eq!(statuses("! [[ 1 == 1 ]]"), vec![vec![1]]);
 }
 
 #[test]

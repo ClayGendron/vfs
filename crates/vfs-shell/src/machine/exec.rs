@@ -401,11 +401,14 @@ fn run_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline)
         }
         sh.last_status = status;
         // A compound command keeps the PIPESTATUS of the last pipeline inside it, and a function
-        // definition keeps the one before it, as bash does.
+        // definition keeps the one before it; `( )`, `[[ ]]` and `(( ))` set their own, as in bash.
         let keeps = matches!(
             pipeline.stages.as_slice(),
             [Stage { command: Command::Compound(compound, _), .. }]
-                if !matches!(**compound, CompoundCommand::Subshell(_))
+                if !matches!(
+                    **compound,
+                    CompoundCommand::Subshell(_) | CompoundCommand::Cond(..) | CompoundCommand::Arith(..)
+                )
         ) || matches!(
             pipeline.stages.as_slice(),
             [Stage {
@@ -413,6 +416,15 @@ fn run_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline)
                 ..
             }]
         );
+        // Bash records a negated `[[ ]]` or `(( ))` with its `!` applied, and any other command without.
+        let test_alone = matches!(
+            pipeline.stages.as_slice(),
+            [Stage { command: Command::Compound(compound, _), .. }]
+                if matches!(**compound, CompoundCommand::Cond(..) | CompoundCommand::Arith(..))
+        );
+        if test_alone && pipeline.negated && !whole_job {
+            sh.pipestatus = vec![status];
+        }
         if !keeps {
             let statuses: BTreeMap<i64, String> = (0i64..)
                 .zip(sh.pipestatus.iter().map(i32::to_string))
@@ -663,6 +675,8 @@ fn exec_compound_inner<'b>(
                                 if n > 1 {
                                     return Err(Flow::Break(n.saturating_sub(1)));
                                 }
+                                // A break in the condition leaves the loop with 0, whatever its own status.
+                                sh.break_status = None;
                                 break;
                             }
                             Err(Flow::Continue(n)) => {
@@ -772,6 +786,7 @@ fn exec_compound_inner<'b>(
                                 if n > 1 {
                                     return Err(Flow::Break(n.saturating_sub(1)));
                                 }
+                                status = sh.break_status.take().unwrap_or(0);
                                 break;
                             }
                             Err(Flow::Continue(n)) => {

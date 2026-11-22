@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "arithmetic for: 1\nplain break after: 0\nwhile condition: 0\nplain break after that: 0\n",
+  "stderr": "bash: line 3: break: 0: loop count out of range\nbash: line 7: break: 0: loop count out of range\n"
+}

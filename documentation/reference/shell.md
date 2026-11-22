@@ -47,7 +47,7 @@ The call fails when the line did not run to its end: it did not parse, it holds 
 |---|---|
 | `stdout`, `stderr` | What the line printed to each stream, as UTF-8 text with invalid bytes replaced. |
 | `exit_code` | `$?` of the line, as bash would exit; the statuses are listed below. |
-| `statuses` | For each pipeline of the line's top level that ran, in order, the `PIPESTATUS` bash reads right after it. A pipeline inside a loop, a function or a compound command adds no entry of its own, so the list is bounded by the line's text. A job run with `&` adds none, and `wait` reports it. |
+| `statuses` | For each pipeline of the line's top level that set `PIPESTATUS`, in order, the `PIPESTATUS` bash reads right after it. A pipeline inside a loop, a function or a compound command adds no entry of its own, so the list is bounded by the line's text. A function definition, and a compound command that ran no pipeline, set none and add no entry. A job run with `&` adds none, and `wait` reports it. |
 | `errors` | Why the line did not run to its end, and, as warnings, each distinct thing vfs refused inside it, once. Past 100 distinct refusals, the rest are counted in one `truncated` warning. |
 | `fuel_used` | The instructions the line executed. |
 | `ops` | Always `("cli",)`. |
@@ -120,4 +120,4 @@ The instruction count is a function of the line and its replies, and the result 
 
 ## How Closely It Follows Bash
 
-The shell is tested against a corpus of 3,337 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not. 3,216 of the 3,337 pass; the other 121 are listed by name in `tests/shell/known_failures.txt`, and the corpus test fails when a listed case starts to pass or an unlisted one fails.
+The shell is tested against a corpus of 3,339 scripts, each recorded once by bash 5.3 and GNU coreutils in a pinned container image, 13 of them found by a differential fuzzer that runs generated scripts through the shell and through bash. A run compares standard output and the exit status exactly, and standard error as empty or not. 3,216 of the 3,337 pass; the other 121 are listed by name in `tests/shell/known_failures.txt`, and the corpus test fails when a listed case starts to pass or an unlisted one fails.

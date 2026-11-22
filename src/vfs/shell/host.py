@@ -74,8 +74,12 @@ PID: Final = 1000
 _KIND_OF: Final[dict[str, str]] = {"directory": "directory"}
 
 BODY_CACHE_BYTES: Final = 64 << 20
-"""Bytes of file bodies a line's host holds at once, as much as the machine itself may hold; a body
-a reader is inside is held whatever its size, since one ``read`` of the router returns it whole."""
+"""Bytes of file bodies no reader is inside that a line's host holds at once, as much as the machine
+itself may hold. The body a request reads is held whatever its size, since one ``read`` returns it whole."""
+
+READING_BYTES: Final = 128 << 20
+"""Bytes of bodies a reader is inside that the host holds at once, so two readers of large bodies each
+read theirs once; past it, the body read least recently gives way, since a reader may stop early."""
 
 _BODY: Final = frozenset({"content", "data"})
 """The columns a read asks for: a bytes body comes back only when ``data`` is named."""
@@ -183,9 +187,10 @@ class LineResult(Result):
     """``$?`` of the line: the last command's status, or 2 when the line could not run as written,
     124 when its deadline passed, 130 when it was cancelled and 137 when a budget ended it."""
     statuses: list[list[int]] = Field(default_factory=list)
-    """``PIPESTATUS`` after each pipeline of the line's top level that ran, in order: ``[[1, 0]]`` for
+    """``PIPESTATUS`` after each pipeline of the line's top level that set it, in order: ``[[1, 0]]`` for
     ``cat /nope | wc -l``. A pipeline inside a loop, a function or a compound command adds no entry
-    of its own, so the list is bounded by the line's text; a pipeline that did not run is absent."""
+    of its own, so the list is bounded by the line's text. A pipeline that did not run, a function
+    definition and a compound command that ran no pipeline set none and add no entry."""
     fuel_used: int = 0
     """The instructions the line executed inside the machine's module, a function of the line and its replies."""
 
@@ -323,7 +328,7 @@ class _Host:
         self._authority = authority
         self._bodies: dict[str, bytes] = {}
         self._held = 0
-        self._reading: set[str] = set()
+        self._reading: dict[str, None] = {}
         self._running: dict[str, tuple[str, list[str], str]] = {}
         self._facts: dict[tuple[str, str | None, str], ResultError] = {}
         self._unkept = 0
@@ -379,21 +384,26 @@ class _Host:
             self._hold(path, body)
         end = offset + length
         finished = end >= len(body)
-        if finished:
-            self._reading.discard(path)
-        else:
-            self._reading.add(path)
+        self._reading.pop(path, None)
+        if not finished:
+            self._reading[path] = None
         return "data", (body[offset:end], finished)
 
     def _hold(self, path: str, body: bytes) -> None:
-        """Keep ``body`` for the line. Bodies no reader is inside give way to keep the budget; a body
-        a reader is inside is kept whatever its size, so its chunks come from one read."""
-        for other in [held for held in self._bodies if held not in self._reading]:
-            if self._held + len(body) <= BODY_CACHE_BYTES:
-                break
-            self._held -= len(self._bodies.pop(other))
+        """Keep ``body`` for the line. Bodies no reader is inside give way first, past
+        ``BODY_CACHE_BYTES``; then bodies a reader is inside, read least recently first, past
+        ``READING_BYTES``. The body kept now never gives way to itself."""
         self._bodies[path] = body
         self._held += len(body)
+        for other in [held for held in self._bodies if held not in self._reading and held != path]:
+            if self._held <= BODY_CACHE_BYTES:
+                break
+            self._held -= len(self._bodies.pop(other))
+        for other in [held for held in self._reading if held != path]:
+            if self._held <= READING_BYTES:
+                break
+            self._held -= len(self._bodies.pop(other))
+            del self._reading[other]
 
     async def _stat(self, path: str) -> tuple[str, object]:
         result = await self._fs.stat(path, authority=self._authority)

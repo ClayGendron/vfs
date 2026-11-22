@@ -748,11 +748,7 @@ class Result(BaseModel):
         """
         target = self
         if max_errors is not None and len(self.errors) > max_errors:
-            target = Result(
-                ops=self.ops,
-                observations=self.observations,
-                errors=self._rolled_errors(),
-            )
+            target = self.model_copy(update={"errors": self._rolled_errors()})
         payload = json.loads(target.model_dump_json(exclude_none=exclude_none))
         payload.pop("success", None)
         return {"success": self.success} | payload

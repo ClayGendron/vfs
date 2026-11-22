@@ -349,7 +349,27 @@ async def test_two_readers_past_the_budget_each_read_their_body_once(monkeypatch
     monkeypatch.setattr(fs, "read", counted)
     result = await fs.cli("cat /a.txt | cat /b.txt - | wc -c", authority=ADA)
     assert result.stdout == "600000\n"
-    assert reads == 2, "a body a reader is inside never gives way to another"
+    assert reads == 2, "a body a reader is inside gives way to no other while the bodies being read fit"
+
+
+async def test_bodies_whose_readers_stopped_early_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 1000)
+    monkeypatch.setattr(host_module, "READING_BYTES", 250_000)
+    fs = AsyncVirtualFileSystem()
+    for n in range(20):
+        ok(await fs.write(path=f"/t/{n:02}.txt", content="first\n" + "z" * 100_000, parents=True, authority=SYSTEM))
+    held: list[int] = []
+    real_hold = host_module._Host._hold
+
+    def counted(self: Any, path: str, body: bytes) -> None:
+        real_hold(self, path, body)
+        held.append(self._held)
+
+    monkeypatch.setattr(host_module._Host, "_hold", counted)
+    result = await fs.cli("for f in /t/*; do read -r x < $f; echo $x; done | uniq -c", authority=ADA)
+    assert result.stdout == "     20 first\n"
+    assert len(held) == 20
+    assert max(held) <= 250_000 + 100_006, "a reader that stopped early leaves a body that gives way in time"
 
 
 async def test_a_refused_search_reads_as_its_message_and_is_kept_as_a_warning() -> None:
@@ -747,6 +767,13 @@ async def test_a_line_result_crosses_the_wire_whole() -> None:
     assert isinstance(back, host_module.LineResult)
     assert back == result
     assert back.statuses == [[0], [0], [1], [1, 0]]
+
+
+async def test_a_line_result_rolled_up_at_the_wire_keeps_what_the_line_printed() -> None:
+    result = await AsyncVirtualFileSystem().cli("echo out; cat /a /b /c; false | true", authority=ADA)
+    payload = result.to_payload(max_errors=1)
+    assert (payload["stdout"], payload["exit_code"], payload["statuses"]) == ("out\n", 0, [[0], [1], [1, 0]])
+    assert len(payload["errors"]) == 2
 
 
 async def test_a_line_result_prints_its_output_then_its_facts() -> None:
