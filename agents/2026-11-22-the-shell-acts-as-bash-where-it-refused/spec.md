@@ -83,7 +83,7 @@ Ruled on 2026-11-22: the shell acts just like Linux bash in every way it can. Th
 - **Unbounded work.** The budgets are the contract.
 - **The order in which concurrent jobs interleave.** Request keys must be deterministic, so the shell prints one fixed order among those bash could print.
 - **CPU times**, which have no process accounting behind them.
-- **Mode bits, owners and symlinks.** These are what vfs stores today. Whether vfs stores mode bits is an open question on the program-table spec.
+- **Mode bits beyond the executable bit, and symlinks.** vfs stores neither. `agents/2026-11-22-a-file-carries-its-executable-bit/spec.md` proposes storing the executable bit and deriving read and write from the caller's rights.
 - **The text of `help`.**
 
 ## Tests
