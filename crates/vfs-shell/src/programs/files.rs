@@ -648,7 +648,11 @@ enum Ask {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Walked {
     Removed,
+    /// Kept because a question about it was declined.
     Kept,
+    /// Kept because descent into it, or into a directory beneath it, was declined: GNU rm asks
+    /// about no directory above it.
+    Skipped,
     Failed,
 }
 
@@ -662,9 +666,11 @@ pub async fn rm(prog: &mut Prog<'_>, args: &[String]) -> Result<i32, Flow> {
             "--recursive" => recursive = true,
             "--verbose" => verbose = true,
             "--dir" => empty_dirs = true,
-            "--interactive" | "--interactive=always" => (force, ask) = (false, Ask::Always),
+            "--interactive" | "--interactive=always" | "--interactive=yes" => {
+                (force, ask) = (false, Ask::Always);
+            }
             "--interactive=once" => (force, ask) = (false, Ask::Once),
-            "--interactive=never" => ask = Ask::Never,
+            "--interactive=never" | "--interactive=no" | "--interactive=none" => ask = Ask::Never,
             long if long.starts_with("--interactive=") => {
                 let value = long.trim_start_matches("--interactive=");
                 prog.err(&format!("invalid argument '{value}' for '--interactive'"))
@@ -831,7 +837,8 @@ async fn remove(
 
 /// `rm -ri` on one directory: ask to descend, ask for each entry beneath it, then ask for the
 /// directory itself, removing each entry alone so a kept child keeps its parent. A directory
-/// with a child that failed is not asked about, as GNU rm skips it.
+/// with a child that failed, or one it was not let descend into, is not asked about, as GNU rm
+/// skips it.
 fn walk<'a, 's: 'a>(
     prog: &'a mut Prog<'s>,
     shown: String,
@@ -848,9 +855,9 @@ fn walk<'a, 's: 'a>(
         };
         if !entries.is_empty() {
             if !confirm(prog, &format!("rm: descend into directory '{shown}'? ")).await? {
-                return Ok(Walked::Kept);
+                return Ok(Walked::Skipped);
             }
-            let mut failed = false;
+            let (mut failed, mut skipped) = (false, false);
             for entry in entries {
                 let child = join(&shown, &entry.name);
                 let walked = match entry.kind {
@@ -865,9 +872,13 @@ fn walk<'a, 's: 'a>(
                     }
                 };
                 failed |= walked == Walked::Failed;
+                skipped |= walked == Walked::Skipped;
             }
             if failed {
                 return Ok(Walked::Failed);
+            }
+            if skipped {
+                return Ok(Walked::Skipped);
             }
         }
         if !confirm(prog, &prompt(&shown, EntryKind::Directory, 0)).await? {

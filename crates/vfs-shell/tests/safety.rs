@@ -402,3 +402,92 @@ fn a_write_refused_when_the_line_ends_fails_the_line() {
     assert!(stderr(&outcome).contains("out: Permission denied"));
     assert_eq!(host.file("/top/sub/out"), Some(&b""[..]));
 }
+
+#[test]
+fn a_write_refused_as_a_child_shell_ends_still_fails_the_line() {
+    for line in [
+        "( : {fd}>out; echo hi >&$fd ); echo st=$?",
+        "echo x | { : {fd}>out; cat >&$fd; }; echo st=$?",
+        "v=$( : {fd}>out; echo hi >&$fd ); echo st=$?",
+    ] {
+        let (outcome, host) = run_refusing(line, 1);
+        assert_eq!(outcome.status, 1, "{line}");
+        assert!(
+            stderr(&outcome).contains("out: Permission denied"),
+            "{line}"
+        );
+        assert_eq!(host.file("/top/sub/out"), Some(&b""[..]), "{line}");
+    }
+}
+
+#[test]
+fn an_alias_of_a_refused_writer_sends_nothing_either() {
+    let line = "{ cat /top/big; echo tail >&3; } >out 3>&1; echo st=$?";
+    let (outcome, host) = run_refusing(line, 1);
+    assert_eq!(outcome.stdout, b"st=1\n");
+    assert_eq!(writes_to_out(&outcome), 2);
+    assert_eq!(host.file("/top/sub/out"), Some(&b""[..]));
+}
+
+#[test]
+fn rm_ri_declining_a_descent_asks_about_no_directory_above_it() {
+    // deep holds inner/ then x.txt: decline inner, remove x.txt, and deep is not asked about.
+    let (outcome, host) = run("rm -ri deep; echo st=$?", b"y\nn\ny\n");
+    assert_eq!(outcome.stdout, b"st=0\n");
+    assert_eq!(
+        stderr(&outcome),
+        "rm: descend into directory 'deep'? rm: descend into directory 'deep/inner'? \
+         rm: remove regular file 'deep/x.txt'? "
+    );
+    assert!(host.exists("/top/sub/deep/inner/y.txt"));
+    assert!(!host.exists("/top/sub/deep/x.txt"));
+    assert!(host.exists("/top/sub/deep"));
+}
+
+#[test]
+fn rm_takes_every_spelling_gnu_takes_for_interactive() {
+    for (spelling, asks) in [
+        ("yes", true),
+        ("always", true),
+        ("no", false),
+        ("none", false),
+        ("never", false),
+    ] {
+        let (outcome, host) = run(&format!("rm --interactive={spelling} a.txt"), b"n\n");
+        assert_eq!(host.exists("/top/sub/a.txt"), asks, "{spelling}");
+        assert_eq!(stderr(&outcome).is_empty(), !asks, "{spelling}");
+    }
+}
+
+#[test]
+fn a_sandboxed_script_file_is_refused_before_any_operand_is_read() {
+    let (outcome, _) = run(
+        "printf '1r keep.txt\\n' > s.sed; sed --sandbox -f s.sed a.txt c.txt; echo st=$?",
+        b"",
+    );
+    assert_eq!(outcome.stdout, b"st=1\n");
+    let operand_reads = outcome
+        .requests
+        .iter()
+        .filter(|request| request.contains("Read") && !request.contains("s.sed"))
+        .count();
+    assert_eq!(operand_reads, 0);
+}
+
+#[test]
+fn a_script_file_gets_its_r_reads() {
+    let (outcome, _) = run(
+        "printf '1r ../keep.txt\\n' > s.sed; sed -f s.sed a.txt",
+        b"",
+    );
+    assert_eq!(outcome.stdout, b"alpha\nkeep\n");
+}
+
+#[test]
+fn a_refused_replacement_stops_every_later_in_place_edit() {
+    let line = "printf 'a\\n' > out; sed -i 's/a/X/' out c.txt; echo st=$?";
+    let (outcome, host) = run_refusing(line, 1);
+    assert_eq!(outcome.stdout, b"st=4\n");
+    assert_eq!(host.file("/top/sub/out"), Some(&b"a\n"[..]));
+    assert_eq!(host.file("/top/sub/c.txt"), Some(&b"gamma\n"[..]));
+}

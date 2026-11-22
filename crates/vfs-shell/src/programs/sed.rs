@@ -141,26 +141,28 @@ pub enum WriteKind {
 // The entry points
 // ---------------------------------------------------------------------------
 
-/// The files `sed` will read for `args` (operands, `-` for standard input,
-/// the targets of `r` and `R`, and `-f` script files), or the output of a
-/// usage or script error. The `r` and `R` targets inside a `-f` script are
-/// not known before the script is read, so they are not named.
-pub fn inputs(args: &[String]) -> Result<Vec<String>, SedOutput> {
+/// The `-f` script files `sed` must read before it can compile its script, in order, `-` being
+/// standard input; or the output of a usage error.
+pub fn scripts(args: &[String]) -> Result<Vec<String>, SedOutput> {
     let options = Options::parse(args)?;
-    let mut names = options.operand_names();
-    let scripts: Vec<String> = options
+    Ok(options
         .sources
         .iter()
         .filter_map(|source| match source {
             Source::File(name) => Some(name.clone()),
             Source::Expr(_) => None,
         })
-        .collect();
-    if scripts.is_empty() {
-        let program = compile(&options, &Files::new(), &[])?;
-        names.extend(program.reads);
-    }
-    names.extend(scripts);
+        .collect())
+}
+
+/// The files `sed` will read for `args` once its script compiles with the `-f` files already
+/// read (operands, `-` for standard input, and the targets of `r` and `R`); or the output of a
+/// usage or script error, before any of them is read.
+pub fn inputs(args: &[String], scripts: &Files, stdin: &[u8]) -> Result<Vec<String>, SedOutput> {
+    let options = Options::parse(args)?;
+    let program = compile(&options, scripts, stdin)?;
+    let mut names = options.operand_names();
+    names.extend(program.reads);
     let mut seen = BTreeSet::new();
     names.retain(|name| seen.insert(name.clone()));
     Ok(names)
@@ -2359,16 +2361,22 @@ mod tests {
 
     #[test]
     fn inputs_names_operands_stdin_and_read_targets() {
-        assert_eq!(inputs(&args(&["p"])).unwrap(), ["-"]);
+        let none = Files::new();
+        assert_eq!(inputs(&args(&["p"]), &none, b"").unwrap(), ["-"]);
         assert_eq!(
-            inputs(&args(&["-n", "1r extra\n2R more", "a", "-", "b"])).unwrap(),
+            inputs(
+                &args(&["-n", "1r extra\n2R more", "a", "-", "b"]),
+                &none,
+                b""
+            )
+            .unwrap(),
             ["a", "-", "b", "extra", "more"]
         );
-        assert_eq!(
-            inputs(&args(&["-f", "script.sed", "in.txt"])).unwrap(),
-            ["in.txt", "script.sed"]
-        );
-        let refused = inputs(&args(&["s/a/b"])).unwrap_err();
+        let list = args(&["-f", "script.sed", "in.txt"]);
+        assert_eq!(scripts(&list).unwrap(), ["script.sed"]);
+        let read = Files::from([("script.sed".to_owned(), Ok(b"1r extra\n".to_vec()))]);
+        assert_eq!(inputs(&list, &read, b"").unwrap(), ["in.txt", "extra"]);
+        let refused = inputs(&args(&["s/a/b"]), &none, b"").unwrap_err();
         assert_eq!(
             refused.stderr,
             b"sed: -e expression #1, char 5: unterminated `s' command\n"

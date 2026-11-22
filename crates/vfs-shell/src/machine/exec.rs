@@ -100,7 +100,7 @@ pub fn run_line(
         // A write refused only as the line ends fails the line, once it has been said.
         let mut status = status;
         for (path, error) in files::unreported(&sh.hub) {
-            let text = format!("bash: line {}: {}: {}\n", sh.lineno, path, error.message());
+            let text = files::refusal_text(sh.lineno, &path, error);
             if sh.error_text(&text).await.is_err() {
                 break;
             }
@@ -2376,13 +2376,8 @@ pub async fn restore(sh: &mut Shell, saved: Saved) -> Result<bool, Flow> {
             let failed = writer.borrow_mut().error.take();
             if let Some(error) = failed {
                 let path = writer.borrow().path.clone();
-                sh.error_text(&format!(
-                    "bash: line {}: {}: {}\n",
-                    sh.lineno,
-                    path,
-                    error.message()
-                ))
-                .await?;
+                sh.error_text(&files::refusal_text(sh.lineno, &path, error))
+                    .await?;
                 written = false;
             }
         }

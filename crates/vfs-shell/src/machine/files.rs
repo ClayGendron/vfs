@@ -227,11 +227,15 @@ impl Drop for FileWriter {
     fn drop(&mut self) {
         if let Ok(mut hub) = self.hub.try_borrow_mut() {
             hub.release(self.buffer.len());
+            if let Some(error) = self.error.take() {
+                hub.refusals.push((std::mem::take(&mut self.path), error));
+            }
         }
     }
 }
 
-/// The refusals no one has reported yet, each with its path, taken so each is said once.
+/// The refusals no one has reported yet, each with its path, taken so each is said once: those
+/// of writers still open, and those of writers a child shell ended.
 pub fn unreported(hub: &HubRef) -> Vec<(String, HostError)> {
     let writers: Vec<_> = hub
         .borrow()
@@ -239,14 +243,18 @@ pub fn unreported(hub: &HubRef) -> Vec<(String, HostError)> {
         .iter()
         .filter_map(Weak::upgrade)
         .collect();
-    writers
-        .iter()
-        .filter_map(|writer| {
-            let mut this = writer.try_borrow_mut().ok()?;
-            let error = this.error.take()?;
-            Some((this.path.clone(), error))
-        })
-        .collect()
+    let mut refused = std::mem::take(&mut hub.borrow_mut().refusals);
+    refused.extend(writers.iter().filter_map(|writer| {
+        let mut this = writer.try_borrow_mut().ok()?;
+        let error = this.error.take()?;
+        Some((this.path.clone(), error))
+    }));
+    refused
+}
+
+/// What the line says of a write vfs refused.
+pub fn refusal_text(lineno: u32, path: &str, error: HostError) -> String {
+    format!("bash: line {lineno}: {path}: {}\n", error.message())
 }
 
 /// The writers holding bytes for `path`, or for any path when `path` is `None`.
