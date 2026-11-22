@@ -17,6 +17,7 @@ Ruled on 2026-11-22: this lands before `0.1.0b1`, when the public surface is fro
 - 145 cases fail: most in `printf` (bash formats floats as `long double`), the parameter operators, `declare`, `mapfile` and redirections; four are finds under `tests/shell/cases/found/` (a backslash before a letter in a quoted default word, a variable inside an extglob group, a here-document ended by the end of input, a delimiter spelled as an expansion).
 - The parse depth of 200 counts each grammar rule a construct passes through, about six for one `$( )`, so 33 nested substitutions parse and 35 do not; bash runs 40.
 - Compound commands carry no span.
+- A here-document inside a command substitution inside a here-document is refused and listed in `tests/shell/deltas.txt` as deliberate, but it is a gap of the parser, and bash runs it.
 - The prior-art memo ran 468 Oils cases (363 agree, 39 differ, 66 skipped); the rate over the whole suite is not measured.
 
 ## Decisions
