@@ -25,7 +25,7 @@ The interpreter does no input or output of its own. It asks for every effect as 
 
 A line never runs as the system actor.
 
-A redirection is opened as bash opens it, before its command runs, so a command never acts before vfs refuses its file. When the command only prints (`echo`, `printf`, `:`, `true`, or `cat` of a here-document), its file is judged with a `stat` and written with one `write` of all its bytes. Any other command could act first, so its file is opened with a `write` of no bytes, and what the command prints follows in a second `write`. Output past 8 MiB is written in more than one request.
+A redirection is opened as bash opens it, before its command runs, so a command never acts before vfs refuses its file. When the command only prints (`echo`, `:`, `true`, `printf` without `-v`, or `cat` reading an input its own redirection gives it), its file is judged with a `stat` and written with one `write` of all its bytes. Any other command could act first, so its file is opened with a `write` of no bytes, and what the command prints follows in a second `write`. Output past 8 MiB is written in more than one request.
 
 The interpreter runs inside a WebAssembly module, in a runtime linked into vfs. The runtime is the wall around the line. It counts every instruction the line executes, holds the module's memory under a hard limit, and ends the line when its deadline passes or its call is cancelled. A fault inside the interpreter ends that line with an error; the process goes on. Each line runs in a fresh instance, one slice at a time on vfs's worker pool, so the event loop keeps serving other calls while a line computes.
 

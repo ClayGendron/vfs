@@ -200,8 +200,15 @@ async def _read_only_ro() -> AsyncVirtualFileSystem:
         ("{ cat > /ro/out.txt; cat; } <<< hi", "hi\n"),
         ("echo x > /ro/out.txt; echo $?", "1\n"),
         ("cat > /ro/out.txt <<< hi; echo $?", "1\n"),
+        ("{ cat < /dev/stdin > /ro/out.txt; cat; } <<< hi", "hi\n"),
     ],
-    ids=["printf-v-sets-nothing", "cat-leaves-its-input", "echo-refused-at-the-end", "cat-of-its-own-input"],
+    ids=[
+        "printf-v-sets-nothing",
+        "cat-leaves-its-input",
+        "echo-refused-at-the-end",
+        "cat-of-its-own-input",
+        "cat-of-dev-stdin-leaves-its-input",
+    ],
 )
 async def test_a_refused_redirection_leaves_its_command_undone(line: str, stdout: str) -> None:
     fs = await _read_only_ro()
@@ -324,6 +331,25 @@ async def test_a_body_past_the_budget_is_read_once_across_its_chunks(monkeypatch
     result = await fs.cli("wc -c < /big.bin", authority=ADA)
     assert result.stdout == "300000\n"
     assert reads == 1, "five chunks of one body are one read"
+
+
+async def test_two_readers_past_the_budget_each_read_their_body_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 1000)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/a.txt", content="a" * 300_000, authority=SYSTEM))
+    ok(await fs.write(path="/b.txt", content="b" * 300_000, authority=SYSTEM))
+    reads = 0
+    real_read = fs.read
+
+    async def counted(*args: Any, **kwargs: Any) -> Result:
+        nonlocal reads
+        reads += 1
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(fs, "read", counted)
+    result = await fs.cli("cat /a.txt | cat /b.txt - | wc -c", authority=ADA)
+    assert result.stdout == "600000\n"
+    assert reads == 2, "a body a reader is inside never gives way to another"
 
 
 async def test_a_refused_search_reads_as_its_message_and_is_kept_as_a_warning() -> None:

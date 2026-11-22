@@ -379,6 +379,11 @@ impl Test<'_> {
                 [one] => Ok(!one.is_empty()),
                 // With three arguments a binary operator in the middle wins, whatever the first is.
                 [a, op, b] if is_binary(op) => self.binary(a, op, b).await,
+                [a, op, b] if op == "-a" || op == "-o" => {
+                    let x = !a.is_empty();
+                    let y = !b.is_empty();
+                    Ok(if op == "-a" { x && y } else { x || y })
+                }
                 [bang, rest @ ..] if bang == "!" && args.len() <= 4 => {
                     Ok(!self.expression(rest).await? && self.error.is_none())
                 }

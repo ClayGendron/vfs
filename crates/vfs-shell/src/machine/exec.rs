@@ -18,7 +18,7 @@ use super::{Config, Fatal, HostError, Reply, Request, WriteMode, builtins, quote
 use crate::programs;
 use crate::syntax::ast::{
     AndOr, Arg, AssignValue, Assignment, CaseEnd, Command, CompoundCommand, Connector, List,
-    Pipeline, RedirFd, RedirOp, RedirTarget, Redirect, Script, SimpleCommand, Word,
+    Pipeline, RedirFd, RedirOp, RedirTarget, Redirect, Script, SimpleCommand, Stage, Word,
 };
 use crate::syntax::is_name;
 
@@ -238,7 +238,8 @@ async fn run_item<'a>(
     if item.background {
         let mut child = sh.fork();
         child.in_condition = false;
-        child.in_background = true;
+        // Bash reports a job of one negated pipeline without its `!`; any longer job keeps every `!`.
+        child.in_background = item.and_or.rest.is_empty() && item.and_or.first.negated;
         let id = sh.jobs.len().saturating_add(1);
         let pid = child.bash_pid;
         let hub = sh.hub.clone();
@@ -354,17 +355,27 @@ fn exec_pipeline<'b>(ctx: &'b Ctx<'_>, sh: &'b mut Shell, pipeline: &'b Pipeline
         if pipeline.negated {
             sh.in_condition = true;
         }
+        // Only the job's own pipeline drops its `!`; nothing nested inside the job sees the flag.
+        let whole_job = std::mem::take(&mut sh.in_background);
         let result = run_stages(ctx, sh, pipeline).await;
         sh.in_condition = outer_condition;
         let mut status = result?;
-        if pipeline.negated && !sh.in_background {
+        if pipeline.negated && !whole_job {
             status = i32::from(status == 0);
         }
         sh.last_status = status;
-        let statuses: BTreeMap<i64, String> = (0i64..)
-            .zip(sh.pipestatus.iter().map(i32::to_string))
-            .collect();
-        set_value(sh, "PIPESTATUS", Value::Indexed(statuses))?;
+        // A compound command keeps the PIPESTATUS of the last pipeline inside it, as bash does.
+        let compound_alone = matches!(
+            pipeline.stages.as_slice(),
+            [Stage { command: Command::Compound(compound, _), .. }]
+                if !matches!(**compound, CompoundCommand::Subshell(_))
+        );
+        if !compound_alone {
+            let statuses: BTreeMap<i64, String> = (0i64..)
+                .zip(sh.pipestatus.iter().map(i32::to_string))
+                .collect();
+            set_value(sh, "PIPESTATUS", Value::Indexed(statuses))?;
+        }
         Ok(status)
     })
 }
@@ -1977,10 +1988,14 @@ fn writes_nothing_else(sh: &Shell, name: &str, words: &[String], redirects: &[Re
             words.len() == 1
                 && redirects.iter().any(|redirect| {
                     matches!(redirect.fd, RedirFd::Default | RedirFd::Number(0))
-                        && matches!(
-                            redirect.op,
-                            RedirOp::Read | RedirOp::HereDoc | RedirOp::HereString
-                        )
+                        && match (&redirect.op, &redirect.target) {
+                            (RedirOp::HereDoc | RedirOp::HereString, _) => true,
+                            // A literal file of its own; `/dev/stdin` and its kin are the input it inherits.
+                            (RedirOp::Read, RedirTarget::Word(word)) => word
+                                .static_text()
+                                .is_some_and(|path| !path.starts_with("/dev/")),
+                            _ => false,
+                        }
                 })
         }
         _ => false,

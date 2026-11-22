@@ -71,8 +71,8 @@ PID: Final = 1000
 _KIND_OF: Final[dict[str, str]] = {"directory": "directory"}
 
 BODY_CACHE_BYTES: Final = 64 << 20
-"""Bytes of file bodies a line's host holds at once, as much as the machine itself may hold; the
-body being read is held whatever its size, since one ``read`` of the router returns it whole."""
+"""Bytes of file bodies a line's host holds at once, as much as the machine itself may hold; a body
+a reader is inside is held whatever its size, since one ``read`` of the router returns it whole."""
 
 _BODY: Final = frozenset({"content", "data"})
 """The columns a read asks for: a bytes body comes back only when ``data`` is named."""
@@ -290,6 +290,7 @@ class _Host:
         self._authority = authority
         self._bodies: dict[str, bytes] = {}
         self._held = 0
+        self._reading: set[str] = set()
         self._running: dict[str, tuple[str, list[str], str]] = {}
         self.evidence: list[ResultError] = []
 
@@ -309,6 +310,7 @@ class _Host:
             return await self._feed(args)
         self._bodies.clear()
         self._held = 0
+        self._reading.clear()
         return await self._mutate(op, args)
 
     async def _read(self, path: str, offset: int, length: int) -> tuple[str, object]:
@@ -320,15 +322,24 @@ class _Host:
                 return refusal
             row = result.observations[0]
             body = row.data if row.data is not None else (row.content or "").encode()
-            # The body being read is always kept, so a reader takes it in chunks from one read; the
-            # others give way when it would pass the budget.
-            if self._held + len(body) > BODY_CACHE_BYTES:
-                self._bodies.clear()
-                self._held = 0
-            self._bodies[path] = body
-            self._held += len(body)
+            self._hold(path, body)
         end = offset + length
-        return "data", (body[offset:end], end >= len(body))
+        finished = end >= len(body)
+        if finished:
+            self._reading.discard(path)
+        else:
+            self._reading.add(path)
+        return "data", (body[offset:end], finished)
+
+    def _hold(self, path: str, body: bytes) -> None:
+        """Keep ``body`` for the line. Bodies no reader is inside give way to keep the budget; a body
+        a reader is inside is kept whatever its size, so its chunks come from one read."""
+        for other in [held for held in self._bodies if held not in self._reading]:
+            if self._held + len(body) <= BODY_CACHE_BYTES:
+                break
+            self._held -= len(self._bodies.pop(other))
+        self._bodies[path] = body
+        self._held += len(body)
 
     async def _stat(self, path: str) -> tuple[str, object]:
         result = await self._fs.stat(path, authority=self._authority)
