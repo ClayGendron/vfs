@@ -27,8 +27,8 @@ Each was run on 2026-11-22 at `dev` `5a823ea`.
 
 ## Decisions
 
-1. **An open is one public `read`, held by that open alone.** The host reads the whole body once when a line opens a file, and keeps it with the open description until its last descriptor closes or the line ends. A duplicated descriptor shares it and its cursor. A second open of the same path, at any offset, is a new `read`, so it is judged under the caller's rights and sees the current version. There is no cache across opens, so nothing is evicted and no reader is refilled from another version. Through a session the read leaves a stamp, as any read does.
-2. **Held bodies are charged to the line.** Each held body and its key count against an allowance equal to the line's `memory_bytes`, charged when the read returns and released at close. A read that would pass the allowance ends the line `budget_exhausted`, 137, and the profile is stated on the reference page: an open costs its whole body until spec 178's ranged read serves prefixes.
+1. **An open is one public `read`, held by that open alone.** Built on 2026-11-22. The host reads the whole body once when a line opens a file, and keeps it with the open description until its last descriptor closes or the line ends. A duplicated descriptor shares it and its cursor. A second open of the same path, at any offset, is a new `read`, so it is judged under the caller's rights and sees the current version. There is no cache across opens, so nothing is evicted and no reader is refilled from another version. Through a session the read leaves a stamp, as any read does.
+2. **Held bodies give way, and a body read again must be the version its open saw.** A body is held only while its open has not read its end, keyed by the open; the machine names the open on each read by the key of its first one. Past `READING_BYTES`, 128 MiB, the body read least recently gives way, never the one being read. Its open keeps the version it saw, and a later read of it reads the body again: the same version is served, and a different one refuses the read with a `vfs.conflict` warning on the line. So memory follows the open readers, and no reader mixes versions. Built on 2026-11-22.
 3. **A listing is paged.** The host calls `ls(after=, limit=128)` and follows `next_after` until it is absent, replying a page at a time. Each page is charged while held.
 4. **Warnings on a successful partial result reach the line.** A warning on a successful `read`, `stat`, `ls`, `glob`, `grep` or `search` result is kept through the existing deduplicating collector, in the served programs of `src/vfs/shell/programs.py` too. An ordinary negative probe, such as `test -e` on an absent path, keeps nothing.
 5. **`stat` can report the caller's rights.** `stat(columns=...)` gains the optional columns `can_read` and `can_write`, computed by the router from the same admission checks the verbs use: for a file, the body read and an overwrite; for a directory, a listing and the creation of a child. A later real mutation is judged again. The host asks for them only for `-r`, `-w`, `-O` and `-G`, and maps an unknown value to false.
@@ -36,12 +36,12 @@ Each was run on 2026-11-22 at `dev` `5a823ea`.
 
 ## Tests
 
-- `tests/shell/test_host.py`, the regression `test_each_open_is_a_fresh_read_judged_again`:
+- `tests/shell/test_host.py`, built on 2026-11-22 as `test_each_open_of_a_file_is_a_fresh_read_that_sees_an_edit`, `test_an_open_after_a_revoke_is_refused`, `test_one_open_reads_one_version_across_its_chunks`, `test_two_opens_of_one_file_are_two_reads`, `test_a_body_given_way_is_read_again_only_at_the_version_its_open_saw` and `test_bodies_whose_readers_stopped_early_are_bounded`:
   - `cat f; cat f` around an edit prints both bodies, with two router reads;
   - around a revoke the second `cat` is refused;
   - the `read -r x; touch z; grep` line reads one version only;
   - 200 and 400 empty files cost work in proportion, counted;
-  - a held body past `memory_bytes` ends the line 137.
+  - a body that gave way is read again at its open's version, or refused.
 - A spied `ls` over 300 children is three paged calls.
 - A `truncated` warning on `ls` and on `glob` reaches `LineResult.errors` once.
 - `-r`, `-w`, `-nt` and `-ot` over read-only, writable, list-only and masked files, under `[ ]` and `[[ ]]`, against the verbs' own answers, on memory and SQLite.

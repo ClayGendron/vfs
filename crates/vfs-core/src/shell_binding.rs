@@ -678,10 +678,12 @@ fn encode_request<'py>(
     let op = match request {
         Request::Read {
             path,
+            open,
             offset,
             length,
         } => {
             args.set_item("path", path)?;
+            args.set_item("open", open.to_string())?;
             args.set_item("offset", offset)?;
             args.set_item("length", length)?;
             "read"

@@ -306,76 +306,120 @@ async def test_a_limit_that_is_no_ascii_number_is_a_misuse() -> None:
     assert result.stderr.startswith("search: invalid limit: \u2018\u00b2\u2019\n")
 
 
-async def test_the_bodies_a_line_holds_give_way_to_the_one_it_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 10)
+def _counted_reads(monkeypatch: pytest.MonkeyPatch, fs: AsyncVirtualFileSystem, after: Any = None) -> list[str]:
+    """Count the router reads ``fs`` serves, calling ``after(n)`` once the ``n``-th returns."""
+    reads: list[str] = []
+    real_read = fs.read
+
+    async def counted(*args: Any, **kwargs: Any) -> Result:
+        result = await real_read(*args, **kwargs)
+        reads.append(args[0] if args else kwargs.get("path", ""))
+        if after is not None:
+            await after(len(reads))
+        return result
+
+    monkeypatch.setattr(fs, "read", counted)
+    return reads
+
+
+async def test_each_open_of_a_file_is_a_fresh_read_that_sees_an_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.mkdir("/w", authority=SYSTEM))
+    ok(await fs.write(path="/w/f", content="v1\n", authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+
+    async def edit(n: int) -> None:
+        if n == 1:
+            ok(await fs.write(path="/w/f", content="v2\n", authority=SYSTEM))
+
+    reads = _counted_reads(monkeypatch, fs, edit)
+    result = await fs.cli("cat /w/f; cat /w/f", authority=ADA)
+    assert result.stdout == "v1\nv2\n"
+    assert reads == ["/w/f", "/w/f"]
+
+
+async def test_an_open_after_a_revoke_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.mkdir("/w", authority=SYSTEM))
+    ok(await fs.write(path="/w/f", content="secret\n", authority=SYSTEM))
+    ok(await fs.set_posture("/", "none", authority=SYSTEM))
+    ok(await fs.grant("/w", "ada", "read", authority=SYSTEM))
+
+    async def revoke(n: int) -> None:
+        if n == 1:
+            ok(await fs.revoke("/w", "ada", authority=SYSTEM))
+
+    _counted_reads(monkeypatch, fs, revoke)
+    result = await fs.cli("cat /w/f; echo st=$?; cat /w/f; echo st=$?", authority=ADA)
+    assert result.stdout == "secret\nst=0\nst=1\n"
+
+
+async def test_one_open_reads_one_version_across_its_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.mkdir("/w", authority=SYSTEM))
+    lines = 30_000
+    ok(await fs.write(path="/w/a", content="".join(f"A{n:07}\n" for n in range(lines)), authority=SYSTEM))
+    ok(await fs.grant("/", "ada", "read_write", authority=SYSTEM))
+
+    async def rewrite(n: int) -> None:
+        if n == 1:
+            ok(await fs.write(path="/w/a", content="".join(f"B{n:07}\n" for n in range(lines)), authority=SYSTEM))
+
+    reads = _counted_reads(monkeypatch, fs, rewrite)
+    result = await fs.cli("{ read -r x; echo $x; touch /w/z; grep -c ^A; } < /w/a", authority=ADA)
+    assert result.stdout == f"A0000000\n{lines - 1}\n"
+    assert reads == ["/w/a"], "a body of five chunks is one read, and a write elsewhere in the line forgets nothing"
+
+
+async def test_two_opens_of_one_file_are_two_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     fs = AsyncVirtualFileSystem()
     ok(await fs.write(path="/big.txt", content="x" * 100, authority=SYSTEM))
-    ok(await fs.write(path="/small.txt", content="tiny", authority=SYSTEM))
-    reads = 0
-    real_read = fs.read
-
-    async def counted(*args: Any, **kwargs: Any) -> Result:
-        nonlocal reads
-        reads += 1
-        return await real_read(*args, **kwargs)
-
-    monkeypatch.setattr(fs, "read", counted)
-    result = await fs.cli("cat /big.txt /big.txt /small.txt /small.txt | wc -c", authority=ADA)
-    assert result.stdout == "208\n"
-    assert reads == 2, "each body is read once; the small one makes the big one give way"
-
-
-async def test_a_body_past_the_budget_is_read_once_across_its_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 1000)
-    fs = AsyncVirtualFileSystem()
-    ok(await fs.write(path="/big.bin", content="y" * 300_000, authority=SYSTEM))
-    reads = 0
-    real_read = fs.read
-
-    async def counted(*args: Any, **kwargs: Any) -> Result:
-        nonlocal reads
-        reads += 1
-        return await real_read(*args, **kwargs)
-
-    monkeypatch.setattr(fs, "read", counted)
-    result = await fs.cli("wc -c < /big.bin", authority=ADA)
-    assert result.stdout == "300000\n"
-    assert reads == 1, "five chunks of one body are one read"
-
-
-async def test_two_readers_past_the_budget_each_read_their_body_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 1000)
-    fs = AsyncVirtualFileSystem()
     ok(await fs.write(path="/a.txt", content="a" * 300_000, authority=SYSTEM))
     ok(await fs.write(path="/b.txt", content="b" * 300_000, authority=SYSTEM))
-    reads = 0
-    real_read = fs.read
+    reads = _counted_reads(monkeypatch, fs)
+    result = await fs.cli("cat /big.txt /big.txt | wc -c; cat /a.txt | cat /b.txt - | wc -c", authority=ADA)
+    assert result.stdout == "200\n600000\n"
+    assert reads[:2] == ["/big.txt", "/big.txt"]
+    assert sorted(reads[2:]) == ["/a.txt", "/b.txt"]
 
-    async def counted(*args: Any, **kwargs: Any) -> Result:
-        nonlocal reads
-        reads += 1
-        return await real_read(*args, **kwargs)
 
-    monkeypatch.setattr(fs, "read", counted)
-    result = await fs.cli("cat /a.txt | cat /b.txt - | wc -c", authority=ADA)
-    assert result.stdout == "600000\n"
-    assert reads == 2, "a body a reader is inside gives way to no other while the bodies being read fit"
+async def test_a_body_given_way_is_read_again_only_at_the_version_its_open_saw(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_module, "READING_BYTES", 150_000)
+    fs = AsyncVirtualFileSystem()
+    ok(await fs.write(path="/a.txt", content="a" * 100_000, authority=SYSTEM))
+    ok(await fs.write(path="/b.txt", content="b" * 100_000, authority=SYSTEM))
+    line = "{ read -r -n 1 x <&3; read -r -n 1 y <&4; cat <&3 | wc -c; } 3</a.txt 4</b.txt"
+
+    reads = _counted_reads(monkeypatch, fs)
+    result = await fs.cli(line, authority=ADA)
+    assert result.stdout == "99999\n"
+    assert reads == ["/a.txt", "/b.txt", "/a.txt"], "b's body made a's give way, and a is read again"
+    assert result.errors == []
+
+    async def rewrite(n: int) -> None:
+        if n == 2:
+            ok(await fs.write(path="/a.txt", content="c" * 100_000, authority=SYSTEM))
+
+    _counted_reads(monkeypatch, fs, rewrite)
+    result = await fs.cli(line, authority=ADA)
+    assert "c" not in result.stdout
+    assert [str(error.kind) for error in result.errors] == ["vfs.conflict"]
 
 
 async def test_bodies_whose_readers_stopped_early_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(host_module, "BODY_CACHE_BYTES", 1000)
     monkeypatch.setattr(host_module, "READING_BYTES", 250_000)
     fs = AsyncVirtualFileSystem()
     for n in range(20):
         ok(await fs.write(path=f"/t/{n:02}.txt", content="first\n" + "z" * 100_000, parents=True, authority=SYSTEM))
     held: list[int] = []
-    real_hold = host_module._Host._hold
+    real_read = host_module._Host._read
 
-    def counted(self: Any, path: str, body: bytes) -> None:
-        real_hold(self, path, body)
+    async def counted(self: Any, *args: Any) -> tuple[str, object]:
+        reply = await real_read(self, *args)
         held.append(self._held)
+        return reply
 
-    monkeypatch.setattr(host_module._Host, "_hold", counted)
+    monkeypatch.setattr(host_module._Host, "_read", counted)
     result = await fs.cli("for f in /t/*; do read -r x < $f; echo $x; done | uniq -c", authority=ADA)
     assert result.stdout == "     20 first\n"
     assert len(held) == 20
@@ -826,3 +870,20 @@ def test_a_closed_facade_answers_a_line_with_a_classified_refusal() -> None:
     assert closed_facade.errors[0].kind == ErrorKind.backend_unavailable
     assert closed_facade.success is False
     assert closed_facade.exit_code == 2
+
+
+async def test_an_empty_or_dot_operand_removes_nothing_through_the_router() -> None:
+    fs = await _seeded(seed=False)
+    ok(await fs.write(path="/work/sub/a.txt", content="a\n", parents=True, authority=SYSTEM))
+    line = 'X=; rm -rf "$X"; rm -rf .; rm -rf ..; rm -rf ../sub/.; echo st=$?'
+    result = await fs.cli(line, cwd="/work/sub", authority=ADA)
+    assert result.stdout == "st=1\n"
+    assert (await fs.read("/work/sub/a.txt", authority=SYSTEM)).success
+
+
+async def test_a_sandboxed_sed_writes_no_file_through_the_router() -> None:
+    fs = await _seeded(seed=False)
+    ok(await fs.write(path="/work/f.txt", content="a\n", authority=SYSTEM))
+    result = await fs.cli("sed --sandbox 'w /work/out' /work/f.txt; echo st=$?", authority=ADA)
+    assert result.stdout == "st=1\n"
+    assert not (await fs.stat("/work/out", authority=SYSTEM)).observations

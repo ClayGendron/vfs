@@ -93,14 +93,21 @@ pub fn par_batch<I: Sync, T: Send>(
     let results = items
         .par_iter()
         .map(|item| {
-            let (result, finished) = if deadline.past() { (skipped(), false) } else { run(item) };
+            let (result, finished) = if deadline.past() {
+                (skipped(), false)
+            } else {
+                run(item)
+            };
             if !finished {
                 completed.store(false, Ordering::Relaxed);
             }
             result
         })
         .collect();
-    BatchOutcome { results, completed: completed.load(Ordering::Relaxed) }
+    BatchOutcome {
+        results,
+        completed: completed.load(Ordering::Relaxed),
+    }
 }
 
 #[cfg(test)]
@@ -147,7 +154,11 @@ mod tests {
     #[test]
     fn after_a_negative_or_nan_budget_is_a_zero_budget() {
         for budget in [-5.0, f64::NEG_INFINITY, f64::NAN, 0.0] {
-            assert_ne!(Deadline::after(Some(budget)), Deadline::never(), "budget {budget}");
+            assert_ne!(
+                Deadline::after(Some(budget)),
+                Deadline::never(),
+                "budget {budget}"
+            );
         }
     }
 
@@ -155,7 +166,10 @@ mod tests {
     fn par_batch_runs_every_item_before_the_deadline() {
         let items: Vec<u64> = (0..100).collect();
         let outcome = par_batch(&items, Deadline::never(), || 0, |item| (item * 2, true));
-        assert_eq!(outcome.results, items.iter().map(|item| item * 2).collect::<Vec<_>>());
+        assert_eq!(
+            outcome.results,
+            items.iter().map(|item| item * 2).collect::<Vec<_>>()
+        );
         assert!(outcome.completed);
         let empty = par_batch(&[] as &[u64], already_past(), || 0, |item| (*item, true));
         assert!(empty.results.is_empty());
@@ -183,7 +197,12 @@ mod tests {
     #[test]
     fn par_batch_flips_completed_for_an_unfinished_item() {
         let items: Vec<u64> = (0..100).collect();
-        let outcome = par_batch(&items, Deadline::never(), || u64::MAX, |item| (*item, *item != 37));
+        let outcome = par_batch(
+            &items,
+            Deadline::never(),
+            || u64::MAX,
+            |item| (*item, *item != 37),
+        );
         assert_eq!(outcome.results, items);
         assert!(!outcome.completed);
     }
@@ -193,8 +212,12 @@ mod tests {
         let items: Vec<u64> = (0..1_000).collect();
         let sequential: Vec<u64> = items.iter().map(|item| item * item).collect();
         for threads in [1, 8] {
-            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool builds");
-            let outcome = pool.install(|| par_batch(&items, Deadline::never(), || 0, |item| (item * item, true)));
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("pool builds");
+            let outcome = pool
+                .install(|| par_batch(&items, Deadline::never(), || 0, |item| (item * item, true)));
             assert_eq!(outcome.results, sequential);
             assert!(outcome.completed);
         }

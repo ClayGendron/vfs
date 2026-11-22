@@ -145,7 +145,12 @@ impl Matcher {
     /// The hit scan with its cost. Each search starts at a line start and
     /// resumes past the hit line it finds, so the searches cover disjoint
     /// stretches and each backward scan stays inside its stretch.
-    fn scan_hit_lines(&self, hay: &[u8], invert: bool, mut emit: impl FnMut(usize, usize, u32) -> bool) -> ScanCost {
+    fn scan_hit_lines(
+        &self,
+        hay: &[u8],
+        invert: bool,
+        mut emit: impl FnMut(usize, usize, u32) -> bool,
+    ) -> ScanCost {
         let mut cost = ScanCost::default();
         if invert {
             for (ls, le, line_no) in LineRanges::new(hay) {
@@ -192,7 +197,12 @@ pub fn count_batch<B: AsRef<[u8]> + Sync>(
     invert: bool,
     deadline: Deadline,
 ) -> BatchOutcome<u64> {
-    par_batch(bodies, deadline, || 0, |body| (matcher.count_lines(body.as_ref(), cap, invert), true))
+    par_batch(
+        bodies,
+        deadline,
+        || 0,
+        |body| (matcher.count_lines(body.as_ref(), cap, invert), true),
+    )
 }
 
 /// `hit_lines` across bodies in parallel; bodies started after `deadline`
@@ -206,7 +216,12 @@ pub fn hits_batch<B: AsRef<[u8]> + Sync>(
     invert: bool,
     deadline: Deadline,
 ) -> BatchOutcome<Vec<Hit>> {
-    par_batch(bodies, deadline, Vec::new, |body| (matcher.hit_lines(body.as_ref(), before, after, cap, invert), true))
+    par_batch(bodies, deadline, Vec::new, |body| {
+        (
+            matcher.hit_lines(body.as_ref(), before, after, cap, invert),
+            true,
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +238,11 @@ struct LineRanges<'a> {
 
 impl<'a> LineRanges<'a> {
     fn new(hay: &'a [u8]) -> Self {
-        Self { hay, pos: 0, line_no: 0 }
+        Self {
+            hay,
+            pos: 0,
+            line_no: 0,
+        }
     }
 }
 
@@ -289,8 +308,11 @@ fn strip_line_terminators(hir: Hir) -> Result<Hir, PatternError> {
             Hir::literal(bytes)
         }
         HirKind::Class(Class::Unicode(class)) => {
-            let ranges: Vec<ClassUnicodeRange> =
-                class.ranges().iter().flat_map(split_unicode_range).collect();
+            let ranges: Vec<ClassUnicodeRange> = class
+                .ranges()
+                .iter()
+                .flat_map(split_unicode_range)
+                .collect();
             if ranges.is_empty() {
                 return Err(PatternError::LineTerminator);
             }
@@ -317,10 +339,14 @@ fn strip_line_terminators(hir: Hir) -> Result<Hir, PatternError> {
             sub: Box::new(strip_line_terminators(*cap.sub)?),
         }),
         HirKind::Concat(subs) => Hir::concat(
-            subs.into_iter().map(strip_line_terminators).collect::<Result<Vec<_>, _>>()?,
+            subs.into_iter()
+                .map(strip_line_terminators)
+                .collect::<Result<Vec<_>, _>>()?,
         ),
         HirKind::Alternation(subs) => Hir::alternation(
-            subs.into_iter().map(strip_line_terminators).collect::<Result<Vec<_>, _>>()?,
+            subs.into_iter()
+                .map(strip_line_terminators)
+                .collect::<Result<Vec<_>, _>>()?,
         ),
     })
 }
@@ -403,7 +429,11 @@ mod tests {
 
     fn hits(pattern: &str, ci: bool, hay: &str) -> Vec<u32> {
         let matcher = Matcher::new(pattern, ci).expect("pattern compiles");
-        matcher.hit_lines(hay.as_bytes(), 0, 0, None, false).iter().map(|h| h.match_line).collect()
+        matcher
+            .hit_lines(hay.as_bytes(), 0, 0, None, false)
+            .iter()
+            .map(|h| h.match_line)
+            .collect()
     }
 
     #[test]
@@ -413,7 +443,10 @@ mod tests {
 
     #[test]
     fn word_boundary_rejects_prefix_hits() {
-        assert_eq!(hits(r"\b(?:kfree)\b", false, "kfreed\nkfree(p);\n"), vec![2]);
+        assert_eq!(
+            hits(r"\b(?:kfree)\b", false, "kfreed\nkfree(p);\n"),
+            vec![2]
+        );
     }
 
     #[test]
@@ -423,7 +456,10 @@ mod tests {
 
     #[test]
     fn case_insensitive_flag() {
-        assert_eq!(hits("copyright", true, "COPYRIGHT x\nnope\nCopyRight\n"), vec![1, 3]);
+        assert_eq!(
+            hits("copyright", true, "COPYRIGHT x\nnope\nCopyRight\n"),
+            vec![1, 3]
+        );
     }
 
     #[test]
@@ -431,7 +467,10 @@ mod tests {
         let wrapped = Matcher::new(".*alloc_page.*", false).unwrap();
         let plain = Matcher::new("alloc_page", false).unwrap();
         let hay = b"x alloc_page(y)\nnothing\nalloc_pages\n".as_slice();
-        assert_eq!(wrapped.hit_lines(hay, 0, 0, None, false), plain.hit_lines(hay, 0, 0, None, false));
+        assert_eq!(
+            wrapped.hit_lines(hay, 0, 0, None, false),
+            plain.hit_lines(hay, 0, 0, None, false)
+        );
     }
 
     #[test]
@@ -441,15 +480,30 @@ mod tests {
 
     #[test]
     fn newline_only_patterns_refuse() {
-        assert_eq!(Matcher::new("foo\nbar", false).unwrap_err(), PatternError::LineTerminator);
-        assert_eq!(Matcher::new(r"[\n]", false).unwrap_err(), PatternError::LineTerminator);
+        assert_eq!(
+            Matcher::new("foo\nbar", false).unwrap_err(),
+            PatternError::LineTerminator
+        );
+        assert_eq!(
+            Matcher::new(r"[\n]", false).unwrap_err(),
+            PatternError::LineTerminator
+        );
     }
 
     #[test]
     fn crate_language_refusals_are_syntax_errors() {
-        assert!(matches!(Matcher::new(r"(a)\1", false), Err(PatternError::Syntax(_))));
-        assert!(matches!(Matcher::new(r"a(?=b)", false), Err(PatternError::Syntax(_))));
-        assert!(matches!(Matcher::new(r"a(?<=b)", false), Err(PatternError::Syntax(_))));
+        assert!(matches!(
+            Matcher::new(r"(a)\1", false),
+            Err(PatternError::Syntax(_))
+        ));
+        assert!(matches!(
+            Matcher::new(r"a(?=b)", false),
+            Err(PatternError::Syntax(_))
+        ));
+        assert!(matches!(
+            Matcher::new(r"a(?<=b)", false),
+            Err(PatternError::Syntax(_))
+        ));
     }
 
     #[test]
@@ -523,16 +577,24 @@ mod tests {
                 body
             })
             .collect();
-        let sequential_counts: Vec<u64> =
-            bodies.iter().map(|b| matcher.count_lines(b, Some(9), false)).collect();
-        let sequential_hits: Vec<Vec<Hit>> =
-            bodies.iter().map(|b| matcher.hit_lines(b, 1, 2, Some(9), false)).collect();
+        let sequential_counts: Vec<u64> = bodies
+            .iter()
+            .map(|b| matcher.count_lines(b, Some(9), false))
+            .collect();
+        let sequential_hits: Vec<Vec<Hit>> = bodies
+            .iter()
+            .map(|b| matcher.hit_lines(b, 1, 2, Some(9), false))
+            .collect();
         for threads in [1, 8] {
-            let pool =
-                rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool builds");
-            let counts = pool.install(|| count_batch(&matcher, &bodies, Some(9), false, Deadline::never()));
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("pool builds");
+            let counts =
+                pool.install(|| count_batch(&matcher, &bodies, Some(9), false, Deadline::never()));
             assert_eq!(counts.results, sequential_counts);
-            let hits = pool.install(|| hits_batch(&matcher, &bodies, 1, 2, Some(9), false, Deadline::never()));
+            let hits = pool
+                .install(|| hits_batch(&matcher, &bodies, 1, 2, Some(9), false, Deadline::never()));
             assert_eq!(hits.results, sequential_hits);
         }
     }
@@ -549,7 +611,13 @@ mod tests {
         assert!(!outcome.completed);
     }
 
-    fn regions(pattern: &str, hay: &str, before: u32, after: u32, invert: bool) -> Vec<(u32, u32, u32)> {
+    fn regions(
+        pattern: &str,
+        hay: &str,
+        before: u32,
+        after: u32,
+        invert: bool,
+    ) -> Vec<(u32, u32, u32)> {
         let matcher = Matcher::new(pattern, false).expect("pattern compiles");
         matcher
             .hit_lines(hay.as_bytes(), before, after, None, invert)
@@ -560,12 +628,18 @@ mod tests {
 
     #[test]
     fn overlapping_windows_split_at_each_hit_line() {
-        assert_eq!(regions("x", "a\nx\nb\nx\nc\n", 1, 1, false), vec![(1, 3, 2), (4, 5, 4)]);
+        assert_eq!(
+            regions("x", "a\nx\nb\nx\nc\n", 1, 1, false),
+            vec![(1, 3, 2), (4, 5, 4)]
+        );
     }
 
     #[test]
     fn touching_windows_stay_whole() {
-        assert_eq!(regions("x", "a\nx\nb\nc\nx\nd\n", 1, 1, false), vec![(1, 3, 2), (4, 6, 5)]);
+        assert_eq!(
+            regions("x", "a\nx\nb\nc\nx\nd\n", 1, 1, false),
+            vec![(1, 3, 2), (4, 6, 5)]
+        );
     }
 
     #[test]
@@ -580,14 +654,23 @@ mod tests {
 
     #[test]
     fn inverted_hits_split_alike() {
-        assert_eq!(regions("x", "a\nx\nb\nx\nc\n", 1, 1, true), vec![(1, 2, 1), (3, 4, 3), (5, 5, 5)]);
+        assert_eq!(
+            regions("x", "a\nx\nb\nx\nc\n", 1, 1, true),
+            vec![(1, 2, 1), (3, 4, 3), (5, 5, 5)]
+        );
     }
 
     #[test]
     fn one_long_line_scans_once() {
-        for (pattern, body) in [("x", "x".repeat(100_000)), (".*[^A-Z]|[A-Z]", "A".repeat(40_000))] {
+        for (pattern, body) in [
+            ("x", "x".repeat(100_000)),
+            (".*[^A-Z]|[A-Z]", "A".repeat(40_000)),
+        ] {
             let matcher = Matcher::new(pattern, false).unwrap();
-            assert_eq!(matcher.hit_lines(body.as_bytes(), 0, 0, None, false).len(), 1);
+            assert_eq!(
+                matcher.hit_lines(body.as_bytes(), 0, 0, None, false).len(),
+                1
+            );
             assert_eq!(matcher.count_lines(body.as_bytes(), None, false), 1);
             let mut lines = 0;
             let cost = matcher.scan_hit_lines(body.as_bytes(), false, |_, _, _| {

@@ -296,6 +296,7 @@ impl MemoryHost {
                 path,
                 offset,
                 length,
+                ..
             } => match self.nodes.get(path) {
                 Some(Node::File(bytes)) => {
                     let start = usize::try_from(*offset)

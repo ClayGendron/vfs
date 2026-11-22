@@ -52,9 +52,6 @@ if TYPE_CHECKING:
     from vfs.results import Result, ResultError
     from vfs.shell.patterns import Dialect, Translated
 
-MUTATING: Final = frozenset({"grant", "revoke", "edit", "mkedge", "rmedge"})
-"""The programs that change bodies or rights, so a line forgets the bodies it holds before one runs."""
-
 USAGE: Final[dict[str, str]] = {
     "glob": "Usage: glob [-t f|d] [-n MAX] PATTERN [PATH]...\n",
     "search": "Usage: search [-n LIMIT] QUERY [PATH]...\n",

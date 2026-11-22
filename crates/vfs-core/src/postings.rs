@@ -38,11 +38,16 @@ pub enum PostingError {
 impl std::fmt::Display for PostingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::EmptyBlob => write!(f, "empty posting blob (a valid empty list is one zero byte)"),
+            Self::EmptyBlob => write!(
+                f,
+                "empty posting blob (a valid empty list is one zero byte)"
+            ),
             Self::Truncated => write!(f, "truncated varint at end of blob"),
             Self::OverWide => write!(f, "over-wide varint"),
             Self::NonCanonical => write!(f, "non-canonical varint spelling"),
-            Self::CountMismatch { count, held } => write!(f, "count header says {count}, blob holds {held}"),
+            Self::CountMismatch { count, held } => {
+                write!(f, "count header says {count}, blob holds {held}")
+            }
             Self::NonPositiveDelta => write!(f, "non-positive delta"),
             Self::Wrap => write!(f, "doc ids not monotone (int64 wrap)"),
         }
@@ -60,7 +65,10 @@ impl std::fmt::Display for AddDocError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NonIncreasingDocId { doc_id, last } => {
-                write!(f, "doc ids must be strictly increasing and positive; got {doc_id} after {last}")
+                write!(
+                    f,
+                    "doc ids must be strictly increasing and positive; got {doc_id} after {last}"
+                )
             }
         }
     }
@@ -99,7 +107,10 @@ impl PostingsAccumulator {
     /// Extract `data`'s distinct grams and post `doc_id` on each of them.
     pub fn add_doc(&mut self, doc_id: i64, data: &[u8]) -> Result<(), AddDocError> {
         if doc_id <= self.last_doc_id {
-            return Err(AddDocError::NonIncreasingDocId { doc_id, last: self.last_doc_id });
+            return Err(AddDocError::NonIncreasingDocId {
+                doc_id,
+                last: self.last_doc_id,
+            });
         }
         let mut scratch = std::mem::take(&mut self.scratch);
         self.extractor.unique_grams(data, &mut scratch);
@@ -107,7 +118,12 @@ impl PostingsAccumulator {
             let slot = &mut self.slots[gram as usize];
             if *slot < 0 {
                 *slot = self.lists.len() as i32;
-                self.lists.push(GramList { gram, last_id: 0, count: 0, deltas: Vec::new() });
+                self.lists.push(GramList {
+                    gram,
+                    last_id: 0,
+                    count: 0,
+                    deltas: Vec::new(),
+                });
             }
             let list = &mut self.lists[*slot as usize];
             append_varint(&mut list.deltas, (doc_id - list.last_id) as u64);
@@ -122,7 +138,10 @@ impl PostingsAccumulator {
     /// Seal the accumulator into its gram-ordered drain.
     pub fn finish(mut self) -> DrainedPostings {
         self.lists.sort_unstable_by_key(|list| list.gram);
-        DrainedPostings { lists: self.lists, cursor: 0 }
+        DrainedPostings {
+            lists: self.lists,
+            cursor: 0,
+        }
     }
 }
 
@@ -163,7 +182,11 @@ impl DrainedPostings {
             }
             list.deltas = Vec::new();
             batch_bytes += blob.len();
-            batch.push(PostingRow { gram: list.gram, blob, doc_count: list.count });
+            batch.push(PostingRow {
+                gram: list.gram,
+                blob,
+                doc_count: list.count,
+            });
             self.cursor += 1;
         }
         Some(batch)
@@ -235,7 +258,12 @@ impl<'a> Postings<'a> {
         let Some(count) = varints.next()? else {
             return Err(PostingError::EmptyBlob);
         };
-        Ok(Self { varints, count, seen: 0, last: 0 })
+        Ok(Self {
+            varints,
+            count,
+            seen: 0,
+            last: 0,
+        })
     }
 
     /// The next id, or `None` once the blob is exhausted and its count agrees.
@@ -243,7 +271,10 @@ impl<'a> Postings<'a> {
     fn next(&mut self) -> Result<Option<i64>, PostingError> {
         let Some(delta) = self.varints.next()? else {
             if self.seen != self.count {
-                return Err(PostingError::CountMismatch { count: self.count, held: self.seen });
+                return Err(PostingError::CountMismatch {
+                    count: self.count,
+                    held: self.seen,
+                });
             }
             return Ok(None);
         };
@@ -435,7 +466,13 @@ mod tests {
 
     #[test]
     fn decode_round_trips_the_reference_encoder() {
-        for ids in [vec![], vec![1], vec![3, 200, 1 << 62], (1..300).collect::<Vec<i64>>(), vec![i64::MAX]] {
+        for ids in [
+            vec![],
+            vec![1],
+            vec![3, 200, 1 << 62],
+            (1..300).collect::<Vec<i64>>(),
+            vec![i64::MAX],
+        ] {
             assert_eq!(decode_postings(&encode_reference(&ids)).unwrap(), ids);
         }
         assert_eq!(decode_postings(&[0]).unwrap(), Vec::<i64>::new());
@@ -444,17 +481,32 @@ mod tests {
     #[test]
     fn decode_refuses_every_malformed_class() {
         assert_eq!(decode_postings(b"").unwrap_err(), PostingError::EmptyBlob);
-        assert_eq!(decode_postings(&[0x01, 0x81]).unwrap_err(), PostingError::Truncated);
+        assert_eq!(
+            decode_postings(&[0x01, 0x81]).unwrap_err(),
+            PostingError::Truncated
+        );
         let mut wide = vec![0x01];
         wide.extend([0x80; 10]);
         wide.push(0x01);
         assert_eq!(decode_postings(&wide).unwrap_err(), PostingError::OverWide);
         let mut minimal = varint(1);
         minimal.extend([0x85, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01]);
-        assert_eq!(decode_postings(&minimal).unwrap_err(), PostingError::OverWide);
-        assert_eq!(decode_postings(&[0x01, 0x81, 0x00]).unwrap_err(), PostingError::NonCanonical);
-        assert_eq!(decode_postings(&[0x02, 0x01]).unwrap_err(), PostingError::CountMismatch { count: 2, held: 1 });
-        assert_eq!(decode_postings(&[0x02, 0x01, 0x00]).unwrap_err(), PostingError::NonPositiveDelta);
+        assert_eq!(
+            decode_postings(&minimal).unwrap_err(),
+            PostingError::OverWide
+        );
+        assert_eq!(
+            decode_postings(&[0x01, 0x81, 0x00]).unwrap_err(),
+            PostingError::NonCanonical
+        );
+        assert_eq!(
+            decode_postings(&[0x02, 0x01]).unwrap_err(),
+            PostingError::CountMismatch { count: 2, held: 1 }
+        );
+        assert_eq!(
+            decode_postings(&[0x02, 0x01, 0x00]).unwrap_err(),
+            PostingError::NonPositiveDelta
+        );
         let mut wrap = varint(2);
         wrap.extend(varint(i64::MAX as u64));
         wrap.extend(varint(i64::MAX as u64));
@@ -468,14 +520,26 @@ mod tests {
         let c = encode_reference(&[3, 8, 34]);
         let d = encode_reference(&[40, 41]);
         let groups: Vec<Vec<&[u8]>> = vec![vec![&a, &b, &c], vec![&d], vec![]];
-        assert_eq!(candidate_ids(&groups, None, 100).unwrap(), (vec![3, 8, 40, 41], 4));
-        assert_eq!(candidate_ids(&groups, Some(&[8, 9, 41]), 100).unwrap(), (vec![8, 41], 2));
+        assert_eq!(
+            candidate_ids(&groups, None, 100).unwrap(),
+            (vec![3, 8, 40, 41], 4)
+        );
+        assert_eq!(
+            candidate_ids(&groups, Some(&[8, 9, 41]), 100).unwrap(),
+            (vec![8, 41], 2)
+        );
         // The cap slices after the allow-list meets the union; the count is pre-cap.
-        assert_eq!(candidate_ids(&groups, Some(&[3, 8, 41]), 2).unwrap(), (vec![3, 8], 3));
+        assert_eq!(
+            candidate_ids(&groups, Some(&[3, 8, 41]), 2).unwrap(),
+            (vec![3, 8], 3)
+        );
         assert_eq!(candidate_ids(&groups, None, 0).unwrap(), (vec![], 4));
         // Overlapping groups deduplicate; an empty first blob empties its group.
         let overlap: Vec<Vec<&[u8]>> = vec![vec![&a], vec![&b]];
-        assert_eq!(candidate_ids(&overlap, None, 100).unwrap().0, vec![1, 2, 3, 5, 8, 13, 21]);
+        assert_eq!(
+            candidate_ids(&overlap, None, 100).unwrap().0,
+            vec![1, 2, 3, 5, 8, 13, 21]
+        );
         let none = encode_reference(&[]);
         let emptied: Vec<Vec<&[u8]>> = vec![vec![&none, &a]];
         assert_eq!(candidate_ids(&emptied, None, 100).unwrap(), (vec![], 0));
@@ -486,6 +550,9 @@ mod tests {
     fn a_corrupt_later_blob_is_refused_even_when_survivors_are_empty() {
         let none = encode_reference(&[]);
         let groups: Vec<Vec<&[u8]>> = vec![vec![&none, &[0x02, 0x01][..]]];
-        assert_eq!(candidate_ids(&groups, None, 10).unwrap_err(), PostingError::CountMismatch { count: 2, held: 1 });
+        assert_eq!(
+            candidate_ids(&groups, None, 10).unwrap_err(),
+            PostingError::CountMismatch { count: 2, held: 1 }
+        );
     }
 }

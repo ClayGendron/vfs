@@ -47,9 +47,13 @@ impl Default for RefParser {
     /// Both grammars load or the build is defective, so a failed load panics.
     fn default() -> Self {
         let mut block = Parser::new();
-        block.set_language(&tree_sitter_md::LANGUAGE.into()).expect("the Markdown block grammar loads");
+        block
+            .set_language(&tree_sitter_md::LANGUAGE.into())
+            .expect("the Markdown block grammar loads");
         let mut inline = Parser::new();
-        inline.set_language(&tree_sitter_md::INLINE_LANGUAGE.into()).expect("the Markdown inline grammar loads");
+        inline
+            .set_language(&tree_sitter_md::INLINE_LANGUAGE.into())
+            .expect("the Markdown inline grammar loads");
         RefParser { block, inline }
     }
 }
@@ -58,7 +62,9 @@ impl Default for RefParser {
 pub fn markdown_refs_batch(bodies: &[&[u8]]) -> Vec<Vec<MarkdownRef>> {
     bodies
         .par_iter()
-        .map_init(RefParser::default, |parser, body| markdown_refs(parser, body))
+        .map_init(RefParser::default, |parser, body| {
+            markdown_refs(parser, body)
+        })
         .collect()
 }
 
@@ -174,7 +180,13 @@ fn inline_ranges(node: Node<'_>) -> Vec<Range> {
 }
 
 /// One inline tree's nodes below its root, in document order.
-fn walk_inline(tree: &Tree, body: &[u8], lines: &mut LineContexts<'_>, refs: &mut Vec<MarkdownRef>, cost: &mut WalkCost) {
+fn walk_inline(
+    tree: &Tree,
+    body: &[u8],
+    lines: &mut LineContexts<'_>,
+    refs: &mut Vec<MarkdownRef>,
+    cost: &mut WalkCost,
+) {
     let mut cursor = tree.walk();
     if !cursor.goto_first_child() {
         return;
@@ -201,7 +213,13 @@ fn walk_inline(tree: &Tree, body: &[u8], lines: &mut LineContexts<'_>, refs: &mu
 }
 
 /// Record *node* when it is a reference; only reference nodes are decoded.
-fn visit(node: Node<'_>, body: &[u8], lines: &mut LineContexts<'_>, refs: &mut Vec<MarkdownRef>, cost: &mut WalkCost) {
+fn visit(
+    node: Node<'_>,
+    body: &[u8],
+    lines: &mut LineContexts<'_>,
+    refs: &mut Vec<MarkdownRef>,
+    cost: &mut WalkCost,
+) {
     let kind = node.kind();
     if kind != "link_destination" && kind != "code_span" {
         return;
@@ -215,7 +233,10 @@ fn visit(node: Node<'_>, body: &[u8], lines: &mut LineContexts<'_>, refs: &mut V
         path_shaped(&text)
     };
     if let Some(dest) = dest {
-        refs.push(MarkdownRef { dest, context: lines.context_at(node.start_byte(), cost) });
+        refs.push(MarkdownRef {
+            dest,
+            context: lines.context_at(node.start_byte(), cost),
+        });
     }
 }
 
@@ -228,13 +249,21 @@ struct LineContexts<'a> {
 
 impl<'a> LineContexts<'a> {
     fn new(body: &'a [u8]) -> Self {
-        Self { body, newlines: memchr_iter(b'\n', body).collect(), last: None }
+        Self {
+            body,
+            newlines: memchr_iter(b'\n', body).collect(),
+            last: None,
+        }
     }
 
     /// The folded line holding byte `at`, found by bisection, folded once per line.
     fn context_at(&mut self, at: usize, cost: &mut WalkCost) -> String {
         let index = self.newlines.partition_point(|&newline| newline < at);
-        let start = if index == 0 { 0 } else { self.newlines[index - 1] + 1 };
+        let start = if index == 0 {
+            0
+        } else {
+            self.newlines[index - 1] + 1
+        };
         if let Some((cached, folded)) = &self.last
             && *cached == start
         {
@@ -251,7 +280,9 @@ impl<'a> LineContexts<'a> {
 
 /// A destination written as `<...>` without its brackets.
 fn strip_angles(dest: &str) -> &str {
-    dest.strip_prefix('<').and_then(|inner| inner.strip_suffix('>')).unwrap_or(dest)
+    dest.strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(dest)
 }
 
 /// The path a code span names, if it is shaped like one.
@@ -284,7 +315,9 @@ fn is_path_char(ch: char) -> bool {
 fn has_extension(name: &str) -> bool {
     match name.rsplit_once('.') {
         Some((stem, ext)) => {
-            !stem.is_empty() && (1..=MAX_EXTENSION_CHARS).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            !stem.is_empty()
+                && (1..=MAX_EXTENSION_CHARS).contains(&ext.len())
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
         }
         None => false,
     }
@@ -295,13 +328,19 @@ mod tests {
     use super::*;
 
     fn dests(body: &str) -> Vec<String> {
-        markdown_refs(&mut RefParser::default(), body.as_bytes()).into_iter().map(|r| r.dest).collect()
+        markdown_refs(&mut RefParser::default(), body.as_bytes())
+            .into_iter()
+            .map(|r| r.dest)
+            .collect()
     }
 
     #[test]
     fn links_images_and_definitions_yield_their_destinations() {
         let body = "See [spec](../specs/spec.md \"t\") and ![i](img.png) and [y](#a).\n\n[ref]: d.md\n[lab]: <e f.md> 'title'\n";
-        assert_eq!(dests(body), ["../specs/spec.md", "img.png", "#a", "d.md", "e f.md"]);
+        assert_eq!(
+            dests(body),
+            ["../specs/spec.md", "img.png", "#a", "d.md", "e f.md"]
+        );
     }
 
     #[test]
@@ -335,13 +374,18 @@ mod tests {
 
     #[test]
     fn tables_lists_and_quotes_are_prose() {
-        let body = "| a | b |\n|---|---|\n| [t](h.md) | `i.md` |\n\n- item [j](k.md)\n> quote [l](m.md)\n";
+        let body =
+            "| a | b |\n|---|---|\n| [t](h.md) | `i.md` |\n\n- item [j](k.md)\n> quote [l](m.md)\n";
         assert_eq!(dests(body), ["h.md", "i.md", "k.md", "m.md"]);
     }
 
     #[test]
     fn batches_align_with_their_bodies() {
-        let out = markdown_refs_batch(&[b"[a](a.md)".as_slice(), b"plain".as_slice(), b"`b.md`".as_slice()]);
+        let out = markdown_refs_batch(&[
+            b"[a](a.md)".as_slice(),
+            b"plain".as_slice(),
+            b"`b.md`".as_slice(),
+        ]);
         assert_eq!(out.iter().map(Vec::len).collect::<Vec<_>>(), [1, 0, 1]);
     }
 
@@ -362,20 +406,32 @@ mod tests {
             if cursor.node().kind() == "inline" {
                 break cursor.node();
             }
-            assert!(cursor.goto_first_child() || cursor.goto_next_sibling(), "an inline node");
+            assert!(
+                cursor.goto_first_child() || cursor.goto_next_sibling(),
+                "an inline node"
+            );
         };
-        let spans: Vec<(usize, usize)> = inline_ranges(inline).iter().map(|r| (r.start_byte, r.end_byte)).collect();
+        let spans: Vec<(usize, usize)> = inline_ranges(inline)
+            .iter()
+            .map(|r| (r.start_byte, r.end_byte))
+            .collect();
         assert_eq!(spans, [(2, 4), (6, 8), (10, 11)]);
     }
 
     #[test]
     fn a_body_nested_past_the_scanner_cap_yields_its_reference() {
-        assert_eq!(dests(&format!("{}[l](a.md)\n", "> ".repeat(2000))), ["a.md"]);
+        assert_eq!(
+            dests(&format!("{}[l](a.md)\n", "> ".repeat(2000))),
+            ["a.md"]
+        );
     }
 
     #[test]
     fn nested_list_markers_past_the_cap_parse() {
-        let refs = markdown_refs(&mut RefParser::default(), format!("{}x\n", "- ".repeat(2000)).as_bytes());
+        let refs = markdown_refs(
+            &mut RefParser::default(),
+            format!("{}x\n", "- ".repeat(2000)).as_bytes(),
+        );
         assert!(refs.is_empty());
     }
 
@@ -400,7 +456,12 @@ mod tests {
         let body = format!("{}[x](a.md)\n", "> ".repeat(200));
         let (refs, cost) = costed(&body);
         assert_eq!(refs.len(), 1);
-        assert!(cost.decoded_bytes <= 2 * body.len(), "{} decoded of {}", cost.decoded_bytes, body.len());
+        assert!(
+            cost.decoded_bytes <= 2 * body.len(),
+            "{} decoded of {}",
+            cost.decoded_bytes,
+            body.len()
+        );
     }
 
     #[test]
@@ -409,21 +470,33 @@ mod tests {
         let (refs, cost) = costed(&body);
         assert_eq!(refs.len(), 4_000);
         assert!(refs.iter().all(|r| r.dest == "a.md"));
-        assert!(cost.decoded_bytes <= 2 * body.len(), "{} decoded of {}", cost.decoded_bytes, body.len());
+        assert!(
+            cost.decoded_bytes <= 2 * body.len(),
+            "{} decoded of {}",
+            cost.decoded_bytes,
+            body.len()
+        );
     }
 
     #[test]
     fn references_on_separate_lines_fold_each_line() {
         let (refs, cost) = costed("one [a](a.md)\ntwo [b](b.md)\nthree [c](c.md)\n");
         let contexts: Vec<&str> = refs.iter().map(|r| r.context.as_str()).collect();
-        assert_eq!(contexts, ["one [a](a.md)", "two [b](b.md)", "three [c](c.md)"]);
+        assert_eq!(
+            contexts,
+            ["one [a](a.md)", "two [b](b.md)", "three [c](c.md)"]
+        );
         assert_eq!(cost.folds, 3);
     }
 
     /// Today's fold: collapse, trim, then keep the first MAX_CONTEXT_CHARS characters.
     fn fold_then_take(line: &str) -> String {
         let collapsed: Vec<&str> = line.split_whitespace().collect();
-        collapsed.join(" ").chars().take(MAX_CONTEXT_CHARS).collect()
+        collapsed
+            .join(" ")
+            .chars()
+            .take(MAX_CONTEXT_CHARS)
+            .collect()
     }
 
     #[test]
@@ -431,11 +504,15 @@ mod tests {
         let alphabet = [' ', '\t', 'a', 'Z', 'é', '漢', '\u{3000}'];
         let mut state: u64 = 20_261_107;
         for _ in 0..200 {
-            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let length = (state >> 33) as usize % 1_001;
             let line: String = (0..length)
                 .map(|_| {
-                    state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
                     alphabet[(state >> 33) as usize % alphabet.len()]
                 })
                 .collect();

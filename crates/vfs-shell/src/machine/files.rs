@@ -55,6 +55,8 @@ impl Drop for ReadBuffer {
 /// A file read in chunks.
 pub struct FileReader {
     pub path: String,
+    /// The key of the read that opened the file, which every later read of it names.
+    pub open: RequestKey,
     pub offset: u64,
     pub chunk: Vec<u8>,
     pub pos: usize,
@@ -66,6 +68,7 @@ impl FileReader {
     pub fn new(
         hub: &HubRef,
         path: String,
+        open: RequestKey,
         first: Vec<u8>,
         eof: bool,
     ) -> Result<Rc<RefCell<FileReader>>, Fatal> {
@@ -73,6 +76,7 @@ impl FileReader {
         let offset = first.len() as u64;
         Ok(Rc::new(RefCell::new(FileReader {
             path,
+            open,
             offset,
             chunk: first,
             pos: 0,
@@ -95,7 +99,7 @@ impl FileReader {
         hub: &HubRef,
         key: RequestKey,
     ) -> Result<bool, Fatal> {
-        let (path, offset) = {
+        let (path, open, offset) = {
             let this = reader.borrow();
             if this.pos < this.chunk.len() {
                 return Ok(true);
@@ -103,13 +107,14 @@ impl FileReader {
             if this.eof {
                 return Ok(false);
             }
-            (this.path.clone(), this.offset)
+            (this.path.clone(), this.open.clone(), this.offset)
         };
         let reply = super::io::host_call(
             hub,
             key,
             Request::Read {
                 path,
+                open,
                 offset,
                 length: CHUNK as u64,
             },

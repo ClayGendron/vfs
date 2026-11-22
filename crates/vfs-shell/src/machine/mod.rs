@@ -163,9 +163,11 @@ pub enum EntryKind {
 /// Every effect the machine can ask of its host. Paths are always absolute.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
-    /// Up to `length` bytes of a file from `offset`.
+    /// Up to `length` bytes of a file from `offset`, for the open whose first read had the key
+    /// `open`: each open is judged again, and every read of one open sees the version it saw.
     Read {
         path: String,
+        open: RequestKey,
         offset: u64,
         length: u64,
     },
