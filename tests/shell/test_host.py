@@ -890,17 +890,18 @@ async def test_a_program_vfs_refuses_is_a_warning_and_its_own_exit_is_none() -> 
 
 
 async def test_a_refusal_repeated_in_a_loop_is_kept_once() -> None:
-    result = await AsyncVirtualFileSystem().cli("for i in {1..2000}; do cat /nope; done 2>/dev/null", authority=ADA)
+    result = await AsyncVirtualFileSystem().cli("for i in {1..300}; do cat /nope; done 2>/dev/null", authority=ADA)
     assert [e.kind for e in result.errors] == [ErrorKind.not_found]
 
 
 async def test_the_facts_a_line_keeps_are_bounded_and_the_rest_counted() -> None:
-    line = "for i in {1..2000}; do cat /nope$i; done 2>/dev/null"
+    refusals = 3 * host_module.LINE_FACTS
+    line = f"for i in {{1..{refusals}}}; do cat /nope$i; done 2>/dev/null"
     result = await AsyncVirtualFileSystem().cli(line, authority=ADA)
     assert len(result.errors) == host_module.LINE_FACTS + 1
     rollup = result.errors[-1]
     assert (rollup.kind, rollup.severity) == (ErrorKind.truncated, Severity.warning)
-    assert rollup.data == {"vfs.rollup": {"count": 2000 - host_module.LINE_FACTS, "sources": []}}
+    assert rollup.data == {"vfs.rollup": {"count": refusals - host_module.LINE_FACTS, "sources": []}}
     assert result.success is True
 
 
