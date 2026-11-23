@@ -1,0 +1,40 @@
+agents MIT LICENSE
+mcp Apache-2.0 LICENSE
+mcp-server-cloudflare Apache-2.0 LICENSE
+code-act MIT LICENSE
+smolagents Apache-2.0 LICENSE
+mini-swe-agent MIT LICENSE.md
+monty MIT LICENSE
+pydantic-ai MIT LICENSE
+skills Apache-2.0 (per skill; no top-level licence; skills/doc-coauthoring has none) skills/*/LICENSE.txt
+claude-cookbooks MIT LICENSE
+claude-agent-sdk-python MIT LICENSE
+openai-agents-python MIT LICENSE
+codex Apache-2.0 LICENSE
+langgraph-bigtool MIT LICENSE
+mcp-gateway MIT LICENSE
+spring-ai-tool-search-tool Apache-2.0 LICENSE.txt
+mcp-gateway-registry Apache-2.0 LICENSE
+cloudflare-docs CC-BY-4.0 (prose) and MIT (code) LICENSE, LICENSE-CODE
+philschmid-mcp-cli MIT LICENSE
+mcporter MIT LICENSE
+apify-mcpc Apache-2.0 LICENSE
+mcpfs MIT LICENSE
+deepagents MIT LICENSE
+just-bash Apache-2.0 packages/just-bash/LICENSE (no top-level licence file)
+bash-tool MIT LICENSE
+mcptools MIT LICENSE
+mcp2cli MIT LICENSE
+mcp2cli-rs Apache-2.0 LICENSE
+clihub MIT LICENSE
+agfs Apache-2.0 LICENSE
+code-mode MPL-2.0 LICENSE
+utcp-specification Apache-2.0 AND MPL-2.0 (MPL-2.0 for docs/api/** and versioned api/ subtrees; Apache-2.0 for the rest) LICENSE
+pctx MIT LICENSE
+executor MIT LICENSE
+mcporter MIT LICENSE
+goose Apache-2.0 LICENSE
+mcp-use MIT LICENSE
+fastmcp Apache-2.0 LICENSE
+opencode MIT LICENSE
+lootbox none (README.md says "MIT License - See LICENSE file", but no LICENSE file exists and GitHub detects none; terms unclear, clone deleted, studied through its public README and LLM_QUICK_START.md) README.md
