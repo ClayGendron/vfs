@@ -12,3 +12,5 @@ combined/V2/search:mem-fused: {'n': 65, 'hit@1': 0.369, 'hit@3': 0.477, 'hit@5':
 github/V1/search:mem-overlay: {'n': 46, 'hit@1': 0.478, 'hit@3': 0.543, 'hit@5': 0.63, 'hit@10': 0.674, 'mrr@10': 0.531} built in 0.2s
 github/V1/grep: {'n': 46, 'hit@1': 0.239, 'hit@3': 0.522, 'hit@5': 0.63, 'hit@10': 0.739, 'mrr@10': 0.453}
 github/V1/search:lexical: {'n': 46, 'hit@1': 0.478, 'hit@3': 0.543, 'hit@5': 0.63, 'hit@10': 0.674, 'mrr@10': 0.531} built in 0.6s
+github/V1/search:hash-vector: {'n': 46, 'hit@1': 0.196, 'hit@3': 0.217, 'hit@5': 0.239, 'hit@10': 0.304, 'mrr@10': 0.22} built in 0.5s
+github/V1/search:mem-fused: {'n': 46, 'hit@1': 0.457, 'hit@3': 0.543, 'hit@5': 0.565, 'hit@10': 0.587, 'mrr@10': 0.504} built in 0.6s
