@@ -38,3 +38,7 @@ mcp-use https://github.com/mcp-use/mcp-use.git main 8ff4b865e0e5712c66d5077e9339
 fastmcp https://github.com/PrefectHQ/fastmcp.git main ca0de0da2a0f28d2a6ca09ff8a2832d120325973 2026-11-23 2026-11-23
 opencode https://github.com/anomalyco/opencode.git dev e1fb08afc547cd838ebc8ee7741d41d92edc0d6b 2026-11-23 2026-11-23
 lootbox https://github.com/jx-codes/lootbox.git main 587a5a1b2694d0d00168665d8f1a536bc54e0f1a 2026-02-27 2026-11-23
+github-mcp-server https://github.com/github/github-mcp-server main 9a72d8d38fec18c207cd924b33aa0eb3e186252c 2026-11-20T17:28:47+00:00 2026-11-23
+mcp-registry https://github.com/docker/mcp-registry main 7acac061940d9b3d6bbfc7dd26b1e9c2ee17b15c 2026-11-19T09:02:02-08:00 2026-11-23
+alibabacloud-devops-mcp-server https://github.com/aliyun/alibabacloud-devops-mcp-server master 526d85c510f3b0557a8d20a53520432dcb8a8304 2026-11-06T14:24:09+08:00 2026-11-23
+simulink-agentic-toolkit https://github.com/matlab/simulink-agentic-toolkit main bdfaf9ac37876dc38276325a6b2919fa522b33c7 2026-11-19T21:00:06+00:00 2026-11-23

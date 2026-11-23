@@ -4,3 +4,6 @@ combined/V1/grep: {'n': 65, 'hit@1': 0.323, 'hit@3': 0.554, 'hit@5': 0.615, 'hit
 combined/V1/search:lexical: {'n': 65, 'hit@1': 0.477, 'hit@3': 0.569, 'hit@5': 0.677, 'hit@10': 0.708, 'mrr@10': 0.547} built in 1.6s
 combined/V1/search:hash-vector: {'n': 65, 'hit@1': 0.092, 'hit@3': 0.185, 'hit@5': 0.2, 'hit@10': 0.262, 'mrr@10': 0.147} built in 1.7s
 combined/V1/search:mem-fused: {'n': 65, 'hit@1': 0.354, 'hit@3': 0.462, 'hit@5': 0.538, 'hit@10': 0.6, 'mrr@10': 0.427} built in 1.8s
+combined/V2/search:mem-overlay: {'n': 65, 'hit@1': 0.492, 'hit@3': 0.692, 'hit@5': 0.723, 'hit@10': 0.769, 'mrr@10': 0.594} built in 0.9s
+combined/V2/grep: {'n': 65, 'hit@1': 0.246, 'hit@3': 0.538, 'hit@5': 0.646, 'hit@10': 0.662, 'mrr@10': 0.443}
+combined/V2/search:lexical: {'n': 65, 'hit@1': 0.492, 'hit@3': 0.677, 'hit@5': 0.738, 'hit@10': 0.769, 'mrr@10': 0.591} built in 1.7s

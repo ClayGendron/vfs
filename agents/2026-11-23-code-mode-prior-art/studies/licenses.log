@@ -38,3 +38,7 @@ mcp-use MIT LICENSE
 fastmcp Apache-2.0 LICENSE
 opencode MIT LICENSE
 lootbox none (README.md says "MIT License - See LICENSE file", but no LICENSE file exists and GitHub detects none; terms unclear, clone deleted, studied through its public README and LLM_QUICK_START.md) README.md
+github-mcp-server MIT LICENSE
+mcp-registry MIT LICENSE
+alibabacloud-devops-mcp-server Apache-2.0 LICENSE
+simulink-agentic-toolkit LicenseRef-MathWorks-BSD-style-restricted-to-MathWorks-products LICENSE.md
