@@ -19,3 +19,8 @@ github/V2/grep: {'n': 46, 'hit@1': 0.152, 'hit@3': 0.565, 'hit@5': 0.587, 'hit@1
 github/V2/search:lexical: {'n': 46, 'hit@1': 0.478, 'hit@3': 0.696, 'hit@5': 0.717, 'hit@10': 0.739, 'mrr@10': 0.587} built in 0.6s
 github/V2/search:hash-vector: {'n': 46, 'hit@1': 0.109, 'hit@3': 0.239, 'hit@5': 0.261, 'hit@10': 0.348, 'mrr@10': 0.175} built in 0.6s
 github/V2/search:mem-fused: {'n': 46, 'hit@1': 0.435, 'hit@3': 0.652, 'hit@5': 0.674, 'hit@10': 0.717, 'mrr@10': 0.548} built in 0.6s
+github/V3/search:mem-overlay: {'n': 46, 'hit@1': 0.848, 'hit@3': 0.913, 'hit@5': 0.935, 'hit@10': 1.0, 'mrr@10': 0.891} built in 0.3s
+github/V3/grep: {'n': 46, 'hit@1': 0.391, 'hit@3': 0.826, 'hit@5': 0.848, 'hit@10': 0.891, 'mrr@10': 0.646}
+github/V3/search:lexical: {'n': 46, 'hit@1': 0.848, 'hit@3': 0.913, 'hit@5': 0.935, 'hit@10': 0.957, 'mrr@10': 0.887} built in 0.5s
+github/V3/search:hash-vector: {'n': 46, 'hit@1': 0.174, 'hit@3': 0.304, 'hit@5': 0.304, 'hit@10': 0.457, 'mrr@10': 0.236} built in 0.6s
+github/V3/search:mem-fused: {'n': 46, 'hit@1': 0.848, 'hit@3': 0.891, 'hit@5': 0.913, 'hit@10': 0.978, 'mrr@10': 0.884} built in 0.6s
