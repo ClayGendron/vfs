@@ -1,0 +1,1023 @@
+{
+ "servers": [
+  {
+   "server": "zscaler-mcp-server",
+   "tools": 302,
+   "bytes": 34725,
+   "est_tokens": 8682,
+   "bytes_with_annotations_output": 34725,
+   "origins": {
+    "docker-none": 302
+   }
+  },
+  {
+   "server": "alibaba-devops",
+   "tools": 203,
+   "bytes": 172142,
+   "est_tokens": 38899,
+   "bytes_with_annotations_output": 172142,
+   "origins": {
+    "export": 203
+   }
+  },
+  {
+   "server": "github",
+   "tools": 149,
+   "bytes": 155201,
+   "est_tokens": 38795,
+   "bytes_with_annotations_output": 335860,
+   "origins": {
+    "toolsnap": 149
+   }
+  },
+  {
+   "server": "okta-mcp-server",
+   "tools": 108,
+   "bytes": 79586,
+   "est_tokens": 19860,
+   "bytes_with_annotations_output": 79586,
+   "origins": {
+    "docker-inputSchema": 108
+   }
+  },
+  {
+   "server": "maestro-mcp-server",
+   "tools": 35,
+   "bytes": 14137,
+   "est_tokens": 3534,
+   "bytes_with_annotations_output": 14137,
+   "origins": {
+    "docker-arguments": 35
+   }
+  },
+  {
+   "server": "keboola-mcp",
+   "tools": 33,
+   "bytes": 30442,
+   "est_tokens": 7610,
+   "bytes_with_annotations_output": 30442,
+   "origins": {
+    "docker-arguments": 33
+   }
+  },
+  {
+   "server": "kubectl-mcp-server",
+   "tools": 26,
+   "bytes": 5013,
+   "est_tokens": 1254,
+   "bytes_with_annotations_output": 5013,
+   "origins": {
+    "docker-arguments": 26
+   }
+  },
+  {
+   "server": "sonarqube",
+   "tools": 25,
+   "bytes": 9407,
+   "est_tokens": 2352,
+   "bytes_with_annotations_output": 9407,
+   "origins": {
+    "docker-arguments": 25
+   }
+  },
+  {
+   "server": "sqlite-mcp-server",
+   "tools": 25,
+   "bytes": 7497,
+   "est_tokens": 1875,
+   "bytes_with_annotations_output": 7497,
+   "origins": {
+    "docker-arguments": 25
+   }
+  },
+  {
+   "server": "stripe-remote",
+   "tools": 25,
+   "bytes": 3245,
+   "est_tokens": 812,
+   "bytes_with_annotations_output": 3245,
+   "origins": {
+    "docker-arguments": 25
+   }
+  },
+  {
+   "server": "vectra-ai-rux-mcp-server",
+   "tools": 25,
+   "bytes": 12456,
+   "est_tokens": 3114,
+   "bytes_with_annotations_output": 12456,
+   "origins": {
+    "docker-inputSchema": 25
+   }
+  },
+  {
+   "server": "buildkite",
+   "tools": 24,
+   "bytes": 14281,
+   "est_tokens": 3571,
+   "bytes_with_annotations_output": 15687,
+   "origins": {
+    "docker-arguments": 24
+   }
+  },
+  {
+   "server": "simplechecklist",
+   "tools": 20,
+   "bytes": 5569,
+   "est_tokens": 1393,
+   "bytes_with_annotations_output": 5569,
+   "origins": {
+    "docker-arguments": 20
+   }
+  },
+  {
+   "server": "zerodha-kite",
+   "tools": 15,
+   "bytes": 4164,
+   "est_tokens": 1041,
+   "bytes_with_annotations_output": 4164,
+   "origins": {
+    "docker-arguments": 15
+   }
+  },
+  {
+   "server": "webflow-remote",
+   "tools": 14,
+   "bytes": 1847,
+   "est_tokens": 462,
+   "bytes_with_annotations_output": 1847,
+   "origins": {
+    "docker-arguments": 14
+   }
+  },
+  {
+   "server": "explorium",
+   "tools": 12,
+   "bytes": 2135,
+   "est_tokens": 534,
+   "bytes_with_annotations_output": 2135,
+   "origins": {
+    "docker-arguments": 12
+   }
+  },
+  {
+   "server": "alfresco",
+   "tools": 10,
+   "bytes": 4259,
+   "est_tokens": 1065,
+   "bytes_with_annotations_output": 4259,
+   "origins": {
+    "docker-inputSchema": 10
+   }
+  },
+  {
+   "server": "notion-remote",
+   "tools": 8,
+   "bytes": 1076,
+   "est_tokens": 269,
+   "bytes_with_annotations_output": 1076,
+   "origins": {
+    "docker-arguments": 8
+   }
+  },
+  {
+   "server": "arm-mcp",
+   "tools": 7,
+   "bytes": 7967,
+   "est_tokens": 1992,
+   "bytes_with_annotations_output": 7967,
+   "origins": {
+    "docker-arguments": 7
+   }
+  },
+  {
+   "server": "cylera-mcp-server",
+   "tools": 7,
+   "bytes": 1198,
+   "est_tokens": 300,
+   "bytes_with_annotations_output": 1198,
+   "origins": {
+    "docker-arguments": 7
+   }
+  },
+  {
+   "server": "database-server",
+   "tools": 7,
+   "bytes": 1700,
+   "est_tokens": 425,
+   "bytes_with_annotations_output": 1700,
+   "origins": {
+    "docker-arguments": 7
+   }
+  },
+  {
+   "server": "dotnet-types-explorer",
+   "tools": 5,
+   "bytes": 3515,
+   "est_tokens": 879,
+   "bytes_with_annotations_output": 3515,
+   "origins": {
+    "docker-arguments": 5
+   }
+  },
+  {
+   "server": "neo4j",
+   "tools": 4,
+   "bytes": 1190,
+   "est_tokens": 298,
+   "bytes_with_annotations_output": 1190,
+   "origins": {
+    "docker-arguments": 4
+   }
+  },
+  {
+   "server": "wayfound",
+   "tools": 4,
+   "bytes": 778,
+   "est_tokens": 195,
+   "bytes_with_annotations_output": 778,
+   "origins": {
+    "docker-arguments": 4
+   }
+  },
+  {
+   "server": "gmail-mcp",
+   "tools": 3,
+   "bytes": 965,
+   "est_tokens": 242,
+   "bytes_with_annotations_output": 965,
+   "origins": {
+    "docker-arguments": 3
+   }
+  },
+  {
+   "server": "kgrag-mcp-server",
+   "tools": 3,
+   "bytes": 737,
+   "est_tokens": 185,
+   "bytes_with_annotations_output": 737,
+   "origins": {
+    "docker-arguments": 3
+   }
+  },
+  {
+   "server": "microsoft-learn",
+   "tools": 3,
+   "bytes": 886,
+   "est_tokens": 222,
+   "bytes_with_annotations_output": 886,
+   "origins": {
+    "docker-arguments": 3
+   }
+  },
+  {
+   "server": "ref",
+   "tools": 2,
+   "bytes": 1294,
+   "est_tokens": 324,
+   "bytes_with_annotations_output": 1294,
+   "origins": {
+    "docker-arguments": 2
+   }
+  },
+  {
+   "server": "sentry-remote",
+   "tools": 2,
+   "bytes": 341,
+   "est_tokens": 86,
+   "bytes_with_annotations_output": 341,
+   "origins": {
+    "docker-arguments": 2
+   }
+  },
+  {
+   "server": "astro-docs",
+   "tools": 1,
+   "bytes": 210,
+   "est_tokens": 53,
+   "bytes_with_annotations_output": 210,
+   "origins": {
+    "docker-arguments": 1
+   }
+  }
+ ],
+ "full_schema": {
+  "tools": 495,
+  "properties": 2241,
+  "rows": {
+   "string": [
+    1471,
+    970,
+    501
+   ],
+   "string-base64": [
+    0,
+    0,
+    0
+   ],
+   "integer": [
+    121,
+    19,
+    102
+   ],
+   "number": [
+    181,
+    71,
+    110
+   ],
+   "boolean": [
+    78,
+    2,
+    76
+   ],
+   "enum": [
+    173,
+    52,
+    121
+   ],
+   "array-scalar": [
+    63,
+    6,
+    57
+   ],
+   "union-scalar": [
+    91,
+    89,
+    2
+   ],
+   "array-object": [
+    16,
+    7,
+    9
+   ],
+   "array-other": [
+    6,
+    2,
+    4
+   ],
+   "object-flat": [
+    2,
+    0,
+    2
+   ],
+   "object-nested": [
+    7,
+    5,
+    2
+   ],
+   "object-free": [
+    28,
+    13,
+    15
+   ],
+   "union": [
+    4,
+    0,
+    4
+   ],
+   "untyped": [
+    0,
+    0,
+    0
+   ]
+  },
+  "native_properties": 2087,
+  "jsonvalued_properties": 154,
+  "tools_zero_props": 7,
+  "tools_native_only": 392,
+  "tools_any_jsonvalued": 103,
+  "tools_required_jsonvalued": 81,
+  "tools_needing_json_fallback": 0,
+  "tools_rescued_by_dotted_flags": 1,
+  "tools_plain_words_only": 443,
+  "wordish_properties": 91,
+  "props_per_tool_median": 4,
+  "props_per_tool_max": 33,
+  "required_per_tool_median": 2,
+  "positionals_median": 2,
+  "camel_case_props": 887,
+  "props_with_description": 2222
+ },
+ "docker_arguments": {
+  "tools": 310,
+  "properties": 556,
+  "rows": {
+   "string": [
+    406,
+    368,
+    38
+   ],
+   "string-base64": [
+    0,
+    0,
+    0
+   ],
+   "integer": [
+    47,
+    43,
+    4
+   ],
+   "number": [
+    35,
+    19,
+    16
+   ],
+   "boolean": [
+    22,
+    15,
+    7
+   ],
+   "enum": [
+    0,
+    0,
+    0
+   ],
+   "array-scalar": [
+    11,
+    2,
+    9
+   ],
+   "union-scalar": [
+    0,
+    0,
+    0
+   ],
+   "array-object": [
+    6,
+    4,
+    2
+   ],
+   "array-other": [
+    18,
+    18,
+    0
+   ],
+   "object-flat": [
+    0,
+    0,
+    0
+   ],
+   "object-nested": [
+    0,
+    0,
+    0
+   ],
+   "object-free": [
+    11,
+    7,
+    4
+   ],
+   "union": [
+    0,
+    0,
+    0
+   ],
+   "untyped": [
+    0,
+    0,
+    0
+   ]
+  },
+  "native_properties": 521,
+  "jsonvalued_properties": 35,
+  "tools_zero_props": 114,
+  "tools_native_only": 284,
+  "tools_any_jsonvalued": 26,
+  "tools_required_jsonvalued": 25,
+  "tools_needing_json_fallback": 0,
+  "tools_rescued_by_dotted_flags": 0,
+  "tools_plain_words_only": 284,
+  "wordish_properties": 0,
+  "props_per_tool_median": 1.0,
+  "props_per_tool_max": 11,
+  "required_per_tool_median": 1.0,
+  "positionals_median": 1.0,
+  "camel_case_props": 46,
+  "props_with_description": 512
+ },
+ "per_server": {
+  "github": {
+   "tools": 149,
+   "properties": 817,
+   "rows": {
+    "string": [
+     449,
+     293,
+     156
+    ],
+    "string-base64": [
+     0,
+     0,
+     0
+    ],
+    "integer": [
+     19,
+     9,
+     10
+    ],
+    "number": [
+     155,
+     64,
+     91
+    ],
+    "boolean": [
+     30,
+     2,
+     28
+    ],
+    "enum": [
+     121,
+     42,
+     79
+    ],
+    "array-scalar": [
+     25,
+     1,
+     24
+    ],
+    "union-scalar": [
+     0,
+     0,
+     0
+    ],
+    "array-object": [
+     9,
+     4,
+     5
+    ],
+    "array-other": [
+     2,
+     2,
+     0
+    ],
+    "object-flat": [
+     2,
+     0,
+     2
+    ],
+    "object-nested": [
+     0,
+     0,
+     0
+    ],
+    "object-free": [
+     4,
+     0,
+     4
+    ],
+    "union": [
+     1,
+     0,
+     1
+    ],
+    "untyped": [
+     0,
+     0,
+     0
+    ]
+   },
+   "native_properties": 799,
+   "jsonvalued_properties": 18,
+   "tools_zero_props": 1,
+   "tools_native_only": 136,
+   "tools_any_jsonvalued": 13,
+   "tools_required_jsonvalued": 6,
+   "tools_needing_json_fallback": 0,
+   "tools_rescued_by_dotted_flags": 1,
+   "tools_plain_words_only": 136,
+   "wordish_properties": 0,
+   "props_per_tool_median": 5,
+   "props_per_tool_max": 26,
+   "required_per_tool_median": 3,
+   "positionals_median": 3,
+   "camel_case_props": 94,
+   "props_with_description": 811
+  },
+  "alibaba-devops": {
+   "tools": 203,
+   "properties": 1041,
+   "rows": {
+    "string": [
+     731,
+     498,
+     233
+    ],
+    "string-base64": [
+     0,
+     0,
+     0
+    ],
+    "integer": [
+     73,
+     10,
+     63
+    ],
+    "number": [
+     26,
+     7,
+     19
+    ],
+    "boolean": [
+     16,
+     0,
+     16
+    ],
+    "enum": [
+     52,
+     10,
+     42
+    ],
+    "array-scalar": [
+     28,
+     5,
+     23
+    ],
+    "union-scalar": [
+     91,
+     89,
+     2
+    ],
+    "array-object": [
+     7,
+     3,
+     4
+    ],
+    "array-other": [
+     0,
+     0,
+     0
+    ],
+    "object-flat": [
+     0,
+     0,
+     0
+    ],
+    "object-nested": [
+     7,
+     5,
+     2
+    ],
+    "object-free": [
+     7,
+     0,
+     7
+    ],
+    "union": [
+     3,
+     0,
+     3
+    ],
+    "untyped": [
+     0,
+     0,
+     0
+    ]
+   },
+   "native_properties": 926,
+   "jsonvalued_properties": 115,
+   "tools_zero_props": 3,
+   "tools_native_only": 133,
+   "tools_any_jsonvalued": 70,
+   "tools_required_jsonvalued": 62,
+   "tools_needing_json_fallback": 0,
+   "tools_rescued_by_dotted_flags": 0,
+   "tools_plain_words_only": 184,
+   "wordish_properties": 91,
+   "props_per_tool_median": 4,
+   "props_per_tool_max": 33,
+   "required_per_tool_median": 3,
+   "positionals_median": 2,
+   "camel_case_props": 779,
+   "props_with_description": 1029
+  },
+  "alfresco": {
+   "tools": 10,
+   "properties": 31,
+   "rows": {
+    "string": [
+     26,
+     25,
+     1
+    ],
+    "string-base64": [
+     0,
+     0,
+     0
+    ],
+    "integer": [
+     2,
+     0,
+     2
+    ],
+    "number": [
+     0,
+     0,
+     0
+    ],
+    "boolean": [
+     1,
+     0,
+     1
+    ],
+    "enum": [
+     0,
+     0,
+     0
+    ],
+    "array-scalar": [
+     0,
+     0,
+     0
+    ],
+    "union-scalar": [
+     0,
+     0,
+     0
+    ],
+    "array-object": [
+     0,
+     0,
+     0
+    ],
+    "array-other": [
+     0,
+     0,
+     0
+    ],
+    "object-flat": [
+     0,
+     0,
+     0
+    ],
+    "object-nested": [
+     0,
+     0,
+     0
+    ],
+    "object-free": [
+     2,
+     1,
+     1
+    ],
+    "union": [
+     0,
+     0,
+     0
+    ],
+    "untyped": [
+     0,
+     0,
+     0
+    ]
+   },
+   "native_properties": 29,
+   "jsonvalued_properties": 2,
+   "tools_zero_props": 0,
+   "tools_native_only": 8,
+   "tools_any_jsonvalued": 2,
+   "tools_required_jsonvalued": 1,
+   "tools_needing_json_fallback": 0,
+   "tools_rescued_by_dotted_flags": 0,
+   "tools_plain_words_only": 8,
+   "wordish_properties": 0,
+   "props_per_tool_median": 3.0,
+   "props_per_tool_max": 5,
+   "required_per_tool_median": 2.0,
+   "positionals_median": 2.0,
+   "camel_case_props": 14,
+   "props_with_description": 31
+  },
+  "okta-mcp-server": {
+   "tools": 108,
+   "properties": 272,
+   "rows": {
+    "string": [
+     219,
+     154,
+     65
+    ],
+    "string-base64": [
+     0,
+     0,
+     0
+    ],
+    "integer": [
+     8,
+     0,
+     8
+    ],
+    "number": [
+     0,
+     0,
+     0
+    ],
+    "boolean": [
+     20,
+     0,
+     20
+    ],
+    "enum": [
+     0,
+     0,
+     0
+    ],
+    "array-scalar": [
+     10,
+     0,
+     10
+    ],
+    "union-scalar": [
+     0,
+     0,
+     0
+    ],
+    "array-object": [
+     0,
+     0,
+     0
+    ],
+    "array-other": [
+     0,
+     0,
+     0
+    ],
+    "object-flat": [
+     0,
+     0,
+     0
+    ],
+    "object-nested": [
+     0,
+     0,
+     0
+    ],
+    "object-free": [
+     15,
+     12,
+     3
+    ],
+    "union": [
+     0,
+     0,
+     0
+    ],
+    "untyped": [
+     0,
+     0,
+     0
+    ]
+   },
+   "native_properties": 257,
+   "jsonvalued_properties": 15,
+   "tools_zero_props": 2,
+   "tools_native_only": 93,
+   "tools_any_jsonvalued": 15,
+   "tools_required_jsonvalued": 12,
+   "tools_needing_json_fallback": 0,
+   "tools_rescued_by_dotted_flags": 0,
+   "tools_plain_words_only": 93,
+   "wordish_properties": 0,
+   "props_per_tool_median": 2.0,
+   "props_per_tool_max": 11,
+   "required_per_tool_median": 1.0,
+   "positionals_median": 1.0,
+   "camel_case_props": 0,
+   "props_with_description": 271
+  },
+  "vectra-ai-rux-mcp-server": {
+   "tools": 25,
+   "properties": 80,
+   "rows": {
+    "string": [
+     46,
+     0,
+     46
+    ],
+    "string-base64": [
+     0,
+     0,
+     0
+    ],
+    "integer": [
+     19,
+     0,
+     19
+    ],
+    "number": [
+     0,
+     0,
+     0
+    ],
+    "boolean": [
+     11,
+     0,
+     11
+    ],
+    "enum": [
+     0,
+     0,
+     0
+    ],
+    "array-scalar": [
+     0,
+     0,
+     0
+    ],
+    "union-scalar": [
+     0,
+     0,
+     0
+    ],
+    "array-object": [
+     0,
+     0,
+     0
+    ],
+    "array-other": [
+     4,
+     0,
+     4
+    ],
+    "object-flat": [
+     0,
+     0,
+     0
+    ],
+    "object-nested": [
+     0,
+     0,
+     0
+    ],
+    "object-free": [
+     0,
+     0,
+     0
+    ],
+    "union": [
+     0,
+     0,
+     0
+    ],
+    "untyped": [
+     0,
+     0,
+     0
+    ]
+   },
+   "native_properties": 76,
+   "jsonvalued_properties": 4,
+   "tools_zero_props": 1,
+   "tools_native_only": 22,
+   "tools_any_jsonvalued": 3,
+   "tools_required_jsonvalued": 0,
+   "tools_needing_json_fallback": 0,
+   "tools_rescued_by_dotted_flags": 0,
+   "tools_plain_words_only": 22,
+   "wordish_properties": 0,
+   "props_per_tool_median": 2,
+   "props_per_tool_max": 9,
+   "required_per_tool_median": 0,
+   "positionals_median": 0,
+   "camel_case_props": 0,
+   "props_with_description": 80
+  }
+ },
+ "annotations": {
+  "github": {
+   "tools": 149,
+   "readOnlyHint=True": 69,
+   "idempotentHint=False": 145,
+   "title": 149,
+   "readOnlyHint=False": 80,
+   "destructiveHint=True": 20,
+   "write_without_destructiveHint": 28,
+   "destructiveHint=False": 34,
+   "openWorldHint=True": 38,
+   "idempotentHint=True": 3
+  },
+  "alibaba-devops": {
+   "tools": 203,
+   "write_without_destructiveHint": 203
+  },
+  "docker-registry": {
+   "tools_with_annotations": 24,
+   "readOnlyHint=True": 20
+  }
+ },
+ "description_bytes": {
+  "median": 58,
+  "p90": 216,
+  "max": 3050,
+  "empty": 0
+ },
+ "tools_needing_json": [],
+ "origin_counts": {
+  "toolsnap": 149,
+  "export": 203,
+  "docker-inputSchema": 143,
+  "docker-arguments": 310,
+  "docker-none": 302
+ },
+ "total_tools": 1107,
+ "total_servers": 30
+}

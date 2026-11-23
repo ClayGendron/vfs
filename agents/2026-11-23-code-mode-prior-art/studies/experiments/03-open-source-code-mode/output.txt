@@ -1,0 +1,3 @@
+{"name":"plain_js","compiled":true,"value":1}
+{"name":"ts_annotation","compiled":false,"error":"SyntaxError: Missing initializer in const declaration"}
+{"name":"ts_interface","compiled":false,"error":"SyntaxError: Unexpected identifier 'R'"}
