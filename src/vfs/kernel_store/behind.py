@@ -30,7 +30,7 @@ import contextvars
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping, Sequence
@@ -464,7 +464,7 @@ class BehindWriter:
         return self._settle(batch, outcome, at_close=at_close is not None)
 
     def _groups(self, batch: Sequence[_Waiting]) -> list[tuple[BehindKind, list[Mapping[str, object]]]]:
-        """The batch's rows by kind, in the order the kinds were registered; a keyed kind's sorted by key."""
+        """The batch's rows by kind, in the order the kinds were registered; the store sorts a keyed kind's."""
         by_kind: dict[str, list[_Waiting]] = {}
         for entry in batch:
             by_kind.setdefault(entry.kind.name, []).append(entry)
@@ -473,8 +473,6 @@ class BehindWriter:
             entries = by_kind.get(name)
             if not entries:
                 continue
-            if kind.key is not None:
-                entries.sort(key=_key_of)
             groups.append((kind, [entry.row for entry in entries]))
         return groups
 
@@ -552,8 +550,3 @@ async def _ended(task: asyncio.Task[None] | None, timeout: float | None) -> None
     """Wait for *task* to end, at most *timeout* seconds, and never interrupt it; at once when there is none."""
     if task is not None:
         await asyncio.wait({task}, timeout=timeout)
-
-
-def _key_of(entry: _Waiting) -> Any:
-    """A keyed row's key, which a flush sorts the kind's rows by."""
-    return entry.key

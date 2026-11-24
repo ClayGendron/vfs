@@ -458,6 +458,27 @@ async def test_a_kind_whose_write_raises_is_dropped_as_one_that_can_never_land(
     assert "this kind's write is broken" in failed[0]
 
 
+@pytest.mark.parametrize("place", SQLITE_PLACES, indirect=True)
+async def test_a_keyed_kind_whose_keys_cannot_be_ordered_is_dropped_as_one_that_can_never_land(
+    probe: Probe, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Guards a sort by key that raises out of the flush, ending the task and holding every row behind it.
+
+    The deadline only bounds the wait of that mutant, whose drain never ends.
+    """
+    store = probe.store
+    unordered = BehindKind(name="unordered", write=probe_kind(probe.table).write, key=("owner", "name"))
+    store.register_behind(unordered)
+    caplog.set_level(logging.ERROR, logger="vfs.kernel_store")
+    store.put_behind(unordered, [{**row, "owner": None} for row in probe_rows(1)], scope="unordered")
+    store.put_behind(unordered, probe_rows(1, owner="x"), scope="unordered")
+    store.put_behind(probe.kind, probe_rows(3), scope="sound")
+    await asyncio.wait_for(store.drain("sound"), timeout=_DEADLINE)
+    failed = records(caplog, "ERROR")
+    assert (await count_rows(store, probe.table), store.dropped, len(failed)) == (3, 2, 1)
+    assert "2 unordered records" in failed[0]
+
+
 @pytest.mark.parametrize("place", BOTH_ENGINES, indirect=True)
 async def test_a_store_of_another_format_drops_what_is_written_behind(
     place: RecordPlace, stores: Callable[..., KernelStore], caplog: pytest.LogCaptureFixture

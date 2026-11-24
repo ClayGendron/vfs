@@ -641,7 +641,7 @@ class KernelStore:
 
         async def every_kind(transaction: Transaction) -> None:
             for kind, rows in groups:
-                await kind.write(self, transaction, rows)
+                await self._write_kind(kind, transaction, rows)
 
         try:
             await self._transact(every_kind, writer=True, to_its_end=False, at_close=at_close)
@@ -665,7 +665,7 @@ class KernelStore:
             for kind, rows in groups:
                 try:
                     async with transaction.begin_nested():
-                        await kind.write(self, transaction, rows)
+                        await self._write_kind(kind, transaction, rows)
                 except SQLAlchemyError as exc:
                     if _can_clear(exc):
                         raise
@@ -680,6 +680,15 @@ class KernelStore:
             # Each kind's failure was caught under its savepoint: what is left is the store's, which a retry clears.
             return FlushOutcome(held=failure)
         return FlushOutcome(lost=lost)
+
+    async def _write_kind(
+        self, kind: BehindKind, transaction: Transaction, rows: Sequence[Mapping[str, object]]
+    ) -> None:
+        """Hand *kind* its rows, a keyed kind's sorted by key; a key that cannot be ordered fails as the kind's code."""
+        if kind.key is not None:
+            names = kind.key
+            rows = sorted(rows, key=lambda row: tuple(row[name] for name in names))
+        await kind.write(self, transaction, rows)
 
     async def _keeps_records(self) -> bool:
         """Whether the place holds the kernel's tables; it makes none and runs no first touch."""
