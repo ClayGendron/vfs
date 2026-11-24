@@ -462,7 +462,8 @@ Reason: a test of expiry that waited for time to pass would read a clock, and a 
 The budget:
 
 - `KernelStore.close(*, within=None)` takes the seconds it has, and the kernel passes its `close_timeout`, 10 by default. The store's budget is `within` less one second, which is kept for the dispose, and never less than half of `within`. With no `within` there is no budget.
-- The budget is counted on the loop's monotonic time. That is not the clock of decision 18: no record holds it, and a test sets the budget and steps no clock.
+- The budget is a `Deadline` of `vfs.deadline`: `Deadline.after(budget)`, made once when `close` is entered and handed to the steps as an argument, or `Deadline.never()` with no `within`. What is left is read from it with `remaining()`. The store reads no clock of its own, so the rule the gate holds stands: one module reads the monotonic clock for a deadline (`src/vfs/deadline.py:1-19`, `tests/lint/test_code_shape.py:536-544`), and one fake clock patched there drives this budget with every other. It is not the clock of decision 18, since no record holds it.
+- Nothing is left when `remaining()` is zero. A test passes `within=0`, for which it is zero at the first reading, and steps no clock.
 - Before each flush at close, the task reads what is left of the budget. With nothing left it starts no flush. Otherwise the flush makes its one try, and on SQLite that try waits for the file's writer at most the smaller of `busy_timeout`, 5 seconds, and half of what is left. It sets that on its own connection before its `BEGIN IMMEDIATE`.
 - Step 5's wait ends when the count reaches zero or when the budget is spent.
 - Steps 3 and 5 run at the same time. With the defaults, a close behind a writer held throughout ends in about 5 seconds, where four tries would have taken about 21 against a timeout of 10.
@@ -873,7 +874,7 @@ Lint, `tests/lint/test_code_shape.py` and `tests/models/test_kernel_rows.py`:
 
 - Every kernel table's name begins with one of `KERNEL_TABLE_PREFIXES`, and no table of `build_vfs_tables` does.
 - `vfs.kernel_store.store` is the one new name in `ADAPTER_IMPORTERS`, and `vfs.kernel_store` has a rung.
-- Under `src/vfs/kernel_store/` one line reads the system clock, the default of `clock`.
+- Under `src/vfs/kernel_store/` one line reads the system clock, the default of `clock`, and none reads the monotonic clock or a loop's time: the budget of `close` is a `Deadline`.
 - `vfs.base`, `vfs.session`, `vfs.sync` and `vfs.sync_session` import no SQLAlchemy, and `vfs.storage.protocol` imports none at run time.
 
 ## Scope
