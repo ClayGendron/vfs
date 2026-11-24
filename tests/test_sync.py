@@ -201,6 +201,9 @@ def test_the_facade_forwards_an_edits_required_vids() -> None:
         batch = fs.edit(observations=rows, old="alpha", new="beta", if_vids={"/a.txt": stale})
         assert [error.kind for error in (*single.errors, *batch.errors)] == [vfs.ErrorKind.conflict] * 2
         assert fs.read(path="/a.txt").one().content == "alpha"
+    finally:
+        fs.close()
+
 
 @pytest.mark.parametrize("verb", ["delete", "move", "restore"])
 def test_the_facade_forwards_each_verbs_required_vid(verb: str) -> None:

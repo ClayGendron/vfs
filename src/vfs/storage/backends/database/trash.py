@@ -60,7 +60,7 @@ from vfs.models import Observation
 from vfs.models.rows import vid_at
 from vfs.ops import VERB_RUNGS
 from vfs.paths import ROOT, TRASH_ROOT, Path
-from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified, stale_vid
+from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified
 from vfs.results.kinds import TRASH_ROOT_KEY
 from vfs.storage.backends.database.authorized import admit, admit_beneath, judging
 from vfs.storage.backends.database.descent import (
@@ -93,6 +93,7 @@ from vfs.storage.backends.database.serialized import (
     serialize,
     snapshot_columns,
 )
+from vfs.storage.backends.database.staging import required_refusal
 from vfs.vid import ABSENT
 
 if TYPE_CHECKING:
@@ -190,7 +191,7 @@ async def delete_rows(
             row = live.get(str(target))
             if row is None:
                 errors.append(classify_miss(target, kinds, tombstones))
-            elif (stale := _stale(target, row, required, mint)) is not None:
+            elif (stale := required_refusal(mint, target, row, required.get(target))) is not None:
                 errors.append(stale)
             else:
                 rows.append(_observe_deleted(target, row, mint, deleted_at=now))
@@ -200,7 +201,7 @@ async def delete_rows(
         if row is None:
             errors.append(classify_miss(target, kinds, tombstones))
             continue
-        if (stale := _stale(target, row, required, mint)) is not None:
+        if (stale := required_refusal(mint, target, row, required.get(target))) is not None:
             errors.append(stale)
             continue
         if not cascade and occupancy[row["entry_id"]] > emptied[row["entry_id"]]:
@@ -340,7 +341,8 @@ async def restore_rows(
             errors.append(verdict)
             continue
         assert fetched is not None
-        if required.get(target, ABSENT) != ABSENT and (stale := _stale(target, fetched, required, mint)):
+        # The mark adds nothing to a restore: the ladder already answers a live row.
+        if (key := required.get(target)) != ABSENT and (stale := required_refusal(mint, target, fetched, key)):
             errors.append(stale)
             continue
         ladder.revive(fetched)
@@ -682,15 +684,6 @@ async def _reclaim_orphan_content(
             for entry_id in orphans
         )
     return notes
-
-
-def _stale(
-    target: Path, row: Mapping[Any, Any], required: Mapping[Path, VidOrAbsent], mint: VidMint
-) -> ResultError | None:
-    """The ``conflict`` of a target whose row is not at the vid its caller requires, or nothing where none is."""
-    if target not in required or required[target] == (vid := vid_at(mint, row["entry_id"], row["version"])):
-        return None
-    return stale_vid(target, row["version"], vid)
 
 
 def _observe_deleted(

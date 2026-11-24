@@ -37,10 +37,9 @@ from ulid import ULID
 from vfs.authority import owner_for
 from vfs.batching import byte_chunked
 from vfs.models import encoded_at_creation
-from vfs.models.rows import vid_at
 from vfs.ops import VERB_RUNGS
 from vfs.paths import MAX_PATH_LENGTH, ROOT, Path, byte_length
-from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, stale_vid
+from vfs.results import ErrorKind, Result, ResultError, already_exists, classified
 from vfs.storage.backends.database.authorized import admit, admit_created, destination_postures, judging
 from vfs.storage.backends.database.descent import (
     ancestor_chain,
@@ -74,6 +73,7 @@ from vfs.storage.backends.database.serialized import (
     point_row,
     serialize,
 )
+from vfs.storage.backends.database.staging import required_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -183,8 +183,8 @@ async def transfer_rows(
             errors.append(classified(ErrorKind.invalid, src, target=dest, detail=detail))
             continue
         # A required vid names the source, judged before any fact about the destination.
-        if src in required and required[src] != (vid := vid_at(mint, src_row["entry_id"], src_row["version"])):
-            errors.append(stale_vid(src, src_row["version"], vid))
+        if (refused := required_refusal(mint, src, src_row, required.get(src))) is not None:
+            errors.append(refused)
             continue
         if dest == src:
             # POSIX rename-to-self: a successful no-op, never a refusal.
