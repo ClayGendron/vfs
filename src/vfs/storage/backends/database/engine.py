@@ -59,7 +59,7 @@ from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.attempts import run_out_of_reach
-from vfs.storage.backends.database.core import BEGIN_TAG, EngineCore
+from vfs.storage.backends.database.core import BEGIN_TAG, EngineCore, begin_statement
 from vfs.storage.backends.database.dialects import (
     PROFILES,
     StaleSnapshot,
@@ -134,7 +134,7 @@ class _AnalysisPass:
 
 
 class EngineHost(EngineCore):
-    """One mount's tables, dialect policy, and first-touch state, on the engine core."""
+    """One mount's tables and first-touch state, on the engine core."""
 
     def __init__(
         self,
@@ -756,7 +756,7 @@ class EngineHost(EngineCore):
         unknown, and is held as an advisory for the next public verb,
         unless the owning task interrupted the pass on purpose.
         """
-        statement = f"BEGIN IMMEDIATE /* {STATISTICS_NAME} */"
+        statement = begin_statement(writer=True, tag=STATISTICS_NAME)
         pooled: PoolProxiedConnection | None = None
         try:
             async with self.session_factory() as session:

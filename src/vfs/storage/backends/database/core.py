@@ -72,8 +72,28 @@ BEGIN_TAG: Final = "vfs_begin_tag"
 """The execution option whose text a SQLite transaction's ``BEGIN`` carries as a comment, told apart in a trace."""
 
 
+# ---------------------------------------------------------------------------
+# The statement that begins a SQLite transaction
+# ---------------------------------------------------------------------------
+
+
+def begin_statement(*, writer: bool, tag: str | None = None) -> str:
+    """The ``BEGIN`` a SQLite transaction sends: ``IMMEDIATE`` for a writer, and *tag* as a comment."""
+    mode = "BEGIN IMMEDIATE" if writer else "BEGIN"
+    return f"{mode} /* {tag} */" if tag else mode
+
+
+# ---------------------------------------------------------------------------
+# The engine core
+# ---------------------------------------------------------------------------
+
+
 class EngineCore:
-    """One database's connectivity and policy: the engine, its sessions, the retry, the classifier, the dispose."""
+    """One database's connectivity and policy: the engine, its sessions, the retry, the classifier, the dispose.
+
+    A subclass that keeps tables in a database held in one connection
+    overrides ``_rearm``, which is called when that connection is replaced.
+    """
 
     def __init__(
         self,
@@ -250,8 +270,4 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
         options = conn.get_execution_options()
         if options.get("vfs_no_begin"):
             return
-        mode = "BEGIN IMMEDIATE" if options.get("vfs_writer") else "BEGIN"
-        tag = options.get(BEGIN_TAG)
-        if tag:
-            mode = f"{mode} /* {tag} */"
-        conn.exec_driver_sql(mode)
+        conn.exec_driver_sql(begin_statement(writer=bool(options.get("vfs_writer")), tag=options.get(BEGIN_TAG)))
