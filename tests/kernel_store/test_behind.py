@@ -12,6 +12,7 @@ store's seams; every count is of statements, rows, calls of a kind's
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import logging
 import os
@@ -259,6 +260,50 @@ async def test_a_close_cut_short_starts_no_further_flush(
     assert (begins(sent), connections.open, dropped) == ([], 0, 2_000)
     assert (warned_in_flight, len(warned), "2000 records" in warned[0]) == (0, 1, True)
     assert (file_rows(tmp_path / "knowledge.db", PROBE_TABLE), files_in(tmp_path)) == (3, ["knowledge.db"])
+
+
+@pytest.mark.parametrize("place", [IN_A_FILE], indirect=True)
+async def test_a_flush_at_close_behind_first_touch_opens_nothing_after_a_cut_short_close(
+    stores: Callable[..., KernelStore], tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards a flush at close that waits on first touch's lock, and is let in after the close cut short."""
+    maker = stores()
+    await probe_table(maker)
+    await maker.close()
+    store = stores()
+    probe = await _probe_on(store)
+    connections = Connections(store)
+    core = store._engine_core()
+    reached, go = asyncio.Event(), asyncio.Event()
+    settings = core.apply_file_settings
+
+    async def held() -> None:
+        await settings()
+        reached.set()
+        await go.wait()
+
+    async def nothing(_transaction: Transaction) -> None:
+        return None
+
+    async def put_and_close() -> None:
+        # In one step, so that the task's first flush is the close's own.
+        store.put_behind(probe.kind, probe_rows(3))
+        await store.close()
+
+    monkeypatch.setattr(core, "apply_file_settings", held)
+    commit = asyncio.ensure_future(store.commit(nothing))
+    await reached.wait()
+    closing = asyncio.ensure_future(put_and_close())
+    await turns_of_the_loop()
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    go.set()
+    with contextlib.suppress(KernelStoreUnavailable):
+        await commit
+    await _the_task_ends()
+    assert connections.open == 0
+    assert files_in(tmp_path) == ["knowledge.db"]
 
 
 async def test_a_read_only_file_holds_its_rows_and_warns_once(

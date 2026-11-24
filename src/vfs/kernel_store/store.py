@@ -170,6 +170,7 @@ class KernelStore:
         self._core: _StoreCore | None = None
         self._ready = False
         self._closing = False
+        self._cut_short = False
         self._warned_of_memory = False
         self._warned_of_format = False
         # Made on the caller's loop at first use: construction binds nothing to a loop.
@@ -519,6 +520,7 @@ class KernelStore:
         try:
             await asyncio.gather(ending, self._wait_for_in_flight(budget))
         finally:
+            self._cut_short = True
             self._writer.cut_short()
             if self._core is not None:
                 await self._core.close()
@@ -606,9 +608,10 @@ class KernelStore:
     async def _try(self, body: Callable[[], Awaitable[T]], *, at_close: bool = False) -> T:
         """One try of a transaction or of first touch: none starts after a close, and none leaves a connection open.
 
-        A try *at_close* is the close's own flush, and is not refused.
+        A try *at_close* is the close's own flush, and is refused only once
+        the close is cut short, so it opens nothing on the new pool.
         """
-        if self._closing and not at_close:
+        if self._closing and (not at_close or self._cut_short):
             raise KernelStoreUnavailable(classified(ErrorKind.backend_unavailable, detail=_CLOSED))
         engine = self._engine_core().engine.sync_engine
         began_on = engine.pool
