@@ -1,0 +1,219 @@
+Run on 2026-11-24 at 27f3d24 of dev, Python 3.13, SQLite 3.53.1 in memory, Postgres 16.15 without pgvector.
+
+######## p01_what_a_deleted_row_does_to_its_name_today.py
+== 1. the shell: a folder removed and made again
+  $ mkdir /proj/build && echo a > /proj/build/out.txt
+      exit=0 out='' err=''
+  $ rm -r /proj/build && mkdir /proj/build
+      exit=1 out='' err='mkdir: cannot create directory ‘/proj/build’: No such file or directory'
+  $ mkdir -p /proj/build/sub
+      exit=1 out='' err='mkdir: cannot create directory ‘/proj/build/sub’: No such file or directory'
+== 2. the verbs at a deleted directory's name
+  mkdir /proj/build: ERROR vfs.not_found at /proj/build 'Not found'
+  write /proj/build/new.txt parents=True: ERROR vfs.not_found at /proj/build 'Not found'
+  move /proj/other -> /proj/build: ERROR vfs.exists at /proj/build 'Already exists'
+== 3. a file deleted by one caller and written again by another
+    row at /proj/f.txt: entry ...VZ5256 owner=alice version=1 deleted=False
+  delete as alice: 1 row(s): (/proj/f.txt kind=file version=1 status=deleted)
+  write as bob, if_absent=True: 1 row(s): (/proj/f.txt kind=file version=3 status=updated)
+    row at /proj/f.txt: entry ...VZ5256 owner=alice version=3 deleted=False
+  restore as alice: ERROR vfs.exists at /proj/f.txt 'Already exists'
+== 4. the shell: a file saved by writing a temporary file and moving it over
+  $ echo v1 > /proj/conf.txt && echo v2 > /proj/conf.tmp
+      exit=0 out='' err=''
+  $ mv -f /proj/conf.tmp /proj/conf.txt; cat /proj/conf.txt
+      exit=0 out='v1' err="mv: cannot move '/proj/conf.tmp' to '/proj/conf.txt': File exists"
+  $ rm /proj/conf.txt && mv /proj/conf.tmp /proj/conf.txt; cat /proj/conf.txt
+      exit=1 out='' err="mv: cannot move '/proj/conf.tmp' to '/proj/conf.txt': File exists\ncat: /proj/conf.txt: No such file or directory"
+== 5. one name written and deleted 50 times
+  entry rows at /proj/scratch.txt: 1; version rows in the mount: 50
+== 6. one file out of a deleted directory
+  delete /proj/docs: 1 row(s): (/proj/docs kind=directory version=2 status=deleted)
+  restore /proj/docs/1.md: ERROR vfs.not_found at /proj/docs/1.md 'Not found: inside a deleted tree; restore its root'
+== 7. sweep at a live path, on a mount where everyone holds read_write
+  sweep /work as anonymous: 1 row(s): (/work kind=directory version=2 status=deleted)
+  stat /work/keep.txt: ERROR vfs.not_found at /work 'Not found'
+  restore /work: ERROR vfs.not_found at /work 'Not found'
+== 8. a deleted file beneath a directory that is then moved
+  move /a -> /b: 1 row(s): (/b kind=directory version=4 status=created)
+  ls /.vfs/trash: 5 row(s): (/b/gone.txt kind=file version=2) (/proj/build kind=directory version=3) (/proj/conf.txt kind=file version=2) (/proj/docs kind=directory version=3) (/proj/scratch.txt kind=file version=100)
+  restore /a/gone.txt: ERROR vfs.not_found at /a 'Not found'
+  restore /b/gone.txt: 1 row(s): (/b/gone.txt kind=file version=3 status=created)
+== 9. a miss at a deleted path, and a read through the trash view
+  stat /proj/note.md: vfs.not_found data keys=['vfs.deleted_at', 'vfs.trashed']
+  stat /.vfs/trash/proj/note.md: 1 row(s): (/proj/note.md kind=file version=2)
+
+######## p02_two_key_shapes_on_three_dialects.py
+
+== SQLite, shape live_only
+    CREATE INDEX ix_probe_live_only_trashed_path ON probe_live_only (path, deleted_at) WHERE deleted_at IS NOT NULL
+    CREATE UNIQUE INDEX uq_probe_live_only_live_children ON probe_live_only (parent_id, name) WHERE deleted_at IS NULL
+      as an untuned dialect compiles it: CREATE UNIQUE INDEX uq_probe_live_only_live_children ON probe_live_only (parent_id, name)
+    CREATE UNIQUE INDEX uq_probe_live_only_live_path ON probe_live_only (path) WHERE deleted_at IS NULL
+      as an untuned dialect compiles it: CREATE UNIQUE INDEX uq_probe_live_only_live_path ON probe_live_only (path)
+    create /d/f (entry 1): ok
+    delete entry 1: ok
+    create /d/f again (entry 2), the name holding one deleted row: ok
+    delete entry 2: ok
+    create /d/f a third time (entry 3): ok
+    rows at /d/f: 3, live: 1
+    restore entry 1 while entry 3 is live: refused: IntegrityError
+    arbitrated create against the live entry 3: ok, 0 row(s) returned
+    delete entry 3: ok
+    arbitrated create at the name holding three deleted rows: ok, 1 row(s) returned
+    the tree's conflict target as written today, with no predicate: refused: OperationalError
+
+== SQLite, shape generation
+    declared in the table: ck_probe_generation_generation_agrees
+    declared in the table: uq_probe_generation_parent_generation_name
+    declared in the table: uq_probe_generation_path_generation
+    CREATE INDEX ix_probe_generation_trashed_path ON probe_generation (path, deleted_at) WHERE deleted_at IS NOT NULL
+    create /d/f (entry 1): ok
+    delete entry 1: ok
+    create /d/f again (entry 2), the name holding one deleted row: ok
+    delete entry 2: ok
+    create /d/f a third time (entry 3): ok
+    rows at /d/f: 3, live: 1
+    restore entry 1 while entry 3 is live: refused: IntegrityError
+    arbitrated create against the live entry 3: ok, 0 row(s) returned
+    delete entry 3: ok
+    arbitrated create at the name holding three deleted rows: ok, 1 row(s) returned
+
+== Postgres, shape live_only
+    CREATE INDEX ix_probe_live_only_trashed_path ON probe_live_only (path, deleted_at) WHERE deleted_at IS NOT NULL
+    CREATE UNIQUE INDEX uq_probe_live_only_live_children ON probe_live_only (parent_id, name) WHERE deleted_at IS NULL
+      as an untuned dialect compiles it: CREATE UNIQUE INDEX uq_probe_live_only_live_children ON probe_live_only (parent_id, name)
+    CREATE UNIQUE INDEX uq_probe_live_only_live_path ON probe_live_only (path) WHERE deleted_at IS NULL
+      as an untuned dialect compiles it: CREATE UNIQUE INDEX uq_probe_live_only_live_path ON probe_live_only (path)
+    create /d/f (entry 1): ok
+    delete entry 1: ok
+    create /d/f again (entry 2), the name holding one deleted row: ok
+    delete entry 2: ok
+    create /d/f a third time (entry 3): ok
+    rows at /d/f: 3, live: 1
+    restore entry 1 while entry 3 is live: refused: IntegrityError
+    arbitrated create against the live entry 3: ok, 0 row(s) returned
+    delete entry 3: ok
+    arbitrated create at the name holding three deleted rows: ok, 1 row(s) returned
+    the tree's conflict target as written today, with no predicate: refused: ProgrammingError
+    two creates of /d/g at read committed: the second waited=True, returned 0 row(s); live rows at /d/g: 1
+
+== Postgres, shape generation
+    declared in the table: ck_probe_generation_generation_agrees
+    declared in the table: uq_probe_generation_parent_generation_name
+    declared in the table: uq_probe_generation_path_generation
+    CREATE INDEX ix_probe_generation_trashed_path ON probe_generation (path, deleted_at) WHERE deleted_at IS NOT NULL
+    create /d/f (entry 1): ok
+    delete entry 1: ok
+    create /d/f again (entry 2), the name holding one deleted row: ok
+    delete entry 2: ok
+    create /d/f a third time (entry 3): ok
+    rows at /d/f: 3, live: 1
+    restore entry 1 while entry 3 is live: refused: IntegrityError
+    arbitrated create against the live entry 3: ok, 0 row(s) returned
+    delete entry 3: ok
+    arbitrated create at the name holding three deleted rows: ok, 1 row(s) returned
+    two creates of /d/g at read committed: the second waited=True, returned 0 row(s); live rows at /d/g: 1
+
+== SQLite with the live_only keys built whole, as an untuned dialect builds them, shape live_only
+    CREATE INDEX ix_probe_live_only_trashed_path ON probe_live_only (path, deleted_at)
+    CREATE UNIQUE INDEX uq_probe_live_only_live_children ON probe_live_only (parent_id, name)
+    CREATE UNIQUE INDEX uq_probe_live_only_live_path ON probe_live_only (path)
+    create /d/f (entry 1): ok
+    delete entry 1: ok
+    create /d/f again (entry 2), the name holding one deleted row: refused: IntegrityError
+    delete entry 2: ok
+    create /d/f a third time (entry 3): refused: IntegrityError
+    rows at /d/f: 1, live: 0
+    restore entry 1 while entry 3 is live: ok
+
+######## p03_what_a_listing_and_a_seek_visit.py
+== SQLite 3.53.1
+ -- key shape live_only
+    list the 10 live children of a directory holding 4,000 deleted ones: rows=10 vm_steps=77 plan=SEARCH t_live_only USING INDEX t_live_only_live_children (parent_id=?)
+    seek the live row at a path holding 10,000 deleted ones: rows=1 vm_steps=18 plan=SEARCH t_live_only USING INDEX t_live_only_live_path (path=?)
+    seek the newest deleted row at that path: rows=1 vm_steps=20 plan=SEARCH t_live_only USING COVERING INDEX t_live_only_trashed_path (path=? AND deleted_at>?)
+    count the deleted rows at that path: rows=1 vm_steps=30019 plan=SEARCH t_live_only USING COVERING INDEX t_live_only_trashed_path (path=? AND deleted_at>?)
+    the newest deleted row at each of two named paths, one of them that path, by a term on the row: rows=2 vm_steps=170066 plan=SEARCH e USING COVERING INDEX t_live_only_trashed_path (path=? AND deleted_at>?); CORRELATED SCALAR SUBQUERY 1; SEARCH n USING COVERING INDEX t_live_only_trashed_path (path=? AND deleted_at>?)
+    a trash page: the newest deleted row at each of the first 100 paths beneath the directory: rows=100 vm_steps=2030 plan=SEARCH e USING COVERING INDEX t_live_only_trashed_path (path>? AND path<?); CORRELATED SCALAR SUBQUERY 1; SEARCH n USING COVERING INDEX t_live_only_trashed_path (path=? AND deleted_at>?)
+    the newest deleted row at each of 1,000 named paths, one of them that path, one seek for each target: rows=1000 found=1000 vm_steps=21013
+ -- key shape generation
+    list the 10 live children of a directory holding 4,000 deleted ones: rows=10 vm_steps=66 plan=SEARCH t_generation USING COVERING INDEX sqlite_autoindex_t_generation_2 (parent_id=? AND name_generation=?)
+    seek the live row at a path holding 10,000 deleted ones: rows=1 vm_steps=10 plan=SEARCH t_generation USING COVERING INDEX sqlite_autoindex_t_generation_1 (path=? AND name_generation=?)
+    seek the newest deleted row at that path: rows=1 vm_steps=21 plan=SEARCH t_generation USING COVERING INDEX t_generation_trashed_path (path=? AND deleted_at>?)
+    count the deleted rows at that path: rows=1 vm_steps=30020 plan=SEARCH t_generation USING COVERING INDEX t_generation_trashed_path (path=? AND deleted_at>?)
+    the newest deleted row at each of two named paths, one of them that path, by a term on the row: rows=2 vm_steps=170073 plan=SEARCH e USING COVERING INDEX t_generation_trashed_path (path=? AND deleted_at>?); CORRELATED SCALAR SUBQUERY 1; SEARCH n USING COVERING INDEX t_generation_trashed_path (path=? AND deleted_at>?)
+    a trash page: the newest deleted row at each of the first 100 paths beneath the directory: rows=100 vm_steps=2047 plan=SEARCH e USING COVERING INDEX t_generation_trashed_path (path>? AND path<?); CORRELATED SCALAR SUBQUERY 1; SEARCH n USING COVERING INDEX t_generation_trashed_path (path=? AND deleted_at>?)
+    the newest deleted row at each of 1,000 named paths, one of them that path, one seek for each target: rows=1000 found=1000 vm_steps=21018
+ -- key shape generation_last
+    list the 10 live children of a directory holding 4,000 deleted ones: rows=10 vm_steps=16085 plan=SEARCH t_generation_last USING COVERING INDEX sqlite_autoindex_t_generation_last_2 (parent_id=?)
+    seek the live row at a path holding 10,000 deleted ones: rows=1 vm_steps=10 plan=SEARCH t_generation_last USING COVERING INDEX sqlite_autoindex_t_generation_last_1 (path=? AND name_generation=?)
+    seek the newest deleted row at that path: rows=1 vm_steps=21 plan=SEARCH t_generation_last USING COVERING INDEX t_generation_last_trashed_path (path=? AND deleted_at>?)
+    count the deleted rows at that path: rows=1 vm_steps=30020 plan=SEARCH t_generation_last USING COVERING INDEX t_generation_last_trashed_path (path=? AND deleted_at>?)
+    the newest deleted row at each of two named paths, one of them that path, by a term on the row: rows=2 vm_steps=170073 plan=SEARCH e USING COVERING INDEX t_generation_last_trashed_path (path=? AND deleted_at>?); CORRELATED SCALAR SUBQUERY 1; SEARCH n USING COVERING INDEX t_generation_last_trashed_path (path=? AND deleted_at>?)
+    a trash page: the newest deleted row at each of the first 100 paths beneath the directory: rows=100 vm_steps=2047 plan=SEARCH e USING COVERING INDEX t_generation_last_trashed_path (path>? AND path<?); CORRELATED SCALAR SUBQUERY 1; SEARCH n USING COVERING INDEX t_generation_last_trashed_path (path=? AND deleted_at>?)
+    the newest deleted row at each of 1,000 named paths, one of them that path, one seek for each target: rows=1000 found=1000 vm_steps=21018
+== Postgres 16.15
+ -- key shape live_only
+    list the 10 live children of a directory holding 4,000 deleted ones: rows=10 node=Index Only Scan index=t_live_only_live_children rows the node produced=10 removed by filter=0 buffers hit=3
+    seek the live row at a path holding 10,000 deleted ones: rows=1 node=Index Scan index=t_live_only_live_path rows the node produced=1 removed by filter=0 buffers hit=3
+    seek the newest deleted row at that path: rows=1 node=Index Scan index=t_live_only_trashed_path rows the node produced=1 removed by filter=0 buffers hit=3
+    count the deleted rows at that path: rows=1 node=Index Only Scan index=t_live_only_trashed_path rows the node produced=10000 removed by filter=0 buffers hit=71
+    the newest deleted row at each of two named paths, one of them that path, by a term on the row: rows=2 node=Index Scan index=t_live_only_trashed_path rows the node produced=2 removed by filter=0 buffers hit=30164
+    a trash page: the newest deleted row at each of the first 100 paths beneath the directory: rows=100 node=Bitmap Index Scan index=t_live_only_trashed_path rows the node produced=4000 removed by filter=0 buffers hit=16080
+    the newest deleted row at each of 1,000 named paths, one of them that path, one seek for each target: rows=1000 node=Values Scan buffers hit=4004
+ -- key shape generation
+    list the 10 live children of a directory holding 4,000 deleted ones: rows=10 node=Index Only Scan index=t_generation_parent_id_name_generation_name_key rows the node produced=10 removed by filter=0 buffers hit=7
+    seek the live row at a path holding 10,000 deleted ones: rows=1 node=Bitmap Index Scan index=t_generation_path_name_generation_key rows the node produced=1 removed by filter=0 buffers hit=3
+    seek the newest deleted row at that path: rows=1 node=Index Scan index=t_generation_trashed_path rows the node produced=1 removed by filter=0 buffers hit=3
+    count the deleted rows at that path: rows=1 node=Index Only Scan index=t_generation_trashed_path rows the node produced=10000 removed by filter=0 buffers hit=71
+    the newest deleted row at each of two named paths, one of them that path, by a term on the row: rows=2 node=Bitmap Index Scan index=t_generation_trashed_path rows the node produced=10001 removed by filter=0 buffers hit=30171
+    a trash page: the newest deleted row at each of the first 100 paths beneath the directory: rows=100 node=Bitmap Index Scan index=t_generation_trashed_path rows the node produced=4000 removed by filter=0 buffers hit=16084
+    the newest deleted row at each of 1,000 named paths, one of them that path, one seek for each target: rows=1000 node=Values Scan buffers hit=4004
+ -- key shape generation_last
+    list the 10 live children of a directory holding 4,000 deleted ones: rows=10 node=Index Only Scan index=t_generation_last_parent_id_name_name_generation_key rows the node produced=10 removed by filter=0 buffers hit=23
+    seek the live row at a path holding 10,000 deleted ones: rows=1 node=Bitmap Index Scan index=t_generation_last_path_name_generation_key rows the node produced=1 removed by filter=0 buffers hit=3
+    seek the newest deleted row at that path: rows=1 node=Index Scan index=t_generation_last_trashed_path rows the node produced=1 removed by filter=0 buffers hit=3
+    count the deleted rows at that path: rows=1 node=Index Only Scan index=t_generation_last_trashed_path rows the node produced=10000 removed by filter=0 buffers hit=71
+    the newest deleted row at each of two named paths, one of them that path, by a term on the row: rows=2 node=Bitmap Index Scan index=t_generation_last_trashed_path rows the node produced=10001 removed by filter=0 buffers hit=30171
+    a trash page: the newest deleted row at each of the first 100 paths beneath the directory: rows=100 node=Bitmap Index Scan index=t_generation_last_trashed_path rows the node produced=4000 removed by filter=0 buffers hit=16084
+    the newest deleted row at each of 1,000 named paths, one of them that path, one seek for each target: rows=1000 node=Values Scan buffers hit=4004
+
+######## p04_a_rewrite_by_path_prefix_beside_another_generation.py
+== move the live /d to /e, descendants by today's predicate: path LIKE '/d/%': 3 row(s) rewritten
+  afterwards
+    A: parent=D0 path=/e/a (deleted, set of D0)
+    B: parent=D2 path=/e/b (live)
+    C: parent=D2 path=/e/c (deleted, set of C)
+    D0: parent=root path=/d (deleted, set of D0)
+    D2: parent=root path=/e (live)
+    rows of a deleted set whose path is no longer beneath the set's root: 1
+== move the live /d to /e, descendants by the live side alone: path LIKE '/d/%' AND deleted = 0: 1 row(s) rewritten
+  afterwards
+    A: parent=D0 path=/d/a (deleted, set of D0)
+    B: parent=D2 path=/e/b (live)
+    C: parent=D2 path=/d/c (deleted, set of C)
+    D0: parent=root path=/d (deleted, set of D0)
+    D2: parent=root path=/e (live)
+    rows of a deleted set whose path is no longer beneath the set's root: 0
+
+######## p05_what_each_verb_issues_today.py
+== a file: create, delete, a write at the deleted path, delete, restore
+  write, a fresh name: statements=18 {'INSERT': 4, 'SELECT': 13, 'UPDATE': 1}
+  delete: statements=11 {'SELECT': 9, 'UPDATE': 2}
+  write at the deleted path (the revive): statements=17 {'DELETE': 2, 'INSERT': 3, 'SELECT': 10, 'UPDATE': 2}
+  delete again: statements=13 {'SELECT': 11, 'UPDATE': 2}
+  stat of the deleted path, a miss with the hint: statements=3 {'SELECT': 3}
+  restore: statements=11 {'SELECT': 8, 'UPDATE': 3}
+  stat of a path that holds nothing: statements=3 {'SELECT': 3}
+== a directory: mkdir at a fresh name
+  mkdir: statements=15 {'INSERT': 3, 'SELECT': 11, 'UPDATE': 1}
+== a move of a directory holding 100 live files and 0 deleted ones
+  move: statements=19 {'SELECT': 13, 'UPDATE': 6}
+  entry rows whose path changed: 101 live, 0 deleted; posting rows removed and added: 100 and 100
+== a move of a directory holding 100 live files and 100 deleted ones
+  move: statements=19 {'SELECT': 13, 'UPDATE': 6}
+  entry rows whose path changed: 101 live, 100 deleted; posting rows removed and added: 200 and 200
+== a move of a directory holding 100 live files and 1000 deleted ones
+  move: statements=19 {'SELECT': 13, 'UPDATE': 6}
+  entry rows whose path changed: 101 live, 1000 deleted; posting rows removed and added: 1100 and 1100
