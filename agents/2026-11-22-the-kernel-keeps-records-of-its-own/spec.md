@@ -406,7 +406,7 @@ Reason: a short outage should cost no row, as it cost none in the study (`resear
 async def drain(self, scope: Hashable | None = None) -> None
 ```
 
-It returns when every row put behind before the call, under that scope, has been written or dropped. With no scope it waits for every row. When nothing of the scope is waiting it returns at once and sends nothing. When the flush that carries one of those rows fails, it raises `KernelStoreUnavailable`. A caller that is cancelled while it waits loses no row: the flush goes on.
+It returns when every row put behind before the call, under that scope, has been written or dropped. With no scope it waits for every row. When nothing of the scope is waiting it returns at once and sends nothing. When the flush that carries one of those rows fails, it raises `KernelStoreUnavailable`. So it does when a flush held for a retry stands ahead of those rows in the buffer: rows go to a flush from the head, and the task tries again only at the next put, drain, sweep chunk or `close` (decision 15), so nothing else would carry them. This was ruled on 2026-11-24, in the fourth landing's code review, where a drain behind a failed first batch of 1,024 rows was seen never to end. A caller that is cancelled while it waits loses no row: the flush goes on.
 
 A change that must read what its own session wrote behind calls `drain` with the session's scope first, or reads those rows where they wait with decision 24's `waiting_behind`. Either is allowed to a change. A read does neither.
 
