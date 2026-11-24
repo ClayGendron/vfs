@@ -46,9 +46,9 @@ The verb that removes for good is `destroy`. It acts only on rows that are alrea
 - **Member.** A row of a deleted set that is not its root.
 - **Generation.** The new column `name_generation`. It is 0 on a live row and the row's own `id` on a deleted row.
 - **Newest.** Of the deleted rows at one path, the one with the latest `deleted_at`. A tie goes to the higher `name_generation`.
-- **Reached.** The deleted row at a path that a verb acts on for a caller: the newest, where the caller is admitted to it at the verb's rung, and otherwise the newest the caller owns. Decision 7.
+- **Reached.** The deleted row that a verb acts on for a caller who names a row's own path: the newest there, where the caller is admitted to it at the verb's rung, and otherwise the newest the caller owns. Decision 7. A trash path names the newest and no other.
 - **Trash path.** `/.vfs/trash` followed by a row's own path: the address the trash view serves a deleted row at.
-- **Trash view.** The read-only view under `/.vfs/trash`, which shows deleted rows at their own paths.
+- **Trash view.** The read-only view under `/.vfs/trash`, which shows each deleted row at its trash path.
 - **Hint.** The `vfs.trashed` and `vfs.deleted_at` keys on a `not_found`, which tell a caller that a deleted row lies at the path.
 - **Floor.** The generic dialect profile, served to every dialect other than SQLite and Postgres.
 - **Snapshot.** The read a mutation takes of its targets before it decides anything.
@@ -230,10 +230,11 @@ SELECT e.* FROM targets JOIN vfs_entries e ON e.id = (
 
 - It is chunked by the parameter budget, one bind a target, through `chunked()`.
 - **The row a caller reaches is found in at most two steps, each a seek for each target.** The first is the statement above: the newest deleted row at each target. The storage judges that row for the caller at the rung of the verb that asks: restore's rung, with the owner's floor, for `restore`; `read` or `list` for a read through the trash view; `list` for a hint. Rows at one path share the path's grants and posture, so a caller who is refused the newest is admitted to no row there but its own. For those targets alone, and for a named caller alone, a second statement of the same spelling adds `n.owner_id = :caller` to the inner select and reads the last entry of `ix_vfs_entries_trashed_owner_path`. The row it finds is judged at the same rung. A caller is then never handed a deleted row it may not act on, and another caller's newer deleted row never stands between a caller and its own.
+- **The second step is taken only for a row's own path.** A caller who names `/p` asks for what it may act on at `/p`. A caller who names the trash path `/.vfs/trash/p`, typed or handed back from a listing, names the row the trash view shows there, which is the newest, and is answered on that row alone.
 - The snapshots of `write`, `delete`, `move`, `copy` and `mkdir` read the live side only. `point_row` takes the same argument.
 - **Three statements that do not pass through `rows_by_path` gain the live term in the statement.** The probe of the row that beat a create (`writes.py:694-697`), which today would find a live rival and every deleted row at the name and raise at `.one_or_none()`. An append's row lock (`writes.py:355`), which would lock every deleted row at the path. An edge's endpoint lookup (`edges.py:371-380`), which filters in Python.
 - **A lint holds the rest.** `tests/lint/` lists, by module and count, the statements of the database backend outside `descent.py` that test `path`, or `parent_id` with `name`, for equality or membership. Each listed site carries its side. A site that is not listed fails the lint.
-- A refusal that finds no live row asks the deleted side for the row the caller reaches at the path it blames, at the `list` rung. Where there is one, the `not_found` carries the hint, with that row's `deleted_at`. This is one more statement, issued only on a refusal, and a second only where the first row is refused.
+- A refusal that finds no live row asks the deleted side for the row the caller reaches at the path it blames, which is a row's own path, at the `list` rung. Where there is one, the `not_found` carries the hint, with that row's `deleted_at`. This is one more statement, issued only on a refusal, and a second only where the first row is refused.
 
 Measured, `p06`, the whole statement with the row fetched, on a table of 1,050,000 rows of which 10,000 are deleted at one target's path:
 
@@ -259,12 +260,14 @@ Reason: today's rewrite names its rows by path prefix, which is sound only while
 
 ### 9. `restore` puts the newest deleted root at a path back at that path
 
-`restore` takes a deleted row's own path, as today, or its trash path, as the trash view reports it by decision 17. The two name one row.
+`restore` takes a deleted row's own path, as today, or its trash path, as the trash view reports it by decision 17. The own path names the row the caller reaches, by decision 7. The trash path names the newest deleted row there, the one the view shows, and no other.
+
+The kernel judges either spelling as the row's stored path. For `restore` and `destroy`, a path beneath a trash head is read by `address_of` (`src/vfs/paths.py:855-858`) before the gate, and the `busy` guard and the permission maps are asked about the stored path, in the single route and in the route of handed rows. `_reaches_beneath` already judges both at that path alone (`src/vfs/base.py:3079-3090`). A `read` rule over a region then refuses a restore into it, and a destroy of what was deleted in it, under any spelling.
 
 The ladder, for each target, in this order:
 
 1. A live row at the path is `exists`, with the occupant's version and hash as `occupant_exists` gives them. This is so whatever lies deleted there.
-2. No deleted row at the path that the caller reaches, by decision 7 at restore's rung, is `not_found`, through the descent ladder.
+2. No deleted row that the caller reaches, by decision 7 at restore's rung, is answered by what the caller may see: `permission_denied` at the path where the caller may list the newest deleted row there, as today, and `not_found` through the descent ladder where it may not.
 3. The row reached is a member: `not_found` naming its root, as today.
 4. The ancestors are judged by the descent ladder, leftmost first: a component that holds no live row is `not_found` there, with the hint where a deleted row lies there, and a component that holds a live file is `wrong_kind` there. `restore` makes no directory.
 5. The root is a directory and a live row stands beneath its path: `exists` at the first such path. The probe is `_least_inside` over the roots' descendant ranges with `live=True`, chunked by `arm_budget`, so no statement's arms pass the engine's expression depth (`authorized.py:409-425`). Only a row left behind by the window of the 2026-11-14 memo can be there.
@@ -274,12 +277,12 @@ Then the claim, guarded on the root's version as today, assigns `deleted_at`, `t
 - **The parent is the directory now at the parent path.** Where its entry id differs from the root's stored `parent_id`, the root is re-pointed. Its `parent_id` is set in one statement for a chunk of such roots. Its fs mirror edge is written whether or not one stands, since the stored parent may have been destroyed: one delete of the chunk's fs in-edges and one insert. In the common case no root is re-pointed and no statement is issued.
 - **A rival that takes the name inside the window** makes the claim violate the key. The violation is caught under a savepoint and raised as `StaleSnapshot`, as a move's claim does (`topology.py:339-345`). The verb runs again, and the answer is `exists`.
 - **An older deleted row at the path** is reached by restoring the newest and moving it aside. Each restore brings back the newest that remains.
-- **Another caller's newer deleted row does not stand in the way.** In a directory where callers hold `add` and nothing more, a caller is refused the newest row when another caller deleted at the path last, and decision 7's second step reaches its own. Each caller restores its own deleted file, whoever deleted there last.
+- **Another caller's newer deleted row does not stand in the way.** In a directory where callers hold `add` and nothing more, a caller is refused the newest row when another caller deleted at the path last, and decision 7's second step reaches its own. Each caller restores its own deleted file by its own path, whoever deleted there last. The same caller's `restore` of the trash path names the other caller's row, and is `permission_denied`.
 - **When `restore` takes `if_vid`,** by decision 17 of the vid spec, the vid selects: the root at the path whose vid it is, is restored, newest or not. No root with that vid is `conflict`.
 
 A file restore is 12 statements where it is 11: the two sides are read apart.
 
-Reason: the path is how a caller names a file, and the trash view shows deleted rows at their paths. Refusing an occupied path is what Azure and JuiceFS do, and with decision 4 the remedy is real: move or delete the occupant. The re-pointing follows from decision 8.
+Reason: the path is how a caller names a file, and the trash view shows a deleted row at its trash path, which `restore` takes. Refusing an occupied path is what Azure and JuiceFS do, and with decision 4 the remedy is real: move or delete the occupant. The re-pointing follows from decision 8.
 
 ### 10. The trash view shows the newest deleted row at each path
 
@@ -291,15 +294,15 @@ e.id = (SELECT n.id FROM vfs_entries n WHERE n.path = e.path AND n.deleted_at IS
 ```
 
 - The term carries no rights. The view's own row term stays on the outer row, as today, so the inner select reads the index's last entry for the path whoever asks.
-- A point read at `/.vfs/trash/<path>` uses decision 7's lookup at the read's rung, and so returns the row the caller reaches.
-- A listing and a point read can therefore differ at one path, in one case: the newest row there is another caller's, and the caller owns an older one. Where the caller may list the newest, the listing shows that row, and a point read by a caller who may not read it returns the caller's own. Where the caller may not list the newest, the listing shows nothing at the path, and the caller's own row is still read and restored at its trash path.
+- A point read at `/.vfs/trash/<path>` uses the first step of decision 7's lookup and no second: it is the newest row, judged at the read's rung. A listing and a point read therefore agree. A trash path names one row for every caller, and a caller who may not see it is answered as at a path that holds nothing.
+- A caller's own older deleted row beneath another caller's newer one is in no listing and at no trash path. It is restored by its own path, by decisions 7 and 9, and is then read as any live file.
 - A listing beneath `/.vfs/trash/<directory>` names its rows by path, one level down, and not by `parent_id`, which decision 8 makes a record.
 - A listing resumes by path, as every listing does, and no path repeats.
 - An older deleted row at a path is not listed while a newer one lies over it. It is listed when the newer one is restored or destroyed.
 
 Measured, `p03`: a page of 100 paths with one deleted row each reads 2,047 steps on SQLite. The cost of a trash listing is the deleted rows in its range, and not the rows it returns. The two differ only at a path deleted many times: 10,000 deleted rows at one path cost 10,000 seeks to show one row.
 
-Reason: a listing's resumption key is a path, by decision 5 of the kernel rulings, so a listing cannot repeat one. The row listed is the row a `restore` at that path brings back for every caller who may restore it. A rights term inside the newest select would make the listing read every deleted row at a path for a caller who owns none of them, so the listing keeps to the newest and the lookup of decision 7 serves the caller's own. The profile at a path deleted many times is stated and not capped. The direction, if it shows in a profile, is a stored mark on the newest deleted row at a path, kept by `delete`, `restore` and `destroy`.
+Reason: a listing's resumption key is a path, by decision 5 of the kernel rulings, so a listing cannot repeat one. The row listed is the row a `restore` at that path brings back for every caller who may restore it. A rights term inside the newest select would make the listing read every deleted row at a path for a caller who owns none of them, so the view keeps to the newest and the second step of decision 7 serves the caller's own, by its own path. The profile at a path deleted many times is stated and not capped. The direction, if it shows in a profile, is a stored mark on the newest deleted row at a path, kept by `delete`, `restore` and `destroy`.
 
 ### 11. The verb that removes for good is `destroy`, and `sweep` leaves
 
@@ -320,7 +323,7 @@ Reason: the kernel rulings' decision 3. `delete`, `restore` and `destroy` read a
 - **The set is the rows that share the root's id.** A deleted row beneath the root's path that belongs to another set is left. Such a row keeps a `parent_id` that names no row, and its fs mirror edge goes with the destroyed parent. Decision 8 says what the edge rebuild makes of it, and decision 9 what a restore does.
 - **Each row a `destroy` returns has status `destroyed`,** which joins the literal on `Observation` (`src/vfs/models/entry.py:274`, `:476`). It carries its trash path and its `deleted_at`.
 - **No parent is bumped.** A deleted row is in no live listing, and its `parent_id` is a record.
-- `destroy` and `restore` are the two verbs that may name a path beneath the trash view's head. `check_reserved_path` admits it for them and refuses it for every other mutation, as today (`src/vfs/paths.py:877-889`).
+- `destroy` and `restore` are the two verbs that may name a path beneath the trash view's head. `check_reserved_path` admits it for them and refuses it for every other mutation, as today (`src/vfs/paths.py:877-889`). The kernel gates the call at `<path>`, as decision 9 says.
 
 A caller that means to remove a live file for good calls `delete` and then `destroy` at its trash path.
 
@@ -361,7 +364,7 @@ Reason: the memo left this figure to be set, and "Cost" below rests on it. A fig
 
 ### 16. Three landings, in this order
 
-1. **The key.** Decisions 2, 3 and 15: the column, the two constraints, the check, the index, the profile field, the stamp and its clearing by the delete, the restore and the write that revives, the conflict target, format 29. No verb changes its answer, and no verb issues another statement.
+1. **The key.** Decisions 2, 3 and 15: the column, the two constraints, the check, the two indexes of the deleted side, the profile field, the stamp and its clearing by the delete, the restore and the write that revives, the conflict target, format 29. No verb changes its answer, and no verb issues another statement.
 2. **The name is free.** Decisions 1, 4 to 10 and 17: the creates, the revive's removal, the rights rule, the sides, the move, the restore, the trash view and the trash path its rows report. They land together because each is unsound without the others once two rows can share a path. Until the third landing `sweep` keeps both arms and its addresses; its arm at a path reads the live side, then the newest deleted row, and purges by path as today.
 3. **`destroy`.** Decisions 11 to 13, and the edge rebuild's rule of decision 8, whose state only a destroy at a path makes.
 
@@ -481,14 +484,15 @@ No test of an answer changes in this landing. The 100% coverage gate and the unc
 - `test_a_live_listing_and_a_trash_listing_of_one_stored_path_never_pair`: a stored path that is both live and deleted; `live | trash` holds 2 rows, `live - trash` holds 1, and `live & trash` holds 0.
 - `test_a_listing_less_a_deletes_rows_is_what_remains`: a listing of 3 files, less the rows of a delete of 1, holds 2 rows, as on `dev`.
 - `test_restore_takes_either_spelling`: 2 files deleted; one restored by its own path and one by its trash path; 2 live rows.
-- `tests/base/test_dispatch.py`, `test_a_trash_listing_handed_back_reaches_the_deleted_rows`: a trash listing of 3 rows, one of whose stored paths now holds a live file, handed as `observations=`: `read` returns the 3 deleted bodies and not the live file's; `edit` and `delete` answer 3 `invalid` each and leave the live file at its version; `restore` restores 2 and answers 1 `exists`.
+- `tests/base/test_dispatch.py`, `test_a_trash_listing_handed_back_reaches_the_deleted_rows`: a trash listing of 3 rows, one of whose stored paths now holds a live file, handed as `observations=`: `read` returns the 3 deleted bodies and not the live file's; `edit` and `delete` are each refused whole with 1 `invalid` and leave the live file at its version; `restore` answers 1 `exists` and restores 0, and with the live file moved aside it restores 3.
+- `tests/base/test_gates.py`, `test_a_trash_path_is_gated_as_the_stored_path`: under `read_write(read=["/ro"])`, `restore` of `/ro/f.txt` and of `/.vfs/trash/ro/f.txt` are each `read_only` with 0 calls to the storage; a `read` of `/.vfs/trash/ro/f.txt` returns the body. In the third landing the test gains `destroy` of `/.vfs/trash/ro/f.txt`, `read_only` with 0 calls.
 - `tests/support/cursor_contract.py`, `test_a_trash_listing_resumes_by_path_and_repeats_none`: 5 paths with 3 deleted rows each, pages of 2: 5 rows over 3 pages, 0 repeated, and each `next_after` is a trash path.
 
 `tests/support/grants_contract.py`:
 
 - `test_a_create_at_a_deleted_name_is_judged_as_a_create`: a caller at `add` writes where another's deleted row lies and is answered `created`; the new row's owner is that caller; the first owner, with every grant of theirs removed and the posture closed, is refused a read of the path.
 - `test_the_hint_is_given_only_for_a_deleted_row_the_caller_may_see`: 2 callers, 1 hint.
-- `test_each_caller_restores_its_own_deleted_file_at_a_shared_path`: a directory at `add` under a root at `none`; a first caller writes and deletes a file, a second writes and deletes one at the same path. Each caller's trash listing shows 1 row at the path, the second caller's, which is the newest and which both may list. The first caller's `restore` returns 1 row whose body is the first caller's. The second caller's `restore` is then `exists`, and after a `move` of the restored file aside it returns 1 row whose body is the second caller's.
+- `test_each_caller_restores_its_own_deleted_file_at_a_shared_path`: a directory at `add` under a root at `none`; a first caller writes and deletes a file, a second writes and deletes one at the same path. Each caller's trash listing shows 1 row at the path, the second caller's, which is the newest and which both may list. The first caller's `restore` of the row's own path returns 1 row whose body is the first caller's. Before it, the first caller's `restore(observations=[the listed row])`, which names the trash path, is 1 `permission_denied` and restores 0. A third caller, who owns no deleted file at the path, is `permission_denied` by either spelling. The second caller's `restore` is then `exists`, and after a `move` of the restored file aside it returns 1 row whose body is the second caller's.
 
 `tests/storage/database/`:
 
@@ -510,7 +514,7 @@ No test of an answer changes in this landing. The 100% coverage gate and the unc
 - `test_destroy_takes_no_address_of_a_live_row`, parametrized over 5 addresses: a live file, a live directory holding 2 files, the own path of a deleted file, the own path of a live file above 1 deleted row, and the root. Each is `invalid`, and the counts of live rows and of deleted rows are the same before and after each. It replaces `test_sweep_purges_an_arbitrary_directory_wholesale` and `test_sweep_purges_a_single_file`.
 - `test_destroy_beneath_a_live_file_leaves_the_live_file`: a live file above 1 deleted row at its stored path; a `destroy` of the trash path returns 1 row with status `destroyed`; 1 live row, 0 deleted.
 - `test_destroy_at_a_trash_path_removes_the_newest_deleted_root_and_its_set`: a deleted directory of 3 files; 4 rows returned, each `destroyed` and each at its trash path; 0 rows of the set remain in any family table; a deleted row of another set beneath the path remains. With 2 deleted roots at the path, the trash view then shows the older one.
-- `test_an_edge_rebuild_after_a_destroy_reports_no_drift`: a file deleted, its directory deleted and destroyed at its path; 2 rebuilds give 0 warnings and 0 edges whose source is no entry.
+- `test_an_edge_rebuild_after_a_destroy_reports_no_drift`: a file deleted, its directory deleted and destroyed at its trash path; 2 rebuilds give 0 warnings and 0 edges whose source is no entry.
 - `test_restore_after_the_parent_row_was_destroyed`: in the same state the directory is made again and the file restored; `ls` of the directory returns 1 row, and 1 fs mirror edge runs to the file.
 - `test_destroy_inside_a_deleted_tree_names_its_root`: 1 `not_found` with `vfs.trash_root`.
 - `test_destroy_bumps_no_parent`: the parent directory's version is the same before and after.
@@ -531,13 +535,13 @@ No test of an answer changes in this landing. The 100% coverage gate and the unc
 
 In:
 
-- `src/vfs/models/rows.py`: the column, the constraints, the index, format 29. `src/vfs/models/entry.py`: the status `destroyed`. `src/vfs/paths.py`: `check_reserved_path` admits `restore` and `destroy` beneath the trash view's head.
+- `src/vfs/models/rows.py`: the column, the constraints, the two indexes of the deleted side, format 29. `src/vfs/models/entry.py`: the status `destroyed`. `src/vfs/paths.py`: `check_reserved_path` admits `restore` and `destroy` beneath the trash view's head. `src/vfs/base.py`: those two verbs are gated at the stored path, by decision 9.
 - `src/vfs/storage/backends/database/`: `descent.py` (the side on `rows_by_path` and `classify_misses`, the driven lookup, the newest term in `liveness_filters`), `serialized.py` (`fetch_snapshot`, `point_row`, `dest_parent_id`, `final_rows`), `staging.py` and `writes.py` (the revive's removal, the conflict target, the clobber columns, the live term on the occupant probe and on an append's lock), `authorized.py` (the restore rung on a revive), `topology.py` (the destination check, the live rewrite, the live copy), `trash.py` (the stamp, the restore ladder, `destroy_rows`), `edges.py` (the mirror edge of a chunk of re-pointed roots, the endpoint lookup's live term, the rebuild's rule for a parent that is gone), `dialects.py` (`target_seek`), `reads.py`, `listings.py`, `keyset.py`, `grep.py`, `scope.py`, `search.py`, `traverse.py` and `rights.py` (each lookup names its side; the trash view's children by path; the trash path on every row of the view), `backend.py` (the verb).
 - Wherever the verb is named, `destroy` in `sweep`'s place: `src/vfs/storage/protocol.py`, `src/vfs/ops.py`, `src/vfs/params.py`, `src/vfs/permissions.py`, `src/vfs/paths.py`, `src/vfs/results/render.py`, `src/vfs/base.py`, `src/vfs/session.py`, `src/vfs/sync.py` and `src/vfs/sync_session.py`. The word stays where it names the index's own cleanup of an old epoch, in `indexing.py`, `signals.py`, `lexical.py` and `maintenance.py`.
 - The tests above, and the tests they replace.
 - The docs below, and the row of decision 15 in `AGENTS.md`.
 - `tests/lint/test_code_shape.py` and `tests/lint/allowlist.py`: the lint of decision 7 and its list.
-- The size gate. `MODULE_LINE_BASELINE` holds each module over 1,000 lines at its count (`tests/lint/allowlist.py:26-33`). `writes.py` and `staging.py` shrink with the revive. `rights.py`, `reads.py` and `backend.py` are over the ceiling: each gains an argument at call sites it already has, and no function. `base.py` changes a name and a docstring. Code a decision adds goes to `descent.py`, `trash.py` and `edges.py`, which are under the ceiling, and no baseline is raised by this spec. A baseline that falls is set to the count the build reaches.
+- The size gate. `MODULE_LINE_BASELINE` holds each module over 1,000 lines at its count (`tests/lint/allowlist.py:26-33`). `writes.py` and `staging.py` shrink with the revive. `rights.py`, `reads.py` and `backend.py` are over the ceiling: each gains an argument at call sites it already has, and no function. `base.py` changes a name and a docstring, and gains the stored path at the gate for `restore` and `destroy`; the lines it gains are taken from the docstring of the verb it renames, or its baseline is set to the count the build reaches and the pull request says so. Code a decision adds goes to `descent.py`, `trash.py` and `edges.py`, which are under the ceiling, and no other baseline is raised by this spec. A baseline that falls is set to the count the build reaches.
 
 Out: everything under "Left as it is"; the `replace=` argument, which is story F4's; `crates/`; a migration of a database at format 28.
 
@@ -560,7 +564,7 @@ Pages, each changed: the docstrings of `write`, `mkdir`, `move`, `copy`, `delete
 - Numbered spec 162, `context/specifications/active/162-trash-as-a-tombstone-on-the-row/`, built: its rule 5, "Revive on write, same kind only", goes. Its line that one row per path keeps the unique index plain on every engine is met another way, by decision 2. Its landing note that a transfer onto a deleted occupant is `exists` goes. Its rules 1, 2 and 4 stand, with "the newest" where they say "the". Its rule 7, the trash view, stands but for the path a row reports, which is its trash path by decision 17, and for restore's address, which is either spelling by decision 9.
 - `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, landed: in decision 4's table, the row for a deleted file reads "create, `not_found`, create, create"; "a precondition never revives" stands as "a precondition never creates". Decision 5's sentence that a revive is never `unchanged` has nothing left to speak of. Decision 7's sentence that `if_absent=True` revives a deleted row, judged as a restore, is replaced by decisions 5 and 6 here.
 - `agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md`, fit to build: in its table of departures from Plan 9 and Unix, the two rows that end "when the trash design changes" end here. A name removed and made again is another file, and a removed file occupies nothing. Decision 11's premise, that a deleted row at a destination is `exists`, changes; its conclusion stands, because a destination is still never replaced without `replace=`. Decision 17 gains the selection of decision 9 here. Decision 18's sentences that a deleted row at a marked path is revived, and that a deleted directory there is `wrong_kind`, become "a new row is made". Under "Left as it is", `sweep` reads `destroy`.
-- `agents/2026-11-22-a-rewind-puts-a-sessions-files-back/spec.md`, a draft: decision 8, the holding name, is not needed, since a deleted row holds no path. The kind `revived` of decision 2 and its undo row in decision 6 go, since a write at a deleted path is `made`. The methods of decision 5 read "the row at `path` on either side": they name the side, and on the deleted side they pick by vid among the rows at the path.
+- `agents/2026-11-22-a-rewind-puts-a-sessions-files-back/spec.md`, a draft: decision 8, the holding name, is not needed, since a deleted row holds no path, and where it says the trash shows a row at its own path, it is its trash path. The kind `revived` of decision 2 and its undo row in decision 6 go, since a write at a deleted path is `made`. The methods of decision 5 read "the row at `path` on either side": they name the side, and on the deleted side they pick by vid among the rows at the path.
 - `agents/2026-11-22-the-session-remembers-what-it-read/spec.md`, decision 9: `sweep` reads `destroy` in its table. `agents/2026-11-22-an-interrupted-line-replays-its-replies/spec.md`, decision 7: where it says a deleted file is still at its path, it is, as a record that holds no name.
 - The write-preconditions spec, decision 9: "A tombstoned target is still judged as a restore" goes, and an `add` holder's append at a path that holds another's deleted row is `created`.
 - The vid spec: the row "`delete`, `sweep`" reads "`delete`, `destroy`", and the contract call "a `sweep` of a subtree" reads "a `destroy` of a deleted directory".
@@ -597,7 +601,7 @@ Each is decided above, and the decision stands until it is ruled on.
 7. **5,000 deletes a day** (decision 15). It is an assumption. Another figure moves the last paragraph of "Cost" and nothing else.
 8. **No migration from format 28** (decision 2). Nothing is released, so a database is provisioned again.
 9. **A trash-view row reports its trash path** (decision 17). The other choice keeps the row's own path, as today. It then pairs rows by path and side, which changes what a listing less a delete's rows gives, and it checks every handed row in the kernel.
-10. **A caller refused the newest deleted row at a path reaches its own** (decisions 7, 9 and 10), at the price of a second partial index on the deleted side. The other choice judges the newest row alone, and a caller's own deleted file then waits on another caller's newer one.
+10. **A caller refused the newest deleted row at a path reaches its own, by the row's own path and not by its trash path** (decisions 7, 9 and 10), at the price of a second partial index on the deleted side. The other choice judges the newest row alone, and a caller's own deleted file then waits on another caller's newer one.
 
 ## Needs no other spec meets yet
 
