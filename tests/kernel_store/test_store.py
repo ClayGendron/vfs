@@ -891,6 +891,26 @@ async def test_record_after_returns_a_warning_when_the_store_cannot_be_written(
     assert await store.record_after(lambda transaction: transaction.execute(select(text("1")))) is None
 
 
+async def test_record_after_behind_a_held_writer_returns_its_warning_after_four_tries(tmp_path: pathlib.Path) -> None:
+    """Guards a record behind a held writer that raises, tries more or fewer times than a commit, or says retry."""
+    path = tmp_path / "knowledge.db"
+    store = KernelStore(RecordPlace(url=f"sqlite+aiosqlite:///{path}", label=str(path)))
+    table = await probe_table(store)
+    without_waiting(store)
+    holder = HeldWriter(path)
+    holder.hold()
+    sent = statements_of(store)
+    try:
+        warning = await store.record_after(inserting(table, probe_rows(1), store))
+    finally:
+        holder.release()
+    assert warning is not None
+    assert (warning.kind, warning.severity, warning.retryable) == (ErrorKind.unavailable, Severity.warning, False)
+    assert "kernel store kept losing to concurrent changes" in warning.message
+    assert (begins(sent), await count_rows(store, table)) == (["BEGIN IMMEDIATE"] * 4, 0)
+    await store.close()
+
+
 async def test_a_failed_first_touch_is_tried_again(tmp_path: pathlib.Path) -> None:
     """Guards a first touch whose failure is remembered: the store would refuse every call after a passing hold."""
     path = tmp_path / "knowledge.db"
