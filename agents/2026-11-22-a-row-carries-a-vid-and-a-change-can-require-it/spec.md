@@ -144,7 +144,7 @@ A vid is compared for equality and nothing else. No code takes one apart, and no
 | A digest in two halves, one of the entry and one of the entry at its version | Rejected. Its one use is to compare the entry alone, which decision 10 does not need, and it costs every row a second hash. |
 | The version and the body's hash, the pair the shell's host keeps | Rejected. It tells two files apart only while their bodies differ. Another file with the same body at the same version passes, and a delete or a move of it then changes a file the caller never saw. A directory has no hash at all. |
 | A digest in base64url, 16 characters | Rejected. 318 of 20,000 minted ones began with `-`, which reads as an option on a command line, and the alphabet is case-sensitive. Hex costs 4 more characters and is the faster to make. |
-| One keyed digest in hex, 20 characters | Chosen. |
+| One keyed digest in hex, 20 characters | Chosen. One value in about 4,300 is all digits, or digits around one `e`, and a reader that guesses types takes it for a number (`probes/p09_how_often_an_etag_reads_as_a_number.py`: 101 of 400,000). JSON keeps it text. The gate's refusal names the type it was handed, and the reference page says a vid is always text. |
 
 Reason for the digest: it keeps the vid opaque by construction, so its form can change without breaking a caller. Reason for the key: a vid of one mount equals a vid of another only when two digests collide, which is one chance in 2^80 for each comparison, so a vid cannot be mistaken for another mount's. Reason for 80 bits: a vid is compared against one row, never searched for, and it grants nothing, so nobody gains by forging one.
 
@@ -186,7 +186,7 @@ A row in the trash view carries the vid of the tombstone. A mount's root, shown 
 
 `observations=` never implies a precondition. A row handed back to `edit`, `delete`, `read` or any other verb is used for its path, and its vid is ignored. A caller that wants each row required says so: `if_vids={row.path: row.vid for row in rows}`.
 
-A merge of two rows of one path, by `Result.merge` or by `&`, `|` and `-`, keeps a vid both rows agree on and nulls one they disagree on, as it does a version. When it nulls the version it nulls the vid.
+A merge of two rows of one path, by `Result.merge` or by `&`, `|` and `-`, keeps a vid both rows agree on and nulls one they disagree on, as it does a version. When it nulls the version it nulls the vid. When two rows disagree on the vid the version is nulled with it, whether or not the two versions are equal: two rows of one path at one version with two vids are two entries, and the version names neither.
 
 The default text projections stay as they are. They show no version today and show no vid. A caller names `vid` in a projection to see it in text.
 
@@ -307,6 +307,7 @@ What a `write` answers, by what is at the path when the snapshot is read:
 | live file whose vid is `E`, new body | updated to the next version |
 | live file whose vid is not `E`, new body | `conflict` |
 | live directory | `conflict`. With no vid required it is `wrong_kind`, as today. |
+| tombstoned directory | `not_found` with the trashed hint. With no vid required it is `wrong_kind` with the hint, as today. |
 
 A live row whose vid is not the one required is `conflict` whatever its kind. This is round two's change: spec 3, decision 11 (A directory is held to its vid, and a session's own change carries that vid forward) reads a file's vid met by a directory as a file that changed, and `wrong_kind` would tell a caller that required a file nothing about what became of it.
 
@@ -315,7 +316,7 @@ A live row whose vid is not the one required is `conflict` whatever its kind. Th
 A rival inside the window:
 
 - **SQLite.** A writer holds the database's one writer lock from before its snapshot, so no rival commits inside the window. The in-memory storage has one connection, and calls on it queue.
-- **Postgres, `write` and `edit`.** The call runs at REPEATABLE READ. A rival's commit inside the window ends the guarded `UPDATE` with a serialization failure or with no row matched. The first runs the call again from a new snapshot, where the vid no longer matches. The second is probed and refused. Either way the answer is `conflict`, unless the rival wrote the very body the call carries, which is `unchanged`.
+- **Postgres, `write` and `edit`.** The call runs at REPEATABLE READ. A rival's commit inside the window ends the guarded `UPDATE` with a serialization failure, and the call runs again from a new snapshot. The answer is the one that snapshot gives: `conflict` where the row is still at the path with another vid, `not_found` where the rival moved or deleted it, and `unchanged` where the rival wrote the very body the call carries. Run on Postgres 19.0 on 2026-11-23 (`probes/p03_a_rival_inside_the_window.py`, `probes/p04_the_quoted_statements_at_each_isolation_level.py`). A guard that matches no row is the road of an engine that does not run a write at REPEATABLE READ. No supported engine takes it, and the probe that answers it is kept for the generic floor.
 - **Postgres, `delete` and `move`.** The call runs at READ COMMITTED behind the serialization point. A rival's write inside the window moves the version, the claim matches no row, and the verb runs again from a new snapshot, where the vid no longer matches.
 - **An append.** A rival appender waits on the row lock. When it gets the lock it reads the new version, and with `if_vid` it is refused `conflict` and does not run again.
 
@@ -323,7 +324,7 @@ Two calls that require one vid of one file: one lands and moves the version, and
 
 Two processes mint the same vid for one row, since every input is a stored value.
 
-A crash between two statements leaves nothing: the snapshot, the comparison and the mutation are one transaction. A call cancelled before its commit changed nothing, and one cancelled after it landed whole. The caller cannot tell which, so it sends the call again with the same vid: a `write` that landed answers `unchanged`, an `edit` that landed answers `conflict`, and a `delete` or a `move` that landed answers `not_found`.
+A crash between two statements leaves nothing: the snapshot, the comparison and the mutation are one transaction. A call cancelled before its commit changed nothing, and one cancelled after it landed whole. The caller cannot tell which, so it sends the call again with the same vid: a `write` that landed answers `unchanged`, an `edit` that landed answers `conflict`, a `delete` or a `move` that landed answers `not_found`, and a `restore` that landed answers `exists`.
 
 In a batch, a key is judged against the state before the call. A `write` that names one path twice judges its key once. A `move` reads each pair's source live, so a key on a source that an earlier pair of the same call moved into place never matches.
 
@@ -334,7 +335,7 @@ Reason: the comparison belongs where the row is already in hand, and the proof b
 One rule serves every kind of row on every verb. For a directory:
 
 - A cascading delete, and a move, with `if_vid` require the directory to be the same entry with the same direct children it had when it was read: a child made in it, deleted from it, moved into or out of it, or renamed in it since refuses the call. A change deeper down, and a change of a child's body, do not move the directory's version and are not seen.
-- A delete without cascade requires the same. A caller that emptied the directory itself moved its version by doing so, and passes no `if_vid`: `not_empty` is the guard an empty directory needs.
+- A delete without cascade requires the same. A caller that emptied the directory itself moved its version by doing so, and passes no `if_vid`: `not_empty` is the guard an empty directory needs. A caller that names the children and the directory in one call may require the directory's vid: the key is judged against the state before the call.
 - `write` and `edit` refuse a directory `wrong_kind`, as today.
 
 The merged spec compared the entry alone on a delete without cascade.
@@ -353,9 +354,9 @@ Reason: a precondition protects what a call would replace. A move replaces nothi
 |---|---|---|---|
 | The vid required is not the vid of the live row, at the snapshot | `conflict` | `{"version": v, "vid": e}` of the row at the path | no |
 | The same, found by a call that ran again after a rival | `conflict` | the same | no |
-| A write with a required vid lost its guard, and the row probed is still at the path | `conflict` | `{"version": v, "vid": e}` of that row | no |
-| The same, and the row probed has moved away | `conflict` | none: the row now at the path was not read | no |
-| A plain write lost its guard | `conflict` | `{"version": v, "vid": e}` where the row is still at the path, and none where it moved | yes, as today |
+| On an engine that probes a lost guard, which neither supported engine is: a write with a required vid lost its guard, and the row probed is still at the path | `conflict` | `{"version": v, "vid": e}` of that row | no |
+| On such an engine: the same, and the row probed has moved away | `conflict` | none: the row now at the path was not read | no |
+| On such an engine: a plain write lost its guard | `conflict` | `{"version": v, "vid": e}` where the row is still at the path, and none where it moved | yes, as today |
 | A required vid against no live row | `not_found` | the trashed hint on a tombstone | no |
 | The mark, on a `write`, over a live row | `exists` | `{"version": v, "content_hash": h, "vid": e}` | no |
 | The mark, on `edit`, `delete` or `move`, over a live row | `conflict` | `{"version": v, "vid": e}` | no |
@@ -408,7 +409,7 @@ The third bullet of Article 1.5 becomes: "**Usable for optimistic concurrency.**
 
 Article 1.3's list gains: "`vid` — present wherever `revision` is; see §1.5."
 
-Article 2 holds: the refusals are four kinds of the closed taxonomy. Article 4 holds: the capability is declared by a trait and read without running a verb. Article 5 holds: a change with `if_vid` is revision-guarded, and one without is last writer wins, as each docstring says.
+Article 3 holds by decision 20. Article 2 holds: the refusals are four kinds of the closed taxonomy. Article 4 holds: the capability is declared by a trait and read without running a verb. Article 5 holds: a change with `if_vid` is revision-guarded, and one without is last writer wins, as each docstring says.
 
 Reason: Article 1 allows five first-class things. A sixth would be the most expensive mistake this spec could make, and it is avoided by making the vid a fact about a row and never a name for one.
 
@@ -417,7 +418,9 @@ Reason: Article 1 allows five first-class things. A sixth would be the most expe
 1. The vid on every row: `vid.py`, `ULIDBytes`, the mint at each site, the trait, the merge rule, the exports, the constructor of decision 19, and `vid` beside `version` in the `data` of `conflict` and `exists`. No argument changes.
 2. `write` takes `if_vid` and `if_vids` with the mark of decision 18, and `if_version` and `if_versions` leave, in one landing.
 3. `edit` takes them.
-4. `delete`, `move` and `restore` take them, and the constitution, the roadmap rows and the guide's sentence change.
+4. `delete`, `move` and `restore` take them, and the planned page `documentation/reference/planned-api/vids-and-preconditions.md` is removed, with its row in `planned-api/index.md`, once the reference pages say what it says.
+
+Three things are placed by the review of 2026-11-23. The constitution and the roadmap rows change in the second landing, with the argument they name, so that at no commit does Article 1.5 offer an argument the code has lost. `ABSENT` is exported in the second landing, when something first accepts it. In the first landing `stale_version` stays and gains `vid` in its `data`; `stale_vid` takes its place in the second.
 
 Spec 5's first landing needs the first of these, for the mint. Spec 5's fourth carried `if_vid` on `restore` only if no landing here did, and the fourth here does.
 
@@ -459,7 +462,8 @@ ABSENT: Final = "absent"      # no vid has this shape, and it is plain JSON
 - **On `edit`, `delete` and `move`,** a live row at a marked path is `conflict` with its version and vid. With no live row there the verb goes on and answers what it answers for such a path, which is `not_found`.
 - **On `restore`,** the mark is lawful and adds nothing: the ladder already answers a live row `exists`. It is admitted so that one mapping serves every verb.
 - **`if_absent=True`** stays, applies to every entry, and is still refused beside `if_vid` and `if_vids`.
-- **Rights.** A call is judged at `add`, as a create-only write is today, when `if_absent=True` or every file entry of the call carries the mark. Any other call is judged at the verb's own rungs.
+- **A tombstoned directory at a marked path** is `wrong_kind` with the trashed hint, as `if_absent` answers today: a file write revives a file and never a directory.
+- **Rights.** A call is judged at `add` when `if_absent=True`, when it is an append, or when every file entry carries the mark. Any other call is judged at the verb's own rungs, and the rung is the call's and never the entry's: in a mixed call a marked entry over a row the caller may not change answers `permission_denied`, as a plain one does.
 - **A create that loses its name to a rival.** A marked entry answers `exists` and never lands on the rival's row. An unmarked one lands on it, as today. `StagedEntry` gains `exclusive: bool`, read where the call-wide flag is read today.
 - **Statements.** The files of one depth are inserted in at most two groups, marked and unmarked, where they are one group today. A batch that mixes the two issues at most one more insert for each depth it creates at. A batch of one kind issues what it issues today.
 
@@ -475,6 +479,12 @@ def stale_vid(path: Path, version: int, vid: Vid) -> ResultError: ...
 It returns `classified(ErrorKind.conflict, path, detail="the vid required is not the vid of what is stored", data={"version": version, "vid": vid})`, which is not retryable. The plan, the three ladders and the lost-guard probe call it. It replaces `stale_version` of `staging.py`, and decision 7's sentence that `stale_version` becomes `stale_vid` there now reads: it moves here.
 
 Reason: spec 7, decision 13 (The preview is computed once, as the caller, for seven verbs, and every part of it is bounded) refuses a step whose own `if_vid` is already stale before it stores a job, from rows a `stat` returned. That refusal must be the one a storage would give, word for word and key for key, and one function is how two places stay the same.
+
+### 20. Where this spec leaves Plan 9 and Unix it says so, with the constraint that moved it
+
+Article 3 of the constitution has VFS follow a convention of Plan 9 or Unix wherever one exists, and requires a deviation to be a numbered decision that names the principle, the deviation, the motivating constraint and the expected expiry. This is that decision. The section "Prior art, and where this spec departs" lists each point where a convention exists, what this spec does, and for each departure the four things the Article asks for. The points where the behaviour is older than this spec are listed too, marked as inherited, because this spec builds a guarantee on them.
+
+Reason: a caller who knows `O_EXCL`, `rename` and `ESTALE` should be able to predict this API, and where it cannot, the place to learn why is the spec that decided it.
 
 ## Cost
 
@@ -524,7 +534,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 `tests/test_vid.py`, new:
 
-- `test_an_vid_is_twenty_lowercase_hex_characters`: 1,000 mints, 1,000 that pass `is_vid`.
+- `test_a_vid_is_twenty_lowercase_hex_characters`: 1,000 mints, 1,000 that pass `is_vid`.
 - `test_one_entry_at_one_version_has_one_vid_and_no_other_row_shares_it`: 10,000 pairs of id and version give 10,000 distinct vids; each pair minted twice gives 0 differences; a mint with another mount identity gives 0 equal of 10,000.
 - `test_is_vid_refuses_each_malformed_value`, parametrized over 9 values: 19 characters, 21 characters, an upper-case letter, a `g`, a quoted vid, an empty string, an integer, bytes, `None`. Each is false.
 
@@ -538,7 +548,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 `tests/results/test_result_laws.py`:
 
-- `test_a_merged_vid_agrees_or_is_null`: equal vids are kept, differing ones are null and still masked, a nulled version nulls the vid, and the law holds in both orders and applied twice. 4 cases.
+- `test_a_merged_vid_agrees_or_is_null`: equal vids are kept, differing ones are null and still masked, a nulled version nulls the vid, equal versions under differing vids are nulled too, and the law holds in both orders and applied twice. 5 cases.
 
 `tests/test_params.py`:
 
@@ -556,15 +566,15 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 `tests/support/storage_contract.py`, a new class `TestVid`:
 
-- `test_every_row_with_a_version_carries_an_vid`, parametrized over 17 calls: `read`, `stat`, `ls`, `tree`, `glob`, `grep`, `search`, `traverse`, a `write` that creates, one that updates, one that is unchanged, `edit`, `mkdir`, `move`, `copy`, `delete`, `restore`. For each row, the count of rows where `version` and `vid` are not both set or both unset is 0, and so is the count where their masks differ.
+- `test_every_row_with_a_version_carries_a_vid`, parametrized over 19 calls: `read`, `stat`, `ls`, `tree`, `glob`, `grep`, `search`, `traverse`, a `write` that creates, one that updates, one that is unchanged, `edit`, `mkdir`, `move`, `copy`, `delete`, `restore`, a `sweep` of a subtree, and an `ls` of the trash view. For each row, the count of rows where `version` and `vid` are not both set or both unset is 0, and so is the count where their masks differ.
 - `test_a_bare_row_carries_no_vid`: under an everyone level of `list`, `stat` and `ls` return 0 vids.
 - `test_one_row_has_one_vid_from_every_verb`: `stat`, `read`, `ls` and `glob` of one file give 1 distinct vid.
-- `test_what_moves_an_vid_and_what_keeps_it`, 10 cases from decision 3: a new body, the same body, an edit, an append, a delete and a restore, a delete and a write, a move, a parent moved, a parent deleted and restored, a copy.
+- `test_what_moves_a_vid_and_what_keeps_it`, 10 cases from decision 3: a new body, the same body, an edit, an append, a delete and a restore, a delete and a write, a move, a parent moved, a parent deleted and restored, a copy.
 - `test_a_matching_vid_updates`, and `test_a_stale_vid_is_conflict_and_writes_nothing`: one `conflict`, `data` equal to the version and the vid a `stat` then returns, `retryable` false, and the body unchanged.
 - `test_a_path_freed_by_a_move_is_refused`, parametrized over the 4 rows of "The problem": each is `conflict`, and the file now at the path keeps its body. All four pass with `if_version` today.
-- `test_a_write_with_an_vid_sent_twice_is_unchanged`, and `test_an_vid_on_no_live_row_is_not_found` for an absent path, a missing parent with `parents=True` and a tombstone with the trashed hint.
-- `test_an_vid_minted_by_another_storage_is_conflict`: a vid from a second storage of the same class, for a file at the same path and version, is refused.
-- `test_stale_keys_refuse_the_whole_batch_and_each_is_named`, and `test_an_append_with_an_vid_lands_at_most_once`.
+- `test_a_write_with_a_vid_sent_twice_is_unchanged`, and `test_a_vid_on_no_live_row_is_not_found` for an absent path, a missing parent with `parents=True` and a tombstone with the trashed hint.
+- `test_a_vid_minted_by_another_storage_is_conflict`: a vid from a second storage of the same class, for a file at the same path and version, is refused.
+- `test_stale_keys_refuse_the_whole_batch_and_each_is_named`, and `test_an_append_with_a_vid_lands_at_most_once`.
 - `test_twenty_writers_that_require_one_vid_land_once`: twenty writes at once, each with a body of its own and the same vid, give 1 success and 19 `conflict`.
 - `test_an_edit_with_a_stale_vid_is_conflict_before_any_text_is_matched`: an edit whose `old` is not in the file and whose vid is stale answers 1 error, `conflict`. An edit sent twice with one vid answers `conflict` the second time.
 - `test_a_delete_requires_what_it_was_shown`: a stale file is `conflict` and stays live; a matching one is deleted; a tombstone is `not_found`; a directory with a child made since is `conflict` and the count of live rows beneath it is unchanged; a directory with a grandchild made since is deleted; an empty directory with a child removed since is `conflict` without cascade, and is deleted with no `if_vid`.
@@ -584,7 +594,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_stale_vid_runs_the_snapshot_and_no_write`: 1 statement, a `SELECT`.
 - `test_a_key_for_every_row_adds_no_statement`, for 100 files and, marked `slow`, 10,000, with the membership budget narrowed to 1,000: the list of statement verbs equals the list of the same write without keys. With one stale key the batch fails whole with 0 mutation statements.
 - `test_a_required_vid_mints_twice_for_each_row`: a 10,000-entry write with a key for every row calls `VidMint.mint` 20,000 times. Marked `slow`.
-- `test_a_row_that_lost_its_guard_names_what_is_at_its_path`: a rival committed at the `write:before-apply` seam gives `conflict` with the rival's version and vid; a rival that moved the row away gives `conflict` with no `data`.
+- `test_a_row_that_lost_its_guard_names_what_is_at_its_path`: a rival staged on the attempt's own session at the `write:before-apply` seam, as today's test of the probe stages it (`tests/storage/database/test_writes.py:1990`), gives `conflict` with the rival's version and vid; a rival that moved the row away gives `conflict` with no `data`. It tests the probe, which the generic floor takes and the two engines do not.
 - `test_a_required_vid_adds_no_statement_to_an_edit`: the list of statement verbs with `if_vids` equals the list without, on twin files, and counts 7. A stale one issues 1 statement, the snapshot.
 
 `tests/storage/database/test_trash.py` and `tests/storage/database/test_topology.py`, at the seam as the system actor:
@@ -592,7 +602,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_required_vid_adds_no_statement`, in `test_trash.py` over a delete of a file, a cascading delete of a directory and a delete of an empty directory without cascade, and in `test_topology.py` over a move of a file within one directory: the list of statement verbs with `if_vids` equals the list without, on twin fixtures. The counts are 4, 5, 6 and 16.
 - `test_a_stale_vid_issues_no_mutation_statement`, over the same four: 0 statements that begin `INSERT`, `UPDATE` or `DELETE`.
 - `test_a_ten_thousand_target_delete_with_a_key_for_every_row_adds_no_statement`. Marked `slow`. The same for an `edit` of 10,000 rows, in `test_writes.py`. These are the sizes spec 7, decision 22 carries.
-- `test_a_restore_that_requires_an_vid_adds_no_statement`, in `test_trash.py`: the list of statement verbs equals the list without, and counts 6; a stale one issues 0 mutation statements.
+- `test_a_restore_that_requires_a_vid_adds_no_statement`, in `test_trash.py`: the list of statement verbs equals the list without, and counts 6; a stale one issues 0 mutation statements.
 - `test_a_batch_that_mixes_marked_and_plain_creates_issues_one_more_insert`, in `test_writes.py`: a batch of 100 marked and 100 unmarked new files in one directory issues 2 inserts on `vfs_entries`, where 200 of one kind issue 1.
 
 `tests/storage/database/test_reads.py`:
@@ -602,7 +612,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 `tests/storage/database/test_races.py`, on the Postgres leg:
 
-- `test_a_rival_inside_the_window_refuses_a_required_change`, for `write`, `edit`, `delete` and `move`: a rival committed inside the window leaves the rival's state, and the call answers `conflict`.
+- `test_a_rival_inside_the_window_refuses_a_required_change`, for `write`, `edit`, `delete` and `move`: a rival that wrote inside the window leaves the rival's state, and the call answers `conflict`. For `write`, a rival that moved the row away, and one that deleted it, answer `not_found`, the second with the trashed hint.
 
 `tests/storage/database/test_engine.py`:
 
@@ -612,7 +622,11 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 - `test_stale_vid_is_the_refusal_a_storage_gives`: the error `stale_vid` builds equals, field for field, the one a stale `write` returns from the database storage.
 
-`tests/test_sync.py`: the twin tests pass with the new arguments on both synchronous faces.
+`tests/test_sync.py`: the twin tests pass with the new arguments on the synchronous file system. The synchronous session carries none.
+
+`tests/base/test_authority.py`:
+
+- `test_session_verbs_take_no_identity_argument`, which removes `authority` alone today: for each of the 25 verbs, the file system's parameters without `authority`, `if_vid` and `if_vids` are the session's, name for name.
 
 Every test that passes `if_version` or `if_versions` is rewritten to read the row and pass its vid: 66 uses in `tests/test_params.py`, `tests/base/test_dispatch.py`, `tests/support/storage_contract.py`, `tests/storage/database/test_writes.py` and `tests/storage/database/test_races.py`. The recorder storage in `tests/support/base_doubles.py` declares the trait. A test that compares a whole row gains the field.
 
@@ -626,12 +640,20 @@ In:
 - `src/vfs/storage/protocol.py` (the seam, the trait vocabulary).
 - `src/vfs/storage/backends/database/`: `engine.py` (the mint, built at first touch), `backend.py` (the trait, the arguments), `reads.py`, `listings.py`, `grep.py`, `search.py`, `traverse.py` (the id and the mint on each row), `staging.py`, `writes.py` (the plan's comparison, the rows of a result, the `data` of two refusals), `serialized.py`, `trash.py`, `topology.py` (the comparison in each ladder, the rows of a result).
 - `src/vfs/results/envelope.py` (the merge rule, `stale_vid`), `src/vfs/results/__init__.py`, `src/vfs/results/kinds.py` (the words of `conflict`).
-- The tests above, and the entries of `tests/lint/allowlist.py` for each module that grows.
+- The tests above.
+- The size gate. `MODULE_LINE_BASELINE` holds each module over 1,000 lines at its exact count and fails one that grows (`tests/lint/allowlist.py:11-12`, `26-33`). Five of its six modules are in this scope, and two more sit just under the ceiling. Where the new code goes is decided here, so that a baseline is raised by this spec and not in the build. Each figure is an estimate made before the code is written; the build sets each baseline to the count it reaches and says in its pull request where that differs.
+  - **A new module, `src/vfs/preconditions.py`, beside `cursor.py`,** takes the routing of `if_vids` keys to mounts, the two rules that need resolved paths (a key names a target, and no two keys name one path) and the check of the trait. It takes the routing `base.py` does for `if_versions` today (`base.py:2491-2501`), so that function leaves `base.py`.
+  - **`base.py`, 3,090:** two arguments on five verbs, a paragraph in each of five docstrings, and one call a verb into the new module. About 60 lines more.
+  - **`backend.py`, 1,509:** `if_vids` passed through five methods, and the trait. About 15 lines more.
+  - **`writes.py`, 1,415:** the comparison at settle, `exclusive`, and the second insert group of the mark. About 40 lines more. `staging.py` takes `expected` in place of `expected_version` and is under the ceiling.
+  - **`reads.py`, 1,164:** `DERIVED_FIELDS`, the id in the select list, and the mint where a row is built. About 20 lines more.
+  - **`engine.py`, 1,008:** one `VidMint` built at first touch. About 5 lines more. Spec 0's first landing splits this module and lowers its count; whichever lands second takes the other's number.
+  - **`results/envelope.py`, 948,** gains the merge rule and `stale_vid`, about 25 lines, and **`search.py`, 979,** gains the id and the mint, about 6. Both stay under 1,000 and neither joins the list. If either would pass it, the new code moves to a module of its own first.
 - The docs below.
 
 Out: everything under "Left as it is", the schema, `crates/`, the shell, and every session rule.
 
-The landings are decision 16's four. Each is green under `scripts/ci.sh` and `scripts/docs.sh check` alone. The Postgres leg runs before the pull request of the second, the third and the fourth.
+The landings are decision 16's four. Each is green under `scripts/ci.sh` and `scripts/docs.sh check` alone. The Postgres leg runs before the pull request of each of the four: the first changes `models/rows.py` and every read path of the database backend.
 
 ## What the docs must say
 
@@ -644,7 +666,7 @@ The landings are decision 16's four. Each is green under `scripts/ci.sh` and `sc
 - A directory's vid changes when something is added to it, removed from it or renamed in it, and not when something deeper changes.
 - A storage that issues no vid refuses a change that requires one.
 
-Pages, each changed: the docstrings of `write`, `edit`, `delete`, `move` and `restore` on `AsyncVirtualFileSystem`, which are the reference pages of the four faces; the `Observation` docstring, with `Vid` on `documentation/reference/python-api/entry.md` and a line on `index.md`; the `ErrorKind` docstring for the `data` of `conflict` and `exists`; `documentation/reference/python-api/storage.md` for the trait, its four promises and `VidMint`; `documentation/reference/glossary.json` and `glossary.md` for the term; `context/standards/constitution.md`, Articles 1.3 and 1.5; `context/standards/roadmap.md`, the rows of stories K2 and K10 that name `if_version`; `documentation/how-to/keep-a-session-for-each-conversation.md`, the one sentence named below.
+Pages, each changed: the docstrings of `write`, `edit`, `delete`, `move` and `restore` on `AsyncVirtualFileSystem`, which are the reference pages of the four faces; the `Observation` docstring, with `Vid` on `documentation/reference/python-api/entry.md` and a line on `index.md`; the `ErrorKind` docstring for the `data` of `conflict` and `exists`; `documentation/reference/python-api/storage.md` for the trait, its four promises and `VidMint`; `documentation/reference/glossary.json` and `glossary.md` for the term; `context/standards/constitution.md`, Articles 1.3 and 1.5; `context/standards/roadmap.md`, the rows of stories K2 and K10 that name `if_version`. `documentation/reference/planned-api/vids-and-preconditions.md` is removed in the fourth landing, with its row in `planned-api/index.md`, once the reference pages say what it says.
 
 ## Earlier decisions this reverses
 
@@ -654,6 +676,39 @@ Pages, each changed: the docstrings of `write`, `edit`, `delete`, `move` and `re
 - The spec merged from pull request 42, decision 2, in four places. The storage mints, where the router did. A vid from another mount is `conflict` from the storage, where it was `invalid` before any storage was called. A delete of a directory without cascade compares the entry and the version, where it compared the entry alone. The batch forms of `edit`, `delete` and `move` take `if_vids`, where only `write` did. Its sentence that `if_vid` is exclusive with `if_version`, and its decision 4's sentence that an explicit `if_version` reaches storage unchanged, have nothing left to speak of.
 - `context/standards/constitution.md`, Article 1.5, third bullet: reworded as decision 15 gives it.
 - `context/standards/roadmap.md`, story K10: it stamped the `entry_id`, the version and the hash, and filled in `if_version`. The vid is the stamp, and `if_vid` is what is filled in.
+
+## Prior art, and where this spec departs
+
+Read on 2026-11-23 in the clones and at the lines the research memo `research/2026-11-23-how-unix-plan-9-and-linux-name-a-file-in-a-state.md` records. The memo was written before the ruling that named the value `vid`, and uses the first name.
+
+Where this spec agrees:
+
+- **The name of a file in a state is an identity and a counter.** Plan 9's qid is a path that is never reused and a version that moves when the file is modified. Unix has the inode number with a generation, and Linux adds a change counter. The vid is made of the same two things, the entry id and the version.
+- **Two names are the same file in the same state when the two values are equal.** That is Plan 9's rule for two qids, and it is the one thing a vid is for.
+- **What moves a directory's counter.** In fossil, cwfs, ext4, FFS and V7 a directory changes when a direct child is made, removed or renamed, and not when a child's body changes. The version of a directory here moves the same way, which is all decision 10 claims for it.
+- **A stale name is `ESTALE`.** A file handle whose generation is wrong is refused `ESTALE`, and so is a handle from another file system. A stale vid and a vid from another mount are both `conflict`, the kind the code maps to `ESTALE`.
+- **A change with no precondition lands, and the last writer wins.** No change requires a state. `write` replaces as `creat` and the shell's `>` do, and refusing to replace is opted into, as `noclobber` is.
+- **Create-only is `O_EXCL`.** An occupant of any kind, a directory too, is `exists`, as `O_CREAT|O_EXCL` answers `EEXIST`. An append is outside the rule, as `>>` is.
+- **The validator is opaque, as Unix has it.** An NFS file handle is opaque to its client, and Linux does not let user space read its change counter. The vid is a digest for the same reason: a caller that can take a validator apart will.
+- **Removing a directory, a mount point, and crossing a mount** answer `not_empty`, `busy` and `cross_mount`, which are `ENOTEMPTY`, `EBUSY` and `EXDEV`.
+
+Where this spec departs. Each row is a deviation under Article 3.
+
+| The convention | What this spec does | The constraint that moved it | Expiry |
+|---|---|---|---|
+| No write, remove or rename in 9P or POSIX can carry the state it was read in. | The plain call is kept as it is. `write`, `edit`, `delete`, `move` and `restore` may also carry `if_vid`, and a session carries it for its caller. | The callers this system is built for read a file and change it later, with other callers between, and the lost update is the commonest harm of that loop. It is an addition and never a demand. The nearest relatives are NFSv3's guarded `SETATTR`, git's `update-ref` with an old value, and HTTP's `If-Match`. | None. |
+| Plan 9 shows the whole qid: its path, its version and its type. Unix shows the inode number. | A row shows the version and the kind, which are the qid's version and type. The entry id, which is the qid's path, never leaves the storage, and the vid cannot be taken apart. | Article 3 already rejects raw inode exposure, and the models carry no database identifier by rule. | When a caller is found that must tell the same entry at another version from another entry; "Left as it is" names the field that would serve it. |
+| The word is qid. | The word is `vid`, for version and id: Plan 9's style, and not Plan 9's word. | A qid shows its parts and a vid does not, so the same word would promise what is not there. | None. |
+| Create-only is a flag of its own, `O_EXCL`. | `if_absent=True` is that flag. The mark `ABSENT` is also given where a vid is given. | One mapping must be able to require a vid at some paths and absence at others, so that a batch fails whole (decision 18). git's `update-ref` does the same with an all-zero old value. | None. |
+| A file expected where a directory stands is `EISDIR`. | Under a required vid it is `conflict`. Without one it is `wrong_kind`, as before. | The caller named a file it had read; that a directory took its place is the file changing, and one read mends it (decision 9). | None. |
+| A write always moves the file's counter, in Unix and in Plan 9. | A write of the body the file holds moves nothing and answers `unchanged`. | A call sent twice must be recognisable. Article 1.5 lets a write that changes nothing keep its revision. Inherited from the write-preconditions spec, decision 5. | None. |
+| A name removed and made again is another file: a new qid path, a new inode or generation. | A write at a deleted path revives the row, which keeps its entry id and takes a later version. | The trash keeps a deleted row at its address so that it can be restored. Inherited. The version moves, so no vid from before the delete matches. | When the trash design changes. |
+| A removed file occupies nothing. | A tombstone holds its address: a move onto it is `exists`, a restore requires its vid, and the mark counts it as absent. | The same. Inherited. | When the trash design changes. |
+| POSIX `rename` replaces what is at its destination, atomically. | A move never replaces. This is Plan 9's rule for a rename and Linux's `RENAME_NOREPLACE`. | No verb destroys but `sweep`. Inherited. Decision 11 rests on it: a destination that is never replaced needs no precondition. | None. |
+| A rename of a file onto itself succeeds and does nothing. | With a stale vid required it is `conflict`. | The precondition is judged before any other fact about the source, so that a refusal never depends on the destination. | None. |
+| Two names are one file when their device and inode, or their qid paths, are equal. | No row says which entry it is apart from its version. | No caller needs it yet, and the field that would say it is the identifier the models keep out. | When a caller needs it. |
+
+One difference is neither agreement nor a decision: a rename inside one directory moves that directory's version by two, where Unix changes the directory once. It makes no vid match that should not.
 
 ## Choices for the owner
 
@@ -677,7 +732,7 @@ Ruled on 2026-11-23, with choice 1: the vid is the session's to carry. A session
 ## Where this spec disagrees with the overview or the guides
 
 - The overview: nothing.
-- `documentation/how-to/keep-a-session-for-each-conversation.md`, line 258, says a call made on the file system guards a write only when the expected version is passed. Proposed: it guards a change only when the expected vid is passed, as `if_vid=`. The evidence is "The problem": a version passed that way guards nothing in four cases, and decision 7 removes the argument.
+- `documentation/how-to/keep-a-session-for-each-conversation.md`: nothing. The sentence under "Work Without a Session" already names the vid and `if_vid=`.
 - `documentation/how-to/interrupt-a-job-and-ask-a-person.md`: nothing. Its refusal of a step whose file changed is the `conflict` of decision 12.
 - What a call returns: nothing. Every call this spec changes is a verb, and returns a `Result` as it does today.
 
@@ -699,9 +754,9 @@ One count in another spec follows from decision 17 here and was written before i
 
 ## Not checked
 
-- Postgres. No server was available. To run on the Postgres leg, with the `db_test` skill: the contract class `TestVid`; `tests/storage/database/test_races.py::test_a_rival_inside_the_window_refuses_a_required_change`, which shows that a rival's commit inside the window ends in `conflict` by either road at REPEATABLE READ; `tests/models/test_rows.py::test_the_id_reads_as_bytes_and_as_text_alike`, which shows that `ULIDBytes` over the native `uuid` column hands back the same 16 bytes as the text form; and `test_twenty_marked_creates_of_one_path_land_once`, which shows the mark under `ON CONFLICT`. The Postgres guards in this spec were compiled from the builders and not sent to a server.
+- Postgres 19.0 was run on 2026-11-23, by probes of today's code and of the quoted statements (`probes/`, `reviews/2026-11-23-spec-review.md`). Held: the guards and claims as quoted, the statement counts, the bytes of the native `uuid` column, a rival inside the window of each verb, twenty writers and twenty creates landing once, and a cost of 0.66 microseconds a row for the id and the mint. Not run, because it is not built: the mark beside a vid in one batch with its two insert groups, and `if_vid` on `edit`, `delete`, `move` and `restore`. For those the probes show the guard, the arbitration and the second run they will ride on, and their answers are inferred. Postgres 15 to 18 were not run.
 - The generic floor. No leg runs it.
-- The costs. They are a bench on one machine against in-memory SQLite. To size them on Postgres: time a 10,000-row `glob` with and without the mint on a server.
+- The costs under "Cost" are a bench on one machine against in-memory SQLite. Sized again on 2026-11-23 on Postgres 19.0 and on a SQLite file: the id as bytes and the mint add 0.66 and 0.69 microseconds a row to a 10,000-row listing, 8 to 11% of a row (`probes/p07_what_the_etag_costs_a_listing_row.py`). The 1.1 above is not understated. No other machine was measured.
 - The mean number of rows a read returns at the reference deployment. The 50 is an assumption.
 - How many existing tests compare a whole row or a rendered table of every field, and so gain the new field.
 - That the list of sites that build a row with a version is complete. It was made by a search for the constructors. The contract row of 17 calls is what catches a site that was missed.

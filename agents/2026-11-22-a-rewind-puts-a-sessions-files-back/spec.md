@@ -696,7 +696,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_the_body_at_a_version_is_the_next_version_row`: after a write, a move and a write, the body at the version after the first write is read from the row numbered one above it. 3 statements.
 - `test_a_version_nothing_replaced_is_the_body_held_now`: a target at the file's own version and vid, with no `holding`, answers the live body in 2 statements.
 - `test_a_body_still_held_is_unchanged`: a target whose `holding` is the hash of the body found answers `unchanged` with no body, and no body statement runs.
-- `test_an_vid_that_is_not_the_entrys_is_not_found`: a path that holds another entry, a vid of another version, and a path that holds nothing, each answer `not_found`.
+- `test_a_vid_that_is_not_the_entrys_is_not_found`: a path that holds another entry, a vid of another version, and a path that holds nothing, each answer `not_found`.
 - `test_a_deleted_file_is_read_until_it_is_swept`: its body is returned from the tombstone, and after a `sweep` of the path the target is `not_found`.
 - `test_bodies_stop_at_the_page`: ten targets of 1 MiB each are served 8, then 2, in two calls.
 - `test_a_target_the_caller_may_not_read_is_refused_alone`: one `permission_denied`, the rest served; the system authority is served all.

@@ -131,7 +131,20 @@ The spec was built as written and failed. The three most likely reasons:
 
 ## Disposition
 
-Awaits the author.
+Answered on 2026-11-23, against the spec as amended in the working tree after `4f256425`. Two things changed in the spec between the review and this answer, by rulings of the same day, and neither is a finding: the value was renamed from `etag` to `vid` and the arguments from `if_match` and `if_matches` to `if_vid` and `if_vids`, in every spec and planned page; and the work directory was renamed with them, so the anchors of the links above no longer resolve. The findings are answered in the new names.
+
+1. H1: fixed. Decision 20 and the section "Prior art, and where this spec departs" are in the spec, and decision 15 says "Article 3 holds by decision 20." Three rows differ from the text the memo proposed, each by a ruling of 2026-11-23: the first row says the plain call is kept and the precondition is an addition, since no change requires a state; the row on the words says the word is `vid`, in Plan 9's style and not Plan 9's word; and the row on create-only names `O_EXCL` as the convention, since the words are no longer HTTP's.
+2. M1: fixed. Decision 9's Postgres bullet says the guarded update ends in a serialization failure and the answer is the new snapshot's: `conflict`, `not_found` or `unchanged`. Decision 12's rows three to five are marked as the answers of an engine that probes a lost guard, which neither supported engine is. `test_a_row_that_lost_its_guard_names_what_is_at_its_path` stages its rival on the attempt's own session, and `test_a_rival_inside_the_window_refuses_a_required_change` gains a rival that moves the row and one that deletes it, answered `not_found`.
+3. M2: fixed. The Scope names a new module, `src/vfs/preconditions.py`, for the routing of keys, and gives each of the seven modules its expected growth and the reason the code belongs there. The figures are estimates made before the code.
+4. L1: fixed. Decision 9's table has a row for a tombstoned directory, and decision 18 a sentence for one at a marked path.
+5. L2: fixed. Decision 18's rule for rights is the text proposed.
+6. L3: fixed. Decision 4's merge rule nulls the version with a vid the two rows disagree on, and the test has five cases.
+7. L4: fixed. The guide is listed as needing nothing, and the planned page, now `vids-and-preconditions.md`, is removed in the fourth landing.
+8. L5: fixed. `tests/base/test_authority.py::test_session_verbs_take_no_identity_argument` is in the list, and the contract test runs 19 calls.
+9. L6: fixed. The Postgres leg runs before each of the four landings, the constitution and the roadmap rows change in the second, `ABSENT` is exported in the second, and `stale_version` stays through the first.
+10. L7: fixed. A `restore` sent again answers `exists`, and a caller that names the children and the directory in one call may require the directory's vid.
+11. L8: fixed. The chosen row of decision 2's table states the rate and what the gate and the reference page say.
+12. L9: fixed. "Not checked" says what was run on Postgres 19.0 and what was not.
 
 ## Verdict
 
