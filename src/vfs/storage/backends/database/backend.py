@@ -771,6 +771,7 @@ class DatabaseStorage:
         edits: list[EditOperation],
         path: Path | None = None,
         observations: list[Observation] | None = None,
+        if_vids: Mapping[Path, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
@@ -792,6 +793,7 @@ class DatabaseStorage:
                 targets=targets,
                 authority=self._named(authority),
                 executor=offload_pool(),
+                if_vids=if_vids,
                 mint=host.mint,
             )
 

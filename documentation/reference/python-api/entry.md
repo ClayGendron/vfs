@@ -16,7 +16,7 @@ from vfs import Edge, Entry, Match, Observation
 
 ## Field Types
 
-These are the types of some of an entry's fields. A `Vid` is on every row a call returns with a version: it names that file or directory at that version, and it changes when the version does. It is compared and never taken apart. A `write` that passes a row's vid back as `if_vid` lands only while the row still has that vid. `ABSENT`, given where a vid is given, requires that nothing is at the path.
+These are the types of some of an entry's fields. A `Vid` is on every row a call returns with a version: it names that file or directory at that version, and it changes when the version does. It is compared and never taken apart. A `write` or an `edit` that passes a row's vid back as `if_vid` lands only while the row still has that vid. `ABSENT`, given where a vid is given, requires that nothing is at the path.
 
 ```python
 from vfs import ContentHash, ObjectKind, RenderStatus, Source

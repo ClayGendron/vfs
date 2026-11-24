@@ -355,10 +355,22 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         replace_all: bool = False,
         *,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         return self._result(
-            "edit", self._fs.edit, path, old, new, edits, observations, replace_all, authority=authority
+            "edit",
+            self._fs.edit,
+            path,
+            old,
+            new,
+            edits,
+            observations,
+            replace_all,
+            if_vid=if_vid,
+            if_vids=if_vids,
+            authority=authority,
         )
 
     def delete(

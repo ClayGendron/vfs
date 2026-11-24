@@ -41,7 +41,7 @@ from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from tests.support.statements import is_statistics_statement
 from tests.support.vids import TEST_MINT, vid_in, vids_in
 from vfs.authority import Authority, Principal
-from vfs.models import MEASURED_BODY, BodyMetrics, Entry, measure_bytes
+from vfs.models import MEASURED_BODY, BodyMetrics, Entry, Observation, measure_bytes
 from vfs.models.rows import build_vfs_tables, vid_at
 from vfs.paths import ObjectKind, Path
 from vfs.results import ErrorKind, ResultError
@@ -2052,6 +2052,50 @@ class TestRequiredVid:
         refused = await storage.write(entries=tail, append=True, if_vids={Path("/log.txt"): ABSENT})
         assert [(error.kind, error.retryable) for error in refused.errors] == [(ErrorKind.invalid, False)]
         assert (await storage.read(path=Path("/log.txt"))).one().content == "one"
+
+    async def test_a_required_vid_adds_no_statement_to_an_edit(self, tmp_path) -> None:
+        """Mutation guarded: an edit's comparison that reads the row again, or a key bound into its update."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        twins = [Entry(path=Path(path), content="alpha") for path in ("/a.txt", "/b.txt")]
+        assert (await storage.write(entries=twins)).success is True
+        seen = vid_in(await storage.stat(path=Path("/b.txt")))
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        plain = await storage.edit(path=Path("/a.txt"), edits=[EditOperation("alpha", "beta")])
+        assert plain.success is True, plain.errors
+        without = [statement.split()[0] for statement in _own(statements)]
+        statements.clear()
+        keyed = await storage.edit(
+            path=Path("/b.txt"), edits=[EditOperation("alpha", "beta")], if_vids={Path("/b.txt"): seen}
+        )
+        assert keyed.success is True, keyed.errors
+        assert [statement.split()[0] for statement in _own(statements)] == without
+        assert len(without) == 7
+        statements.clear()
+        stale = await storage.edit(
+            path=Path("/b.txt"), edits=[EditOperation("beta", "gamma")], if_vids={Path("/b.txt"): seen}
+        )
+        assert [error.kind for error in stale.errors] == [ErrorKind.conflict]
+        assert len(_own(statements)) == 1 and _own(statements)[0].startswith("SELECT")
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_a_ten_thousand_target_edit_with_a_key_for_every_row_adds_no_statement(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for name in ("p", "k"):
+            entries = [Entry(path=Path(f"/{name}/f{i:05}.txt"), content="alpha") for i in range(10_000)]
+            assert (await storage.write(entries=entries, parents=True)).success is True
+        seen = vids_in(await storage.glob(patterns=("/k/*.txt",)))
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        rows = [Observation(path=Path(f"/p/f{i:05}.txt")) for i in range(10_000)]
+        assert (await storage.edit(observations=rows, edits=[EditOperation("alpha", "beta")])).success is True
+        without = [statement.split()[0] for statement in _own(statements)]
+        statements.clear()
+        keyed = [Observation(path=path) for path in seen]
+        edited = await storage.edit(observations=keyed, edits=[EditOperation("alpha", "beta")], if_vids=seen)
+        assert edited.success is True, edited.errors
+        assert [statement.split()[0] for statement in _own(statements)] == without
         await storage.close()
 
     @pytest.mark.slow

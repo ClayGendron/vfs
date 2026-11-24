@@ -442,6 +442,23 @@ class TestRequiredVidRivals:
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_inside_the_window_refuses_a_required_edit(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="alpha")])).success
+            seen = vid_in(await storage.stat(path=target))
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="alpha rival")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.edit(path=target, edits=[EditOperation("alpha", "beta")], if_vids={target: seen})
+            assert rivals and rivals[0].success is True
+            now = {"version": 2, "vid": vid_in(await storage.stat(path=target))}
+            assert [(e.kind, e.data, e.retryable) for e in victim.errors] == [(ErrorKind.conflict, now, False)]
+            assert (await storage.read(path=target)).observations[0].content == "alpha rival"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_rival_with_the_same_body_leaves_the_write_unchanged(self, env_var: str) -> None:
         async with server_storage(env_var) as storage:
             target = Path("/a.txt")
