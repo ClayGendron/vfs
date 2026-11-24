@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from math import ceil
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -1585,6 +1586,32 @@ class TestRequiredVid:
         assert (await storage.delete(path=keyed, cascade=cascade, if_vids={keyed: seen})).success is True
         assert statements.verbs() == without
         assert len(without) == count
+        await storage.close()
+
+    async def test_a_key_on_a_covered_target_adds_one_guarded_update(self, tmp_path) -> None:
+        """Mutation guarded: a hold issued without a covered key, or once for each covered key."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for twin in ("p", "r", "k"):
+            entries = [Entry(path=Path(f"/{twin}/{name}.txt"), content="x") for name in ("a", "b")]
+            assert (await storage.write(entries=entries, parents=True)).success
+        seen = {name: vid_in(await storage.stat(path=Path(f"/k/{name}.txt"))) for name in ("a", "b")}
+        root = vid_in(await storage.stat(path=Path("/r")))
+        await storage._host.settle_statistics()
+        statements = recorded(storage)
+
+        def rows(twin: str) -> list[Observation]:
+            return [Observation(path=Path(path)) for path in (f"/{twin}", f"/{twin}/a.txt", f"/{twin}/b.txt")]
+
+        assert (await storage.delete(observations=rows("p"))).success is True
+        without = statements.verbs()
+        statements.clear()
+        assert (await storage.delete(observations=rows("r"), if_vids={Path("/r"): root})).success is True
+        assert statements.verbs() == without
+        statements.clear()
+        keyed = {Path(f"/k/{name}.txt"): vid for name, vid in seen.items()}
+        assert (await storage.delete(observations=rows("k"), if_vids=keyed)).success is True
+        assert Counter(statements.verbs()) - Counter(without) == Counter({"UPDATE": 1})
+        assert len(statements.verbs()) == len(without) + 1
         await storage.close()
 
     @pytest.mark.parametrize("shape", ["file", "cascade", "empty-without-cascade"])

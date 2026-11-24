@@ -154,7 +154,8 @@ async def delete_rows(
     checks judge the state the batch will act on; any refusal fails the
     batch whole.
 
-    Nothing is written until every target is judged: the claims run as
+    Nothing is written until every target is judged: a covered target
+    that carries a key is held by one guarded set, the claims run as
     one guarded set, the descendant stamps once per chunk of claimed
     directories, and each distinct parent is bumped once.
     """
@@ -177,6 +178,7 @@ async def delete_rows(
     now = datetime.now(UTC)
     seen: set[Path] = set()
     claims: list[RowMapping] = []
+    held: dict[str, RowMapping] = {}
     emptied = Counter[str]()
     rows: list[Observation] = []
     errors: list[ResultError] = []
@@ -195,6 +197,8 @@ async def delete_rows(
                 errors.append(stale)
             else:
                 rows.append(_observe_deleted(target, row, mint, deleted_at=now))
+                if covered and target in required:
+                    held[row["entry_id"]] = row
             continue
         seen.add(target)
         row = live.get(str(target))
@@ -215,6 +219,9 @@ async def delete_rows(
     # The claim window: snapshot read, tombstones not yet set — a rival
     # child committing here bumps its parent and must flip the guard.
     await seam("delete:post-collect")
+    refused = await _hold_covered(session, entry, profile, parameter_budget, membership_budget, list(held.values()))
+    if refused is not None:
+        return Result(ops=("delete",), errors=[refused])
     refused = await _tombstone_roots(session, entry, profile, parameter_budget, membership_budget, claims, now)
     if refused is not None:
         return Result(ops=("delete",), errors=[refused])
@@ -495,6 +502,39 @@ async def _tombstone_roots(
     side = tombstone_side(entry, trashed=False)
     return await claim_rows(
         session, entry, profile, parameter_budget, membership_budget, claims, side=side, assign=assign, miss=miss
+    )
+
+
+async def _hold_covered(
+    session: AsyncSession,
+    entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    rows: Sequence[RowMapping],
+) -> ResultError | None:
+    """Hold each covered target that carries a key at the version it was judged, changing nothing.
+
+    The descendant stamp has no version term, so a rival's rewrite of a
+    keyed row beneath a claimed root would ride with the root. This
+    guarded claim misses that rival, and the delete redrives into the
+    ``conflict`` the fresh snapshot gives. It runs before the root
+    claims, whose bumps never reach a covered row, and only where a
+    covered target carries a key.
+    """
+    claims = [Claim(row["entry_id"], row["version"]) for row in rows]
+    miss = "a rival write moved a covered entry past the delete's snapshot"
+    side = tombstone_side(entry, trashed=False)
+    return await claim_rows(
+        session,
+        entry,
+        profile,
+        parameter_budget,
+        membership_budget,
+        claims,
+        side=side,
+        assign={"version": entry.c.version},
+        miss=miss,
     )
 
 
