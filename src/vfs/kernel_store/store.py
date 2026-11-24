@@ -75,16 +75,17 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.drivers import url_of_place
 from vfs.storage.backends.database.engine import advisory_key
 from vfs.storage.backends.database.seams import seam
+from vfs.storage.protocol import RecordPlace, SupportsRecordPlace
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 
     from sqlalchemy import ColumnElement, Table
     from sqlalchemy.engine import Connection
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
     from vfs.models.kernel_rows import KernelTables
-    from vfs.storage.protocol import RecordPlace
+    from vfs.storage.protocol import StorageBackend
 
 T = TypeVar("T")
 K = TypeVar("K")
@@ -583,6 +584,21 @@ class KernelStore:
             _log.warning(_IN_MEMORY_WARNING)
 
 
+def store_for_root(root: StorageBackend, *, mounted: Callable[[], Iterable[StorageBackend]]) -> KernelStore:
+    """The store of a file system whose root storage is *root*, built with no I/O.
+
+    Its records are kept in the place *root* names, or in memory when it
+    names none. *mounted* gives the storages the file system mounts, each
+    time it is called: a store in memory warns once, at a write, while one
+    of them names a database that outlives the process.
+    """
+
+    def holds_durable_mount() -> bool:
+        return any(_record_place_of(storage).durable for storage in mounted())
+
+    return KernelStore(_record_place_of(root), holds_durable_mount=holds_durable_mount)
+
+
 class _StoreCore(EngineCore):
     """The store's engine core, which tells the store when a database in memory opened a second connection."""
 
@@ -592,3 +608,9 @@ class _StoreCore(EngineCore):
 
     def _rearm(self) -> None:
         self._store._rearm()
+
+
+def _record_place_of(storage: StorageBackend) -> RecordPlace:
+    """Where a file system whose root is *storage* keeps its records: the place it names, or memory."""
+    place = storage.record_place if isinstance(storage, SupportsRecordPlace) else None
+    return RecordPlace.in_memory() if place is None else place

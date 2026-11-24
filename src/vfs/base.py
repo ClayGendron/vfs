@@ -60,7 +60,7 @@ from vfs.cursor import Cursor
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
-from vfs.kernel_store import KernelStore
+from vfs.kernel_store.store import KernelStore, store_for_root
 from vfs.listing import SCOPED_REFINE_GUIDANCE, MountListing, PathFilters, gather_settled, skip_record
 from vfs.models import (
     Edge,
@@ -120,7 +120,6 @@ from vfs.results.kinds import Severity
 from vfs.session import AsyncSession
 from vfs.shell import LineResult, run_line
 from vfs.storage import (
-    RecordPlace,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
@@ -128,7 +127,6 @@ from vfs.storage import (
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
-    SupportsRecordPlace,
     SupportsRun,
     SupportsTraversal,
     TransportError,
@@ -326,7 +324,7 @@ class AsyncVirtualFileSystem:
         self._mounts: dict[Path, Mount] = {ROOT: root}
         self._rebuild_sorted_mounts()
         # The kernel's own records, in the place the root storage names; built with no I/O.
-        self._kernel_store = KernelStore(_record_place_of(storage), holds_durable_mount=self._holds_durable_mount)
+        self._kernel_store = store_for_root(storage, mounted=lambda: [mount.storage for mount in self._mounts.values()])
         self._class_name = self.__class__.__name__
         warn_if_system_default(default_authority)
 
@@ -802,10 +800,6 @@ class AsyncVirtualFileSystem:
         """
         self._sorted_mount_paths: list[Path] = sorted(self._mounts.keys(), reverse=True)
         self._listing = MountListing(self._mounts)
-
-    def _holds_durable_mount(self) -> bool:
-        """Whether a mount in the table names a database that outlives the process, as a root would name it."""
-        return any(_record_place_of(mount.storage).durable for mount in self._mounts.values())
 
     # -------------------------------------------------------------------
     # public methods — reads
@@ -3182,12 +3176,6 @@ class AsyncVirtualFileSystem:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _record_place_of(storage: StorageBackend) -> RecordPlace:
-    """Where a file system whose root is ``storage`` keeps its records: the place it names, or memory."""
-    place = storage.record_place if isinstance(storage, SupportsRecordPlace) else None
-    return RecordPlace.in_memory() if place is None else place
 
 
 def _reaches_beneath(op: Op, rel: Path, kwargs: Mapping[str, Any]) -> bool:
