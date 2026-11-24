@@ -19,7 +19,11 @@ Each fact was run, unless it says "read".
   - `q27`'s first four paths matched, and its fifth differed: `/context/research/2026-08-10-okf-open-knowledge-format.md` where the pin has `/context/research/2026-07-21-prior-art-design-review-notes.md`.
 - **The load.** The run shared 4 cores with `scripts/ci.sh` and with several other agents running test suites, on a load average far above the core count.
 - **Not reproduced alone or on a rerun.** The test alone passed three runs of three on the same commit. A second full leg on the same commit passed all 657.
-- **A suspected cause, read and not run.** The pin is meant to hold with and without planner statistics. Postgres's autovacuum can analyze the corpus's tables at any moment while a run is under way. If two candidates tie on score and the order between them comes from the plan, an analyze that lands mid-run could change the plan and so the order.
+- **It failed again one landing later.** The first full leg at `21baf25`, the fourth landing's tip, gave 661 passed and this test failed. This time the order differed on `q18` and `q39`. The test alone passed three runs of three there too.
+- **Both failures are the hybrid half.** Each failed at `tests/ranking/pins.py:87`, the hybrid assertion that runs through the verb with the hashing embedder. The lexical assertion before it passed, so the vector leg is where to look first.
+- **The pattern, counted.** Every full Postgres leg before the store's landing passed, about seven runs across the two specs' earlier landings. From the store's landing on, two runs in three failed. The store's landing adds 13 Postgres tests and changes no ranking, embedding or vector code. The likeliest link is more load on the one server, not the code; this is not shown.
+- **What the planner reads is pinned already.** `tests/ranking/test_harness.py` runs the pin after an explicit `ANALYZE` on Postgres, and passes, so a mid-run analyze is a weaker suspect than it first looked.
+- **A first suspect, read and not run.** The pin is meant to hold with and without planner statistics. Postgres's autovacuum can analyze the corpus's tables at any moment while a run is under way. If two candidates tie on score and the order between them comes from the plan, an analyze that lands mid-run could change the plan and so the order.
 
 ## Decisions
 
@@ -38,7 +42,8 @@ Each fact was run, unless it says "read".
 
 ## Not checked
 
-- The cause is not shown. Whether `q27`'s and `q39`'s fifth candidates tie on score was not read from the run.
+- The cause is not shown. Whether the differing candidates of `q18`, `q27` and `q39` tie on fused score was not read from either run.
+- Whether the vector leg took the ANN index or the exact scan on the failing runs was not recorded. pgvector's index scan is approximate, so a plan that switches between the two can change an order.
 - No run measured how often the failure happens under load.
 
 ## Choices to confirm
