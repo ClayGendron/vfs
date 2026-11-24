@@ -21,6 +21,7 @@ from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table
 
 from tests.support.kernel_store import (
     BOTH_ENGINES,
+    IN_A_FILE,
     PROBE_TABLE,
     SQLITE_PLACES,
     START,
@@ -35,6 +36,7 @@ from tests.support.kernel_store import (
     probe_table,
     probe_table_shape,
     records,
+    sqlite_file_of,
     statements_of,
     without_waiting,
 )
@@ -211,6 +213,39 @@ async def test_a_flush_runs_between_two_chunks(stores: Callable[..., KernelStore
         removed = await sweeping
     order = [item.sql.split()[0] for item in sent if item.sql.startswith(("INSERT", "DELETE"))]
     assert (removed, [verb for verb, _ in itertools.groupby(order)][:3]) == (12_000, ["DELETE", "INSERT", "DELETE"])
+
+
+@pytest.mark.parametrize("place", [IN_A_FILE], indirect=True)
+@pytest.mark.parametrize(("counter", "stored"), [pytest.param(1, 3, id="lands"), pytest.param(None, 0, id="fails")])
+async def test_rows_a_failed_flush_holds_are_flushed_between_two_chunks(
+    place: RecordPlace, stores: Callable[..., KernelStore], counter: int | None, stored: int
+) -> None:
+    """Guards a pass that does not wake the task between two chunks, so rows it holds wait for the whole pass.
+
+    The rows wait behind a flush that failed while the file's writer was
+    held, and nothing but the pass wakes the task: the mutant it kills
+    drops the wake between two chunks, and leaves no write between them.
+    """
+    store = _later_store(stores)
+    table = await _expiring(store, expired=SWEEP_CHUNK + 1)
+    store.register_sweeper("probe", _probe_sweeper(table))
+    kind = probe_kind(table)
+    store.register_behind(kind)
+    without_waiting(store)
+    holder = HeldWriter(sqlite_file_of(place))
+    holder.hold()
+    try:
+        store.put_behind(kind, [{**row, "counter": counter} for row in probe_rows(3, owner="behind")])
+        with pytest.raises(KernelStoreUnavailable):
+            await store.drain()
+    finally:
+        holder.release()
+    sent = statements_of(store)
+    removed = await store.sweep()
+    order = [item.sql.split()[0] for item in sent if item.sql.startswith(("INSERT", "DELETE"))]
+    verbs = [verb for verb, _ in itertools.groupby(order)]
+    stored_now = await count_rows(store, table)
+    assert (removed, verbs[:3], stored_now) == (SWEEP_CHUNK + 1, ["DELETE", "INSERT", "DELETE"], stored)
 
 
 async def test_a_root_that_masks_sweep_runs_no_pass(tmp_path: pathlib.Path) -> None:
