@@ -305,15 +305,17 @@ STALE_VID_DETAIL: Final = "the vid required is not the vid of what is stored"
 """The words of every refusal of a required vid, whatever names the row there now."""
 
 
-def stale_vid(path: Path, version: int, vid: Vid) -> ResultError:
+def stale_vid(path: Path, version: int | None, vid: Vid | None) -> ResultError:
     """The ``conflict`` of a change whose required vid is not the vid of the live row at *path*.
 
     It names the row there now by its ``version`` and its ``vid``, and is
     not retryable: the same call would carry the same stale vid, so the
     caller reads the row again first. A storage, a ladder and the kernel
     all build this refusal here, so each answers it word for word alike.
+    Given neither, it names nothing: the row now at the path was not read.
     """
-    return classified(ErrorKind.conflict, path, detail=STALE_VID_DETAIL, data={"version": version, "vid": vid})
+    data = None if version is None and vid is None else {"version": version, "vid": vid}
+    return classified(ErrorKind.conflict, path, detail=STALE_VID_DETAIL, data=data)
 
 
 def validation_message(exc: ValidationError) -> str:

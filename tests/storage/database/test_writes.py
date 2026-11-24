@@ -1665,6 +1665,25 @@ class TestLandingJudgment:
     """A create that arbitration turns into a change of a standing row is judged on that row."""
 
     @pytest.mark.parametrize("arm", ["upsert", "catch_retry"])
+    @pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside-a-plain-entry"])
+    async def test_a_marked_create_never_lands_on_a_rivals_row(self, monkeypatch, arm: str, beside: bool) -> None:
+        """Mutation guarded: the marked insert group clobbering under ``overwrite``, on either arm."""
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        _arm(monkeypatch, storage, arm)
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        rival = clearing("write:before-apply", lambda: land(sessions[-1], tables, "/drop/x.txt", "alice", "add"))
+        entries = [Entry(path=Path("/drop/x.txt"), content="mine")]
+        if beside:
+            entries.append(Entry(path=Path("/drop/y.txt"), content="plain"))
+        with installed("write:before-apply", rival):
+            result = await storage.write(entries=entries, if_vids={Path("/drop/x.txt"): ABSENT}, authority=SYSTEM)
+        # The rival rides the attempt's own session, so the refused call takes it back with everything else.
+        assert [(error.kind, error.path) for error in result.errors] == [(ErrorKind.exists, "/drop/x.txt")]
+        assert await row_at(storage, "/drop/y.txt") is None
+
+    @pytest.mark.parametrize("arm", ["upsert", "catch_retry"])
     async def test_a_create_that_lands_on_a_row_beyond_the_callers_rung_redrives(self, monkeypatch, arm) -> None:
         """A rival's row at the path absorbs bob's create only if bob may contribute to it.
 
@@ -2024,6 +2043,15 @@ class TestRequiredVid:
         assert [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))] == []
         now = {"version": 3, "vid": (await storage.stat(path=keyed[0])).one().vid}
         assert [(e.kind, e.path, e.data) for e in stale.errors] == [(ErrorKind.conflict, keyed[0], now)]
+        await storage.close()
+
+    async def test_an_append_with_the_mark_is_refused_at_the_seam(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/log.txt"), content="one")])).success is True
+        tail = [Entry(path=Path("/log.txt"), content="two")]
+        refused = await storage.write(entries=tail, append=True, if_vids={Path("/log.txt"): ABSENT})
+        assert [(error.kind, error.retryable) for error in refused.errors] == [(ErrorKind.invalid, False)]
+        assert (await storage.read(path=Path("/log.txt"))).one().content == "one"
         await storage.close()
 
     @pytest.mark.slow

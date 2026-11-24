@@ -716,6 +716,11 @@ class DatabaseStorage:
         if append and (len(entries) != 1 or entries[0].kind == "directory"):
             refusal = classified(ErrorKind.invalid, detail="an append takes one file")
             return Result(ops=("write",), errors=[refusal])
+        if append and (if_vids or {}).get(entries[0].path) == ABSENT:
+            refusal = classified(
+                ErrorKind.invalid, detail="an append takes no ABSENT: an append to an absent path already creates it"
+            )
+            return Result(ops=("write",), errors=[refusal])
         # A write that only creates or only appends replaces no stored byte, so an occupied target is judged at
         # the rung of a creation; so is a call whose every file carries the mark, whose rung is the call's own.
         required = if_vids or {}

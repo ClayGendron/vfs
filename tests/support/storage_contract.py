@@ -3357,7 +3357,7 @@ class StorageContract:
         result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="PDF", new="x")])
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.wrong_kind
-        assert result.errors[0].message.endswith("Wrong kind: binary body; replace the bytes through write")
+        assert result.errors[0].message == "Wrong kind: binary body; replace the bytes through write"
         back = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data"}))
         assert back.observations[0].data == b"%PDF-1.4"
 

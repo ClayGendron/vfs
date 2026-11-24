@@ -546,7 +546,7 @@ async def test_mkedge_duplicate_identity_in_batch_is_refused() -> None:
     result = await fs.mkedge(edges=[edge, edge])
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.invalid
-    assert result.errors[0].message.endswith("Invalid: duplicate imports edge in batch")
+    assert result.errors[0].message == "Invalid: duplicate imports edge in batch"
     assert (result.errors[0].path, result.errors[0].data) == ("/a.py", {"vfs.target": "/b.py"})
     assert fs.calls == []
 

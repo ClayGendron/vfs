@@ -176,6 +176,20 @@ def test_write_then_read_through_the_facade() -> None:
     assert read.one().content == "x"
 
 
+def test_the_facade_forwards_a_required_vid() -> None:
+    """Mutation guarded: a twin that drops ``if_vid`` and writes over the file unguarded."""
+    fs = vfs.VirtualFileSystem()
+    try:
+        assert fs.write(path="/a.txt", content="one").success is True
+        seen = fs.stat(path="/a.txt").one().vid
+        assert fs.write(path="/a.txt", content="two").success is True
+        stale = fs.write(path="/a.txt", content="three", if_vid=seen)
+        assert [error.kind for error in stale.errors] == [vfs.ErrorKind.conflict]
+        assert fs.read(path="/a.txt").one().content == "two"
+    finally:
+        fs.close()
+
+
 def test_a_plain_interpreter_with_no_loop_writes_and_reads() -> None:
     """A script with no asyncio.run harness: the facade's own loop is the only one."""
     done = subprocess.run([sys.executable, "-c", SCRIPT], capture_output=True, text=True, check=False, cwd=REPO)

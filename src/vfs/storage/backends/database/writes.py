@@ -62,7 +62,6 @@ from vfs.models import (
 from vfs.models.rows import ULIDKey, vid_at
 from vfs.offload import call_offloaded
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, stale_vid, wrong_kind
-from vfs.results.envelope import STALE_VID_DETAIL
 from vfs.storage.backends.database.authorized import admit_landed, admit_staged, admit_targets
 from vfs.storage.backends.database.descent import (
     miss_errors,
@@ -1155,7 +1154,7 @@ def _conflict(staged: StagedEntry, standing: tuple[int, Vid] | None) -> ResultEr
     if staged.expected is not None and standing is not None:
         return stale_vid(staged.path, *standing)
     if staged.expected is not None:
-        return classified(ErrorKind.conflict, staged.path, detail=STALE_VID_DETAIL)
+        return stale_vid(staged.path, None, None)
     # Retryable where the caller required no vid: an identical retry
     # is judged against the rival's committed state and resolves honestly.
     data = None if standing is None else {"version": standing[0], "vid": standing[1]}
