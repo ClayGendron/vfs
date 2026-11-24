@@ -1,0 +1,20 @@
+academy-guide	14	7755
+algorithmic-art	339	19769
+brand-guidelines	252	2235
+canvas-design	302	11939
+claude-api	12	105146
+discernment-nudge	18	10592
+doc-coauthoring	443	15815
+docx	841	7488
+frontend-design	219	9390
+internal-comms	343	1511
+mcp-builder	288	11129
+pdf	440	8058
+pptx	744	28365
+skill-creator	332	33168
+slack-gif-creator	244	7841
+theme-factory	275	3124
+web-artifacts-builder	309	3087
+webapp-testing	218	3913
+xlsx	956	9770
+skills=19 metadata_chars=6589 metadata_chars_per_skill=347 skill_md_bytes_median=9390 max=105146

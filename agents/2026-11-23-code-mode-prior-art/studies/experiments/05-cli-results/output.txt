@@ -1,0 +1,178 @@
+## philschmid/mcp-cli 0.3.0 (JSON argument only)
+### pmc echo json
+exit=0 stdout_chars=120 stderr_chars=0 wire_calls=1
+stdout_head: {"filter": {"field": "x", "op": "eq"}, "limit": 5, "mode": "fast", "query": "hi", "tags": ["a,b", "c"], "verbose": true}
+stdout_tail: {"filter": {"field": "x", "op": "eq"}, "limit": 5, "mode": "fast", "query": "hi", "tags": ["a,b", "c"], "verbose": true}
+stderr_head: 
+
+### pmc fail
+exit=0 stdout_chars=4 stderr_chars=0 wire_calls=1
+stdout_head: boom
+stdout_tail: boom
+stderr_head: 
+
+### pmc big
+exit=0 stdout_chars=199999 stderr_chars=0 wire_calls=1
+stdout_head: line 00000 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00001 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00002 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00003 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00004 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00005 xxxxxxxxxxxxxxxxxxxxxxxxxxxx 
+stdout_tail:  line 04996 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04997 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04998 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04999 xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+stderr_head: 
+
+### pmc echo missing required
+exit=0 stdout_chars=2 stderr_chars=0 wire_calls=1
+stdout_head: {}
+stdout_tail: {}
+stderr_head: 
+
+### pmc grep tools
+exit=0 stdout_chars=42 stderr_chars=0 wire_calls=0
+stdout_head: fake echo Echo the arguments back as JSON.
+stdout_tail: fake echo Echo the arguments back as JSON.
+stderr_head: 
+
+## mcp2cli 3.9.0 (flags from the schema)
+### mcp2cli echo flags
+exit=0 stdout_chars=118 stderr_chars=135 wire_calls=1
+stdout_head: {"filter": {"field": "x", "op": "eq"}, "limit": 5, "mode": "fast", "query": "hi", "tags": ["a", "b"], "verbose": true}
+stdout_tail: {"filter": {"field": "x", "op": "eq"}, "limit": 5, "mode": "fast", "query": "hi", "tags": ["a", "b"], "verbose": true}
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+
+### mcp2cli echo json-array tags
+exit=0 stdout_chars=37 stderr_chars=135 wire_calls=1
+stdout_head: {"query": "hi", "tags": ["a,b", "c"]}
+stdout_tail: {"query": "hi", "tags": ["a,b", "c"]}
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+
+### mcp2cli echo bad integer
+exit=2 stdout_chars=0 stderr_chars=436 wire_calls=0
+stdout_head: 
+stdout_tail: 
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead. usage: mcp2cli echo [-h] [--stdin | --req-json JSON] [--schema]                     [--query QUERY] [--l
+
+### mcp2cli echo bad enum
+exit=2 stdout_chars=0 stderr_chars=463 wire_calls=0
+stdout_head: 
+stdout_tail: 
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead. usage: mcp2cli echo [-h] [--stdin | --req-json JSON] [--schema]                     [--query QUERY] [--l
+
+### mcp2cli echo missing required
+exit=0 stdout_chars=12 stderr_chars=135 wire_calls=1
+stdout_head: {"limit": 5}
+stdout_tail: {"limit": 5}
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+
+### mcp2cli fail
+exit=1 stdout_chars=0 stderr_chars=147 wire_calls=1
+stdout_head: 
+stdout_tail: 
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead. Error: boom
+
+### mcp2cli fail --json
+exit=1 stdout_chars=166 stderr_chars=135 wire_calls=1
+stdout_head: {"content": [{"type": "text", "text": "boom", "annotations": null, "meta": null}], "structuredContent": null, "isError": true, "resultType": "complete", "meta": null}
+stdout_tail: ent": [{"type": "text", "text": "boom", "annotations": null, "meta": null}], "structuredContent": null, "isError": true, "resultType": "complete", "meta": null}
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+
+### mcp2cli big
+exit=0 stdout_chars=199999 stderr_chars=135 wire_calls=1
+stdout_head: line 00000 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00001 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00002 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00003 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00004 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00005 xxxxxxxxxxxxxxxxxxxxxxxxxxxx 
+stdout_tail:  line 04996 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04997 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04998 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04999 xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+
+### mcp2cli echo --help
+exit=0 stdout_chars=1109 stderr_chars=135 wire_calls=0
+stdout_head: usage: mcp2cli echo [-h] [--stdin | --req-json JSON] [--schema]                     [--query QUERY] [--limit LIMIT] [--tags TAGS]                     [--mode {fast,slow}] [--verbose | --no-verbose]                     [--filter FILTER]  Ech
+stdout_tail:            tags (JSON array)   --mode {fast,slow}    mode   --verbose, --no-verbose                         verbose   --filter FILTER       filter (JSON object)
+stderr_head: warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+
+## mcporter 0.17.1 (key=value and function-call syntax)
+### mcporter echo kv
+exit=0 stdout_chars=158 stderr_chars=0 wire_calls=1
+stdout_head: {   "filter": {     "field": "x",     "op": "eq"   },   "limit": 5,   "mode": "fast",   "query": "hi",   "tags": [     "a,b",     "c"   ],   "verbose": true }
+stdout_tail: {   "filter": {     "field": "x",     "op": "eq"   },   "limit": 5,   "mode": "fast",   "query": "hi",   "tags": [     "a,b",     "c"   ],   "verbose": true }
+stderr_head: 
+
+### mcporter echo call-expr
+exit=0 stdout_chars=121 stderr_chars=0 wire_calls=1
+stdout_head: {   "filter": {     "field": "x",     "op": "eq"   },   "limit": 5,   "query": "hi",   "tags": [     "a,b",     "c"   ] }
+stdout_tail: {   "filter": {     "field": "x",     "op": "eq"   },   "limit": 5,   "query": "hi",   "tags": [     "a,b",     "c"   ] }
+stderr_head: 
+
+### mcporter echo bad enum
+exit=0 stdout_chars=39 stderr_chars=0 wire_calls=1
+stdout_head: {   "mode": "medium",   "query": "hi" }
+stdout_tail: {   "mode": "medium",   "query": "hi" }
+stderr_head: 
+
+### mcporter echo missing required
+exit=0 stdout_chars=16 stderr_chars=0 wire_calls=1
+stdout_head: {   "limit": 5 }
+stdout_tail: {   "limit": 5 }
+stderr_head: 
+
+### mcporter fail
+exit=1 stdout_chars=4 stderr_chars=0 wire_calls=1
+stdout_head: boom
+stdout_tail: boom
+stderr_head: 
+
+### mcporter big
+exit=0 stdout_chars=199999 stderr_chars=0 wire_calls=1
+stdout_head: line 00000 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00001 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00002 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00003 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00004 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00005 xxxxxxxxxxxxxxxxxxxxxxxxxxxx 
+stdout_tail:  line 04996 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04997 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04998 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04999 xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+stderr_head: 
+
+## apify/mcpc 0.8.0 (key:=value, sessions)
+### mcpc connect
+exit=0 stdout_chars=841 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  MCP: version 2025-11-25 / stdio (stateful)  Server: fake (version: 0)  Capabilities: * tools (static)  Tools (3): * `echo (query:str, limit?:int
+stdout_tail: cpc @fake logs Log file: /tmp/claude-0/-home-user-vfs/73990fc9-bba6-5cb3-8c5e-89a0fb7832d2/scratchpad/mcpc-home/logs/bridge-@fake.log  ✓ Session @fake created
+stderr_head: 
+
+### mcpc echo kv
+exit=0 stdout_chars=292 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  ✓ Tool echo executed successfully with these results:  Content: ```` {"filter": {"field": "x", "op": "eq"}, "limit": 5, "mode": "fast", "query
+stdout_tail: with these results:  Content: ```` {"filter": {"field": "x", "op": "eq"}, "limit": 5, "mode": "fast", "query": "hi", "tags": ["a,b", "c"], "verbose": true} ````
+stderr_head: 
+
+### mcpc echo missing required
+exit=0 stdout_chars=184 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  ✓ Tool echo executed successfully with these results:  Content: ```` {"limit": 5} ````
+stdout_tail: ome/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  ✓ Tool echo executed successfully with these results:  Content: ```` {"limit": 5} ````
+stderr_head: 
+
+### mcpc fail
+exit=2 stdout_chars=219 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  ✗ Tool fail returned an error  Content: ```` boom ```` ℹ Run mcpc @fake tools-get fail to see the tool schema and usage
+stdout_tail: -mode-prior-art/studies/experim…]  ✗ Tool fail returned an error  Content: ```` boom ```` ℹ Run mcpc @fake tools-get fail to see the tool schema and usage
+stderr_head: 
+
+### mcpc big
+exit=0 stdout_chars=200170 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  ✓ Tool big executed successfully with these results:  Content: ```` line 00000 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00001 xxxxxxxxxxxxxxxxxxxxxxx
+stdout_tail:  04996 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04997 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04998 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 04999 xxxxxxxxxxxxxxxxxxxxxxxxxxxx ````
+stderr_head: 
+
+### mcpc big --max-chars 1000
+exit=0 stdout_chars=1244 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  ✓ Tool big executed successfully with these results:  Content: ```` line 00000 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00001 xxxxxxxxxxxxxxxxxxxxxxx
+stdout_tail: x line 00023 xxxxxxxxxxxxxxxxxxxxxxxxxxxx line 00024 xxxxxxxxxxxxxxx  ... output truncated (195.3KB total, showing first 1000 chars). Use --max-chars to adjust.
+stderr_head: 
+
+### mcpc big --json
+exit=0 stdout_chars=205071 stderr_chars=0 wire_calls=0
+stdout_head: {   "content": [     {       "type": "text",       "text": "line 00000 xxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline 00001 xxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline 00002 xxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline 00003 xxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline 00004 xxxxx
+stdout_tail: xxxxxxxxxxxxxxxxxxxxxxxx\nline 04997 xxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline 04998 xxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline 04999 xxxxxxxxxxxxxxxxxxxxxxxxxxxx"     }   ] }
+stderr_head: 
+
+### mcpc grep
+exit=0 stdout_chars=151 stderr_chars=0 wire_calls=0
+stdout_head: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  Tools (1):   * `big (lines?:int)` [read-only]  1 match.
+stdout_tail: [@fake → python3 -I /home/user/vfs/agents/2026-11-23-code-mode-prior-art/studies/experim…]  Tools (1):   * `big (lines?:int)` [read-only]  1 match.
+stderr_head: 
+
+### mcpc close
+exit=0 stdout_chars=37 stderr_chars=0 wire_calls=0
+stdout_head: ✓ Session @fake closed successfully
+stdout_tail: ✓ Session @fake closed successfully
+stderr_head: 
+

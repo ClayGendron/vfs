@@ -1,0 +1,119 @@
+{
+ "tools": 1107,
+ "servers": 30,
+ "levels": {
+  "1 full schemas": {
+   "bytes": 577934,
+   "est_tokens": 140303,
+   "ratio_to_full": 1.0,
+   "x_smaller": 1.0
+  },
+  "1+ with annotations, outputSchema": {
+   "bytes": 759999,
+   "est_tokens": 185819,
+   "ratio_to_full": 1.31503,
+   "x_smaller": 0.8
+  },
+  "2 names only": {
+   "bytes": 24059,
+   "est_tokens": 6015,
+   "ratio_to_full": 0.04163,
+   "x_smaller": 24.0
+  },
+  "3 name + first sentence": {
+   "bytes": 90914,
+   "est_tokens": 22328,
+   "ratio_to_full": 0.15731,
+   "x_smaller": 6.4
+  },
+  "4a ls /.vfs/mcp": {
+   "bytes": 412,
+   "est_tokens": 103,
+   "ratio_to_full": 0.00071,
+   "x_smaller": 1402.8
+  },
+  "4b ls one server (median)": {
+   "bytes": 212.0,
+   "est_tokens": 53,
+   "ratio_to_full": 0.00037,
+   "x_smaller": 2726.1
+  },
+  "4b ls one server (max)": {
+   "bytes": 7853,
+   "est_tokens": 1964,
+   "ratio_to_full": 0.01359,
+   "x_smaller": 73.6
+  },
+  "4c every path": {
+   "bytes": 58482,
+   "est_tokens": 14621,
+   "ratio_to_full": 0.10119,
+   "x_smaller": 9.9
+  },
+  "5 one manifest, all tools (median)": {
+   "bytes": 340,
+   "est_tokens": 85,
+   "ratio_to_full": 0.00059,
+   "x_smaller": 1699.8
+  },
+  "5 one manifest, full-schema tools (median)": {
+   "bytes": 612,
+   "est_tokens": 153,
+   "ratio_to_full": 0.00106,
+   "x_smaller": 944.3
+  },
+  "5 one manifest (p90)": {
+   "bytes": 1610,
+   "est_tokens": 403,
+   "ratio_to_full": 0.00279,
+   "x_smaller": 359.0
+  },
+  "5 one manifest (max)": {
+   "bytes": 7240,
+   "est_tokens": 1810,
+   "ratio_to_full": 0.01253,
+   "x_smaller": 79.8
+  }
+ },
+ "split": {
+  "github": {
+   "tools": 149,
+   "name_bytes": 3025,
+   "description_bytes": 21123,
+   "input_schema_bytes": 124443,
+   "of_which_property_descriptions": 52677,
+   "output_schema_bytes": 162129
+  },
+  "alibaba-devops": {
+   "tools": 203,
+   "name_bytes": 4509,
+   "description_bytes": 22039,
+   "input_schema_bytes": 136569,
+   "of_which_property_descriptions": 45882,
+   "output_schema_bytes": 0
+  }
+ },
+ "largest_manifest": "github/projects_write",
+ "multiplexed_method_tools": [
+  "actions_get",
+  "actions_list",
+  "actions_run_trigger",
+  "discussion_comment_write",
+  "issue_artifact_read",
+  "issue_artifact_write",
+  "issue_dependency_read",
+  "issue_dependency_write",
+  "issue_read",
+  "issue_write",
+  "label_write",
+  "projects_get",
+  "projects_list",
+  "projects_write",
+  "pull_request_artifact_read",
+  "pull_request_artifact_write",
+  "pull_request_read",
+  "pull_request_review_write",
+  "repository_ruleset_read",
+  "ui_get"
+ ]
+}
