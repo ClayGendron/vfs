@@ -1330,6 +1330,17 @@ async def test_each_verb_refuses_a_key_that_names_no_target(verb: str) -> None:
     assert a.calls == []
 
 
+@pytest.mark.parametrize("verb", list(BATCH))
+async def test_each_verb_refuses_a_key_beside_an_empty_batch(verb: str) -> None:
+    """Mutation guarded: an empty batch answered before its keys are matched, which drops a key that names nothing."""
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    result = await BATCH[verb](root, [], if_vids={"/a/f.txt": VID})
+    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert a.calls == []
+
+
 @pytest.mark.parametrize("verb", list(SINGLE))
 async def test_each_verb_refuses_a_required_vid_where_the_storage_issues_none(verb: str) -> None:
     root = AsyncVirtualFileSystem()

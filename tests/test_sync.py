@@ -190,6 +190,21 @@ def test_the_facade_forwards_a_required_vid() -> None:
         fs.close()
 
 
+def test_the_facade_forwards_an_edits_required_vids() -> None:
+    """Mutation guarded: an ``edit`` twin that drops ``if_vid`` or ``if_vids`` and edits the file unguarded."""
+    fs = vfs.VirtualFileSystem()
+    try:
+        assert fs.write(path="/a.txt", content="alpha").success is True
+        stale = "0" * 20
+        single = fs.edit("/a.txt", old="alpha", new="beta", if_vid=stale)
+        rows = [vfs.Observation(path=vfs.Path("/a.txt"))]
+        batch = fs.edit(observations=rows, old="alpha", new="beta", if_vids={"/a.txt": stale})
+        assert [error.kind for error in (*single.errors, *batch.errors)] == [vfs.ErrorKind.conflict] * 2
+        assert fs.read(path="/a.txt").one().content == "alpha"
+    finally:
+        fs.close()
+
+
 def test_a_plain_interpreter_with_no_loop_writes_and_reads() -> None:
     """A script with no asyncio.run harness: the facade's own loop is the only one."""
     done = subprocess.run([sys.executable, "-c", SCRIPT], capture_output=True, text=True, check=False, cwd=REPO)

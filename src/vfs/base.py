@@ -1046,10 +1046,12 @@ class AsyncVirtualFileSystem:
 
         ``if_vid`` is the :class:`~vfs.vid.Vid` of the file as the caller read it; ``if_vids`` maps each
         path of ``observations`` that needs one to its vid. A file whose vid is not the one required is
-        refused with ``conflict`` before any of its text is matched, and nothing in the call is edited;
+        refused with ``conflict`` before any of its text is matched, and nothing is edited on the mount that holds it;
         the error carries the ``version`` and the ``vid`` of what is there now. An edit that landed and
         is sent again with the same vid meets the vid it moved, and is ``conflict`` too: read the file
-        again first. ``ABSENT`` in place of a vid refuses a file that is there with ``conflict``.
+        again first. ``ABSENT`` in place of a vid refuses a file that is there with ``conflict``. Each key of
+        ``if_vids`` must be the path of a row in ``observations``, and no two keys may name one row. A mount
+        whose storage issues no vid refuses a call that requires one there with ``unsupported``.
 
         The call returns a :class:`Result`. An ``edits`` that is not a list of :class:`EditOperation`
         is refused with ``invalid``.

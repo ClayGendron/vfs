@@ -84,7 +84,7 @@ from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
-from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists, required_refusal
 from vfs.storage.backends.database.versions import mint_versions
 from vfs.storage.editing import appended, edited_entry
 
@@ -1447,8 +1447,8 @@ def _stage_edits(
             plan.errors.append(missing[target])
             continue
         # A required vid is judged against the row before the call, and before anything else about it.
-        if target in required and required[target] != (vid := plan.vid_of(row)):
-            plan.errors.append(stale_vid(target, row["version"], vid))
+        if (refused := required_refusal(plan.mint, target, row, required.get(target))) is not None:
+            plan.errors.append(refused)
             continue
         if row["source"] == "bytes":
             plan.errors.append(_binary_target(target))
