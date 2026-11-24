@@ -223,12 +223,19 @@ async def test_a_close_with_no_budget_left_starts_no_flush(
 
 
 @pytest.mark.parametrize("cut", ["budget spent", "cancelled"])
-async def test_a_close_cut_short_starts_no_further_flush(tmp_path: pathlib.Path, cut: str) -> None:
-    """Guards a close cut short whose task goes on flushing, on the new pool, after the engine is disposed."""
+async def test_a_close_cut_short_starts_no_further_flush(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture, cut: str
+) -> None:
+    """Guards a close cut short whose task goes on flushing, on the new pool, after the engine is disposed.
+
+    It also guards the close's one ``WARNING`` said before the flush in hand
+    ends, which could not count that flush's rows if it failed.
+    """
     fs = _file_kernel(tmp_path)
     connections = Connections(fs._kernel_store)
     probe = await _probe(fs._kernel_store)
     store = probe.store
+    caplog.set_level(logging.WARNING, logger="vfs.kernel_store")
     gate = Gate()
     with seams.installed("kernel-store:before-commit", gate):
         store.put_behind(probe.kind, probe_rows(3))
@@ -244,10 +251,13 @@ async def test_a_close_cut_short_starts_no_further_flush(tmp_path: pathlib.Path,
             with pytest.raises(asyncio.CancelledError):
                 await closing
         dropped = store.dropped
+        warned_in_flight = len(records(caplog, "WARNING"))
         gate.open()
         await _the_task_ends()
+    warned = records(caplog, "WARNING")
     await fs.close()
     assert (begins(sent), connections.open, dropped) == ([], 0, 2_000)
+    assert (warned_in_flight, len(warned), "2000 records" in warned[0]) == (0, 1, True)
     assert (file_rows(tmp_path / "knowledge.db", PROBE_TABLE), files_in(tmp_path)) == (3, ["knowledge.db"])
 
 
