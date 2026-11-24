@@ -71,9 +71,13 @@ class TestSqlite:
         assert place.engine_arguments == {"creator": _creator, "connect_args": {"timeout": 3}}
         assert pooled.record_place is not None
         assert pooled.record_place.engine_arguments == {}
+        schemed = SQLiteStorage(path=tmp_path / "s.db", schema="aux")
+        assert schemed.record_place is not None
+        assert schemed.record_place.schema is None
         assert (sorted(tmp_path.iterdir()), connects) == ([], [])
         await storage.close()
         await pooled.close()
+        await schemed.close()
 
     async def test_a_path_with_a_question_mark_keeps_it(self, tmp_path: pathlib.Path) -> None:
         """Guards a place handed as text, where the question mark would start a query."""
@@ -106,10 +110,25 @@ class TestSqlite:
         assert connects == []
         await storage.close()
 
-    async def test_a_memory_url_read_as_a_file_names_no_place(self) -> None:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "sqlite+aiosqlite:///file::memory:?cache=shared&uri=true",
+            "sqlite+aiosqlite:///file:/memx?vfs=memdb&uri=true",
+        ],
+    )
+    async def test_a_memory_url_read_as_a_file_names_no_place(self, url: str) -> None:
         """Guards a place on a URL SQLAlchemy opens as a file, whose database is in memory all the same."""
-        storage = DatabaseStorage(url="sqlite+aiosqlite:///file::memory:?cache=shared&uri=true")
+        storage = DatabaseStorage(url=url)
         assert storage.record_place is None
+        await storage.close()
+
+    async def test_a_file_named_like_memory_without_uri_names_itself(self) -> None:
+        """Guards a memory test that ignores ``uri``: without it the name is a file's."""
+        storage = DatabaseStorage(url="sqlite+aiosqlite:///file::memory:")
+        place = storage.record_place
+        assert place is not None
+        assert (place.label, place.durable) == ("file::memory:", True)
         await storage.close()
 
     async def test_a_storage_on_the_generic_floor_names_no_place(self) -> None:

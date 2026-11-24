@@ -174,9 +174,6 @@ class DatabaseStorage:
             native_embedding=native_embedding,
             posture=posture,
         )
-        # What the storage was built from, which the place of the kernel's records is read from.
-        self._engine_arguments = engine_arguments
-        self._schema = schema
         # Resolved authorities, one per subject set, revalidated by their stamps and the relabels in flight.
         self._rights = RightsCache()
         self._trash_days = trash_days
@@ -215,11 +212,11 @@ class DatabaseStorage:
         this storage's URL and its ``engine_arguments`` without ``pool``,
         so a listener on ``engine`` does not reach it. A database in
         memory names a second one in memory, whose records end with the
-        process. The generic floor, and a ``file::memory:`` URI that
-        SQLAlchemy reads as a file, name none. The URL is SQLAlchemy's
+        process. The generic floor, and a ``file::memory:`` or ``memdb``
+        URI that SQLAlchemy reads as a file, name none. The URL is SQLAlchemy's
         ``URL``, which masks its password when it is printed.
         """
-        return record_place_of(self._host.engine.url, self._engine_arguments, self._schema)
+        return record_place_of(self._host.engine.url, self._host.engine_arguments, self._host.tables.entry.schema)
 
     @property
     def mount_identity(self) -> str | None:

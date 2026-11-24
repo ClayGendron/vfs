@@ -189,8 +189,9 @@ def record_place_of(url: URL, engine_arguments: Mapping[str, Any] | None, schema
     a ``creator`` or ``connect_args`` opens a connection each time it is
     called, so a file only they can open is opened for the records too.
     A database SQLAlchemy gives the pool of one connection names a
-    second database in memory. A ``file::memory:`` URI, which SQLAlchemy
-    reads as a file, and every other dialect name none.
+    second database in memory. A ``file::memory:`` URI or one through the
+    ``memdb`` VFS, which SQLAlchemy reads as a file, and every other
+    dialect name none.
     """
     if lives_in_one_connection(url):
         return RecordPlace.in_memory()
@@ -329,8 +330,13 @@ def _require(arguments: dict[str, Any], key: str, value: object, reason: str, wi
 
 
 def _memory_read_as_file(url: URL) -> bool:
-    """Whether ``url`` is a SQLite URI naming the database in memory, which SQLAlchemy opens as a file."""
-    return asbool(url.query.get("uri", False)) and str(url.database or "").startswith(_MEMORY_URI)
+    """Whether ``url`` is a SQLite URI naming a database in memory, which SQLAlchemy opens as a file.
+
+    Two URIs do: ``file::memory:``, and any file opened through the
+    ``memdb`` VFS.
+    """
+    in_memory = str(url.database or "").startswith(_MEMORY_URI) or url.query.get("vfs") == "memdb"
+    return asbool(url.query.get("uri", False)) and in_memory
 
 
 def _named(key: str, within: str | None = None) -> str:
