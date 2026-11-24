@@ -22,6 +22,7 @@ from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, TRAVERSE_MET
 from vfs.paths import ObjectKind, validate_segment
 from vfs.results.paging import PAGE_BESIDE_MAX_COUNT
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
+from vfs.vid import ABSENT, is_vid
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -39,7 +40,8 @@ ParamKind = Literal[
     "int",
     "bool",
     "dict",
-    "versions",  # mapping of a path to the version expected there; each value in the spec's int domain
+    "vid",  # a vid, the 20 characters a result carries, or the mark ABSENT
+    "vids",  # mapping of a path to the vid required there, or to the mark ABSENT
     "str_seq",  # tuple or list of str; str/bytes/iterables rejected
     "str_set",  # frozenset/set/tuple/list of str
     "observations",  # model kinds: declared for drift/schema, validated
@@ -57,6 +59,10 @@ OUTPUT_MODES: Final[frozenset[str]] = frozenset(get_args(GrepOutputMode))
 OBJECT_KINDS: Final[frozenset[str]] = frozenset(get_args(ObjectKind))
 GRANTABLE: Final[frozenset[str]] = frozenset(GRANTABLE_LEVELS)
 POSTURES: Final[frozenset[str]] = frozenset(get_args(Posture))
+
+# What a vid is, as a refusal describes it, and how much of a refused text a refusal shows.
+_VID_SHAPE: Final = "the 20 characters a result carries"
+_SHOWN_CHARACTERS: Final = 32
 
 # The shared ceiling on every int channel: the tightest integer all of
 # vfs's seams carry alike — 32-bit FFI paths, SQL INT columns, JSON.
@@ -114,6 +120,16 @@ class NotBoth(NamedTuple):
     msg: str
 
 
+class NotWith(NamedTuple):
+    """A value unlawful beside another: ``param == value`` forbids ``other == forbidden``."""
+
+    param: str
+    value: object
+    other: str
+    forbidden: object
+    msg: str
+
+
 class Disjoint(NamedTuple):
     """Two sequence parameters that may share no item."""
 
@@ -128,7 +144,7 @@ class Segments(NamedTuple):
     param: str
 
 
-ValueRule = OnlyWith | NotBoth | Disjoint | Segments
+ValueRule = OnlyWith | NotWith | NotBoth | Disjoint | Segments
 
 
 _AUTHORITY: Final = ParamSpec("authority", "authority", doc="the verified authority behind the call; never on the wire")
@@ -186,16 +202,8 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", doc="single form: the file to write"),
         ParamSpec("content", "str", doc="single form: the file's text body"),
         ParamSpec("data", "bytes", doc="single form: the file's bytes body; its text is a rendering"),
-        ParamSpec(
-            "if_version", "int", minimum=1, maximum=INT_CEILING, doc="single form: the version the write replaces"
-        ),
-        ParamSpec(
-            "if_versions",
-            "versions",
-            minimum=1,
-            maximum=INT_CEILING,
-            doc="batch form: the version expected at each named file's path",
-        ),
+        ParamSpec("if_vid", "vid", doc="single form: the vid of the file the write replaces, or ABSENT"),
+        ParamSpec("if_vids", "vids", doc="batch form: the vid required at each named file's path, or ABSENT"),
         ParamSpec("if_absent", "bool", nullable=False, default=False, doc="create only: refuse a path that is held"),
         ParamSpec("append", "bool", nullable=False, default=False, doc="single form: add the body to the file's end"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
@@ -438,8 +446,8 @@ _ONE_LISTING: Final = ShapeRule(
     exactly_one=False,
     msg_both="after and limit page one listing; they take no observations",
 )
-# Each form of write has its own spelling of the expected version.
-_VERSION_FORMS: Final = "write takes if_version with path, and if_versions with entries"
+# Each form of write has its own spelling of the required vid.
+_VID_FORMS: Final = "write takes if_vid with path, and if_vids with entries"
 
 RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "read": (_ONE_TARGET,),
@@ -468,8 +476,8 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             exactly_one=False,
             msg_both="write takes content or data, not both",
         ),
-        ShapeRule((("if_version",), ("entries",)), exactly_one=False, msg_both=_VERSION_FORMS),
-        ShapeRule((("if_versions",), ("path", "content", "data")), exactly_one=False, msg_both=_VERSION_FORMS),
+        ShapeRule((("if_vid",), ("entries",)), exactly_one=False, msg_both=_VID_FORMS),
+        ShapeRule((("if_vids",), ("path", "content", "data")), exactly_one=False, msg_both=_VID_FORMS),
     ),
     "move": (
         ShapeRule(
@@ -532,8 +540,9 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     ),
 }
 
-# A write that only creates expects no file, and a file that is not there has no version.
-_ABSENT_HAS_NO_VERSION: Final = "write if_absent=True takes no if_version or if_versions: an absent file has no version"
+# A write that only creates requires no file, and a file that is not there has no vid.
+_ABSENT_HAS_NO_VID: Final = "write if_absent=True takes no if_vid or if_vids: an absent file has no vid"
+_APPEND_CREATES: Final = "write takes append or if_absent, not both: an append to an absent path already creates it"
 
 VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
     "traverse": (
@@ -543,14 +552,11 @@ VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
         Segments("edge_types_not"),
     ),
     "write": (
-        OnlyWith("if_absent", True, "if_version", None, _ABSENT_HAS_NO_VERSION),
-        OnlyWith("if_absent", True, "if_versions", None, _ABSENT_HAS_NO_VERSION),
+        OnlyWith("if_absent", True, "if_vid", None, _ABSENT_HAS_NO_VID),
+        OnlyWith("if_absent", True, "if_vids", None, _ABSENT_HAS_NO_VID),
         OnlyWith("append", True, "entries", None, "write append=True takes one file: path with content or data"),
-        NotBoth(
-            "append",
-            "if_absent",
-            "write takes append or if_absent, not both: an append to an absent path already creates it",
-        ),
+        NotBoth("append", "if_absent", _APPEND_CREATES),
+        NotWith("append", True, "if_vid", ABSENT, _APPEND_CREATES),
     ),
 }
 """Cross-parameter value rules, checked after the shape rules on typed values."""
@@ -633,8 +639,10 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
         if not isinstance(value, dict):
             return f"{op} {spec.name} must be a dict, got {type(value).__name__}"
         return None
-    if kind == "versions":
-        return _check_versions(op, spec, value)
+    if kind == "vid":
+        return None if _vid_or_mark(value) else f"{op} {spec.name} must be a vid, {_VID_SHAPE}, got {_shown(value)}"
+    if kind == "vids":
+        return _check_vids(op, spec, value)
     if kind == "str_seq":
         if not isinstance(value, (tuple, list)):
             return f"{op} {spec.name} must be a tuple of strings, got {type(value).__name__}"
@@ -644,16 +652,26 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
     return _check_items(op, spec, value)
 
 
-def _check_versions(op: Op, spec: ParamSpec, value: object) -> str | None:
-    """A mapping whose keys are text and whose values are versions inside the spec's bounds."""
+def _check_vids(op: Op, spec: ParamSpec, value: object) -> str | None:
+    """A mapping whose keys are text and whose values are vids or the mark."""
     if not isinstance(value, Mapping):
-        return f"{op} {spec.name} must be a mapping of paths to versions, got {type(value).__name__}"
-    for key, version in value.items():
+        return f"{op} {spec.name} must be a mapping of paths to vids, got {type(value).__name__}"
+    for key, vid in value.items():
         if not isinstance(key, str):
             return f"{op} {spec.name} keys must be strings, got {type(key).__name__}"
-        if not _in_int_domain(spec, version):
-            return f"{op} {spec.name} values must be integers{_int_bounds(spec)}, got {version!r}"
+        if not _vid_or_mark(vid):
+            return f"{op} {spec.name} values must be vids, {_VID_SHAPE}, got {_shown(vid)}"
     return None
+
+
+def _vid_or_mark(value: object) -> bool:
+    """Whether *value* is what a precondition may require: a vid, or the mark."""
+    return value == ABSENT or is_vid(value)
+
+
+def _shown(value: object) -> str:
+    """A refused value as a refusal names it: its type for a value that is no text, its first characters for text."""
+    return repr(value[:_SHOWN_CHARACTERS]) if isinstance(value, str) else type(value).__name__
 
 
 def _in_int_domain(spec: ParamSpec, value: object) -> bool:
@@ -708,6 +726,8 @@ def _check_value_rule(op: Op, rule: ValueRule, params: Mapping[str, object]) -> 
         if params.get(rule.param) == rule.value and params.get(rule.other) != rule.allowed:
             return rule.msg
         return None
+    if isinstance(rule, NotWith):
+        return rule.msg if params.get(rule.param) == rule.value and params.get(rule.other) == rule.forbidden else None
     if isinstance(rule, NotBoth):
         return rule.msg if params.get(rule.left) is True and params.get(rule.right) is True else None
     if isinstance(rule, Disjoint):

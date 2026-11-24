@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
@@ -54,6 +54,8 @@ from vfs.results.render import render_result
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
+
+    from vfs.vid import Vid
 
 # The vocabulary and contract tables live in vfs.results.kinds (shared with the
 # renderer); re-exported here as the envelope's one import surface.
@@ -297,6 +299,21 @@ def already_exists(path: Path, *, target: Path | None = None) -> ResultError:
 def wrong_kind(kind: str, path: Path, *, target: Path | None = None) -> ResultError:
     """The ``wrong_kind`` fact naming the occupant's actual *kind* as its detail and its field."""
     return classified(ErrorKind.wrong_kind, path, target=target, detail=kind, data={"kind": kind})
+
+
+STALE_VID_DETAIL: Final = "the vid required is not the vid of what is stored"
+"""The words of every refusal of a required vid, whatever names the row there now."""
+
+
+def stale_vid(path: Path, version: int, vid: Vid) -> ResultError:
+    """The ``conflict`` of a change whose required vid is not the vid of the live row at *path*.
+
+    It names the row there now by its ``version`` and its ``vid``, and is
+    not retryable: the same call would carry the same stale vid, so the
+    caller reads the row again first. A storage, a ladder and the kernel
+    all build this refusal here, so each answers it word for word alike.
+    """
+    return classified(ErrorKind.conflict, path, detail=STALE_VID_DETAIL, data={"version": version, "vid": vid})
 
 
 def validation_message(exc: ValidationError) -> str:

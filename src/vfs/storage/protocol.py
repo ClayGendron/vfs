@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from vfs.results import Result
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
+    from vfs.vid import VidOrAbsent
 
 
 # Declared operating-quality traits — how a backend serves its verbs, not
@@ -196,7 +197,7 @@ class SupportsMutation(Protocol):
         self,
         *,
         entries: list[Entry],
-        if_versions: Mapping[Path, int] | None = None,
+        if_vids: Mapping[Path, VidOrAbsent] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -524,13 +525,16 @@ class SupportsTraits(Protocol):
     discovery: staleness and durability are contracts a caller must be
     able to read, not surprises to probe for.
 
-    ``vid``, declared as ``entry_version``, is three promises: every row
+    ``vid``, declared as ``entry_version``, is four promises: every row
     the backend returns with a version carries a vid of the public shape
     (:func:`vfs.vid.is_vid`); two of its rows carry equal vids when, and
     only when, they are the same entry at the same version; and no vid of
-    another storage equals one of its own, short of a digest collision. A
-    backend that does not declare it fills no vid, and its rows carry a
-    version alone. A backend that wants to declare it may mint with
+    another storage equals one of its own, short of a digest collision.
+    And it honours ``if_vids``, the mark ``ABSENT`` included, inside the
+    transaction that changes the row. A backend that does not declare it
+    fills no vid, its rows carry a version alone, and the kernel refuses
+    a change that requires a vid there with ``unsupported`` before the
+    backend is called. A backend that wants to declare it may mint with
     :class:`vfs.vid.VidMint` over any identity that is its own.
     """
 

@@ -61,7 +61,8 @@ from vfs.models import (
 )
 from vfs.models.rows import ULIDKey, vid_at
 from vfs.offload import call_offloaded
-from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
+from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, stale_vid, wrong_kind
+from vfs.results.envelope import STALE_VID_DETAIL
 from vfs.storage.backends.database.authorized import admit_landed, admit_staged, admit_targets
 from vfs.storage.backends.database.descent import (
     miss_errors,
@@ -84,7 +85,7 @@ from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
-from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists, stale_version
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists
 from vfs.storage.backends.database.versions import mint_versions
 from vfs.storage.editing import appended, edited_entry
 
@@ -104,7 +105,7 @@ if TYPE_CHECKING:
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.replace import EditOperation
-    from vfs.vid import Vid, VidMint
+    from vfs.vid import Vid, VidMint, VidOrAbsent
 
 # The refusal of a content-kind write that carries no body to measure.
 BODILESS_DETAIL: Final = "a file write needs a body: content or data"
@@ -180,7 +181,7 @@ async def write_rows(
     overwrite: bool,
     parents: bool,
     authority: Authority | None,
-    if_versions: Mapping[Path, int] | None = None,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
@@ -199,14 +200,15 @@ async def write_rows(
     entries are already measured by :func:`measured_entries`; it stores
     the metrics it is handed.
 
-    *if_versions* maps a file's path to the version its caller expects
-    to replace. A file at another version is ``conflict``, judged from
-    the snapshot at no statement, and a path with no key is replaced
-    whatever its version.
+    *if_vids* maps a file's path to the vid its caller requires there,
+    or to the mark ``ABSENT``. A file with another vid is ``conflict``,
+    judged from the snapshot at no statement; a marked file only
+    creates; and a path with no key is replaced as a plain write
+    replaces it.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, mint=mint)
-    expected = if_versions or {}
+    expected = if_vids or {}
     for entry in entries:
         if entry.kind == "directory":
             status = plan.put_dir(entry.path, parents=parents, exclusive=not overwrite)
@@ -323,7 +325,7 @@ async def append_rows(
     membership_budget: int,
     *,
     entry: Entry,
-    expected: int | None,
+    expected: VidOrAbsent | None,
     parents: bool,
     authority: Authority | None,
     executor: Executor,
@@ -616,8 +618,10 @@ async def _upsert_layer(
 ) -> list[ResultError]:
     """``ON CONFLICT`` arbitration on the ``(parent_id, name)`` index.
 
-    Directory creates never clobber (``DO NOTHING``); file creates clobber
-    a non-directory rival under ``overwrite`` — and only a rival whose
+    Directory creates never clobber (``DO NOTHING``), and neither does a
+    file that only creates, under ``if_absent`` or the mark ``ABSENT``;
+    the files of a depth are inserted in at most those two groups. Every
+    other file create clobbers a non-directory rival under ``overwrite`` — and only a rival whose
     stored path equals the requested path: an incoherent row (a legacy
     torn ghost squatting the address) is never adopted. RETURNING
     carries the surviving identity and final version: a clobber lands on
@@ -633,8 +637,10 @@ async def _upsert_layer(
     pairs = list(zip(layer, rows, strict=True))
     directories = [(s, r) for s, r in pairs if s.kind == "directory"]
     files = [(s, r) for s, r in pairs if s.kind != "directory"]
+    exclusive = [(s, r) for s, r in files if s.exclusive]
+    plain = [(s, r) for s, r in files if not s.exclusive]
     errors: list[ResultError] = []
-    for group, clobber in ((directories, False), (files, overwrite)):
+    for group, clobber in ((directories, False), (exclusive, False), (plain, overwrite)):
         for chunk in chunked(group, per_statement):
             stmt = constructor(entry).values([r for _, r in chunk])
             if clobber:
@@ -790,11 +796,11 @@ async def _resolve_rows(
             errors.append(_incoherent_row(staged.path))
         elif staged.kind == "directory" and occupant.kind == "directory":
             staged.adopt(occupant.entry_id, occupant.version)
-        elif staged.kind != "directory" and overwrite and occupant.kind != "directory":
+        elif staged.kind != "directory" and overwrite and not staged.exclusive and occupant.kind != "directory":
             # The rival's row absorbs our write: a clobbering update that
             # still proves its address (relocations must miss it).
             staged.absorb(occupant.entry_id)
-        elif staged.kind != "directory" and overwrite:
+        elif staged.kind != "directory" and overwrite and not staged.exclusive:
             errors.append(wrong_kind("directory", staged.path, target=staged.path))
         else:
             vid = vid_at(mint, occupant.entry_id, occupant.version)
@@ -1111,7 +1117,8 @@ async def _classify_guard_misses(
         elif current.path == str(staged.path) and current.content_hash == staged.content_hash:
             raise StaleSnapshot(f"a rival wrote the body staged for {staged.path}")
         else:
-            errors.append(_conflict(staged, current.version, vid_at(mint, staged.entry_id, current.version)))
+            standing = (current.version, vid_at(mint, staged.entry_id, current.version))
+            errors.append(_conflict(staged, standing if current.path == str(staged.path) else None))
     return errors
 
 
@@ -1139,15 +1146,20 @@ def _guarded_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
     return _update_params(staged, now) | guard
 
 
-def _conflict(staged: StagedEntry, current: int, vid: Vid) -> ResultError:
-    """The ``conflict`` of a row that lost its guard to a rival, naming the version and the vid the row is at now."""
-    if staged.expected_version is not None:
-        return stale_version(staged.path, current, vid)
-    # Retryable where the caller expected no version: an identical retry
+def _conflict(staged: StagedEntry, standing: tuple[int, Vid] | None) -> ResultError:
+    """The ``conflict`` of a row that lost its guard to a rival, naming its version and vid while it stands at its path.
+
+    A row the rival moved away is named by nothing: the row now at the
+    path was never read, so a version or a vid would name the wrong one.
+    """
+    if staged.expected is not None and standing is not None:
+        return stale_vid(staged.path, *standing)
+    if staged.expected is not None:
+        return classified(ErrorKind.conflict, staged.path, detail=STALE_VID_DETAIL)
+    # Retryable where the caller required no vid: an identical retry
     # is judged against the rival's committed state and resolves honestly.
-    detail = "concurrent modification"
-    data = {"version": current, "vid": vid}
-    return classified(ErrorKind.conflict, staged.path, retryable=True, detail=detail, data=data)
+    data = None if standing is None else {"version": standing[0], "vid": standing[1]}
+    return classified(ErrorKind.conflict, staged.path, retryable=True, detail="concurrent modification", data=data)
 
 
 async def _replace_bodies(

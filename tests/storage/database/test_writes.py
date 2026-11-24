@@ -39,7 +39,7 @@ from tests.support.commit_worlds import replace as replace_row
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url, begin_as_writer, writer_engine
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from tests.support.statements import is_statistics_statement
-from tests.support.vids import TEST_MINT
+from tests.support.vids import TEST_MINT, vid_in, vids_in
 from vfs.authority import Authority, Principal
 from vfs.models import MEASURED_BODY, BodyMetrics, Entry, measure_bytes
 from vfs.models.rows import build_vfs_tables, vid_at
@@ -66,6 +66,7 @@ from vfs.storage.backends.database.writes import (
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.protocol import ResolvedPair
 from vfs.storage.replace import EditOperation
+from vfs.vid import ABSENT, VidMint
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -1974,26 +1975,28 @@ class TestLabelCost:
                 assert not [sql for sql in _body(statements) if _is_stamp_read(sql)]
 
 
-class TestExpectedVersion:
-    """A write that states the version it expects costs what a plain write costs, and a stale one writes nothing."""
+class TestRequiredVid:
+    """A write that requires a vid costs what a plain write costs, and a stale one writes nothing."""
 
-    async def test_a_stale_expected_version_runs_the_snapshot_and_no_write(self, tmp_path) -> None:
+    async def test_a_stale_vid_runs_the_snapshot_and_no_write(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
-        for body in ("one", "two"):
-            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content=body)])).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        seen = vid_in(await storage.stat(path=Path("/a.txt")))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")])).success is True
         await storage._host.settle_statistics()
         statements = _statements_of(storage)
-        stale = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")], if_versions={Path("/a.txt"): 1})
+        stale = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")], if_vids={Path("/a.txt"): seen})
         # The snapshot is the whole call: nothing is updated, minted or replaced.
         own = _own(statements)
         assert len(own) == 1 and own[0].startswith("SELECT"), own
-        now = {"version": 2, "vid": (await storage.stat(path=Path("/a.txt"))).observations[0].vid}
+        now = {"version": 2, "vid": (await storage.stat(path=Path("/a.txt"))).one().vid}
         assert [(e.kind, e.data, e.retryable) for e in stale.errors] == [(ErrorKind.conflict, now, False)]
         await storage.close()
 
     @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
     async def test_a_key_for_every_row_adds_no_statement(self, files: int, tmp_path, monkeypatch) -> None:
+        """Mutation guarded: a comparison that reads the row again, or a key bound into the guarded update."""
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         narrowed = replace(storage._host.profile, in_list_budget=1_000)
@@ -2002,37 +2005,56 @@ class TestExpectedVersion:
         keyed = [Path(f"/k/f{i:05}.txt") for i in range(files)]
         seeded = [Entry(path=path, content="old") for path in (*plain, *keyed)]
         assert (await storage.write(entries=seeded, parents=True)).success is True
+        listed = await storage.glob(patterns=("/k/*.txt",))
+        seen = vids_in(listed)
         await storage._host.settle_statistics()
         statements = _statements_of(storage)
         assert (await storage.write(entries=[Entry(path=path, content="new") for path in plain])).success is True
         without = [statement.split()[0] for statement in _own(statements)]
         statements.clear()
-        expecting = dict.fromkeys(keyed, 1)
-        written = await storage.write(
-            entries=[Entry(path=path, content="new") for path in keyed], if_versions=expecting
-        )
+        written = await storage.write(entries=[Entry(path=path, content="new") for path in keyed], if_vids=seen)
         assert written.success is True, written.errors
         assert [statement.split()[0] for statement in _own(statements)] == without
         # One row moved on: the batch is refused whole, and no statement writes.
+        current = vids_in(written)
         assert (await storage.write(entries=[Entry(path=keyed[0], content="rival")])).success is True
         await storage._host.settle_statistics()
         statements.clear()
-        stale = await storage.write(
-            entries=[Entry(path=path, content="newer") for path in keyed], if_versions=dict.fromkeys(keyed, 2)
-        )
+        stale = await storage.write(entries=[Entry(path=path, content="newer") for path in keyed], if_vids=current)
         assert [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))] == []
-        now = {"version": 3, "vid": (await storage.stat(path=keyed[0])).observations[0].vid}
+        now = {"version": 3, "vid": (await storage.stat(path=keyed[0])).one().vid}
         assert [(e.kind, e.path, e.data) for e in stale.errors] == [(ErrorKind.conflict, keyed[0], now)]
         await storage.close()
 
-    @pytest.mark.parametrize("keyed", [True, False], ids=["expected", "plain"])
-    async def test_a_row_that_lost_its_guard_names_the_version_it_is_at(
+    @pytest.mark.slow
+    async def test_a_required_vid_mints_twice_for_each_row(self, tmp_path, monkeypatch) -> None:
+        """Mutation guarded: a mint per row per chunk, or a comparison that mints the required side again."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        paths = [Path(f"/d/f{i:05}.txt") for i in range(10_000)]
+        assert (await storage.write(entries=[Entry(path=path, content="old") for path in paths], parents=True)).success
+        seen = vids_in(await storage.glob(patterns=("/d/*.txt",)))
+        minted: list[int] = []
+        real = VidMint.mint
+
+        def counted(self: VidMint, entry_key: bytes, version: int) -> str:
+            minted.append(version)
+            return real(self, entry_key, version)
+
+        monkeypatch.setattr(VidMint, "mint", counted)
+        written = await storage.write(entries=[Entry(path=path, content="new") for path in paths], if_vids=seen)
+        assert written.success is True, written.errors
+        assert len(minted) == 20_000
+        await storage.close()
+
+    @pytest.mark.parametrize("keyed", [True, False], ids=["required", "plain"])
+    async def test_a_row_that_lost_its_guard_names_what_is_at_its_path(
         self, keyed: bool, tmp_path, monkeypatch
     ) -> None:
         # A second writer cannot commit inside an attempt on SQLite, so the
         # rival's commit is staged on the attempt's own session at the seam.
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        seen = vid_in(await storage.stat(path=Path("/a.txt")))
         sessions = attempts(monkeypatch, storage)
         entry = storage._host.tables.entry
 
@@ -2043,14 +2065,37 @@ class TestExpectedVersion:
         with installed("write:before-apply", clearing("write:before-apply", rival)):
             lost = await storage.write(
                 entries=[Entry(path=Path("/a.txt"), content="two")],
-                if_versions={Path("/a.txt"): 1} if keyed else None,
+                if_vids={Path("/a.txt"): seen} if keyed else None,
             )
-        # Only a caller that expected no version may send the same call again.
+        # Only a caller that required no vid may send the same call again.
         async with storage._host.session_factory() as session:
             entry_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a.txt"))).scalar_one()
         now = {"version": 5, "vid": vid_at(storage._host.mint, entry_id, 5)}
         assert [(e.kind, e.data, e.retryable) for e in lost.errors] == [(ErrorKind.conflict, now, not keyed)]
         assert len(sessions) == 1
+        await storage.close()
+
+    @pytest.mark.parametrize("keyed", [True, False], ids=["required", "plain"])
+    async def test_a_row_that_lost_its_guard_and_moved_away_names_nothing(
+        self, keyed: bool, tmp_path, monkeypatch
+    ) -> None:
+        """Mutation guarded: the moved row's version and vid reported as if they were what stands at the path."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+        seen = vid_in(await storage.stat(path=Path("/a.txt")))
+        sessions = attempts(monkeypatch, storage)
+        entry = storage._host.tables.entry
+
+        async def rival() -> None:
+            moved = update(entry).where(entry.c.path == "/a.txt").values(path="/b.txt", name="b.txt", version=2)
+            await sessions[-1].execute(moved)
+
+        with installed("write:before-apply", clearing("write:before-apply", rival)):
+            lost = await storage.write(
+                entries=[Entry(path=Path("/a.txt"), content="two")],
+                if_vids={Path("/a.txt"): seen} if keyed else None,
+            )
+        assert [(e.kind, e.data, e.retryable) for e in lost.errors] == [(ErrorKind.conflict, None, not keyed)]
         await storage.close()
 
     async def test_a_guard_lost_to_a_rival_that_wrote_the_same_body_runs_again(self) -> None:
@@ -2091,8 +2136,27 @@ class TestExpectedVersion:
             now=datetime.now(UTC),
             mint=TEST_MINT,
         )
-        now = {"version": 2, "vid": vid_at(TEST_MINT, lost.entry_id, 2)}
-        assert [(e.kind, e.path, e.data, e.retryable) for e in errors] == [(ErrorKind.conflict, "/lost.txt", now, True)]
+        # The row now at the path was not read, so the refusal names nothing.
+        assert [(e.kind, e.path, e.data, e.retryable) for e in errors] == [
+            (ErrorKind.conflict, "/lost.txt", None, True)
+        ]
+
+    @pytest.mark.parametrize("mixed", [True, False], ids=["marked-and-plain", "one-kind"])
+    async def test_a_batch_that_mixes_marked_and_plain_creates_issues_one_more_insert(
+        self, mixed: bool, tmp_path
+    ) -> None:
+        """Mutation guarded: one insert group for the depth, which lets a plain create's clobber reach a marked row."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.mkdir(path=Path("/d"))).success is True
+        await storage._host.settle_statistics()
+        statements = _statements_of(storage)
+        paths = [Path(f"/d/f{i:03}.txt") for i in range(200)]
+        marks = dict.fromkeys(paths[:100] if mixed else paths, ABSENT)
+        written = await storage.write(entries=[Entry(path=path, content="x") for path in paths], if_vids=marks)
+        assert written.success is True, written.errors
+        inserts = [s for s in _own(statements) if s.startswith("INSERT INTO vfs_entries")]
+        assert len(inserts) == (2 if mixed else 1)
+        await storage.close()
 
 
 class TestAppend:

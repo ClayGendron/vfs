@@ -22,7 +22,7 @@ from vfs.results import ErrorKind, Result, classified
 from vfs.shell import LineResult, refused_line
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Sequence
     from types import TracebackType
 
     from vfs.authority import Authority
@@ -157,8 +157,6 @@ class AsyncSession:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        if_version: int | None = None,
-        if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -170,8 +168,6 @@ class AsyncSession:
             path=path,
             content=content,
             data=data,
-            if_version=if_version,
-            if_versions=if_versions,
             if_absent=if_absent,
             append=append,
             parents=parents,

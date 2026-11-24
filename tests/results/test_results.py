@@ -8,9 +8,11 @@ from typing import Any
 
 import pytest
 
-from vfs.models import Match, Observation
+from tests.support.vids import vid_in
+from vfs.models import Entry, Match, Observation
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.results import ErrorKind, Result, ResultError, Severity, wrong_kind
+from vfs.results import ErrorKind, Result, ResultError, Severity, stale_vid, wrong_kind
+from vfs.storage.backends.memory import InMemoryStorage
 
 
 def obs(path: str, **kwargs: Any) -> Observation:
@@ -490,3 +492,16 @@ class TestRetryableFlag:
             errors=[ResultError(kind=ErrorKind.conflict, message="rival writer", retryable=True)],
         )
         assert "retryable" not in str(result).lower()
+
+
+async def test_stale_vid_is_the_refusal_a_storage_gives() -> None:
+    """Mutation guarded: a second spelling of the refusal, in the kernel or in a storage, that drifts from this one."""
+    storage = InMemoryStorage()
+    assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])).success is True
+    seen = vid_in(await storage.stat(path=Path("/a.txt")))
+    assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")])).success is True
+    refused = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")], if_vids={Path("/a.txt"): seen})
+    now = (await storage.stat(path=Path("/a.txt"))).one()
+    assert now.version is not None and now.vid is not None
+    assert refused.errors == [stale_vid(Path("/a.txt"), now.version, now.vid)]
+    await storage.close()

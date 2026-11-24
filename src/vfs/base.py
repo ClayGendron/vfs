@@ -112,6 +112,7 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
+from vfs.preconditions import Site, required_by_mount, vids_unissued
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity
@@ -140,6 +141,7 @@ if TYPE_CHECKING:
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
     from vfs.storage.grants import GrantLevel, Posture
+    from vfs.vid import Vid
 
 # How many more kernels the current request may enter. One is spent per
 # kernel entered and never per mount.
@@ -222,13 +224,6 @@ class _Dispatches(NamedTuple):
     branches: list[tuple[Path, Coroutine[Any, Any, Result]]]
     skips: list[ResultError]
     settle: Callable[[list[Result], list[tuple[Path, Result]]], Coroutine[Any, Any, list[Result]]] | None = None
-
-
-class _FileSite(NamedTuple):
-    """Where one file of a write batch goes: the path of its mount, and its own path as that mount's storage sees it."""
-
-    mount: Path
-    local: Path
 
 
 def _rebase_grant_rows(result: Result, mount: Path) -> Result:
@@ -929,8 +924,8 @@ class AsyncVirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        if_version: int | None = None,
-        if_versions: Mapping[str, int] | None = None,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -952,29 +947,34 @@ class AsyncVirtualFileSystem:
         A write of the body a file already holds changes nothing. Its row comes back with the status
         ``unchanged``, and the file keeps its version.
 
-        ``if_version`` is the version the caller expects to replace, as a read of the file returned
-        it. If the file is at another version, the write is refused with ``conflict``, nothing is
-        written, and the error carries the ``version`` and the ``vid`` the file is at now. Use it
-        to read a file, change it and write it back without erasing a change made in between. A
-        file that is missing or deleted is refused with ``not_found``, and is not made. ``if_versions``
-        is the same for a batch: it maps a path to the version expected there. Each key must be the
-        path of a file in ``entries``, no two keys may name one file, and a file with no key is replaced
-        whatever its version. One stale file refuses every entry that goes to the same mount.
+        ``if_vid`` is the :class:`~vfs.vid.Vid` of the file the caller expects to replace, as a read
+        of the file returned it. If the row at the path is another file, or the same file at another
+        version, the write is refused with ``conflict``, nothing is written, and the error carries the
+        ``version`` and the ``vid`` of what is there now. A directory standing where the file was is
+        ``conflict`` too. Use it to read a file, change it and write it back without erasing a change
+        made in between, or a file that came to stand at the path. Read the file again before sending
+        those values back. A file that is missing or deleted is refused with ``not_found``, and is not
+        made. ``if_vids`` is the same for a batch: it maps a path to the vid required there. Each key must
+        be the path of a file in ``entries``, no two keys may name one file, and a file with no key is
+        replaced as a plain write replaces it. One stale file refuses every entry that goes to the same
+        mount. ``ABSENT`` in place of a vid requires that the path holds no live row: that entry only
+        creates, as ``if_absent`` does for every entry. A mount whose storage issues no vid refuses a
+        call that requires one there with ``unsupported``.
 
         If ``if_absent`` is true, the write only creates. A path that already holds a file or a
         directory is refused with ``exists``. The error carries the ``version`` and ``vid`` of what is there and,
         for a file, the ``content_hash`` of its body, so a caller that never heard the answer to its own
         create can tell that it landed. An entry that meets another entry of the same call is refused
         with no ``data``. A deleted file counts as absent, and the write brings it back with the new
-        body. ``if_absent`` cannot be given with an expected version, because an absent file has none.
+        body. ``if_absent`` cannot be given with ``if_vid`` or ``if_vids``, because an absent file has no vid.
 
         If ``append`` is true, the body is added to the end of the file and nothing already in it is
         changed. It takes ``path`` with ``content`` or ``data``, and never ``entries``. The file is read
         and written inside the storage in one step, so callers that append to one file at the same time
         each keep what they added. A path that holds no file is created with the body as its whole
         contents. A text file stays text while what is added is text, and becomes a bytes file when it
-        is not. An append sent twice adds its body twice. Give ``if_version`` with it to add at most
-        once: the second call then finds a later version and is refused with ``conflict``.
+        is not. An append sent twice adds its body twice. Give ``if_vid`` with it to add at most
+        once: the second call then finds a later vid and is refused with ``conflict``.
 
         If ``parents`` is false, every parent directory must already exist. If ``parents`` is true, the
         missing parents are made, as ``mkdir -p`` makes them. ``if_absent`` and ``parents`` apply to
@@ -993,8 +993,8 @@ class AsyncVirtualFileSystem:
             path=path,
             content=content,
             data=data,
-            if_version=if_version,
-            if_versions=if_versions,
+            if_vid=if_vid,
+            if_vids=if_vids,
             if_absent=if_absent,
             append=append,
             parents=parents,
@@ -1004,7 +1004,7 @@ class AsyncVirtualFileSystem:
             return refusal
         if entries is not None:
             return await self._route_entry_batch(
-                entries, if_versions=if_versions, if_absent=if_absent, parents=parents, authority=authority
+                entries, if_vids=if_vids, if_absent=if_absent, parents=parents, authority=authority
             )
         if path is None or (content is None and data is None):
             return self._error(
@@ -1017,9 +1017,9 @@ class AsyncVirtualFileSystem:
             entry = await measured_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
-        expected = None if if_version is None else {path: if_version}
+        required = None if if_vid is None else {path: if_vid}
         return await self._route_entry_batch(
-            [entry], if_versions=expected, if_absent=if_absent, append=append, parents=parents, authority=authority
+            [entry], if_vids=required, if_absent=if_absent, append=append, parents=parents, authority=authority
         )
 
     async def edit(
@@ -2437,7 +2437,7 @@ class AsyncVirtualFileSystem:
         self,
         entries: Iterable[Entry],
         *,
-        if_versions: Mapping[str, int] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -2448,9 +2448,9 @@ class AsyncVirtualFileSystem:
         Every :term:`entry` has its path checked and passes the gate before any storage is called. Each
         entry is then rewritten as its mount's storage sees it, through :meth:`Entry.without_mount`.
 
-        Each key of ``if_versions`` is checked as an entry's path is, and must be the path of a file in
+        Each key of ``if_vids`` is checked as an entry's path is, and must be the path of a file in
         the batch, and no two keys may name one path. A mount receives the keys of its own files, as its
-        storage sees them.
+        storage sees them, and a mount that receives none is not passed ``if_vids`` at all.
 
         Each :term:`mount` receives its entries sorted so that a parent comes before its child. A
         storage can then judge the batch as a set, and the caller does not have to order it. A
@@ -2464,11 +2464,11 @@ class AsyncVirtualFileSystem:
         if rows is None:
             detail = f"write entries must be an iterable of Entry, got {type(entries).__name__}"
             return self._error(ErrorKind.invalid, op="write", detail=detail)
-        if not rows and not if_versions:
+        if not rows and not if_vids:
             return Result(ops=("write",))
 
         groups: dict[Path, tuple[Mount, list[Entry]]] = {}
-        files: dict[Path, _FileSite] = {}
+        files: dict[Path, Site] = {}
         for entry in rows:
             if not isinstance(entry, Entry):
                 detail = f"write entries must be Entry instances, got {type(entry).__name__}"
@@ -2486,26 +2486,21 @@ class AsyncVirtualFileSystem:
             local = entry.without_mount(terminal.mount.path)
             entry_group.append(local)
             if entry.kind != "directory":
-                files[resolved.path] = _FileSite(terminal.mount.path, local.path)
+                files[resolved.path] = Site(terminal.mount.path, local.path)
 
-        expected: dict[Path, dict[Path, int]] = {}
-        for key, version in (if_versions or {}).items():
-            resolved = resolve_path(key, mutation=True)
-            site = files.get(resolved.path) if resolved.path is not None else None
-            if site is None:
-                detail = "each key of if_versions must be the path of a file in entries"
-                return self._error(ErrorKind.invalid, op="write", detail=detail, data={"raw": str(key)})
-            if site.local in expected.get(site.mount, {}):
-                detail = "if_versions names one path twice"
-                return self._error(ErrorKind.invalid, op="write", detail=detail, data={"raw": str(key)})
-            expected.setdefault(site.mount, {})[site.local] = version
+        required = required_by_mount(if_vids or {}, files, noun="a file in entries")
+        if isinstance(required, ResultError):
+            return Result(ops=("write",), errors=[required])
+        mounts = {mount.path: mount for mount, _ in groups.values()}
+        if (unissued := vids_unissued(required, mounts)) is not None:
+            return Result(ops=("write",), errors=[unissued])
 
         results = await gather_settled(
             self._dispatch_entry(
                 mount,
                 "write",
                 entries=sorted(group, key=lambda e: e.path.depth),
-                if_versions=expected.get(mount.path),
+                **({"if_vids": required[mount.path]} if mount.path in required else {}),
                 if_absent=if_absent,
                 append=append,
                 parents=parents,

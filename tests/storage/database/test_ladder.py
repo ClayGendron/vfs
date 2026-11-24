@@ -29,6 +29,7 @@ from vfs.storage.backends.database.rights import Resolution, Visibility, weight
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import GRANTABLE_LEVELS, GrantRow, resolve
 from vfs.storage.replace import EditOperation
+from vfs.vid import ABSENT
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -218,6 +219,23 @@ async def test_add_hears_exists_from_a_create_only_write_over_anothers_row(
     # Another's tombstone: a write at it is a restore, which add lacks, create-only or not.
     assert (await storage.delete(path=Path("/inbox/carol.md"), authority=CAROL)).success is True
     assert _kind(await _write(storage, "/inbox/carol.md", who, if_absent=True)) == ErrorKind.permission_denied
+
+
+@pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
+async def test_a_call_of_marked_entries_alone_is_judged_at_add(storage: InMemoryStorage, who: Authority) -> None:
+    """Mutation guarded: a rung chosen by the first entry's mark, which lets a plain entry land at add."""
+    await _inbox(storage, "add", "ann", "bob")
+    fresh = [Entry(path=Path(path), content="x") for path in ("/inbox/mine.md", "/inbox/also.md")]
+    marks = dict.fromkeys((entry.path for entry in fresh), ABSENT)
+    assert (await storage.write(entries=fresh, if_vids=marks, authority=who)).success is True
+    stored = (await storage.stat(path=Path("/inbox/carol.md"), authority=SYSTEM)).observations[0]
+    over = await _write(storage, "/inbox/carol.md", who, if_vids={Path("/inbox/carol.md"): ABSENT})
+    named = {"version": stored.version, "content_hash": stored.content_hash, "vid": stored.vid}
+    assert [(error.kind, error.data) for error in over.errors] == [(ErrorKind.exists, named)]
+    # One plain entry over another's row makes the call the verb's own, judged at contribute.
+    mixed = [Entry(path=Path("/inbox/new.md"), content="x"), Entry(path=Path("/inbox/carol.md"), content="y")]
+    plain = await storage.write(entries=mixed, if_vids={Path("/inbox/new.md"): ABSENT}, authority=who)
+    assert _kind(plain) == ErrorKind.permission_denied
 
 
 @pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])

@@ -9,6 +9,7 @@ from vfs.results.envelope import (
     ResultError,
     already_exists,
     classified,
+    stale_vid,
     validation_message,
     wrong_kind,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "already_exists",
     "classified",
     "kind_family",
+    "stale_vid",
     "validation_message",
     "wrong_kind",
 ]

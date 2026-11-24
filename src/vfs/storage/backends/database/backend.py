@@ -86,6 +86,7 @@ from vfs.storage.backends.database.traverse import GraphRequest, Site, traverse_
 from vfs.storage.backends.database.writes import append_rows, edit_rows, measured_entries, mkdir_rows, write_rows
 from vfs.storage.protocol import HOLDS, storage_ops, targets_of
 from vfs.storage.ranking import Ranker
+from vfs.vid import ABSENT
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -102,6 +103,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.rights import Resolution
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
+    from vfs.vid import Vid
 
 T = TypeVar("T")
 
@@ -701,7 +703,7 @@ class DatabaseStorage:
         self,
         *,
         entries: list[Entry],
-        if_versions: Mapping[Path, int] | None = None,
+        if_vids: Mapping[Path, Vid | Literal["absent"]] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -714,9 +716,11 @@ class DatabaseStorage:
         if append and (len(entries) != 1 or entries[0].kind == "directory"):
             refusal = classified(ErrorKind.invalid, detail="an append takes one file")
             return Result(ops=("write",), errors=[refusal])
-        # A write that only creates or only appends replaces no stored byte, so
-        # an occupied target is judged at the rung of a creation.
-        needs = ADDITIVE_WRITE if if_absent or append else VERB_RUNGS["write"]
+        # A write that only creates or only appends replaces no stored byte, so an occupied target is judged at
+        # the rung of a creation; so is a call whose every file carries the mark, whose rung is the call's own.
+        required = if_vids or {}
+        marked = [required.get(e.path) == ABSENT for e in entries if e.kind != "directory"]
+        needs = ADDITIVE_WRITE if if_absent or append or (marked and all(marked)) else VERB_RUNGS["write"]
 
         async def run(session: AsyncSession) -> Result:
             gate = await self._gate(session, authority, needs)
@@ -733,7 +737,7 @@ class DatabaseStorage:
                     host.parameter_budget,
                     host.membership_budget,
                     entry=tail,
-                    expected=(if_versions or {}).get(tail.path),
+                    expected=required.get(tail.path),
                     parents=parents,
                     authority=self._named(authority),
                     executor=offload_pool(),
@@ -750,7 +754,7 @@ class DatabaseStorage:
                 overwrite=not if_absent,
                 parents=parents,
                 authority=self._named(authority),
-                if_versions=if_versions,
+                if_vids=if_vids,
                 mint=host.mint,
             )
 
