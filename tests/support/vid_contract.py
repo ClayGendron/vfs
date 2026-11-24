@@ -397,6 +397,111 @@ class VidContract:
         )
         assert [error.kind for error in empty.errors] == [ErrorKind.not_found]
 
+    async def test_a_delete_requires_what_it_was_shown(self, storage: VidBackend) -> None:
+        """Mutation guarded: a delete that judges the key after ``not_empty``, or not at all on a directory."""
+        files = {"/f.txt": "x", "/d/a.txt": "x", "/g/sub/a.txt": "x", "/e/a.txt": "x"}
+        entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        seen = {path: await _vid(storage, path) for path in ("/f.txt", "/d", "/g", "/e")}
+        assert (await storage.write(entries=[Entry(path=Path("/f.txt"), content="y")])).success is True
+        stale = await storage.delete(path=Path("/f.txt"), if_vids={Path("/f.txt"): seen["/f.txt"]})
+        assert [error.kind for error in stale.errors] == [ErrorKind.conflict]
+        current = {Path("/f.txt"): await _vid(storage, "/f.txt")}
+        assert (await storage.delete(path=Path("/f.txt"), if_vids=current)).success is True
+        gone = await storage.delete(path=Path("/f.txt"), if_vids=current)
+        assert [error.kind for error in gone.errors] == [ErrorKind.not_found]
+        # A child made since moves the directory's vid; a grandchild does not.
+        assert (await storage.write(entries=[Entry(path=Path("/d/b.txt"), content="x")])).success is True
+        child = await storage.delete(path=Path("/d"), if_vids={Path("/d"): seen["/d"]})
+        assert [error.kind for error in child.errors] == [ErrorKind.conflict]
+        assert len((await storage.ls(path=Path("/d"))).observations) == 2
+        assert (await storage.write(entries=[Entry(path=Path("/g/sub/b.txt"), content="x")])).success is True
+        assert (await storage.delete(path=Path("/g"), if_vids={Path("/g"): seen["/g"]})).success is True
+        # An empty directory with a child removed since is the directory changed, and only a plain delete lands.
+        assert (await storage.delete(path=Path("/e/a.txt"))).success is True
+        emptied = await storage.delete(path=Path("/e"), cascade=False, if_vids={Path("/e"): seen["/e"]})
+        assert [error.kind for error in emptied.errors] == [ErrorKind.conflict]
+        assert (await storage.delete(path=Path("/e"), cascade=False)).success is True
+
+    async def test_a_batch_delete_with_one_stale_key_deletes_nothing(self, storage: VidBackend) -> None:
+        paths = ["/a.txt", "/b.txt", "/d/c.txt"]
+        assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)).success
+        seen = {Path(p): await _vid(storage, p) for p in paths}
+        assert (await storage.write(entries=[Entry(path=Path("/d/c.txt"), content="y")])).success is True
+        rows = [Observation(path=Path(p)) for p in ("/a.txt", "/b.txt", "/d", "/d/c.txt")]
+        # /d/c.txt is covered by /d's cascade, and its key is judged all the same.
+        deleted = await storage.delete(observations=rows, if_vids=seen)
+        assert [(error.kind, error.path) for error in deleted.errors] == [(ErrorKind.conflict, "/d/c.txt")]
+        assert len((await storage.glob(patterns=("/**/*.txt",))).observations) == 3
+
+    async def test_a_move_requires_its_source(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        seen = await _vid(storage, "/a.txt")
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="y")])).success is True
+        pair = [ResolvedPair(Path("/a.txt"), Path("/b.txt"))]
+        stale = await storage.move(operations=pair, if_vids={Path("/a.txt"): seen})
+        now = {"version": 2, "vid": await _vid(storage, "/a.txt")}
+        assert [(error.kind, error.data) for error in stale.errors] == [(ErrorKind.conflict, now)]
+        assert (await storage.stat(path=Path("/b.txt"))).success is False
+        current = await _vid(storage, "/a.txt")
+        moved = await storage.move(operations=pair, if_vids={Path("/a.txt"): current})
+        assert moved.success is True, moved.errors
+        assert moved.observations[0].vid not in (None, current)
+        assert (await storage.write(entries=[Entry(path=Path("/c.txt"), content="z")])).success is True
+        onto = [ResolvedPair(Path("/c.txt"), Path("/b.txt"))]
+        for required in ({Path("/c.txt"): await _vid(storage, "/c.txt")}, None):
+            occupied = await storage.move(operations=onto, if_vids=required)
+            assert [error.kind for error in occupied.errors] == [ErrorKind.exists]
+
+    async def test_a_restore_requires_its_tombstone(self, storage: VidBackend) -> None:
+        """Mutation guarded: a restore that judges the vid the delete returned, not the tombstone's own."""
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        deleted = await storage.delete(path=Path("/a.txt"))
+        before = deleted.observations[0].vid
+        assert before is not None
+        tombstone = await _vid(storage, "/.vfs/trash/a.txt")
+        refused = await storage.restore(path=Path("/a.txt"), if_vids={Path("/a.txt"): before})
+        trashed = (await storage.stat(path=Path("/.vfs/trash/a.txt"))).one()
+        assert [(error.kind, error.data) for error in refused.errors] == [
+            (ErrorKind.conflict, {"version": trashed.version, "vid": trashed.vid})
+        ]
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+        assert (await storage.restore(path=Path("/a.txt"), if_vids={Path("/a.txt"): tombstone})).success is True
+        # Another caller restores, edits and deletes again: the first tombstone's vid is stale.
+        assert (await storage.edit(path=Path("/a.txt"), edits=[EditOperation("x", "y")])).success is True
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        again = await storage.restore(path=Path("/a.txt"), if_vids={Path("/a.txt"): tombstone})
+        assert [error.kind for error in again.errors] == [ErrorKind.conflict]
+        assert (await storage.restore(path=Path("/a.txt"))).success is True
+        live = await storage.restore(path=Path("/a.txt"), if_vids={Path("/a.txt"): tombstone})
+        assert [error.kind for error in live.errors] == [ErrorKind.exists]
+        missing = await storage.restore(path=Path("/none.txt"), if_vids={Path("/none.txt"): tombstone})
+        assert [error.kind for error in missing.errors] == [ErrorKind.not_found]
+
+    async def test_a_batch_restore_with_one_stale_key_restores_nothing(self, storage: VidBackend) -> None:
+        paths = ["/a.txt", "/b.txt"]
+        assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths])).success is True
+        for path in paths:
+            assert (await storage.delete(path=Path(path))).success is True
+        keys = {Path("/a.txt"): await _vid(storage, "/.vfs/trash/a.txt"), Path("/b.txt"): "0" * 20}
+        rows = [Observation(path=Path(p)) for p in paths]
+        restored = await storage.restore(observations=rows, if_vids=keys)
+        assert [(error.kind, error.path) for error in restored.errors] == [(ErrorKind.conflict, "/b.txt")]
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+
+    async def test_the_mark_on_a_delete_or_a_move_of_what_is_there(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        there = (await storage.stat(path=Path("/a.txt"))).one()
+        named = {"version": there.version, "vid": there.vid}
+        marked = {Path("/a.txt"): ABSENT}
+        deleted = await storage.delete(path=Path("/a.txt"), if_vids=marked)
+        moved = await storage.move(operations=[ResolvedPair(Path("/a.txt"), Path("/b.txt"))], if_vids=marked)
+        assert [(e.kind, e.data) for e in (*deleted.errors, *moved.errors)] == [(ErrorKind.conflict, named)] * 2
+        empty = {Path("/none.txt"): ABSENT}
+        none_deleted = await storage.delete(path=Path("/none.txt"), if_vids=empty)
+        none_moved = await storage.move(operations=[ResolvedPair(Path("/none.txt"), Path("/b.txt"))], if_vids=empty)
+        assert [e.kind for e in (*none_deleted.errors, *none_moved.errors)] == [ErrorKind.not_found] * 2
+
     async def test_the_storage_declares_the_vid_trait(self, storage: VidBackend) -> None:
         assert storage.traits()["vid"] == "entry_version"
 

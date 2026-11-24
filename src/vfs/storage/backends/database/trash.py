@@ -60,7 +60,7 @@ from vfs.models import Observation
 from vfs.models.rows import vid_at
 from vfs.ops import VERB_RUNGS
 from vfs.paths import ROOT, TRASH_ROOT, Path
-from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified, stale_vid
 from vfs.results.kinds import TRASH_ROOT_KEY
 from vfs.storage.backends.database.authorized import admit, admit_beneath, judging
 from vfs.storage.backends.database.descent import (
@@ -93,6 +93,7 @@ from vfs.storage.backends.database.serialized import (
     serialize,
     snapshot_columns,
 )
+from vfs.vid import ABSENT
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -104,7 +105,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.vid import VidMint
+    from vfs.vid import VidMint, VidOrAbsent
 
 # A restore target adds its root and what the caller's permit judges it by.
 _TOMBSTONE_COLUMNS: Final[tuple[str, ...]] = (*SNAPSHOT_COLUMNS, "trash_root_id", "owner_id", "everyone_level")
@@ -130,6 +131,7 @@ async def delete_rows(
     cascade: bool,
     authority: Authority | None,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of deletes as a set.
@@ -143,6 +145,9 @@ async def delete_rows(
     in the batch deletes cleanly. A tombstoned row in the snapshot is
     absent, and its miss carries the trashed hint. Each deleted row
     observes its pre-delete snapshot state plus the time of the delete.
+    A target with a key in *if_vids*, covered or not, whose live row has
+    another vid, or any vid under the mark ``ABSENT``, is ``conflict``:
+    judged after the miss and before ``not_empty``.
     *authority* is accepted for signature parity; a delete changes no
     ownership. *gate* runs right after the serialization point, so its
     checks judge the state the batch will act on; any refusal fails the
@@ -154,6 +159,7 @@ async def delete_rows(
     """
     del authority
     entry = tables.entry
+    required = if_vids or {}
     await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("delete",), errors=refused)
@@ -184,6 +190,8 @@ async def delete_rows(
             row = live.get(str(target))
             if row is None:
                 errors.append(classify_miss(target, kinds, tombstones))
+            elif (stale := _stale(target, row, required, mint)) is not None:
+                errors.append(stale)
             else:
                 rows.append(_observe_deleted(target, row, mint, deleted_at=now))
             continue
@@ -191,6 +199,9 @@ async def delete_rows(
         row = live.get(str(target))
         if row is None:
             errors.append(classify_miss(target, kinds, tombstones))
+            continue
+        if (stale := _stale(target, row, required, mint)) is not None:
+            errors.append(stale)
             continue
         if not cascade and occupancy[row["entry_id"]] > emptied[row["entry_id"]]:
             errors.append(classified(ErrorKind.not_empty, target))
@@ -279,6 +290,7 @@ async def restore_rows(
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
     permit: Callable[[AsyncSession, Path, Mapping[str, Any] | None, ResultError | None], Awaitable[ResultError | None]]
     | None = None,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of restores as a set, judged in request order.
@@ -297,13 +309,17 @@ async def restore_rows(
     any row is looked up; *permit* then sees each target's row and the
     ladder's verdict, and its refusal wins — so a caller who may not
     see the row is answered before the ladder's wording could tell it
-    anything.
+    anything. A key in *if_vids* then names the tombstone the restore
+    would clear: one with another vid is ``conflict``, judged before the
+    row is claimed. The mark ``ABSENT`` adds nothing: the ladder already
+    answers a live row ``exists``.
 
     The claims run as one guarded set, each root's members clear once
     per chunk of roots, and each distinct parent is bumped once.
     """
     del authority
     entry = tables.entry
+    required = if_vids or {}
     await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("restore",), errors=refused)
@@ -324,6 +340,9 @@ async def restore_rows(
             errors.append(verdict)
             continue
         assert fetched is not None
+        if required.get(target, ABSENT) != ABSENT and (stale := _stale(target, fetched, required, mint)):
+            errors.append(stale)
+            continue
         ladder.revive(fetched)
         claims.append(fetched)
         version = fetched["version"] + 1
@@ -663,6 +682,15 @@ async def _reclaim_orphan_content(
             for entry_id in orphans
         )
     return notes
+
+
+def _stale(
+    target: Path, row: Mapping[Any, Any], required: Mapping[Path, VidOrAbsent], mint: VidMint
+) -> ResultError | None:
+    """The ``conflict`` of a target whose row is not at the vid its caller requires, or nothing where none is."""
+    if target not in required or required[target] == (vid := vid_at(mint, row["entry_id"], row["version"])):
+        return None
+    return stale_vid(target, row["version"], vid)
 
 
 def _observe_deleted(

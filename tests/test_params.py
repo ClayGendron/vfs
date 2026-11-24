@@ -140,6 +140,18 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("edit", {"path": "/f", "old": "a", "new": "b", "if_vid": 3}) == (
         f"edit if_vid must be a vid, {must}, got int"
     )
+    for op, single, batch in (
+        ("delete", {"path": "/f"}, {"observations": []}),
+        ("restore", {"path": "/f"}, {"observations": []}),
+        ("move", {"src": "/f", "dest": "/g"}, {"moves": []}),
+    ):
+        noun = "src and dest" if op == "move" else "path"
+        forms = f"{op} takes if_vid with {noun}, and if_vids with {'moves' if op == 'move' else 'observations'}"
+        assert param_violation(op, {**single, "if_vid": vid}) is None
+        assert param_violation(op, {**batch, "if_vids": {"/f": ABSENT}}) is None
+        assert param_violation(op, {**batch, "if_vid": vid}) == forms
+        assert param_violation(op, {**single, "if_vids": {"/f": vid}}) == forms
+        assert param_violation(op, {**single, "if_vid": 3}) == f"{op} if_vid must be a vid, {must}, got int"
     assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_vid": ABSENT}) == (
         "write takes append or if_absent, not both: an append to an absent path already creates it"
     )
@@ -199,6 +211,11 @@ GARBAGE = [
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
     ("edit-non-str-old", lambda fs: fs.edit("/f.txt", old=1, new="b")),
     ("edit-truthy-replace-all", lambda fs: fs.edit("/f.txt", old="a", new="b", replace_all="yes")),
+    ("delete-int-vid", lambda fs: fs.delete("/f.txt", if_vid=7)),
+    ("delete-vids-with-path", lambda fs: fs.delete("/f.txt", if_vids={"/f.txt": "0" * 20})),
+    ("move-vid-with-moves", lambda fs: fs.move(moves=[("/a", "/b")], if_vid="0" * 20)),
+    ("move-vids-not-a-vid", lambda fs: fs.move(moves=[("/a", "/b")], if_vids={"/a": 1})),
+    ("restore-vid-with-observations", lambda fs: fs.restore(observations=[], if_vid="0" * 20)),
     ("delete-truthy-cascade", lambda fs: fs.delete("/f.txt", cascade=1)),
     ("restore-both-forms", lambda fs: fs.restore("/f.txt", observations=[])),
     ("sweep-non-str-path", lambda fs: fs.sweep(123)),

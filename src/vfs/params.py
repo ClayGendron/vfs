@@ -224,11 +224,15 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", doc="the entry to delete"),
         _OBSERVATIONS,
         ParamSpec("cascade", "bool", nullable=False, default=True, doc="delete the subtree beneath a directory"),
+        ParamSpec("if_vid", "vid", doc="single form: the vid of the entry the delete changes, or ABSENT"),
+        ParamSpec("if_vids", "vids", doc="batch form: the vid required at each named row's path, or ABSENT"),
         _AUTHORITY,
     ),
     "restore": (
         ParamSpec("path", "path", doc="the original path — or the exact trash-side path — of the row to restore"),
         _OBSERVATIONS,
+        ParamSpec("if_vid", "vid", doc="single form: the vid of the tombstone the restore changes, or ABSENT"),
+        ParamSpec("if_vids", "vids", doc="batch form: the vid required at each named row's path, or ABSENT"),
         _AUTHORITY,
     ),
     "sweep": (
@@ -273,6 +277,8 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("src", "path", doc="single form: source path"),
         ParamSpec("dest", "path", doc="single form: destination path"),
         ParamSpec("moves", "pairs", doc="batch form: (src, dest) pairs"),
+        ParamSpec("if_vid", "vid", doc="single form: the vid of the source the move changes, or ABSENT"),
+        ParamSpec("if_vids", "vids", doc="batch form: the vid required at each named source's path, or ABSENT"),
         _AUTHORITY,
     ),
     "copy": (
@@ -451,13 +457,24 @@ _ONE_LISTING: Final = ShapeRule(
 # Each form of write has its own spelling of the required vid.
 _VID_FORMS: Final = "write takes if_vid with path, and if_vids with entries"
 _EDIT_VID_FORMS: Final = "edit takes if_vid with path, and if_vids with observations"
+_DELETE_VID_FORMS: Final = "delete takes if_vid with path, and if_vids with observations"
+_RESTORE_VID_FORMS: Final = "restore takes if_vid with path, and if_vids with observations"
+_MOVE_VID_FORMS: Final = "move takes if_vid with src and dest, and if_vids with moves"
 
 RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "read": (_ONE_TARGET,),
     "stat": (_ONE_TARGET,),
     "ls": (_ONE_TARGET, _ONE_LISTING),
-    "delete": (_ONE_TARGET,),
-    "restore": (_ONE_TARGET,),
+    "delete": (
+        _ONE_TARGET,
+        ShapeRule((("if_vid",), ("observations",)), exactly_one=False, msg_both=_DELETE_VID_FORMS),
+        ShapeRule((("if_vids",), ("path",)), exactly_one=False, msg_both=_DELETE_VID_FORMS),
+    ),
+    "restore": (
+        _ONE_TARGET,
+        ShapeRule((("if_vid",), ("observations",)), exactly_one=False, msg_both=_RESTORE_VID_FORMS),
+        ShapeRule((("if_vids",), ("path",)), exactly_one=False, msg_both=_RESTORE_VID_FORMS),
+    ),
     "traverse": (_ONE_TARGET,),
     "edit": (
         _ONE_TARGET,
@@ -491,6 +508,8 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             msg_both="move takes src/dest or a batch list, not both",
             msg_missing="move requires src and dest, or a batch list",
         ),
+        ShapeRule((("if_vid",), ("moves",)), exactly_one=False, msg_both=_MOVE_VID_FORMS),
+        ShapeRule((("if_vids",), ("src", "dest")), exactly_one=False, msg_both=_MOVE_VID_FORMS),
     ),
     "copy": (
         ShapeRule(

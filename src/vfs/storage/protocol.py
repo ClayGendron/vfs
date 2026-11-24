@@ -220,6 +220,7 @@ class SupportsMutation(Protocol):
         path: Path | None = None,
         observations: list[Observation] | None = None,
         cascade: bool = True,
+        if_vids: Mapping[Path, VidOrAbsent] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 
@@ -228,6 +229,7 @@ class SupportsMutation(Protocol):
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
+        if_vids: Mapping[Path, VidOrAbsent] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 
@@ -251,6 +253,7 @@ class SupportsMutation(Protocol):
         self,
         *,
         operations: list[ResolvedPair],
+        if_vids: Mapping[Path, VidOrAbsent] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 

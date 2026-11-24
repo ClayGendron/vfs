@@ -379,18 +379,33 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         cascade: bool = True,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        return self._result("delete", self._fs.delete, path, observations, cascade=cascade, authority=authority)
+        return self._result(
+            "delete",
+            self._fs.delete,
+            path,
+            observations,
+            cascade=cascade,
+            if_vid=if_vid,
+            if_vids=if_vids,
+            authority=authority,
+        )
 
     def restore(
         self,
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        return self._result("restore", self._fs.restore, path, observations, authority=authority)
+        return self._result(
+            "restore", self._fs.restore, path, observations, if_vid=if_vid, if_vids=if_vids, authority=authority
+        )
 
     def sweep(self, path: str = "/.vfs/trash", *, authority: Authority | None = None) -> Result:
         return self._result("sweep", self._fs.sweep, path, authority=authority)
@@ -445,9 +460,13 @@ class VirtualFileSystem:
         dest: str | None = None,
         moves: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
         *,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        return self._result("move", self._fs.move, src, dest, moves, authority=authority)
+        return self._result(
+            "move", self._fs.move, src, dest, moves, if_vid=if_vid, if_vids=if_vids, authority=authority
+        )
 
     def copy(
         self,

@@ -8,7 +8,6 @@ This section lists the API of two features that are designed and not yet built. 
 
 | Page | What it covers |
 |---|---|
-| [Vids and Preconditions](vids-and-preconditions.md) | `vid` on every row, and `if_vid` on `write`, `edit`, `delete`, `move` and `restore` |
 | [Sessions and Turns](sessions-and-turns.md) | `fs.session`, what a session remembers, `start_turn`, `rewind`, `fork`, and putting files back |
 | [Policies and Steps](policies-and-steps.md) | `@policy`, `Decision`, the step classes, and when a policy is asked |
 | [Jobs and Interrupts](jobs-and-interrupts.md) | `interrupt`, `require_approval`, the answer schemas, `resume`, `jobs`, and a denial or a cancel |
