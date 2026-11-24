@@ -112,7 +112,7 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
-from vfs.preconditions import Site, routed_vids
+from vfs.preconditions import Site, routed_vids, single_or_batch
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity
@@ -1017,7 +1017,7 @@ class AsyncVirtualFileSystem:
             entry = await measured_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
-        required = None if if_vid is None else {path: if_vid}
+        required = single_or_batch(path, if_vid, None)
         return await self._route_entry_batch(
             [entry], if_vids=required, if_absent=if_absent, append=append, parents=parents, authority=authority
         )
@@ -1080,7 +1080,7 @@ class AsyncVirtualFileSystem:
         else:
             assert old is not None and new is not None
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
-        required = {path: if_vid} if path is not None and if_vid is not None else if_vids
+        required = single_or_batch(path, if_vid, if_vids)
         return await self._route_single("edit", path, observations, edits=edits, required=required, authority=authority)
 
     async def delete(
@@ -1109,10 +1109,15 @@ class AsyncVirtualFileSystem:
 
         ``if_vid``, or ``if_vids`` for the rows of ``observations``, is the :class:`~vfs.vid.Vid` of
         what the caller was shown. A row whose vid is not the one required is refused with
-        ``conflict``, and nothing in the call is deleted. A directory's vid changes when a child is
+        ``conflict``, and nothing is deleted on the mount that holds it; the error carries the
+        ``version`` and the ``vid`` of what is there now. A directory's vid changes when a child is
         made in it, removed from it or renamed in it, and not when something deeper changes. A
         caller that emptied a directory itself moved its vid by doing so, and deletes it without one.
-        ``ABSENT`` in place of a vid refuses a row that is there with ``conflict``.
+        ``ABSENT`` in place of a vid refuses a row that is there with ``conflict``. Each key of
+        ``if_vids`` must be the path of a row in ``observations``, and no two keys may name one path.
+        A mount whose storage issues no vid refuses a call that requires one there with
+        ``unsupported``. The vids of the rows passed as ``observations`` are not read: only
+        ``if_vid`` and ``if_vids`` require anything.
         """
         refusal = self._gate_params(
             "delete",
@@ -1125,7 +1130,7 @@ class AsyncVirtualFileSystem:
         )
         if refusal is not None:
             return refusal
-        required = {path: if_vid} if path is not None and if_vid is not None else if_vids
+        required = single_or_batch(path, if_vid, if_vids)
         return await self._route_single(
             "delete", path, observations, cascade=cascade, required=required, authority=authority
         )
@@ -1152,15 +1157,19 @@ class AsyncVirtualFileSystem:
 
         ``if_vid``, or ``if_vids`` for the rows of ``observations``, is the vid of the deleted row,
         which its row in the ``/.vfs/trash`` view carries. A deleted row with another vid is refused
-        with ``conflict``, and nothing is restored: it is not the delete the caller saw. The row a
-        ``delete`` returns carries the vid from before the delete, which is not the deleted row's.
+        with ``conflict``, and nothing is restored on the mount that holds it: it is not the delete
+        the caller saw. The row a ``delete`` returns carries the vid from before the delete, which is
+        not the deleted row's. Each key of ``if_vids`` must be the path of a row in ``observations``,
+        and no two keys may name one path. A mount whose storage issues no vid refuses a call that
+        requires one there with ``unsupported``. The vids of the rows passed as ``observations`` are
+        not read: only ``if_vid`` and ``if_vids`` require anything.
         """
         refusal = self._gate_params(
             "restore", path=path, observations=observations, if_vid=if_vid, if_vids=if_vids, authority=authority
         )
         if refusal is not None:
             return refusal
-        required = {path: if_vid} if path is not None and if_vid is not None else if_vids
+        required = single_or_batch(path, if_vid, if_vids)
         return await self._route_single("restore", path, observations, required=required, authority=authority)
 
     async def sweep(
@@ -1305,14 +1314,16 @@ class AsyncVirtualFileSystem:
         ``if_vid`` is the vid of the row at ``src``, and ``if_vids`` maps each source of ``moves`` that
         needs one to its vid. A source whose vid is not the one required is refused with ``conflict``,
         and the mount moves none of its pairs. The destination takes no vid: a move never replaces
-        what is there.
+        what is there. Each key of ``if_vids`` must be the path of a source in ``moves``, and no two
+        keys may name one path. A mount whose storage issues no vid refuses a call that requires one
+        there with ``unsupported``.
         """
         refusal = self._gate_params(
             "move", src=src, dest=dest, moves=moves, if_vid=if_vid, if_vids=if_vids, authority=authority
         )
         if refusal is not None:
             return refusal
-        required = {src: if_vid} if src is not None and if_vid is not None else if_vids
+        required = single_or_batch(src, if_vid, if_vids)
         return await self._route_pairs("move", src, dest, moves, required=required, authority=authority)
 
     async def copy(

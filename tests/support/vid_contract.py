@@ -422,6 +422,9 @@ class VidContract:
         emptied = await storage.delete(path=Path("/e"), cascade=False, if_vids={Path("/e"): seen["/e"]})
         assert [error.kind for error in emptied.errors] == [ErrorKind.conflict]
         assert (await storage.delete(path=Path("/e"), cascade=False)).success is True
+        # A stale key on a directory that still has a child is judged before ``not_empty``.
+        occupied = await storage.delete(path=Path("/d"), cascade=False, if_vids={Path("/d"): seen["/d"]})
+        assert [error.kind for error in occupied.errors] == [ErrorKind.conflict]
 
     async def test_a_batch_delete_with_one_stale_key_deletes_nothing(self, storage: VidBackend) -> None:
         paths = ["/a.txt", "/b.txt", "/d/c.txt"]
@@ -452,6 +455,15 @@ class VidContract:
         for required in ({Path("/c.txt"): await _vid(storage, "/c.txt")}, None):
             occupied = await storage.move(operations=onto, if_vids=required)
             assert [error.kind for error in occupied.errors] == [ErrorKind.exists]
+
+    async def test_a_rename_onto_itself_requires_its_source(self, storage: VidBackend) -> None:
+        """Mutation guarded: a move that answers a rename onto itself before it judges the key."""
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        seen = await _vid(storage, "/a.txt")
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="y")])).success is True
+        itself = [ResolvedPair(Path("/a.txt"), Path("/a.txt"))]
+        stale = await storage.move(operations=itself, if_vids={Path("/a.txt"): seen})
+        assert [error.kind for error in stale.errors] == [ErrorKind.conflict]
 
     async def test_a_restore_requires_its_tombstone(self, storage: VidBackend) -> None:
         """Mutation guarded: a restore that judges the vid the delete returned, not the tombstone's own."""
@@ -501,6 +513,14 @@ class VidContract:
         none_deleted = await storage.delete(path=Path("/none.txt"), if_vids=empty)
         none_moved = await storage.move(operations=[ResolvedPair(Path("/none.txt"), Path("/b.txt"))], if_vids=empty)
         assert [e.kind for e in (*none_deleted.errors, *none_moved.errors)] == [ErrorKind.not_found] * 2
+
+    async def test_the_mark_on_a_restore_adds_nothing(self, storage: VidBackend) -> None:
+        """Mutation guarded: a restore that refuses the mark where it should pass it by."""
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        restored = await storage.restore(path=Path("/a.txt"), if_vids={Path("/a.txt"): ABSENT})
+        assert restored.success is True, restored.errors
+        assert (await storage.read(path=Path("/a.txt"))).one().content == "x"
 
     async def test_the_storage_declares_the_vid_trait(self, storage: VidBackend) -> None:
         assert storage.traits()["vid"] == "entry_version"

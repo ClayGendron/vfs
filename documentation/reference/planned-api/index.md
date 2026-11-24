@@ -25,7 +25,6 @@ Each name is imported from `vfs`.
 
 | For | Names |
 |---|---|
-| Vids | `Vid`, `ABSENT`, `VidMint`, and the arguments `if_vid` and `if_vids` |
 | Sessions | `fs.session`, `fs.sessions`, `fs.remove_session`, `session.exists`, `SessionInfo`, `SessionPage`, and the argument `session_lifetime` |
 | Turns | `session.start_turn`, `session.turn`, `session.turns`, `session.rewind`, `session.fork`, `session.parent`, `Turn`, `Rewind` |
 | Policies | `policy`, `Policy`, `Decision`, `policies.review`, `fs.add_policy`, `fs.remove_policy`, `fs.policies`, and the argument `policies` |
@@ -49,7 +48,6 @@ Each name is imported from `vfs`.
 | Removed | Use instead |
 |---|---|
 | `fs.open_session(authority)`, `session.close()`, and `with fs.open_session(...)` | `fs.session(authority, id)`. There is nothing to close. |
-| `write(if_version=...)` and `write(if_versions=...)` | `if_vid` and `if_vids`, with the row's `vid` |
 
 ## What Is Not Designed Yet
 

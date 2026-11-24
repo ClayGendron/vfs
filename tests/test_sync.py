@@ -207,19 +207,32 @@ def test_the_facade_forwards_an_edits_required_vids() -> None:
 
 @pytest.mark.parametrize("verb", ["delete", "move", "restore"])
 def test_the_facade_forwards_each_verbs_required_vid(verb: str) -> None:
-    """Mutation guarded: a twin that drops ``if_vid`` on a verb, which then changes the row unguarded."""
+    """Mutation guarded: a twin that drops ``if_vid`` or ``if_vids`` on a verb, which then changes the row unguarded."""
     fs = vfs.VirtualFileSystem()
     try:
         assert fs.write(path="/a.txt", content="alpha").success is True
         if verb == "restore":
             assert fs.delete(path="/a.txt").success is True
         stale = "0" * 20
+        rows = [vfs.Observation(path=vfs.Path("/a.txt"))]
+        keyed = {"/a.txt": stale}
         calls = {
-            "delete": lambda: fs.delete("/a.txt", if_vid=stale),
-            "move": lambda: fs.move("/a.txt", "/b.txt", if_vid=stale),
-            "restore": lambda: fs.restore("/a.txt", if_vid=stale),
+            "delete": (
+                lambda: fs.delete("/a.txt", if_vid=stale),
+                lambda: fs.delete(observations=rows, if_vids=keyed),
+            ),
+            "move": (
+                lambda: fs.move("/a.txt", "/b.txt", if_vid=stale),
+                lambda: fs.move(moves=[("/a.txt", "/b.txt")], if_vids=keyed),
+            ),
+            "restore": (
+                lambda: fs.restore("/a.txt", if_vid=stale),
+                lambda: fs.restore(observations=rows, if_vids=keyed),
+            ),
         }
-        assert [error.kind for error in calls[verb]().errors] == [vfs.ErrorKind.conflict]
+        for call in calls[verb]:
+            assert [error.kind for error in call().errors] == [vfs.ErrorKind.conflict]
+        assert fs.stat(path="/a.txt").success is (verb != "restore")
     finally:
         fs.close()
 
