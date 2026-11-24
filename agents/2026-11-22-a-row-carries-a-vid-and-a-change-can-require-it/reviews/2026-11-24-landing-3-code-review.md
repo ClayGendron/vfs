@@ -85,7 +85,15 @@ Records. (1) `rejected`: a caller holding `read` or `list` hears `permission_den
 
 ## Disposition
 
-Awaits an answer to each finding.
+Answered on 2026-11-24 at `2c7b3cc`.
+
+1. H1: fixed in `2c7b3cc`. `tests/test_sync.py::test_the_facade_forwards_an_edits_required_vids` edits through `VirtualFileSystem` with a stale `if_vid` and with a stale key in `if_vids`, and requires two `conflict` and the body unchanged. Each mutant was applied from a copy: `if_vid=None` in the synchronous `edit` gave 1 failed, and `if_vids=None` gave 1 failed. Restored from the copy. The fourth landing pins `delete`, `move` and `restore` on the synchronous face the same way.
+2. H2: fixed in `2c7b3cc`. `tests/base/test_dispatch.py::test_each_verb_refuses_a_key_beside_an_empty_batch`, parametrized over the verbs of `BATCH`, sends an empty batch with a key and requires `invalid` with no storage call. The mutant `if not groups:` gave 1 failed, the `edit` case. Restored from the copy. The fourth landing adds `delete`, `move` and `restore` to `BATCH`, so the same test covers them.
+3. M1: answered. The Scope's size paragraph gives `base.py` about 60 lines for two arguments on five verbs. At `2c7b3cc`, `base.py` is 3,123 (from 3,085: the `edit` signature, its docstring, and `_route_single` and `_dispatch_grouped_observations` carrying required vids for the verbs of landing 4 too), `backend.py` is 1,535 (from 1,533: the argument passed through), and `writes.py` is 1,471 (from 1,459: the comparison in `_stage_edits` and its docstring). The router's share is the part the Scope placed in `vfs/preconditions.py`, and it stays in `base.py` only as one call for each of the two dispatch paths.
+4. L1: fixed in `2c7b3cc`, with the fix text given.
+5. L2: fixed in `2c7b3cc`, with the fix text given: `required_refusal` in `staging.py` is called by `settle` and by `_stage_edits`; the fourth landing's three ladders call it too.
+
+Gates at `2c7b3cc`: `scripts/ci.sh` passed every step (8,143 passed, 18 skipped, 16,398 statements at 100%; exit 0). The Postgres 19 leg: 632 passed. `scripts/docs.sh check`: the export, the build, `svelte-check` (0 errors) and 23 build tests passed; its 20 Playwright tests passed on `/opt/pw-browsers/chromium` through a scratch config that sets only the executable path.
 
 ## Verdict
 
