@@ -1294,15 +1294,24 @@ class TestClaimRows:
             await session.rollback()
         await storage.close()
 
-    async def test_an_unverifiable_claim_classifies_instead_of_guessing(self, tmp_path, monkeypatch) -> None:
+    @pytest.mark.parametrize("claim", ["root", "covered key"])
+    async def test_an_unverifiable_claim_classifies_instead_of_guessing(
+        self, claim: str, tmp_path, monkeypatch
+    ) -> None:
+        """The root claim, and the hold on a covered target with a key, each refuse where no count can prove them."""
         storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
+        await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="a")], parents=True)
+        seen = vid_in(await storage.stat(path=Path("/d/a.txt")))
         dialect = storage._host.engine.sync_engine.dialect
         monkeypatch.setattr(dialect, "supports_sane_multi_rowcount", False)
         monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
-        result = await storage.delete(path=Path("/a.txt"))
+        if claim == "root":
+            result = await storage.delete(path=Path("/d/a.txt"))
+        else:
+            rows = [Observation(path=Path("/d")), Observation(path=Path("/d/a.txt"))]
+            result = await storage.delete(observations=rows, if_vids={Path("/d/a.txt"): seen})
         assert result.success is False and result.errors[0].kind == ErrorKind.unsupported
-        assert (await _rows(storage))["/a.txt"].deleted_at is None
+        assert (await _rows(storage))["/d/a.txt"].deleted_at is None
         await storage.close()
 
 
