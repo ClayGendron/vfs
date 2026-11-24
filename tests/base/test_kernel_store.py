@@ -19,7 +19,7 @@ from sqlalchemy import event
 from sqlalchemy.pool import Pool
 
 from tests.support.base_doubles import BadCloseStorage, RecorderStorage, SpyCloseStorage
-from tests.support.cancelled_callers import turns_of_the_loop
+from tests.support.cancelled_callers import held_round_trips, starts_with, turns_of_the_loop
 from tests.support.kernel_store import (
     PROBE_TABLE,
     Connections,
@@ -37,7 +37,7 @@ from tests.support.kernel_store import (
     without_waiting,
 )
 from vfs import AsyncVirtualFileSystem, SQLiteStorage
-from vfs.kernel_store import KernelStore, KernelStoreUnavailable
+from vfs.kernel_store import KernelStore, KernelStoreUnavailable, Transaction
 from vfs.session import AsyncSession
 from vfs.storage.backends.database import seams
 from vfs.sync import Session
@@ -269,6 +269,50 @@ async def test_a_commit_in_hand_at_close_starts_no_further_try(tmp_path: pathlib
     finally:
         holder.release()
     assert begins(sent) == ["BEGIN IMMEDIATE"]
+
+
+@pytest.mark.parametrize("close", ["waits for it", "is cut short"])
+async def test_a_first_touch_in_hand_at_close_starts_no_further_try(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, close: str
+) -> None:
+    """Guards a first touch that tries again after a close, on a pool nothing disposes, and leaves the side files."""
+    fs = _file_kernel(tmp_path)
+    assert (await fs.write(path="/a.txt", content="kept")).success
+    await fs.mounts()[0].storage._host.settle_statistics()  # ty: ignore[unresolved-attribute]
+    store = fs._kernel_store
+    without_waiting(store)
+    connections = Connections(store)
+    sent = statements_of(store)
+    round_trip = held_round_trips(monkeypatch)
+    round_trip.hold(starts_with("execute BEGIN IMMEDIATE"))
+    holder = HeldWriter(tmp_path / "knowledge.db")
+    holder.hold()
+
+    async def nothing(_transaction: Transaction) -> None:
+        return None
+
+    try:
+        commit = asyncio.ensure_future(store.commit(nothing))
+        await round_trip.reached.wait()
+        if close == "is cut short":
+            await store.close(within=0)
+            round_trip.let_go()
+            with pytest.raises(KernelStoreUnavailable):
+                await commit
+            left = connections.open
+            await fs.close()
+        else:
+            closing = asyncio.ensure_future(fs.close())
+            await turns_of_the_loop()
+            round_trip.let_go()
+            with pytest.raises(KernelStoreUnavailable):
+                await commit
+            await closing
+            left = connections.open
+    finally:
+        holder.release()
+    assert (begins(sent), left, connections.open) == (["BEGIN IMMEDIATE"], 0, 0)
+    assert files_in(tmp_path) == ["knowledge.db"]
 
 
 # ---------------------------------------------------------------------------

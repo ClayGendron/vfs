@@ -22,7 +22,6 @@ import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-import aiosqlite.core
 import anyio
 import pytest
 from sqlalchemy import event
@@ -40,6 +39,7 @@ from tests.support.cancelled_callers import (
     collect_what_was_dropped,
     first_of_kind,
     first_statement_of_a_transaction,
+    held_round_trips,
     kinds,
     left_of_a_checkout,
     number,
@@ -66,15 +66,7 @@ ON_EVERY_HOST = pytest.mark.parametrize("host", HOSTS, indirect=True)
 
 @pytest.fixture
 def round_trip(monkeypatch: pytest.MonkeyPatch) -> Iterator[HeldRoundTrip]:
-    held = HeldRoundTrip()
-    queue_it = aiosqlite.core.Connection._execute
-
-    async def _execute(self: Any, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        statement = next((" ".join(arg.split()) for arg in args if isinstance(arg, str)), "")
-        name = f"{getattr(function, '__name__', '')} {statement}".strip()
-        return await queue_it(self, held.sees(name, function), *args, **kwargs)
-
-    monkeypatch.setattr(aiosqlite.core.Connection, "_execute", _execute)
+    held = held_round_trips(monkeypatch)
     yield held
     held.let_go()
 

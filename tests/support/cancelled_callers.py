@@ -22,6 +22,7 @@ import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+import aiosqlite.core
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import DisconnectionError
@@ -115,6 +116,20 @@ class HeldRoundTrip:
             return function(*args, **kwargs)
 
         return held
+
+
+def held_round_trips(monkeypatch: pytest.MonkeyPatch) -> HeldRoundTrip:
+    """Send every round trip of every ``aiosqlite`` connection through one :class:`HeldRoundTrip`, for the test."""
+    held = HeldRoundTrip()
+    queue_it = aiosqlite.core.Connection._execute
+
+    async def _execute(self: Any, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        statement = next((" ".join(arg.split()) for arg in args if isinstance(arg, str)), "")
+        name = f"{getattr(function, '__name__', '')} {statement}".strip()
+        return await queue_it(self, held.sees(name, function), *args, **kwargs)
+
+    monkeypatch.setattr(aiosqlite.core.Connection, "_execute", _execute)
+    return held
 
 
 async def cancel_while_held(

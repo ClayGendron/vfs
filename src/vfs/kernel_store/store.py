@@ -440,24 +440,18 @@ class KernelStore:
             core = self._engine_core()
             options = self._options(writer=writer)
 
-            async def attempt() -> T:
-                # A close began: the try in hand ends, and no other starts.
-                if self._closing:
-                    raise KernelStoreUnavailable(classified(ErrorKind.backend_unavailable, detail=_CLOSED))
+            async def body() -> T:
                 await seam("kernel-store:before-try")
-                pool = core.engine.sync_engine.pool
-                try:
-                    async with core.session_factory() as transaction:
-                        await transaction.connection(execution_options=options)
-                        answer = await fn(transaction)
-                        if writer:
-                            await seam("kernel-store:before-commit")
-                            await transaction.commit()
-                        return answer
-                finally:
-                    # A close left this try running and replaced the pool, which nothing else disposes.
-                    if pool is not core.engine.sync_engine.pool:
-                        await greenlet_spawn(pool.dispose)
+                async with core.session_factory() as transaction:
+                    await transaction.connection(execution_options=options)
+                    answer = await fn(transaction)
+                    if writer:
+                        await seam("kernel-store:before-commit")
+                        await transaction.commit()
+                    return answer
+
+            def attempt() -> Awaitable[T]:
+                return self._try(body)
 
             try:
                 return await core.with_retry((lambda: run_to_its_end(attempt)) if to_its_end else attempt)
@@ -468,6 +462,20 @@ class KernelStore:
                 raise KernelStoreUnavailable(self._classify(exc)) from exc
         finally:
             self._leave()
+
+    async def _try(self, body: Callable[[], Awaitable[T]]) -> T:
+        """One try of a transaction or of first touch: none starts after a close, and none leaves a connection open."""
+        if self._closing:
+            raise KernelStoreUnavailable(classified(ErrorKind.backend_unavailable, detail=_CLOSED))
+        engine = self._engine_core().engine.sync_engine
+        began_on = engine.pool
+        try:
+            return await body()
+        finally:
+            # A close replaced the pool under this try, and disposes neither the one it began on nor the new one again.
+            if began_on is not engine.pool:
+                for pool in (began_on, engine.pool):
+                    await greenlet_spawn(pool.dispose)
 
     def _options(self, *, writer: bool) -> dict[str, str | bool]:
         options: dict[str, str | bool] = {"vfs_writer": True} if writer else {}
@@ -485,7 +493,7 @@ class KernelStore:
                 return
             core = self._engine_core()
             try:
-                found = await core.with_retry(self._verify_or_make)
+                found = await core.with_retry(lambda: self._try(self._verify_or_make))
             except StaleSnapshot as exc:
                 detail = f"kernel store kept losing to concurrent changes: {exc.context}"
                 raise KernelStoreUnavailable(classified(ErrorKind.unavailable, retryable=True, detail=detail)) from exc
