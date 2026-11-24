@@ -56,7 +56,7 @@ Publish on normal completion or deliberate q/Q (including its explicit shell exi
 
 ### 5. Publish the replacement through the session, under the read's stamp.
 
-The operand is read through the line's session, which stamps it, and the replacement is written through the same session, which sends `if_match` from that stamp. A source changed, replaced or moved since the read is a publication error with status 4: the newer source survives and an already written backup is kept. The host's existing write permissions still apply. A backup is a copy of the bytes used as input, written with the requested suffix policy. On an ordinary backup write failure do not touch the source. Refuse with status 4 before either write if backup and source name the same VFS path, as the pinned GNU recorder shows. This is per-file publication, with two visible VFS operations when a backup is requested.
+The operand is read through the line's session, which stamps it, and the replacement is written through the same session, which sends `if_vid` from that stamp. A source changed, replaced or moved since the read is a publication error with status 4: the newer source survives and an already written backup is kept. The host's existing write permissions still apply. A backup is a copy of the bytes used as input, written with the requested suffix policy. On an ordinary backup write failure do not touch the source. Refuse with status 4 before either write if backup and source name the same VFS path, as the pinned GNU recorder shows. This is per-file publication, with two visible VFS operations when a backup is requested.
 
 ## Interfaces and edge cases
 

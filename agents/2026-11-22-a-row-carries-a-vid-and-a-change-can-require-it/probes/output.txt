@@ -1,0 +1,439 @@
+Output of every probe, run on 2026-11-23 against Postgres 19.0 (Debian 19.0-1.pgdg12+1) with pgvector in Docker (docker/compose.test.yml) and against SQLite files, at commit 2cec1363. One run; the timings of p07 size a cost on this machine and pin nothing.
+
+######## p01_what_moves_an_id_and_a_version.py
+== sqlite: one file
+  created                                      id=..VY2K v=1 live
+  rewritten                                    id=..VY2K v=2 live
+  written with the same body                   id=..VY2K v=2 live
+  deleted                                      id=..VY2K v=3 tombstone
+    the delete's own row reports version 2
+  written again (revived)                      id=..VY2K v=4 live
+  deleted and restored                         id=..VY2K v=6 live
+  moved to /x/q                                id=..VY2K v=7 live
+  its parent moved (/x -> /y)                  id=..VY2K v=7 live
+  the copy at /y/c                             id=..EY21 v=1 live
+  its parent deleted                           id=..VY2K v=7 tombstone
+  its parent restored                          id=..VY2K v=7 live
+  edited                                       id=..VY2K v=8 live
+  appended to                                  id=..VY2K v=9 live
+  after a grant on it (success=True)           id=..VY2K v=9 live
+  after a posture on its parent (success=True) id=..VY2K v=9 live
+  after a rebuild (success=True)               id=..VY2K v=9 live
+== sqlite: one directory
+  made                                         id=..RWD2 v=1 live
+  a child made                                 id=..RWD2 v=2 live
+  the child rewritten                          id=..RWD2 v=2 live
+  the child edited                             id=..RWD2 v=2 live
+  a subdirectory made                          id=..RWD2 v=3 live
+  a grandchild made                            id=..RWD2 v=3 live
+  the child deleted                            id=..RWD2 v=4 live
+  the child restored                           id=..RWD2 v=5 live
+  the child renamed inside                     id=..RWD2 v=7 live
+  a file moved in                              id=..RWD2 v=8 live
+  a file moved out                             id=..RWD2 v=9 live
+  a file copied in                             id=..RWD2 v=10 live
+  a child deleted, then revived by a write     id=..RWD2 v=12 live
+  mkdir of a child that exists (exist_ok)      id=..RWD2 v=12 live
+  a grant on the directory                     id=..RWD2 v=12 live
+  a posture on the directory                   id=..RWD2 v=12 live
+  the directory itself moved                   id=..RWD2 v=13 live
+  a deleted child swept (destroyed)            id=..RWD2 v=15 live
+== sqlite: delete, the trash view and restore
+  delete /t.md reports           path=/t.md version=1
+  delete /td reports             [('/td', 2)]
+  stored /t.md                   id=..48KR v=2 tombstone
+  stored /td, /td/in.md          id=..GEP3 v=3 tombstone; id=..SD5K v=1 tombstone
+  ls /.vfs/trash                 [('/t.md', 'file', 2), ('/td', 'directory', 3)] errors=[]
+  stat /.vfs/trash/t.md          [('/t.md', 2)] errors=[]
+  stat /.vfs/trash/td/in.md      [('/td/in.md', 1)] errors=[]
+  restore('/.vfs/trash/t.md')    success=False errors=[(<ErrorKind.invalid: 'vfs.invalid'>, "Invalid: Cannot mutate the trash view beneath '/.vfs/trash'")]
+  restore(observations=<trash row>) success=True rows=[('/t.md', 3)] errors=[]
+  restore('/t.md') once it is live  success=False errors=[(<ErrorKind.exists: 'vfs.exists'>, None)]
+== sqlite: the four cases of The problem
+  moved away, new file written   : write(if_version=1) success=True status=['updated']
+  moved away, another file moved in: write(if_version=2) success=True status=['updated']
+  moved away, another file copied in: write(if_version=1) success=True status=['updated']
+  parent moved, remade, rewritten   : write(if_version=1) success=True status=['updated']
+== postgres: one file
+  created                                      id=..4M7T v=1 live
+  rewritten                                    id=..4M7T v=2 live
+  written with the same body                   id=..4M7T v=2 live
+  deleted                                      id=..4M7T v=3 tombstone
+    the delete's own row reports version 2
+  written again (revived)                      id=..4M7T v=4 live
+  deleted and restored                         id=..4M7T v=6 live
+  moved to /x/q                                id=..4M7T v=7 live
+  its parent moved (/x -> /y)                  id=..4M7T v=7 live
+  the copy at /y/c                             id=..2642 v=1 live
+  its parent deleted                           id=..4M7T v=7 tombstone
+  its parent restored                          id=..4M7T v=7 live
+  edited                                       id=..4M7T v=8 live
+  appended to                                  id=..4M7T v=9 live
+  after a grant on it (success=True)           id=..4M7T v=9 live
+  after a posture on its parent (success=True) id=..4M7T v=9 live
+  after a rebuild (success=True)               id=..4M7T v=9 live
+== postgres: one directory
+  made                                         id=..RV5Q v=1 live
+  a child made                                 id=..RV5Q v=2 live
+  the child rewritten                          id=..RV5Q v=2 live
+  the child edited                             id=..RV5Q v=2 live
+  a subdirectory made                          id=..RV5Q v=3 live
+  a grandchild made                            id=..RV5Q v=3 live
+  the child deleted                            id=..RV5Q v=4 live
+  the child restored                           id=..RV5Q v=5 live
+  the child renamed inside                     id=..RV5Q v=7 live
+  a file moved in                              id=..RV5Q v=8 live
+  a file moved out                             id=..RV5Q v=9 live
+  a file copied in                             id=..RV5Q v=10 live
+  a child deleted, then revived by a write     id=..RV5Q v=12 live
+  mkdir of a child that exists (exist_ok)      id=..RV5Q v=12 live
+  a grant on the directory                     id=..RV5Q v=12 live
+  a posture on the directory                   id=..RV5Q v=12 live
+  the directory itself moved                   id=..RV5Q v=13 live
+  a deleted child swept (destroyed)            id=..RV5Q v=15 live
+== postgres: delete, the trash view and restore
+  delete /t.md reports           path=/t.md version=1
+  delete /td reports             [('/td', 2)]
+  stored /t.md                   id=..T5D1 v=2 tombstone
+  stored /td, /td/in.md          id=..7TW5 v=3 tombstone; id=..1CGM v=1 tombstone
+  ls /.vfs/trash                 [('/t.md', 'file', 2), ('/td', 'directory', 3)] errors=[]
+  stat /.vfs/trash/t.md          [('/t.md', 2)] errors=[]
+  stat /.vfs/trash/td/in.md      [('/td/in.md', 1)] errors=[]
+  restore('/.vfs/trash/t.md')    success=False errors=[(<ErrorKind.invalid: 'vfs.invalid'>, "Invalid: Cannot mutate the trash view beneath '/.vfs/trash'")]
+  restore(observations=<trash row>) success=True rows=[('/t.md', 3)] errors=[]
+  restore('/t.md') once it is live  success=False errors=[(<ErrorKind.exists: 'vfs.exists'>, None)]
+== postgres: the four cases of The problem
+  moved away, new file written   : write(if_version=1) success=True status=['updated']
+  moved away, another file moved in: write(if_version=2) success=True status=['updated']
+  moved away, another file copied in: write(if_version=1) success=True status=['updated']
+  parent moved, remade, rewritten   : write(if_version=1) success=True status=['updated']
+exit status: 0
+
+######## p02_the_statements_the_builders_emit.py
+== sqlite
+-- write, an update: 8 statements, ok
+   verbs: SELECT UPDATE SELECT SELECT INSERT DELETE DELETE INSERT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.path = ? AND vfs_entries.deleted_at IS NULL
+-- write, an update with the right expected version: 8 statements, ok
+   verbs: SELECT UPDATE SELECT SELECT INSERT DELETE DELETE INSERT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.path = ? AND vfs_entries.deleted_at IS NULL
+-- write, a stale expected version: 1 statements, refused ['vfs.conflict']
+   verbs: SELECT
+-- edit: 7 statements, ok
+   verbs: SELECT UPDATE SELECT INSERT DELETE DELETE INSERT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.path = ? AND vfs_entries.deleted_at IS NULL
+-- delete of a file: 4 statements, ok
+   verbs: SELECT SELECT UPDATE UPDATE
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.deleted_at IS NULL
+-- restore of a file: 6 statements, ok
+   verbs: SELECT SELECT UPDATE UPDATE UPDATE SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.deleted_at IS NOT NULL
+-- delete of a directory, cascading: 5 statements, ok
+   verbs: SELECT SELECT UPDATE UPDATE UPDATE
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.deleted_at IS NULL
+-- delete of an empty directory, no cascade: 6 statements, ok
+   verbs: SELECT SELECT SELECT UPDATE UPDATE UPDATE
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ? AND vfs_entries.deleted_at IS NULL
+-- move of a file within one directory: 16 statements, ok
+   verbs: SELECT SELECT SELECT SELECT SELECT SELECT SELECT SELECT SELECT UPDATE UPDATE SELECT UPDATE UPDATE SELECT SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = ? AND vfs_entries.version = ?
+== postgres
+-- write, an update: 8 statements, ok
+   verbs: SELECT UPDATE SELECT SELECT SELECT DELETE DELETE SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.path = incoming.v_path AND vfs_entries.deleted_at IS NULL AND vfs_entries.version = incoming.v_base RETURNING vfs_entries.entry_id, vfs_entries.version
+   shape: a VALUES join
+-- write, an update with the right expected version: 8 statements, ok
+   verbs: SELECT UPDATE SELECT SELECT SELECT DELETE DELETE SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.path = incoming.v_path AND vfs_entries.deleted_at IS NULL AND vfs_entries.version = incoming.v_base RETURNING vfs_entries.entry_id, vfs_entries.version
+   shape: a VALUES join
+-- write, a stale expected version: 1 statements, refused ['vfs.conflict']
+   verbs: SELECT
+-- edit: 7 statements, ok
+   verbs: SELECT UPDATE SELECT SELECT DELETE DELETE SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.path = incoming.v_path AND vfs_entries.deleted_at IS NULL AND vfs_entries.version = incoming.v_base RETURNING vfs_entries.entry_id, vfs_entries.version
+   shape: a VALUES join
+-- delete of a file: 4 statements, ok
+   verbs: SELECT SELECT UPDATE UPDATE
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.version = incoming.v_ver AND vfs_entries.deleted_at IS NULL RETURNING vfs_entries.entry_id
+   shape: a VALUES join
+-- restore of a file: 6 statements, ok
+   verbs: SELECT SELECT UPDATE UPDATE UPDATE SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.version = incoming.v_ver AND vfs_entries.deleted_at IS NOT NULL RETURNING vfs_entries.entry_id
+   shape: a VALUES join
+-- delete of a directory, cascading: 5 statements, ok
+   verbs: SELECT SELECT UPDATE UPDATE UPDATE
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.version = incoming.v_ver AND vfs_entries.deleted_at IS NULL RETURNING vfs_entries.entry_id
+   shape: a VALUES join
+-- delete of an empty directory, no cascade: 6 statements, ok
+   verbs: SELECT SELECT SELECT UPDATE UPDATE UPDATE
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = incoming.v_id AND vfs_entries.version = incoming.v_ver AND vfs_entries.deleted_at IS NULL RETURNING vfs_entries.entry_id
+   shape: a VALUES join
+-- move of a file within one directory: 16 statements, ok
+   verbs: SELECT SELECT SELECT SELECT SELECT SELECT SELECT SELECT SELECT UPDATE UPDATE SELECT UPDATE UPDATE SELECT SELECT
+   first UPDATE of vfs_entries: WHERE vfs_entries.entry_id = $8::UUID AND vfs_entries.version = $9::BIGINT
+exit status: 0
+
+######## p03_a_rival_inside_the_window.py
+== sqlite
+-- write(if_versions) against a rival write of another body
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('updated', 2)]
+   victim's engine errors: none; statements 8, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- write(if_versions) against a rival write of the same body
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('updated', 2)]
+   victim's engine errors: none; statements 8, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- write(if_versions) against a rival that moved the row away
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('updated', 2)]
+   victim's engine errors: none; statements 8, of them UPDATE 1
+   /d/moved.txt afterwards: no row
+-- write(if_versions) against a rival that deleted the row
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('updated', 2)]
+   victim's engine errors: none; statements 8, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- a plain write against a rival write of another body
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('updated', 2)]
+   victim's engine errors: none; statements 8, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- edit against a rival write that keeps the text the edit matches
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('updated', 2)]
+   victim's engine errors: none; statements 7, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- delete against a rival write to the target
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('deleted', 1)]
+   victim's engine errors: none; statements 4, of them UPDATE 2
+   /d/a.txt afterwards: v=2 tombstone
+-- delete of a directory against a rival child made in it
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('deleted', 2)]
+   victim's engine errors: ['SQLITE_BUSY: database is locked', 'SQLITE_BUSY: database is locked']; statements 5, of them UPDATE 3
+   /d afterwards: v=3 tombstone
+-- move against a rival write to the source
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('created', 2)]
+   victim's engine errors: none; statements 16, of them UPDATE 4
+   /d/moved.txt afterwards: v=2 live
+-- restore against a rival write that revives the row
+   rival: did not finish in 8 s (blocked)
+   victim: ok [('created', 3)]
+   victim's engine errors: none; statements 6, of them UPDATE 3
+   /d/a.txt afterwards: v=3 live
+== postgres
+-- write(if_versions) against a rival write of another body
+   rival: committed
+   victim: refused [('vfs.conflict', {'version': 2}, False)]
+   victim's engine errors: ["40001: <class 'asyncpg.exceptions.SerializationError'>: could not serialize a"]; statements 3, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- write(if_versions) against a rival write of the same body
+   rival: committed
+   victim: ok [('unchanged', 2)]
+   victim's engine errors: ["40001: <class 'asyncpg.exceptions.SerializationError'>: could not serialize a"]; statements 3, of them UPDATE 1
+   /d/a.txt afterwards: v=2 live
+-- write(if_versions) against a rival that moved the row away
+   rival: committed
+   victim: refused [('vfs.not_found', None, False)]
+   victim's engine errors: ["40001: <class 'asyncpg.exceptions.SerializationError'>: could not serialize a"]; statements 3, of them UPDATE 1
+   /d/moved.txt afterwards: v=2 live
+-- write(if_versions) against a rival that deleted the row
+   rival: committed
+   victim: refused [('vfs.not_found', {'vfs.trashed': True, 'vfs.deleted_at': '2026-11-24T00:39:15.639628+00:00'}, False)]
+   victim's engine errors: ["40001: <class 'asyncpg.exceptions.SerializationError'>: could not serialize a"]; statements 3, of them UPDATE 1
+   /d/a.txt afterwards: v=2 tombstone
+-- a plain write against a rival write of another body
+   rival: committed
+   victim: ok [('updated', 3)]
+   victim's engine errors: ["40001: <class 'asyncpg.exceptions.SerializationError'>: could not serialize a"]; statements 10, of them UPDATE 2
+   /d/a.txt afterwards: v=3 live
+-- edit against a rival write that keeps the text the edit matches
+   rival: committed
+   victim: ok [('updated', 3)]
+   victim's engine errors: ["40001: <class 'asyncpg.exceptions.SerializationError'>: could not serialize a"]; statements 9, of them UPDATE 2
+   /d/a.txt afterwards: v=3 live
+-- delete against a rival write to the target
+   rival: committed
+   victim: ok [('deleted', 2)]
+   victim's engine errors: none; statements 7, of them UPDATE 3
+   /d/a.txt afterwards: v=3 tombstone
+-- delete of a directory against a rival child made in it
+   rival: committed
+   victim: ok [('deleted', 3)]
+   victim's engine errors: none; statements 8, of them UPDATE 4
+   /d afterwards: v=4 tombstone
+-- move against a rival write to the source
+   rival: committed
+   victim: ok [('created', 3)]
+   victim's engine errors: none; statements 26, of them UPDATE 5
+   /d/moved.txt afterwards: v=3 live
+-- restore against a rival write that revives the row
+   rival: committed
+   victim: refused [('vfs.exists', None, False)]
+   victim's engine errors: none; statements 5, of them UPDATE 1
+   /d/a.txt afterwards: v=3 live
+exit status: 0
+
+######## p04_the_quoted_statements_at_each_isolation_level.py
+== sqlite
+sqlite library 3.50.4
+-- a second writer while one holds BEGIN IMMEDIATE (the snapshot saw version 1)
+   the rival's BEGIN IMMEDIATE -> ERROR SQLITE_BUSY: database is locked
+   the rival's bare UPDATE     -> ERROR SQLITE_BUSY: database is locked
+   the holder's guarded UPDATE -> 1 row(s) matched
+-- ON CONFLICT (parent_id, name) DO NOTHING RETURNING
+   over a held name -> 0 row(s); over a free name -> [('/free', 1)]
+== postgres
+server 19.0 (Debian 19.0-1.pgdg12+1)
+-- 1. the write guard, rival bumped the version
+   REPEATABLE READ; the snapshot saw 1 row(s) at version [1]
+   -> ERROR 40001: could not serialize access due to concurrent update
+-- 2. the write guard, rival moved the row
+   REPEATABLE READ; the snapshot saw 1 row(s) at version [1]
+   -> ERROR 40001: could not serialize access due to concurrent update
+-- 3. the write guard, the rival committed before the first read
+   REPEATABLE READ; the snapshot saw 1 row(s) at version [2]
+   -> 0 row(s) []
+-- 4. the delete claim, rival bumped the version
+   READ COMMITTED; the snapshot saw 1 row(s) at version [1]
+   -> 0 row(s) []
+-- 5. the move claim, rival committed while the claim waited (waited: True)
+   READ COMMITTED
+   -> 0 row(s) []
+-- 6. the restore claim, rival revived the row
+   READ COMMITTED; the snapshot saw 1 row(s) at version [1]
+   -> 0 row(s) []
+-- 7. create only (DO NOTHING), rival created the name inside the window
+   REPEATABLE READ; the snapshot saw 1 row(s) at version [1]
+   -> ERROR 40001: could not serialize access due to concurrent update
+-- 8. clobber (DO UPDATE), rival created the name inside the window
+   REPEATABLE READ; the snapshot saw 1 row(s) at version [1]
+   -> ERROR 40001: could not serialize access due to concurrent update
+-- 9. create only (DO NOTHING), the name was there before the snapshot
+   REPEATABLE READ; the snapshot saw 2 row(s) at version [1, 1]
+   -> 0 row(s) []
+-- 10. create only (DO NOTHING), rival created the name inside the window
+   READ COMMITTED; the snapshot saw 1 row(s) at version [1]
+   -> 0 row(s) []
+exit status: 0
+
+######## p05_the_entry_id_as_bytes_and_the_mint.py
+== sqlite: the entry id as bytes
+   the driver hands the column as builtins.bytes
+   rows 1002; byte widths {16: 1002}; python types {'bytes': 1002}
+   rows where ULIDBytes != entry_key_of(text): 0
+   rows where ULIDBytes != ULID.from_str(text).bytes: 0
+   the mount identity is 26 ascii characters
+== postgres: the entry id as bytes
+   the driver hands the column as asyncpg.pgproto.pgproto.UUID
+   rows 1002; byte widths {16: 1002}; python types {'bytes': 1002}
+   rows where ULIDBytes != entry_key_of(text): 0
+   rows where ULIDBytes != ULID.from_str(text).bytes: 0
+   the mount identity is 26 ascii characters
+== the mint
+   1,000 mints: 1000 have the shape; 1000 distinct
+   a twin mint of the same mount differs on 0
+   another mount's mint equals on 0
+   version 0 equals version 1 on 0
+   version 2**63 - 1 mints: True
+   is_etag('absent') is False; is_etag(etag.upper()) is False
+   blake2b limits: key 64 bytes (the identity is 26), person 16 bytes (the spec's is 10)
+   first characters seen: 0123456789abcdef
+exit status: 0
+
+######## p06_twenty_writers_and_twenty_creates.py
+== sqlite
+-- twenty writes that require version 1: {'vfs.conflict': 19, 'ok:updated': 1}
+   the file ends at version 2; engine errors on the way: none
+   the data of the refusals: {"{'version': 2}": 19}
+-- twenty create-only writes of one path: {'vfs.exists': 19, 'ok:created': 1}
+   the file ends at version 1; engine errors on the way: none
+   the data of the refusals: {'names version and hash': 19}
+-- twenty appends that require version 1: {'vfs.conflict': 19, 'ok:updated': 1}
+   the file ends at version 2 with 2 lines; engine errors on the way: none
+-- twenty plain appends: {'ok:updated': 20}
+   the file ends at version 22 with 22 lines; engine errors on the way: none
+   one mount identity across the 21 handles: True
+== postgres
+-- twenty writes that require version 1: {'vfs.conflict': 19, 'ok:updated': 1}
+   the file ends at version 2; engine errors on the way: {'40001': 19}
+   the data of the refusals: {"{'version': 2}": 19}
+-- twenty create-only writes of one path: {'vfs.exists': 19, 'ok:created': 1}
+   the file ends at version 1; engine errors on the way: {'40001': 19}
+   the data of the refusals: {'names version and hash': 19}
+-- twenty appends that require version 1: {'ok:updated': 1, 'vfs.conflict': 19}
+   the file ends at version 2 with 2 lines; engine errors on the way: none
+-- twenty plain appends: {'ok:updated': 20}
+   the file ends at version 22 with 22 lines; engine errors on the way: none
+   one mount identity across the 21 handles: True
+exit status: 0
+
+######## p07_what_the_etag_costs_a_listing_row.py
+machine: arm64 Darwin 25.5.0, Python 3.13.11
+== sqlite
+   today's glob of 10000 rows, end to end            7.55 us a row
+   today's ls of 10000 rows, end to end              6.46 us a row
+   one select of the listing columns                1.22 us a row
+     and the id as text, through ULIDKey            3.06   (+1.84)
+     and the id as bytes, through ULIDBytes         1.43   (+0.21)
+   mint from bytes                                  0.48 us a row
+   mint from text, through entry_key_of             0.84 us a row
+   id as bytes + mint                               0.69 us a row: 9% of a glob row, 11% of an ls row; 6.9 ms for the listing
+== postgres
+   today's glob of 10000 rows, end to end            8.72 us a row
+   today's ls of 10000 rows, end to end              7.19 us a row
+   one select of the listing columns                1.41 us a row
+     and the id as text, through ULIDKey            3.35   (+1.94)
+     and the id as bytes, through ULIDBytes         1.59   (+0.17)
+   mint from bytes                                  0.49 us a row
+   mint from text, through entry_key_of             0.85 us a row
+   id as bytes + mint                               0.66 us a row: 8% of a glob row, 9% of an ls row; 6.6 ms for the listing
+== the row itself
+   building an Observation today                    6.14 us a row
+   compact JSON of a three-field row              90 bytes; with an etag field 120 (+30)
+exit status: 0
+
+######## p08_cases_the_spec_does_not_state.py
+== sqlite
+1. write(if_version=1) where a deleted directory is:   refused [('vfs.wrong_kind', '/gone', {'kind': 'directory', 'vfs.trashed': True, 'vfs.deleted_at': '2026-11-24T00:39:37.338861'})]
+2. write(if_absent=True) where a deleted directory is: refused [('vfs.wrong_kind', '/gone', {'kind': 'directory', 'vfs.trashed': True, 'vfs.deleted_at': '2026-11-24T00:39:37.338861'})]
+3. write(if_version=1) beneath a file:                 refused [('vfs.wrong_kind', '/file', {'kind': 'file', 'vfs.target': '/file/child'})]
+4. delete([/d/a, /d], cascade=False):                  ok [('/d/a', 'deleted', 1), ('/d', 'deleted', 2)]
+5. move([(/m1, /m2), (/m2, /m3)]):                     ok [('/m2', 'created', 2), ('/m3', 'created', 3)]
+6. edit of one file named twice (a -> b, once each):   refused [('vfs.invalid', '/twice', None)]
+7. write of one path twice, if_versions at 1:          ok [('/dup', 'updated', 2), ('/dup', 'updated', 2)]
+   the same call again, still expecting 1:             ok [('/dup', 'unchanged', 2), ('/dup', 'unchanged', 2)]
+8. ls / shows the mount point as:   [('/mnt', 'directory', 2, ['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'])]
+   stat /mnt returns:               [('/mnt', 'directory', 2)]
+   the mounted storage's own root:  [('/', 'directory', 2)]
+9. merged, versions agree:  version=3 masked=True
+   merged, versions differ: version=None masked=True
+10. move(/self, /self):                                ok [('/self', 'unchanged', 1)]
+== postgres
+1. write(if_version=1) where a deleted directory is:   refused [('vfs.wrong_kind', '/gone', {'kind': 'directory', 'vfs.trashed': True, 'vfs.deleted_at': '2026-11-24T00:39:37.667625+00:00'})]
+2. write(if_absent=True) where a deleted directory is: refused [('vfs.wrong_kind', '/gone', {'kind': 'directory', 'vfs.trashed': True, 'vfs.deleted_at': '2026-11-24T00:39:37.667625+00:00'})]
+3. write(if_version=1) beneath a file:                 refused [('vfs.wrong_kind', '/file', {'kind': 'file', 'vfs.target': '/file/child'})]
+4. delete([/d/a, /d], cascade=False):                  ok [('/d/a', 'deleted', 1), ('/d', 'deleted', 2)]
+5. move([(/m1, /m2), (/m2, /m3)]):                     ok [('/m2', 'created', 2), ('/m3', 'created', 3)]
+6. edit of one file named twice (a -> b, once each):   refused [('vfs.invalid', '/twice', None)]
+7. write of one path twice, if_versions at 1:          ok [('/dup', 'updated', 2), ('/dup', 'updated', 2)]
+   the same call again, still expecting 1:             ok [('/dup', 'unchanged', 2), ('/dup', 'unchanged', 2)]
+8. ls / shows the mount point as:   [('/mnt', 'directory', 2, ['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'])]
+   stat /mnt returns:               [('/mnt', 'directory', 2)]
+   the mounted storage's own root:  [('/', 'directory', 2)]
+9. merged, versions agree:  version=3 masked=True
+   merged, versions differ: version=None masked=True
+10. move(/self, /self):                                ok [('/self', 'unchanged', 1)]
+exit status: 0
+
+######## p09_how_often_an_etag_reads_as_a_number.py (no server; run after the container was removed)
+400000 etags minted
+  begin with '-':            0
+  int() accepts:             48   (expected 33.1, one in 12,089)
+  float() accepts:           101   (expected 92.6, one in 4,318)
+  at 5,600,000 rows a day:   about 1,297 such etags a day
+exit status: 0
