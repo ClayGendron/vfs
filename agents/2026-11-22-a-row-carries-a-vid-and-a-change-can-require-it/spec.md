@@ -316,7 +316,7 @@ A live row whose vid is not the one required is `conflict` whatever its kind. Th
 A rival inside the window:
 
 - **SQLite.** A writer holds the database's one writer lock from before its snapshot, so no rival commits inside the window. The in-memory storage has one connection, and calls on it queue.
-- **Postgres, `write` and `edit`.** The call runs at REPEATABLE READ. A rival's commit inside the window ends the guarded `UPDATE` with a serialization failure, and the call runs again from a new snapshot. The answer is the one that snapshot gives: `conflict` where the row is still at the path with another vid, `not_found` where the rival moved or deleted it, and `unchanged` where the rival wrote the very body the call carries. Run on Postgres 19.0 on 2026-11-23 (`probes/p03_a_rival_inside_the_window.py`, `probes/p04_the_quoted_statements_at_each_isolation_level.py`). A guard that matches no row is the road of an engine that does not run a write at REPEATABLE READ. No supported engine takes it, and the probe that answers it is kept for the generic floor.
+- **Postgres, `write` and `edit`.** The call runs at REPEATABLE READ. A rival's commit inside the window ends the guarded `UPDATE` with a serialization failure, and the call runs again from a new snapshot. The answer is the one that snapshot gives: `conflict` where the row is still at the path with another vid, `not_found` where the rival moved or deleted it, and `unchanged` where the rival wrote the very body the call carries. Run on Postgres 19.0 on 2026-11-23 (`probes/p03_a_rival_inside_the_window.py`, `probes/p04_the_quoted_statements_at_each_isolation_level.py`). A guard that matches no row is answered by a probe on a profile that declares it, and both supported engines do (`dialects.py:365`, `418`). Neither reaches it from a rival inside the window: SQLite admits no rival, and Postgres raises the serialization failure first. The generic floor declares no probe and runs the call again (`dialects.py:318`). The probe is reached by a rival staged on the attempt's own session, which is how its tests stage it.
 - **Postgres, `delete` and `move`.** The call runs at READ COMMITTED behind the serialization point. A rival's write inside the window moves the version, the claim matches no row, and the verb runs again from a new snapshot, where the vid no longer matches.
 - **An append.** A rival appender waits on the row lock. When it gets the lock it reads the new version, and with `if_vid` it is refused `conflict` and does not run again.
 
@@ -354,9 +354,9 @@ Reason: a precondition protects what a call would replace. A move replaces nothi
 |---|---|---|---|
 | The vid required is not the vid of the live row, at the snapshot | `conflict` | `{"version": v, "vid": e}` of the row at the path | no |
 | The same, found by a call that ran again after a rival | `conflict` | the same | no |
-| On an engine that probes a lost guard, which neither supported engine is: a write with a required vid lost its guard, and the row probed is still at the path | `conflict` | `{"version": v, "vid": e}` of that row | no |
-| On such an engine: the same, and the row probed has moved away | `conflict` | none: the row now at the path was not read | no |
-| On such an engine: a plain write lost its guard | `conflict` | `{"version": v, "vid": e}` where the row is still at the path, and none where it moved | yes, as today |
+| Where a guard matched no row and the profile probes, which a rival inside the window causes on neither supported engine: a write with a required vid lost its guard, and the row probed is still at the path | `conflict` | `{"version": v, "vid": e}` of that row | no |
+| The same case: the row probed has moved away | `conflict` | none: the row now at the path was not read | no |
+| The same case: a plain write lost its guard | `conflict` | `{"version": v, "vid": e}` where the row is still at the path, and none where it moved | yes, as today |
 | A required vid against no live row | `not_found` | the trashed hint on a tombstone | no |
 | The mark, on a `write`, over a live row | `exists` | `{"version": v, "content_hash": h, "vid": e}` | no |
 | The mark, on `edit`, `delete` or `move`, over a live row | `conflict` | `{"version": v, "vid": e}` | no |
@@ -405,7 +405,7 @@ Reason: a name that differs between two faces is found by the caller who crosses
 
 This spec manipulates one primitive, the Candidate, which gains a field. A vid is a value on a Candidate, composed of two things the constitution already has: the Entry's identity and its revision, within one Mount. It has no path and needs none. Nothing is found by it: hydrating a Candidate stays a path lookup, and a caller that never passes a vid uses the file system as before.
 
-The third bullet of Article 1.5 becomes: "**Usable for optimistic concurrency.** Every Candidate that carries a revision carries an *vid*, an opaque value composed of the Entry's identity and its revision. A caller MAY pass `if_vid=vid` on a change; a mismatch MUST surface as `Conflict` in the error taxonomy (Article 2). A revision alone is not a precondition: two Entries can stand at one path, one after the other, at the same revision."
+The third bullet of Article 1.5 becomes: "**Usable for optimistic concurrency.** Every Candidate that carries a revision carries a *vid*, an opaque value composed of the Entry's identity and its revision. A caller MAY pass `if_vid=vid` on a change; a mismatch MUST surface as `Conflict` in the error taxonomy (Article 2). A revision alone is not a precondition: two Entries can stand at one path, one after the other, at the same revision."
 
 Article 1.3's list gains: "`vid` — present wherever `revision` is; see §1.5."
 
@@ -415,8 +415,8 @@ Reason: Article 1 allows five first-class things. A sixth would be the most expe
 
 ### 16. Four landings, in this order
 
-1. The vid on every row: `vid.py`, `ULIDBytes`, the mint at each site, the trait, the merge rule, the exports, the constructor of decision 19, and `vid` beside `version` in the `data` of `conflict` and `exists`. No argument changes.
-2. `write` takes `if_vid` and `if_vids` with the mark of decision 18, and `if_version` and `if_versions` leave, in one landing.
+1. The vid on every row: `vid.py`, `ULIDBytes`, the mint at each site, the trait, the merge rule, the exports of `Vid` and `VidMint`, and `vid` beside `version` in the `data` of `conflict` and `exists`. No argument changes.
+2. `write` takes `if_vid` and `if_vids` with the mark of decision 18, `ABSENT` is exported, `stale_vid` of decision 19 takes the place of `stale_version`, and `if_version` and `if_versions` leave, in one landing.
 3. `edit` takes them.
 4. `delete`, `move` and `restore` take them, and the planned page `documentation/reference/planned-api/vids-and-preconditions.md` is removed, with its row in `planned-api/index.md`, once the reference pages say what it says.
 
@@ -467,7 +467,7 @@ ABSENT: Final = "absent"      # no vid has this shape, and it is plain JSON
 - **A create that loses its name to a rival.** A marked entry answers `exists` and never lands on the rival's row. An unmarked one lands on it, as today. `StagedEntry` gains `exclusive: bool`, read where the call-wide flag is read today.
 - **Statements.** The files of one depth are inserted in at most two groups, marked and unmarked, where they are one group today. A batch that mixes the two issues at most one more insert for each depth it creates at. A batch of one kind issues what it issues today.
 
-Reason: two specs need it and neither can do without soundly. Spec 3, decision 9 writes a strict session's batch of read and unread paths, and without the mark it is two calls, the second of which can fail after the first has landed. Spec 7, decision 22 carries out a saved batch in which the preview found some paths empty, and without the mark those paths are not guarded at all. Reason for a word and not `*`: in HTTP `If-Match: *` means that something is there, which is the opposite.
+Reason: two specs need it and neither can do without soundly. Spec 3, decision 9 writes a strict session's batch of read and unread paths, and without the mark it is two calls, the second of which can fail after the first has landed. Spec 7, decision 22 carries out a saved batch in which the preview found some paths empty, and without the mark those paths are not guarded at all. Reason for a word and not `*`: a `*` reads as anything at all, and to a caller who knows HTTP's `If-Match: *` it reads as something is there, which is the opposite.
 
 ### 19. One constructor makes the refusal of a failed precondition, for a storage and for the kernel alike
 
@@ -594,7 +594,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_stale_vid_runs_the_snapshot_and_no_write`: 1 statement, a `SELECT`.
 - `test_a_key_for_every_row_adds_no_statement`, for 100 files and, marked `slow`, 10,000, with the membership budget narrowed to 1,000: the list of statement verbs equals the list of the same write without keys. With one stale key the batch fails whole with 0 mutation statements.
 - `test_a_required_vid_mints_twice_for_each_row`: a 10,000-entry write with a key for every row calls `VidMint.mint` 20,000 times. Marked `slow`.
-- `test_a_row_that_lost_its_guard_names_what_is_at_its_path`: a rival staged on the attempt's own session at the `write:before-apply` seam, as today's test of the probe stages it (`tests/storage/database/test_writes.py:1990`), gives `conflict` with the rival's version and vid; a rival that moved the row away gives `conflict` with no `data`. It tests the probe, which the generic floor takes and the two engines do not.
+- `test_a_row_that_lost_its_guard_names_what_is_at_its_path`: a rival staged on the attempt's own session at the `write:before-apply` seam, as today's test of the probe stages it (`tests/storage/database/test_writes.py:1990`), gives `conflict` with the rival's version and vid; a rival that moved the row away gives `conflict` with no `data`. It tests the probe, which both engines declare and neither reaches from a second connection. The generic floor runs the call again.
 - `test_a_required_vid_adds_no_statement_to_an_edit`: the list of statement verbs with `if_vids` equals the list without, on twin files, and counts 7. A stale one issues 1 statement, the snapshot.
 
 `tests/storage/database/test_trash.py` and `tests/storage/database/test_topology.py`, at the seam as the system actor:
@@ -641,10 +641,11 @@ In:
 - `src/vfs/storage/backends/database/`: `engine.py` (the mint, built at first touch), `backend.py` (the trait, the arguments), `reads.py`, `listings.py`, `grep.py`, `search.py`, `traverse.py` (the id and the mint on each row), `staging.py`, `writes.py` (the plan's comparison, the rows of a result, the `data` of two refusals), `serialized.py`, `trash.py`, `topology.py` (the comparison in each ladder, the rows of a result).
 - `src/vfs/results/envelope.py` (the merge rule, `stale_vid`), `src/vfs/results/__init__.py`, `src/vfs/results/kinds.py` (the words of `conflict`).
 - The tests above.
+- `tests/lint/test_code_shape.py`: `LAYERS` gains `vfs.vid` on the rung of `vfs.paths`, since it imports the standard library alone and the models import it, and `vfs.preconditions` on the rung of `vfs.cursor`, below `vfs.base`. `vfs.vid` joins `IMPORTS_NO_VFS_MODULE`. No rung is loosened and no upward import is admitted.
 - The size gate. `MODULE_LINE_BASELINE` holds each module over 1,000 lines at its exact count and fails one that grows (`tests/lint/allowlist.py:11-12`, `26-33`). Five of its six modules are in this scope, and two more sit just under the ceiling. Where the new code goes is decided here, so that a baseline is raised by this spec and not in the build. Each figure is an estimate made before the code is written; the build sets each baseline to the count it reaches and says in its pull request where that differs.
-  - **A new module, `src/vfs/preconditions.py`, beside `cursor.py`,** takes the routing of `if_vids` keys to mounts, the two rules that need resolved paths (a key names a target, and no two keys name one path) and the check of the trait. It takes the routing `base.py` does for `if_versions` today (`base.py:2491-2501`), so that function leaves `base.py`.
+  - **A new module, `src/vfs/preconditions.py`, beside `cursor.py`,** takes the routing of `if_vids` keys to mounts, the two rules that need resolved paths (a key names a target, and no two keys name one path) and the check of the trait. It takes the routing `base.py` does for `if_versions` today, a loop at `base.py:2491-2501`, so that loop leaves `base.py`.
   - **`base.py`, 3,090:** two arguments on five verbs, a paragraph in each of five docstrings, and one call a verb into the new module. About 60 lines more.
-  - **`backend.py`, 1,509:** `if_vids` passed through five methods, and the trait. About 15 lines more.
+  - **`backend.py`, 1,509:** `if_vids` passed through five methods, the trait, and the mint handed to each builder of a row. About 15 lines more where the mint rides on an object the builders are already passed, and about 45 where it is one more argument at each of the 29 calls that pass `host.tables`. The first is the one to build.
   - **`writes.py`, 1,415:** the comparison at settle, `exclusive`, and the second insert group of the mark. About 40 lines more. `staging.py` takes `expected` in place of `expected_version` and is under the ceiling.
   - **`reads.py`, 1,164:** `DERIVED_FIELDS`, the id in the select list, and the mint where a row is built. About 20 lines more.
   - **`engine.py`, 1,008:** one `VidMint` built at first touch. About 5 lines more. Spec 0's first landing splits this module and lowers its count; whichever lands second takes the other's number.
@@ -759,7 +760,7 @@ One count in another spec follows from decision 17 here and was written before i
 - The costs under "Cost" are a bench on one machine against in-memory SQLite. Sized again on 2026-11-23 on Postgres 19.0 and on a SQLite file: the id as bytes and the mint add 0.66 and 0.69 microseconds a row to a 10,000-row listing, 8 to 11% of a row (`probes/p07_what_the_etag_costs_a_listing_row.py`). The 1.1 above is not understated. No other machine was measured.
 - The mean number of rows a read returns at the reference deployment. The 50 is an assumption.
 - How many existing tests compare a whole row or a rendered table of every field, and so gain the new field.
-- That the list of sites that build a row with a version is complete. It was made by a search for the constructors. The contract row of 17 calls is what catches a site that was missed.
+- That the list of sites that build a row with a version is complete. It was made by a search for the constructors. The contract row of 19 calls is what catches a site that was missed.
 - Whether a rendering pass moves a version. Decision 3 says only that a vid stays where the version does.
 - The mark's second insert group was read from the arbitration code and not run. The count of 2 inserts is the test's to show.
 - The other eight specs were read at `7c383f32` and as they stood on disk in round three, while their writers were revising them. Every decision cited here was found under the number and the heading given. A later change of a heading is not seen.
