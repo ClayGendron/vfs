@@ -132,9 +132,8 @@ class KernelStore:
     another dialect than SQLite or Postgres raises ``ValueError``, which
     names the dialect and never the URL. The store's engine is built at
     its first use and disposed by :meth:`close`. ``clock`` returns an
-    aware UTC time; every time a record stores is read from it.
-    ``holds_durable_mount`` tells a store in memory whether its file
-    system holds a mount on a database, which it warns of once.
+    aware UTC time; every time a record stores is read from it. The
+    kernel builds its store through :func:`store_for_root`.
     """
 
     def __init__(
@@ -144,7 +143,6 @@ class KernelStore:
         clock: Callable[[], datetime] = system_clock,
         retry_attempts: int = 4,
         retry_base_delay: float = 0.05,
-        holds_durable_mount: Callable[[], bool] | None = None,
     ) -> None:
         self._url = url_of_place(place)
         self._place = place
@@ -154,7 +152,8 @@ class KernelStore:
         self.clock = clock
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
-        self._holds_durable_mount = holds_durable_mount
+        # Whether the file system holds a mount on a database; set by store_for_root.
+        self._holds_durable_mount: Callable[[], bool] | None = None
         self._core: _StoreCore | None = None
         self._ready = False
         self._closing = False
@@ -593,10 +592,9 @@ def store_for_root(root: StorageBackend, *, mounted: Callable[[], Iterable[Stora
     of them names a database that outlives the process.
     """
 
-    def holds_durable_mount() -> bool:
-        return any(_record_place_of(storage).durable for storage in mounted())
-
-    return KernelStore(_record_place_of(root), holds_durable_mount=holds_durable_mount)
+    store = KernelStore(_record_place_of(root))
+    store._holds_durable_mount = lambda: any(_record_place_of(storage).durable for storage in mounted())
+    return store
 
 
 class _StoreCore(EngineCore):

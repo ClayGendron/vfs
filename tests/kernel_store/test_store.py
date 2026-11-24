@@ -51,7 +51,7 @@ from tests.support.kernel_store import (
     without_waiting,
 )
 from tests.support.server_schemas import server_storage
-from vfs import AsyncVirtualFileSystem, PostgresStorage, RecordPlace, SQLiteStorage
+from vfs import AsyncVirtualFileSystem, PostgresStorage, RecordPlace, SQLiteStorage, kernel_store
 from vfs.kernel_store import KernelStore, KernelStoreUnavailable
 from vfs.models.kernel_rows import KERNEL_FORMAT_VERSION, KERNEL_TABLE_PREFIXES, build_kernel_tables
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
@@ -158,6 +158,13 @@ async def until_sent(store: KernelStore, prefix: str) -> asyncio.Event:
 # ---------------------------------------------------------------------------
 # Where the records live, and first touch
 # ---------------------------------------------------------------------------
+
+
+def test_the_package_exports_the_constants_of_the_interface() -> None:
+    """Guards a constant a spec that keeps a record reaches only through the module of the tables."""
+    exported = {name: getattr(kernel_store, name) for name in ("KERNEL_FORMAT_VERSION", "KERNEL_TABLE_PREFIXES")}
+    assert exported == {"KERNEL_FORMAT_VERSION": KERNEL_FORMAT_VERSION, "KERNEL_TABLE_PREFIXES": KERNEL_TABLE_PREFIXES}
+    assert set(exported) <= set(kernel_store.__all__)
 
 
 async def test_a_file_system_that_keeps_no_record_makes_no_file(tmp_path: pathlib.Path) -> None:
