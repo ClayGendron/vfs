@@ -63,7 +63,7 @@ import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from sqlalchemy import Column, and_, delete, event, insert, select, tuple_, update
+from sqlalchemy import Column, and_, delete, insert, select, tuple_, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.util import greenlet_spawn
@@ -74,7 +74,7 @@ from vfs.kernel_store.sweep import sweep_pass
 from vfs.models.kernel_rows import KERNEL_FORMAT_VERSION, build_kernel_tables
 from vfs.results import ErrorKind, ResultError, Severity, classified
 from vfs.storage.backends.database.attempts import run_to_its_end
-from vfs.storage.backends.database.core import EngineCore
+from vfs.storage.backends.database.core import BUSY_TIMEOUT_CAP, EngineCore
 from vfs.storage.backends.database.dialects import (
     StaleSnapshot,
     bulk_insert,
@@ -93,7 +93,7 @@ from vfs.storage.protocol import RecordPlace, SupportsRecordPlace
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 
-    from sqlalchemy import ColumnElement, Engine, Table
+    from sqlalchemy import ColumnElement, Table
     from sqlalchemy.engine import Connection
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -116,9 +116,6 @@ _CLOSED: Final = "the filesystem is closed"
 
 # Kept back from a close's budget for the dispose.
 _DISPOSE_SECONDS: Final = 1.0
-
-# The execution option that bounds, in milliseconds, how long a flush at close waits for SQLite's writer.
-_WAIT_AT_CLOSE: Final = "vfs_kernel_wait_ms"
 
 _IN_MEMORY_WARNING: Final = (
     "this file system keeps its sessions and jobs in memory, because its root storage names no database for "
@@ -503,15 +500,16 @@ class KernelStore:
         none, or an infinite one, there is no budget and no clock is read.
         Within it, and at the same time, the task flushes the buffer with
         one try a flush, on SQLite waiting for the file's writer at most
-        half of what is left, and the transactions in flight end. A flush
-        that fails ends the flushing. When the budget is spent, or the
-        close is cancelled, the task starts no further flush, and the rows
-        left are dropped and counted, with one ``WARNING``. A transaction
-        or a flush a close leaves running ends the try it has in hand,
-        starts no other, and closes its own connection when it ends. A
-        close that is cancelled disposes all the same, and a second one
-        waits again for what is still in hand. A store never used has no
-        engine, and its close does nothing.
+        its ``busy_timeout`` or half of what is left, whichever is less,
+        set before its ``BEGIN IMMEDIATE``, and the transactions in flight
+        end. A flush that fails ends the flushing. When the budget is
+        spent, or the close is cancelled, the task starts no further flush,
+        and the rows left are dropped and counted, with one ``WARNING``. A
+        transaction or a flush a close leaves running ends the try it has
+        in hand, starts no other, and closes its own connection when it
+        ends. A close that is cancelled disposes all the same, and a second
+        one waits again for what is still in hand. A store never used has
+        no engine, and its close does nothing.
         """
         # A close with no bound reads no clock.
         unbounded = within is None or math.isinf(within)
@@ -540,8 +538,6 @@ class KernelStore:
                 retry_base_delay=self._retry_base_delay,
                 vector=False,
             )
-            if self._core.profile.name == "sqlite":
-                _bound_the_wait_at_close(self._core.engine.sync_engine)
         return self._core
 
     def _rearm(self) -> None:
@@ -631,7 +627,7 @@ class KernelStore:
             options["isolation_level"] = isolation
         if at_close is not None and (left := at_close.remaining()) is not None:
             # Half of what is left, in milliseconds, for SQLite's wait for its writer; busy_timeout bounds it too.
-            options[_WAIT_AT_CLOSE] = int(left * 500)
+            options[BUSY_TIMEOUT_CAP] = int(left * 500)
         return options
 
     async def _flush(self, groups: Groups, at_close: Deadline | None) -> FlushOutcome:
@@ -822,29 +818,6 @@ def _can_clear(exc: BaseException | None) -> bool:
     if exc is None or is_insufficient_privilege(exc):
         return True
     return not (isinstance(exc, IntegrityError) or is_value_too_large(exc) or is_permanent_defect(exc))
-
-
-def _bound_the_wait_at_close(sync_engine: Engine) -> None:
-    """Make a flush at close wait for SQLite's writer at most what it carries, set before its ``BEGIN IMMEDIATE``.
-
-    It runs before the core's own begin, and lowers the connection's
-    ``busy_timeout`` and never raises it; the next checkout sets it again.
-    """
-
-    @event.listens_for(sync_engine, "begin", insert=True)
-    def bounded(conn: Connection) -> None:
-        wait = conn.get_execution_options().get(_WAIT_AT_CLOSE)
-        if wait is None:
-            return
-        dbapi = conn.connection.dbapi_connection
-        assert dbapi is not None
-        cursor = dbapi.cursor()
-        try:
-            cursor.execute("PRAGMA busy_timeout")
-            (current,) = cursor.fetchone() or (wait,)
-            cursor.execute(f"PRAGMA busy_timeout = {min(int(current), int(wait))}")
-        finally:
-            cursor.close()
 
 
 class _StoreCore(EngineCore):

@@ -147,7 +147,7 @@ Every time a record stores, and every expiry it is compared with, comes from `st
 
 1. The store stops taking rows and transactions. A put after this is dropped and counted. A `query` or a `commit` raises `vfs.unavailable.backend`, "the filesystem is closed", and a `record_after` returns its warning.
 2. A transaction or a flush that began before ends the try it has in hand and starts no other.
-3. The task flushes what the buffer holds, **one try for each flush and not four**. On SQLite that try waits for the file's writer at most half of what is left of the budget. A flush that fails ends the flushing, and the rows left are dropped and counted with one `WARNING`. Nothing is raised for them, since every such row may be dropped.
+3. The task flushes what the buffer holds, **one try for each flush and not four**. On SQLite that try waits for the file's writer at most the smaller of the connection's `busy_timeout`, 5 seconds by the profile, and half of what is left of the budget. The store carries that wait in an execution option, and the engine core lowers `busy_timeout` to it before it sends the `BEGIN IMMEDIATE`. A flush that fails ends the flushing, and the rows left are dropped and counted with one `WARNING`. Nothing is raised for them, since every such row may be dropped.
 4. The task ends, and is awaited and never interrupted. At the same time the store waits for its transactions in flight.
 5. The engine is disposed, in a `finally`.
 

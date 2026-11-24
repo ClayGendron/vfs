@@ -18,11 +18,11 @@ import os
 import random
 import subprocess
 import sys
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table, text, update
+from sqlalchemy import Column, Integer, MetaData, String, Table, event, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -839,6 +839,34 @@ async def test_a_close_whose_budget_is_spent_between_two_flushes_starts_no_more(
     warned = records(caplog, "WARNING")
     assert (len(begins(sent)), file_rows(sqlite_file_of(place), PROBE_TABLE), store.dropped) == (2, FLUSH_ROWS, 5)
     assert (len(warned), "5 records" in warned[0]) == (1, True)
+
+
+@pytest.mark.parametrize("place", [IN_A_FILE], indirect=True)
+async def test_a_flush_at_close_on_sqlite_waits_at_most_half_of_what_is_left(
+    place: RecordPlace, probe: Probe, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards a flush at close that waits for the file's writer its whole ``busy_timeout`` and not half its budget.
+
+    The connection keeps the profile's own ``busy_timeout``, and the deadline
+    module's clock stands still, so a close of 4 seconds has a budget of 3
+    and its one ``BEGIN IMMEDIATE`` waits at most 1,500 ms. The mutants it
+    kills lower the wait after the ``BEGIN`` is sent, or by all that is left.
+    """
+    store = probe.store
+    monkeypatch.setattr(deadline_module, "monotonic", _SteppedMonotonic())
+    waits: list[tuple[str, int]] = []
+
+    @event.listens_for(store.engine.sync_engine, "before_cursor_execute")
+    def read_the_wait(conn: Any, _cursor: Any, statement: str, *_rest: Any) -> None:
+        if statement.startswith("BEGIN"):
+            cursor = conn.connection.dbapi_connection.cursor()
+            cursor.execute("PRAGMA busy_timeout")
+            waits.append((statement, cursor.fetchone()[0]))
+            cursor.close()
+
+    store.put_behind(probe.kind, probe_rows(3))
+    await store.close(within=4)
+    assert (waits, file_rows(sqlite_file_of(place), PROBE_TABLE)) == ([("BEGIN IMMEDIATE", 1_500)], 3)
 
 
 @pytest.mark.slow
