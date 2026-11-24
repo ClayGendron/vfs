@@ -434,9 +434,9 @@ class KernelStore:
         """Wait until every row put behind before the call, under *scope*, or every row, is written or dropped.
 
         Nothing waiting returns at once and sends nothing. When the flush
-        that carries one of those rows fails, it raises
-        :class:`KernelStoreUnavailable`. A caller cancelled while it waits
-        loses no row: the flush goes on.
+        that carries one of those rows fails, or a flush ahead of them is
+        held for a retry, it raises :class:`KernelStoreUnavailable`. A
+        caller cancelled while it waits loses no row: the flush goes on.
         """
         await self._writer.drain(scope)
 

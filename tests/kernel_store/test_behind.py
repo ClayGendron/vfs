@@ -67,6 +67,9 @@ if TYPE_CHECKING:
 
     from vfs.kernel_store import Transaction
 
+_DEADLINE = 30.0
+"""The seconds a test waits for a drain that may never end, so that a hang fails the test and is not the run's."""
+
 
 class Probe(NamedTuple):
     """A store that is ready, its probe table, a kind registered on it, and the calls of that kind's ``write``."""
@@ -707,6 +710,30 @@ async def test_drain_raises_when_its_flush_fails(place: RecordPlace, probe: Prob
         holder.release()
     await store.drain("s")
     assert (failed.value.error.kind, await count_rows(store, probe.table)) == (ErrorKind.unavailable, 2)
+
+
+@pytest.mark.parametrize("place", [IN_A_FILE], indirect=True)
+async def test_a_drain_behind_a_failed_flush_raises(place: RecordPlace, probe: Probe) -> None:
+    """Guards a drain whose rows wait behind a failed flush, which then waits for a wake that never comes.
+
+    The mutant it kills raises a held failure only to the drains with a row
+    in the failed flush; the deadline only bounds the wait of that mutant.
+    """
+    store = probe.store
+    without_waiting(store)
+    holder = HeldWriter(sqlite_file_of(place))
+    holder.hold()
+    try:
+        store.put_behind(probe.kind, probe_rows(FLUSH_ROWS + 10, scope="a"), scope="a")
+        store.put_behind(probe.kind, probe_rows(3), scope="s")
+        with pytest.raises(KernelStoreUnavailable) as failed:
+            await asyncio.wait_for(store.drain("s"), timeout=_DEADLINE)
+        waiting = len(store.waiting_behind(probe.kind, scope="s"))
+    finally:
+        holder.release()
+    await store.drain("s")
+    stored = await count_rows(store, probe.table)
+    assert (failed.value.error.kind, waiting, stored) == (ErrorKind.unavailable, 3, FLUSH_ROWS + 13)
 
 
 @pytest.mark.parametrize("place", SQLITE_PLACES, indirect=True)

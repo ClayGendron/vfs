@@ -213,8 +213,9 @@ class BehindWriter:
         """Return when every row of *scope*, every row with none, put before the call is written or dropped.
 
         Nothing waiting returns at once. When a flush that carries one of
-        those rows fails, the store's failure is raised. A caller
-        cancelled meanwhile loses no row: the flush goes on.
+        those rows fails, or a flush ahead of them is held for a retry, the
+        store's failure is raised. A caller cancelled meanwhile loses no
+        row: the flush goes on.
         """
         mark = self._next_number
         if not self._pending(scope, mark):
@@ -350,8 +351,18 @@ class BehindWriter:
             return any(number < mark for place in (self._buffer, self._flight) for number in place)
         return any(number < mark for number in self._scopes.get(scope, ()))
 
-    def _settle_drains(self, failed: Sequence[tuple[_Waiting, KernelStoreUnavailable]] = ()) -> None:
-        """Answer each drain whose rows are all written or dropped, or raise to it a failure of one of its rows."""
+    def _settle_drains(
+        self,
+        failed: Sequence[tuple[_Waiting, KernelStoreUnavailable]] = (),
+        *,
+        held: KernelStoreUnavailable | None = None,
+    ) -> None:
+        """Answer each drain whose rows are all written or dropped, or raise to it a failure of one of its rows.
+
+        A flush *held* for a retry is raised to every drain with a row still
+        waiting: the task flushes from the head, so no row moves past the held
+        ones, and it tries again only at the next put, drain, sweep or close.
+        """
         waiting: list[_Drain] = []
         for waiter in (waiter for waiter in self._drains if not waiter.done.done()):
             failure = next(
@@ -362,9 +373,12 @@ class BehindWriter:
                 ),
                 None,
             )
+            pending = self._pending(waiter.scope, waiter.mark)
+            if failure is None and pending:
+                failure = held
             if failure is not None:
                 waiter.done.set_exception(failure)
-            elif not self._pending(waiter.scope, waiter.mark):
+            elif not pending:
                 waiter.done.set_result(None)
             else:
                 waiting.append(waiter)
@@ -472,7 +486,7 @@ class BehindWriter:
                 self._dropped_at_failure = self.dropped
                 _log.warning(_HELD, self._label, outcome.held.error.message, self._capacity)
             self._failures += 1
-            self._settle_drains([(entry, outcome.held) for entry in batch])
+            self._settle_drains(held=outcome.held)
             self._release_flush_waiters()
             return False
         whole = outcome.held or outcome.refused
