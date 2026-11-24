@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import pathlib
 import random
 import sqlite3
 import subprocess
@@ -32,8 +31,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.lint.shapes import REPO
 from tests.support.cancelled_callers import turns_of_the_loop
 from tests.support.kernel_store import (
+    BOTH_ENGINES,
+    EVERY_PLACE,
+    IN_MEMORY,
     PROBE_KEY,
     PROBE_TABLE,
+    SQLITE_PLACES,
     START,
     Gate,
     HeldWriter,
@@ -47,6 +50,7 @@ from tests.support.kernel_store import (
     probe_rows,
     probe_table,
     records,
+    sqlite_file_of,
     statements_of,
     without_waiting,
 )
@@ -61,56 +65,16 @@ from vfs.storage.backends.database.dialects import StaleSnapshot
 from vfs.storage.backends.database.engine import advisory_key
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    import pathlib
+    from collections.abc import Callable
 
     from vfs.kernel_store import Transaction
-
-IN_A_FILE = pytest.param("file", id="file")
-IN_MEMORY = pytest.param("memory", id="memory")
-ON_POSTGRES = pytest.param("postgres", marks=pytest.mark.postgres, id="postgres")
-
-SQLITE_PLACES = [IN_A_FILE, IN_MEMORY]
-"""Every test that names no engine: a SQLite file and a store in memory."""
-BOTH_ENGINES = [IN_A_FILE, ON_POSTGRES]
-"""A test of both engines: a SQLite file and the Postgres leg."""
-EVERY_PLACE = [IN_A_FILE, IN_MEMORY, ON_POSTGRES]
 
 NARROW_BUDGET = 1_000
 """The parameter budget a test narrows the store's dialect to, so 10,000 rows take many statements."""
 
 # The words a closed store answers with, the closed kernel's own.
 CLOSED = "the filesystem is closed"
-
-
-@pytest.fixture
-async def place(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> AsyncIterator[RecordPlace]:
-    """The place the test names: a SQLite file a storage names, a database in memory, or a Postgres schema."""
-    kind = request.param
-    if kind == "file":
-        place = SQLiteStorage(path=str(tmp_path / "knowledge.db")).record_place
-        assert place is not None
-        yield place
-    elif kind == "memory":
-        yield RecordPlace.in_memory()
-    else:
-        async with server_storage("VFS_TEST_POSTGRES_URL") as storage:
-            place = storage.record_place
-            assert place is not None
-            yield place
-
-
-@pytest.fixture
-async def stores(place: RecordPlace) -> AsyncIterator[Callable[..., KernelStore]]:
-    """A maker of stores on the test's place, each closed at teardown."""
-    made: list[KernelStore] = []
-
-    def make(**options: Any) -> KernelStore:
-        made.append(store := KernelStore(place, **options))
-        return store
-
-    yield make
-    for store in made:
-        await store.close()
 
 
 def narrowed(store: KernelStore, budget: int = NARROW_BUDGET) -> KernelStore:
@@ -134,13 +98,6 @@ async def counter_of(store: KernelStore, table: Table, name: str = "n00000") -> 
         return (await transaction.execute(select(table.c.counter).where(table.c.name == name))).scalar_one()
 
     return await store.query(read)
-
-
-def sqlite_file_of(place: RecordPlace) -> pathlib.Path:
-    """The path of the SQLite file *place* names."""
-    database = make_url(place.url).database
-    assert database is not None
-    return pathlib.Path(database)
 
 
 async def until_sent(store: KernelStore, prefix: str) -> asyncio.Event:

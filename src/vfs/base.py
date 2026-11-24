@@ -60,7 +60,7 @@ from vfs.cursor import Cursor
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
-from vfs.kernel_store.store import KernelStore, store_for_root
+from vfs.kernel_store.store import KernelStore, KernelStoreUnavailable, store_for_root
 from vfs.listing import SCOPED_REFINE_GUIDANCE, MountListing, PathFilters, gather_settled, skip_record
 from vfs.models import (
     Edge,
@@ -100,6 +100,7 @@ from vfs.ops import (
 from vfs.params import param_violation
 from vfs.paths import (
     ROOT,
+    TRASH_ROOT,
     Path,
     check_reserved_path,
     is_trash_path,
@@ -550,10 +551,13 @@ class AsyncVirtualFileSystem:
         twice is safe. So a second ``close()`` after a cancelled one finishes the job.
 
         The kernel's own store of records is closed beside the storages, within the same
-        ``close_timeout``. It starts no transaction after this, waits for the ones in flight for all
-        but one second of the timeout, and then releases its connections. A transaction still running
-        then ends the try it has, starts no other, and closes its own connection. On SQLite the
-        directory is then left with the database file and nothing beside it.
+        ``close_timeout``. It first writes what the file system had not yet written about its sessions
+        and jobs, and then releases its connections. When another process holds a SQLite file's
+        writer, it tries once and drops what it could not write, with one warning, so the close ends
+        within the timeout and raises nothing for it. It starts no transaction after this, and waits
+        for the ones in flight for all but one second of the timeout. A transaction still running then
+        ends the try it has, starts no other, and closes its own connection. On SQLite the directory
+        is then left with the database file and nothing beside it.
         """
         async with self._mount_lock:
             mounts = [*self._mounts.values(), *self._removals.drain()]
@@ -800,6 +804,14 @@ class AsyncVirtualFileSystem:
         """
         self._sorted_mount_paths: list[Path] = sorted(self._mounts.keys(), reverse=True)
         self._listing = MountListing(self._mounts)
+
+    def _is_the_roots_trash(self, path: str) -> bool:
+        """Whether ``path`` names the root :term:`mount`'s trash view, whose sweep reclaims the kernel's records."""
+        resolved = resolve_path(path, mutation=True)
+        assert resolved.path is not None, "the sweep's own route refuses a path that does not resolve"
+        # A close since the sweep's route leaves no mount, and no pass.
+        mount = self._match_mount(resolved.path)
+        return mount is not None and mount.path == ROOT and resolved.path.without_mount(ROOT) == TRASH_ROOT
 
     # -------------------------------------------------------------------
     # public methods — reads
@@ -1199,13 +1211,31 @@ class AsyncVirtualFileSystem:
         ``/m``. A storage does no work in the background, so nothing is destroyed until this is
         called, and calling it twice is safe.
 
+        A sweep of the root's trash also removes the kernel's own expired records: jobs past
+        ``job_lifetime``, and sessions past ``session_lifetime`` where one is set. A session is never
+        removed for its age unless a lifetime is set. They are removed once the trash's retention has
+        succeeded, in chunks of their own. A root that masks ``sweep``, or a caller who may not write
+        the root's trash, removes none of them, and no other call does: a deployment whose agents'
+        file system masks ``sweep`` calls it from a file system of its own over the same database.
+
         The call returns a :class:`Result`. A path that is a mount point, or that holds one, is refused
-        with ``busy``.
+        with ``busy``. When the kernel's records could not be removed, the result carries one error of
+        severity ``warning`` and the trash's own outcome is kept.
         """
         refusal = self._gate_params("sweep", path=path, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("sweep", path, None, authority=authority)
+        result = await self._route_single("sweep", path, None, authority=authority)
+        if result.success and self._is_the_roots_trash(path):
+            try:
+                await self._kernel_store.sweep()
+            except KernelStoreUnavailable as failure:
+                detail = (
+                    f"the trash is swept, and the kernel's expired records were not removed: {failure.error.message}"
+                )
+                warning = classified(ErrorKind.unavailable, severity=Severity.warning, detail=detail)
+                result = result.model_copy(update={"errors": [*result.errors, warning]})
+        return result
 
     async def mkdir(
         self,

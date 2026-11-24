@@ -20,6 +20,7 @@ import vfs
 import vfs.sync as sync_module
 from tests.base.test_authority import ALICE, CALLS, seen
 from tests.support.base_doubles import CannedStorage, RecorderStorage
+from tests.support.kernel_store import PROBE_TABLE, file_rows, files_in, probe_kind, probe_rows, probe_table
 from tests.support.server_schemas import server_schema
 from tests.support.statements import is_statistics_statement
 from vfs.base import AsyncVirtualFileSystem
@@ -31,6 +32,7 @@ from vfs.results import ErrorKind, Result
 from vfs.session import AsyncSession
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.backends.sqlite import SQLiteStorage
 from vfs.sync import FOREIGN_LOOP_WARNING, LOOP_THREAD_NAME, Session, VirtualFileSystem
 
 REPO = FsPath(__file__).resolve().parents[1]
@@ -392,6 +394,23 @@ def test_close_stops_the_loop_thread_and_is_idempotent() -> None:
         assert len(_loop_threads()) == 1
     assert other.closed is True
     assert _loop_threads() == []
+
+
+def test_the_facade_closes_the_kernel_store(tmp_path: FsPath) -> None:
+    """Guards a facade whose close leaves rows written behind unwritten, the store's engine open, or its thread."""
+    facade = VirtualFileSystem(storage=SQLiteStorage(path=str(tmp_path / "knowledge.db")))
+    store = facade._fs._kernel_store
+
+    async def put() -> None:
+        table = await probe_table(store)
+        kind = probe_kind(table)
+        store.register_behind(kind)
+        store.put_behind(kind, probe_rows(3))
+
+    asyncio.run_coroutine_threadsafe(put(), facade._loop).result(timeout=60)
+    facade.close()
+    written = file_rows(tmp_path / "knowledge.db", PROBE_TABLE)
+    assert (written, files_in(tmp_path), _loop_threads()) == (3, ["knowledge.db"], [])
 
 
 @pytest.mark.parametrize("op", sorted(ALL_OPS))

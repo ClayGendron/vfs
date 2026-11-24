@@ -6,7 +6,7 @@ This guide shows how to give each conversation an agent has a session of its own
 
 **A session is VFS's side of one conversation.** Your application or its agent framework keeps the messages. VFS keeps three things for the conversation: who the agent is, what the agent has been shown, and where its shell is. The second is the important one. An agent that reads a file and changes it ten minutes later should not overwrite a change somebody else made in between, and the session is what stops it.
 
-**A session is stored in the database, and the object in your code is only a handle to it.** A chat application usually handles each message in a new request, often in another process. A session that lived in one process's memory would forget everything between two messages. So VFS keeps the session in the database you already run, under an id you choose, and any process can pick it up by that id. On SQLite that is a second file beside your database. A file system whose root storage is in memory keeps its sessions in memory, and they end with the program.
+**A session is stored in the database, and the object in your code is only a handle to it.** A chat application usually handles each message in a new request, often in another process. A session that lived in one process's memory would forget everything between two messages. So VFS keeps the session in the database you already run, under an id you choose, and any process can pick it up by that id. On SQLite it is kept in the same file as your files, in tables of its own. A file system whose root storage is in memory keeps its sessions in memory, and they end with the program.
 
 ## Before You Begin
 

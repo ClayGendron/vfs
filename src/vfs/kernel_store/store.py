@@ -36,6 +36,15 @@ the mount waits its four tries and then fails as unavailable. A read of
 the mount never waits on the store: in WAL a reader runs beside the
 writer.
 
+A record that may be dropped is written behind: ``put_behind`` adds it
+to a buffer and returns, sending nothing, and one background task of the
+store's own, ``vfs-kernel-store``, writes it as soon as it is free, in
+transactions of at most ``FLUSH_ROWS`` rows. A change that must read what
+its own session wrote behind drains that session's rows first, or reads
+them where they wait. Expired records leave only when ``sweep`` is
+called, in chunks of ``SWEEP_CHUNK``, and the task's flush goes between
+two chunks.
+
 Every time the store keeps comes from its ``clock``, which a test
 replaces, and is bound as a parameter: no statement names the engine's
 own clock.
@@ -47,18 +56,21 @@ own clock.
 from __future__ import annotations
 
 import asyncio
+import functools
 import itertools
 import logging
 import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from sqlalchemy import Column, and_, delete, insert, select, tuple_, update
+from sqlalchemy import Column, and_, delete, event, insert, select, tuple_, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.util import greenlet_spawn
 
 from vfs.deadline import Deadline
+from vfs.kernel_store.behind import BEHIND_CAPACITY, BehindWriter, FlushOutcome
+from vfs.kernel_store.sweep import sweep_pass
 from vfs.models.kernel_rows import KERNEL_FORMAT_VERSION, build_kernel_tables
 from vfs.results import ErrorKind, ResultError, Severity, classified
 from vfs.storage.backends.database.attempts import run_to_its_end
@@ -68,6 +80,8 @@ from vfs.storage.backends.database.dialects import (
     bulk_insert,
     chunked,
     is_insufficient_privilege,
+    is_permanent_defect,
+    is_value_too_large,
     rows_per_statement,
     upsert_constructor,
 )
@@ -77,12 +91,14 @@ from vfs.storage.backends.database.seams import seam
 from vfs.storage.protocol import RecordPlace, SupportsRecordPlace
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 
-    from sqlalchemy import ColumnElement, Table
+    from sqlalchemy import ColumnElement, Engine, Table
     from sqlalchemy.engine import Connection
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+    from vfs.kernel_store.behind import BehindKind, Groups
+    from vfs.kernel_store.sweep import Sweeper
     from vfs.models.kernel_rows import KernelTables
     from vfs.storage.protocol import StorageBackend
 
@@ -100,6 +116,9 @@ _CLOSED: Final = "the filesystem is closed"
 
 # Kept back from a close's budget for the dispose.
 _DISPOSE_SECONDS: Final = 1.0
+
+# The execution option that bounds, in milliseconds, how long a flush at close waits for SQLite's writer.
+_WAIT_AT_CLOSE: Final = "vfs_kernel_wait_ms"
 
 _IN_MEMORY_WARNING: Final = (
     "this file system keeps its sessions and jobs in memory, because its root storage names no database for "
@@ -130,6 +149,7 @@ class KernelStore:
     its first use and disposed by :meth:`close`. ``clock`` returns an
     aware UTC time; every time a record stores is read from it. The
     kernel builds its store through :func:`store_for_root`.
+    ``behind_capacity`` bounds the rows written behind that wait.
     """
 
     def __init__(
@@ -139,12 +159,12 @@ class KernelStore:
         clock: Callable[[], datetime] = system_clock,
         retry_attempts: int = 4,
         retry_base_delay: float = 0.05,
+        behind_capacity: int = BEHIND_CAPACITY,
     ) -> None:
         self._url = url_of_place(place)
         self._place = place
         self.tables: KernelTables = build_kernel_tables(schema=place.schema)
         self.durable = place.durable
-        self.dropped = 0
         self.clock = clock
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
@@ -160,6 +180,13 @@ class KernelStore:
         self._idle: asyncio.Event | None = None
         self._in_flight = 0
         self._key = advisory_key(self.tables.meta.fullname)
+        self._writer = BehindWriter(
+            flush=self._flush,
+            before_flush=functools.partial(seam, "kernel-store:before-flush"),
+            label=place.label,
+            capacity=behind_capacity,
+        )
+        self._sweepers: dict[str, Sweeper] = {}
 
     # -------------------------------------------------------------------
     # Facts, with no I/O
@@ -169,6 +196,11 @@ class KernelStore:
     def engine(self) -> AsyncEngine:
         """The store's own engine, for listeners alone; building it opens no connection."""
         return self._engine_core().engine
+
+    @property
+    def dropped(self) -> int:
+        """Rows written behind that were dropped: by the bound, by a flush that can never land, or at close."""
+        return self._writer.dropped
 
     @property
     def parameter_budget(self) -> int:
@@ -345,6 +377,100 @@ class KernelStore:
         return await self.delete_where(transaction, table, key=key, where=expired, limit=limit, order_by=expires)
 
     # -------------------------------------------------------------------
+    # Written behind
+    # -------------------------------------------------------------------
+
+    def register_behind(self, kind: BehindKind) -> None:
+        """Register a kind written behind, once, when the kernel is built; kinds flush in the order registered.
+
+        A kind that needs another kind's rows is registered after it. A
+        second kind of one name raises ``ValueError``.
+        """
+        self._writer.register(kind)
+
+    def put_behind(
+        self, kind: BehindKind, rows: Iterable[Mapping[str, object]], *, scope: Hashable | None = None
+    ) -> None:
+        """Add *rows* to the buffer, wake the task, and return; it sends nothing, awaits nothing and never fails.
+
+        A row of a keyed kind replaces a waiting row of that kind with the
+        same key, in that row's place. Past ``behind_capacity`` the oldest
+        rows are dropped and counted in ``dropped``. After ``close`` the
+        rows are dropped. A kind that was not registered raises
+        ``ValueError``. Called on the loop's thread only; the task belongs
+        to the loop of the last put.
+        """
+        self._writer.put(kind, rows, scope=scope)
+
+    def waiting_behind(
+        self,
+        kind: BehindKind,
+        *,
+        scope: Hashable | None = None,
+        keys: Iterable[tuple[object, ...]] | None = None,
+    ) -> list[Mapping[str, object]]:
+        """The rows of *kind* put behind and neither stored nor dropped: buffered, or in the flush in flight.
+
+        It takes a scope, keys of the kind's ``key`` fields, or both, and
+        sends nothing; with neither it raises ``ValueError``. A key that
+        has no waiting row is in the store, unless it was dropped.
+        """
+        return self._writer.waiting(kind, scope=scope, keys=keys)
+
+    def discard_behind(
+        self,
+        kind: BehindKind,
+        *,
+        scope: Hashable | None = None,
+        keys: Iterable[tuple[object, ...]] | None = None,
+    ) -> int:
+        """Take the rows of *kind* under *scope*, or with one of *keys*, out of the buffer; return how many.
+
+        A row of the flush in flight is not withdrawn, and is stored.
+        """
+        return self._writer.discard(kind, scope=scope, keys=keys)
+
+    async def drain(self, scope: Hashable | None = None) -> None:
+        """Wait until every row put behind before the call, under *scope*, or every row, is written or dropped.
+
+        Nothing waiting returns at once and sends nothing. When the flush
+        that carries one of those rows fails, it raises
+        :class:`KernelStoreUnavailable`. A caller cancelled while it waits
+        loses no row: the flush goes on.
+        """
+        await self._writer.drain(scope)
+
+    # -------------------------------------------------------------------
+    # The sweep
+    # -------------------------------------------------------------------
+
+    def register_sweeper(self, name: str, sweep: Sweeper) -> None:
+        """Register a sweeper for a table that expires, in the order its parents and dependents need."""
+        if name in self._sweepers:
+            raise ValueError(f"a sweeper named {name!r} is already registered")
+        self._sweepers[name] = sweep
+
+    async def sweep(self) -> int:
+        """One pass: every sweeper in turn, in chunks of ``SWEEP_CHUNK``, until a call removes no row; the rows removed.
+
+        Each chunk is a ``commit`` of its own, and the task's flush goes
+        between two chunks. A store whose place holds no kernel table
+        removes nothing and makes none. A pass that fails logs one
+        ``WARNING`` and raises :class:`KernelStoreUnavailable`; the next
+        pass starts over. Only the public ``sweep`` of the root's trash
+        calls it: the task writes and never removes.
+        """
+        if not self._sweepers:
+            return 0
+        return await sweep_pass(
+            self,
+            self._sweepers.values(),
+            label=self._place.label,
+            keeps_records=self._keeps_records,
+            between=self._writer.let_one_flush,
+        )
+
+    # -------------------------------------------------------------------
     # Life
     # -------------------------------------------------------------------
 
@@ -370,13 +496,18 @@ class KernelStore:
             self._leave()
 
     async def close(self, *, within: float | None = None) -> None:
-        """Stop taking transactions, wait for those in flight, and dispose the engine.
+        """Stop taking rows and transactions, flush what waits, wait for what is in flight, and dispose the engine.
 
         *within* is the seconds the store has. It keeps one for the
-        dispose, and never less than half of *within*, as a budget for
-        the transactions in flight; with none, or an infinite one, it waits
-        for them and reads no clock. A
-        transaction a close leaves running ends the try it has in hand,
+        dispose, and never less than half of *within*, as a budget; with
+        none, or an infinite one, there is no budget and no clock is read.
+        Within it, and at the same time, the task flushes the buffer with
+        one try a flush, on SQLite waiting for the file's writer at most
+        half of what is left, and the transactions in flight end. A flush
+        that fails ends the flushing. When the budget is spent, or the
+        close is cancelled, the task starts no further flush, and the rows
+        left are dropped and counted, with one ``WARNING``. A transaction
+        or a flush a close leaves running ends the try it has in hand,
         starts no other, and closes its own connection when it ends. A
         close that is cancelled disposes all the same, and a second one
         waits again for what is still in hand. A store never used has no
@@ -386,9 +517,11 @@ class KernelStore:
         unbounded = within is None or math.isinf(within)
         budget = Deadline.never() if unbounded else Deadline.after(max(within - _DISPOSE_SECONDS, within / 2))
         self._closing = True
+        ending = self._writer.close(budget)
         try:
-            await self._wait_for_in_flight(budget)
+            await asyncio.gather(ending, self._wait_for_in_flight(budget))
         finally:
+            self._writer.cut_short()
             if self._core is not None:
                 await self._core.close()
 
@@ -407,6 +540,8 @@ class KernelStore:
                 retry_base_delay=self._retry_base_delay,
                 vector=False,
             )
+            if self._core.profile.name == "sqlite":
+                _bound_the_wait_at_close(self._core.engine.sync_engine)
         return self._core
 
     def _rearm(self) -> None:
@@ -433,12 +568,21 @@ class KernelStore:
         except TimeoutError:
             return
 
-    async def _transact(self, fn: Callable[[Transaction], Awaitable[T]], *, writer: bool, to_its_end: bool) -> T:
-        self._enter()
+    async def _transact(
+        self,
+        fn: Callable[[Transaction], Awaitable[T]],
+        *,
+        writer: bool,
+        to_its_end: bool,
+        at_close: Deadline | None = None,
+    ) -> T:
+        # A flush at close is the close's own work: it is not refused, not counted in flight, and makes one try.
+        if at_close is None:
+            self._enter()
         try:
-            await self._first_touch()
+            await self._first_touch(at_close)
             core = self._engine_core()
-            options = self._options(writer=writer)
+            options = self._options(writer=writer, at_close=at_close)
 
             async def body() -> T:
                 await seam("kernel-store:before-try")
@@ -451,18 +595,24 @@ class KernelStore:
                     return answer
 
             def attempt() -> Awaitable[T]:
-                return self._try(body)
+                return self._try(body, at_close=at_close is not None)
 
             try:
+                if at_close is not None:
+                    return await attempt()
                 return await core.with_retry((lambda: run_to_its_end(attempt)) if to_its_end else attempt)
             except (StaleSnapshot, SQLAlchemyError, OSError) as exc:
                 raise self._unavailable(exc) from exc
         finally:
-            self._leave()
+            if at_close is None:
+                self._leave()
 
-    async def _try(self, body: Callable[[], Awaitable[T]]) -> T:
-        """One try of a transaction or of first touch: none starts after a close, and none leaves a connection open."""
-        if self._closing:
+    async def _try(self, body: Callable[[], Awaitable[T]], *, at_close: bool = False) -> T:
+        """One try of a transaction or of first touch: none starts after a close, and none leaves a connection open.
+
+        A try *at_close* is the close's own flush, and is not refused.
+        """
+        if self._closing and not at_close:
             raise KernelStoreUnavailable(classified(ErrorKind.backend_unavailable, detail=_CLOSED))
         engine = self._engine_core().engine.sync_engine
         began_on = engine.pool
@@ -474,14 +624,86 @@ class KernelStore:
                 for pool in (began_on, engine.pool):
                     await greenlet_spawn(pool.dispose)
 
-    def _options(self, *, writer: bool) -> dict[str, str | bool]:
-        options: dict[str, str | bool] = {"vfs_writer": True} if writer else {}
+    def _options(self, *, writer: bool, at_close: Deadline | None = None) -> dict[str, str | bool | int]:
+        options: dict[str, str | bool | int] = {"vfs_writer": True} if writer else {}
         # As a topology verb's: a counter and a claim read what a rival committed while they waited for its lock.
         if (isolation := self._engine_core().profile.topology_isolation) is not None:
             options["isolation_level"] = isolation
+        if at_close is not None and (left := at_close.remaining()) is not None:
+            # Half of what is left, in milliseconds, for SQLite's wait for its writer; busy_timeout bounds it too.
+            options[_WAIT_AT_CLOSE] = int(left * 500)
         return options
 
-    async def _first_touch(self) -> None:
+    async def _flush(self, groups: Groups, at_close: Deadline | None) -> FlushOutcome:
+        """Write one flush of rows written behind, every kind's ``write`` in one transaction; say what became of it.
+
+        A failure a retry can clear holds the flush. A store of another
+        format refuses it whole. Any other failure, of a statement or of a
+        kind's own code, is tried once more a kind at a time.
+        """
+        self._warn_of_memory()
+
+        async def every_kind(transaction: Transaction) -> None:
+            for kind, rows in groups:
+                await kind.write(self, transaction, rows)
+
+        try:
+            await self._transact(every_kind, writer=True, to_its_end=False, at_close=at_close)
+        except KernelStoreUnavailable as failure:
+            if failure.error.kind is ErrorKind.schema_mismatch:
+                return FlushOutcome(refused=failure)
+            if _can_clear(failure.__cause__):
+                return FlushOutcome(held=failure)
+        except Exception:  # A kind's own code raised: the second try names the kind.
+            pass
+        else:
+            return FlushOutcome()
+        return await self._flush_a_kind_at_a_time(groups, at_close)
+
+    async def _flush_a_kind_at_a_time(self, groups: Groups, at_close: Deadline | None) -> FlushOutcome:
+        """The second try of a flush that can never land whole: each kind under a savepoint, in one transaction."""
+        lost: dict[str, KernelStoreUnavailable] = {}
+
+        async def each_kind(transaction: Transaction) -> None:
+            lost.clear()
+            for kind, rows in groups:
+                try:
+                    async with transaction.begin_nested():
+                        await kind.write(self, transaction, rows)
+                except SQLAlchemyError as exc:
+                    if _can_clear(exc):
+                        raise
+                    lost[kind.name] = KernelStoreUnavailable(self._classify(exc))
+                except Exception as exc:  # A kind's own code raised, which no retry clears.
+                    detail = f"the write of {kind.name} records raised {exc!r}"
+                    lost[kind.name] = KernelStoreUnavailable(classified(ErrorKind.internal, detail=detail))
+
+        try:
+            await self._transact(each_kind, writer=True, to_its_end=False, at_close=at_close)
+        except KernelStoreUnavailable as failure:
+            # Each kind's failure was caught under its savepoint: what is left is the store's, which a retry clears.
+            return FlushOutcome(held=failure)
+        return FlushOutcome(lost=lost)
+
+    async def _keeps_records(self) -> bool:
+        """Whether the place holds the kernel's tables; it makes none and runs no first touch."""
+        if self._ready:
+            return True
+        self._enter()
+
+        async def look() -> bool:
+            async with self._engine_core().session_factory() as transaction:
+                connection = await transaction.connection()
+                return await connection.run_sync(self._has_meta_table)
+
+        try:
+            return await self._try(look)
+        except (SQLAlchemyError, OSError) as exc:
+            raise self._unavailable(exc) from exc
+        finally:
+            self._leave()
+
+    async def _first_touch(self, at_close: Deadline | None = None) -> None:
         if self._ready:
             return
         if self._touch is None:
@@ -491,7 +713,10 @@ class KernelStore:
                 return
             core = self._engine_core()
             try:
-                found = await core.with_retry(lambda: self._try(self._verify_or_make))
+                if at_close is not None:
+                    found = await self._try(functools.partial(self._verify_or_make, at_close), at_close=True)
+                else:
+                    found = await core.with_retry(lambda: self._try(self._verify_or_make))
             except (StaleSnapshot, SQLAlchemyError, OSError) as exc:
                 raise self._unavailable(exc) from exc
             if found != KERNEL_FORMAT_VERSION:
@@ -502,13 +727,14 @@ class KernelStore:
                 raise KernelStoreUnavailable(refusal)
             self._ready = True
 
-    async def _verify_or_make(self) -> int:
+    async def _verify_or_make(self, at_close: Deadline | None = None) -> int:
         """One first touch: the file settings, then the tables and the meta row at the serialization point."""
         core = self._engine_core()
         meta = self.tables.meta
         await core.apply_file_settings()
         async with core.session_factory() as transaction:
-            connection = await transaction.connection(execution_options=self._options(writer=True))
+            options = self._options(writer=True, at_close=at_close)
+            connection = await transaction.connection(execution_options=options)
             await self._serialization_point(connection)
             if not await connection.run_sync(self._has_meta_table):
                 await connection.run_sync(self.tables.metadata.create_all, checkfirst=True)
@@ -589,6 +815,36 @@ def store_for_root(root: StorageBackend, *, mounted: Callable[[], Iterable[Stora
     store = KernelStore(_record_place_of(root))
     store._holds_durable_mount = lambda: any(_record_place_of(storage).durable for storage in mounted())
     return store
+
+
+def _can_clear(exc: BaseException | None) -> bool:
+    """Whether a retry, or a grant, can clear a flush's failure: never a broken row, statement or value."""
+    if exc is None or is_insufficient_privilege(exc):
+        return True
+    return not (isinstance(exc, IntegrityError) or is_value_too_large(exc) or is_permanent_defect(exc))
+
+
+def _bound_the_wait_at_close(sync_engine: Engine) -> None:
+    """Make a flush at close wait for SQLite's writer at most what it carries, set before its ``BEGIN IMMEDIATE``.
+
+    It runs before the core's own begin, and lowers the connection's
+    ``busy_timeout`` and never raises it; the next checkout sets it again.
+    """
+
+    @event.listens_for(sync_engine, "begin", insert=True)
+    def bounded(conn: Connection) -> None:
+        wait = conn.get_execution_options().get(_WAIT_AT_CLOSE)
+        if wait is None:
+            return
+        dbapi = conn.connection.dbapi_connection
+        assert dbapi is not None
+        cursor = dbapi.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout")
+            (current,) = cursor.fetchone() or (wait,)
+            cursor.execute(f"PRAGMA busy_timeout = {min(int(current), int(wait))}")
+        finally:
+            cursor.close()
 
 
 class _StoreCore(EngineCore):

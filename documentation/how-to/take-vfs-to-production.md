@@ -69,8 +69,35 @@ GRANT SELECT, INSERT, UPDATE, DELETE
 
 Until both are done, VFS refuses its records to the serving role, and the refusal names the grant and each table.
 
+## Step 6: Call Sweep on a Schedule
+
+**Nothing is removed until you call `fs.sweep()`.** A sweep of the root's trash, which is what `sweep()` does with no path, empties the trash and removes the records that have expired: jobs past their lifetime, and sessions past `session_lifetime` where you set one. A session has no lifetime unless you set one, so by default a sweep never removes a session. Run it on a schedule, once a night for example.
+
+A file system that masks `sweep` with `deny_ops` runs no sweep, and nor does a caller who may not write the root. Masking it on the file system your agents use is wise, because a sweep cannot be undone. Then call it from a file system of your own over the same database, with no mask.
+
+```python
+from vfs import SQLiteStorage, VirtualFileSystem
+
+agents = VirtualFileSystem(
+    storage=SQLiteStorage(path="vfs.db"),
+    deny_ops={"sweep"},
+)
+schedule = VirtualFileSystem(
+    storage=SQLiteStorage(path="vfs.db"),
+)
+
+assert not agents.sweep().success
+assert schedule.sweep().success
+
+agents.close()
+schedule.close()
+```
+
+On SQLite a sweep shares the file's one writer with your writes, so run a long sweep while the file is quiet. Postgres has no such wait.
+
 ## What You Did
 
 - **You gave the root a database.** VFS keeps its records in the root's own database, and a root in memory keeps them in memory.
 - **You kept the records with the files.** A database mounted beneath a memory root keeps only its files, and VFS warns once when that is the shape.
 - **You chose the engine for the load.** SQLite for a local application, Postgres for long batches and many writers.
+- **You scheduled the sweep.** It empties the trash and removes expired records, and nothing is removed until it runs.
