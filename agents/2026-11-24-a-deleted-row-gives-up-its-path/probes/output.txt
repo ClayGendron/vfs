@@ -243,3 +243,19 @@ Run on 2026-11-24 at 27f3d24 of dev, Python 3.13, SQLite 3.53.1 in memory, Postg
     lateral: each target reads its own newest row: 3 targets, 3 rows, buffers=12, a target=4.0, sequential scans of the table=0
     lateral: each target reads its own newest row: 1000 targets, 1000 rows, buffers=4000, a target=4.0, sequential scans of the table=0
     lateral: each target reads its own newest row: 32000 targets, 32000 rows, buffers=128000, a target=4.0, sequential scans of the table=0
+
+######## p07_the_newest_deleted_row_a_caller_owns.py
+== SQLite 3.53.1
+    with the path index alone: 3 targets, 3 rows, vm_steps=50111, a target=16703.7
+    with the path index alone: 1000 targets, 1000 rows, vm_steps=78027, a target=78.0
+    with the path index alone: 32000 targets, 32000 rows, vm_steps=946027, a target=29.6
+    with the owner index beside it: 3 targets, 3 rows, vm_steps=110, a target=36.7
+    with the owner index beside it: 1000 targets, 1000 rows, vm_steps=26032, a target=26.0
+    with the owner index beside it: 32000 targets, 32000 rows, vm_steps=832032, a target=26.0
+== Postgres 16.15
+    with the path index alone: 3 targets, 3 rows, buffers=291, a target=97.0, sequential scans of the table=0
+    with the path index alone: 1000 targets, 1000 rows, buffers=4279, a target=4.3, sequential scans of the table=0
+    with the path index alone: 32000 targets, 32000 rows, buffers=128279, a target=4.0, sequential scans of the table=0
+    with the owner index beside it: 3 targets, 3 rows, buffers=12, a target=4.0, sequential scans of the table=0
+    with the owner index beside it: 1000 targets, 1000 rows, buffers=4000, a target=4.0, sequential scans of the table=0
+    with the owner index beside it: 32000 targets, 32000 rows, buffers=128000, a target=4.0, sequential scans of the table=0
