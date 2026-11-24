@@ -8,7 +8,7 @@ A draft, written on 2026-11-24 from the code review of the second landing of `ag
 
 ## Builds on
 
-The line allowlist in `tests/lint/allowlist.py`, whose rule is that a listed module never grows and gives back as many lines as were added. `agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md` raised the entry from 1,509 to 1,546 within its Scope's estimate. The record place raised it from 1,546 to 1,565: an import, `DatabaseStorage.record_place` and the docstring that spec's "What the docs must say" requires. The store's landing then adds 5 more, to 1,573.
+The line allowlist in `tests/lint/allowlist.py`, under which a listed module that grows fails and one that shrinks lowers its entry, and the ownership lens of the code review, which asks a raised entry to be given back. `agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md` raised the entry from 1,509 to 1,546 within its Scope's estimate. The record place raised it from 1,546 to 1,565: an import, `DatabaseStorage.record_place` and the docstring that spec's "What the docs must say" requires.
 
 ## The problem
 
@@ -20,7 +20,7 @@ Read, at `3c805d1`.
   - **Who calls them:** `search` alone, once.
   - **Their output:** a `VectorLeg` or the records that say why the lexical leg answered alone.
 - **No other verb reads them.** Moving them changes no statement and no answer.
-- **Tests reach the leg through the storage.** `tests/storage/database/test_vector_leg.py` calls `storage._vector_leg_for` directly and patches it (lines 175, 182, 293 to 312), so a move edits those tests' handles and nothing they assert.
+- **Tests reach the leg through the storage.** `tests/storage/database/test_vector_leg.py` calls `storage._vector_leg_for` directly and patches it (lines 175, 182, 293 to 312, and `_ann_indexed` at 316 and `_embed_query` at 336), so a move edits those tests' handles and nothing they assert.
 
 ## Decisions
 
@@ -42,7 +42,7 @@ Out: every behaviour of `search`.
 
 ## Not checked
 
-Nothing was run. The count of lines that leave is read from the file, not measured after a move.
+Nothing was run. The count of lines that leave is read from the file, not measured after a move. The store's landing of the kernel-records spec is drafted to add about 5 more lines to `backend.py`; that figure is read from its branch and is not on `dev`.
 
 ## Choices to confirm
 
