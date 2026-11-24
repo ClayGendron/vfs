@@ -63,7 +63,7 @@ from vfs.storage.backends.database import seams
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from vfs.kernel_store import Transaction
 
@@ -629,6 +629,28 @@ async def test_one_put_past_the_bound_keeps_its_last_rows(stores: Callable[..., 
     await probe.store.drain()
     assert (probe.store.dropped, probe.seen[0].rows[0]["name"]) == (12, "n00012")
     assert BEHIND_CAPACITY == 16_384
+
+
+@pytest.mark.parametrize("place", SQLITE_PLACES, indirect=True)
+async def test_one_put_past_the_bound_never_holds_more_than_the_bound(stores: Callable[..., KernelStore]) -> None:
+    """Guards a put that adds every row before it trims, so the buffer holds the whole put until it returns.
+
+    The rows are read from a generator, which counts what waits each time
+    the put asks it for the next row.
+    """
+    probe = await _probe(stores(behind_capacity=8))
+    store = probe.store
+    held: list[int] = []
+
+    def counted() -> Iterator[dict[str, object]]:
+        for row in probe_rows(20):
+            held.append(len(store.waiting_behind(probe.kind, scope="s")))
+            yield row
+
+    store.put_behind(probe.kind, counted(), scope="s")
+    names = [row["name"] for row in store.waiting_behind(probe.kind, scope="s")]
+    await store.drain()
+    assert (max(held), store.dropped, names) == (8, 12, [f"n{index:05d}" for index in range(12, 20)])
 
 
 @pytest.mark.slow

@@ -175,13 +175,15 @@ class BehindWriter:
         if self._closed:
             self.dropped += sum(1 for _ in rows)
             return
+        overflow = 0
         for row in rows:
             self._add(kind, row, scope)
-        overflow = len(self._buffer) - self._capacity
-        if overflow > 0:
-            for _ in range(overflow):
+            # Trimmed row by row, so one put never holds more than the bound and the row it adds.
+            if len(self._buffer) > self._capacity:
                 _number, entry = self._buffer.popitem(last=False)
                 self._forget(entry, self._keyed)
+                overflow += 1
+        if overflow:
             self.dropped += overflow
             self._settle_drains()
         self._start()
