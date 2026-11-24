@@ -46,6 +46,7 @@ from vfs.storage.backends.database.dialects import (
     op_execution_options,
     topology_execution_options,
 )
+from vfs.storage.backends.database.drivers import record_place_of
 from vfs.storage.backends.database.edges import mkedge_rows, rmedge_rows
 from vfs.storage.backends.database.embed import EMBED_CONCURRENCY, EMBED_TIMEOUT_SECONDS, unit_vector
 from vfs.storage.backends.database.engine import EngineHost
@@ -99,7 +100,7 @@ if TYPE_CHECKING:
     from vfs.models.vector import NativeEmbeddingConfig
     from vfs.ops import CaseMode, GrepOutputMode, Needs, Op, Rung
     from vfs.paths import ObjectKind
-    from vfs.storage import ResolvedPair
+    from vfs.storage import RecordPlace, ResolvedPair
     from vfs.storage.backends.database.rights import Resolution
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
@@ -173,6 +174,9 @@ class DatabaseStorage:
             native_embedding=native_embedding,
             posture=posture,
         )
+        # What the storage was built from, which the place of the kernel's records is read from.
+        self._engine_arguments = engine_arguments
+        self._schema = schema
         # Resolved authorities, one per subject set, revalidated by their stamps and the relabels in flight.
         self._rights = RightsCache()
         self._trash_days = trash_days
@@ -198,6 +202,24 @@ class DatabaseStorage:
         on it. On an in-memory storage, one opened beside a call costs the database. ``close()`` disposes the engine.
         """
         return self._host.engine
+
+    @property
+    def record_place(self) -> RecordPlace | None:
+        """Where a file system whose root is this storage keeps its records: this storage's own database.
+
+        It is read once, when the file system is made, and does no I/O.
+        On a SQLite file the place is the same file, labelled by its path,
+        and the kernel's tables sit beside the mount's. On Postgres it is
+        the same database and schema, labelled by the schema's name. The
+        kernel reaches either through an engine of its own, built from
+        this storage's URL and its ``engine_arguments`` without ``pool``,
+        so a listener on ``engine`` does not reach it. A database in
+        memory names a second one in memory, whose records end with the
+        process. The generic floor, and a ``file::memory:`` URI that
+        SQLAlchemy reads as a file, name none. The URL is SQLAlchemy's
+        ``URL``, which masks its password when it is printed.
+        """
+        return record_place_of(self._host.engine.url, self._engine_arguments, self._schema)
 
     @property
     def mount_identity(self) -> str | None:

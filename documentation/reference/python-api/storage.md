@@ -23,9 +23,11 @@ from vfs import InMemoryStorage, DatabaseStorage
 
 A backend that declares the `vid` trait puts a vid on every row it returns with a version. It promises four things. Every such row carries a vid. Two of its rows carry the same vid when, and only when, they are the same entry at the same version. No vid of another storage equals one of its own. And a change that passes it `if_vids` lands only on rows that still have those vids, or, under `ABSENT`, only where nothing is. A mount whose storage does not declare the trait refuses a change that requires a vid, before the storage is called. `VidMint` makes vids that keep these promises, from an identity that is the backend's own. A backend that does not declare the trait returns a version alone.
 
+A file system keeps its records, its sessions and jobs among them, in the place its root storage names through `record_place`, a `RecordPlace`. The property is optional and is read once, when the file system is made. A backend that has none, or returns `None`, has its file system keep its records in memory. A backend that returns a place names a SQLite file or a Postgres database, and writes no table and no statement for it: the kernel makes its own tables there, on an engine of its own. A place's `label` names it in a message, and its URL is never printed.
+
 ```python
 from vfs import ResolvedPair, ScopeChannel, StorageBackend
-from vfs import VidMint
+from vfs import RecordPlace, VidMint
 ```
 
 ::: vfs.StorageBackend
@@ -35,3 +37,5 @@ from vfs import VidMint
 ::: vfs.ScopeChannel
 
 ::: vfs.VidMint
+
+::: vfs.RecordPlace

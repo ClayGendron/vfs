@@ -55,12 +55,15 @@ reaching storage at all.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, get_args, runtime_checkable
 
 from vfs.ops import GRANT_OPS, MUTATING_OPS, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from sqlalchemy.engine import URL
 
     from vfs.authority import Authority
     from vfs.models import Edge, Entry, Observation
@@ -594,6 +597,53 @@ class SupportsClose(Protocol):
     """
 
     async def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RecordPlace:
+    """The database the kernel keeps its records in: sessions, turns, jobs, and what they saw.
+
+    A file system keeps its records in the place its root storage names
+    through ``record_place``. ``url`` is a SQLAlchemy URL of SQLite or of
+    Postgres, as text or as SQLAlchemy's ``URL``, and the kernel builds an
+    engine of its own on it, beside the storage's, with
+    ``engine_arguments`` and in ``schema``. ``label`` is how a message
+    names the place, a file's path or a schema's name, and never a URL,
+    which can hold a password. ``durable`` is false for a database in
+    memory, whose records end with the process.
+
+    A place is printed with its label, its schema and ``durable``, and
+    never with its URL or its arguments, so a log or a traceback shows
+    no password.
+    """
+
+    url: str | URL = field(repr=False)
+    label: str
+    engine_arguments: Mapping[str, Any] | None = field(default=None, repr=False, hash=False)
+    schema: str | None = None
+    durable: bool = True
+
+    @classmethod
+    def in_memory(cls) -> RecordPlace:
+        """A private SQLite database in memory, which no other process sees and which ends with this one."""
+        return cls(url="sqlite+aiosqlite://", label="memory", durable=False)
+
+
+@runtime_checkable
+class SupportsRecordPlace(Protocol):
+    """Optional: the database where the kernel keeps its records, when this storage is the root.
+
+    ``record_place`` is read once, when the file system is made, and does
+    no I/O. A storage that has no such attribute, or returns ``None``,
+    has its file system keep its records in memory. A storage that
+    returns a :class:`RecordPlace` names a SQLite file or a Postgres
+    database, and writes no table and no statement for it: the kernel
+    makes and writes its own tables there. It is not a capability,
+    because no verb reaches a record.
+    """
+
+    @property
+    def record_place(self) -> RecordPlace | None: ...
 
 
 # ---------------------------------------------------------------------------

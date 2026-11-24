@@ -8,7 +8,10 @@ needs something. SQLite needs its connections opened as
 fails, and an in-memory SQLite database that SQLAlchemy gives one
 connection needs to keep it. ``load_sqlite_vec`` loads the vector
 extension into each SQLite connection that ``has_sqlite_vec`` finds
-without it. No engine may autocommit.
+without it. No engine may autocommit. ``record_place_of`` gives the
+place a storage on a URL names for the kernel's records, and
+``url_of_place`` reads a place's URL for the engine the kernel builds
+there.
 
     create_async_engine(url, **merge_engine_arguments(url, given))
 
@@ -41,13 +44,15 @@ import sqlite3
 from collections.abc import Mapping
 from contextlib import suppress
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.util import asbool
 from sqlalchemy.util.concurrency import await_only
 
 from vfs.storage.backends.database.dialects import SQLITE_VEC_PROBE
+from vfs.storage.protocol import RecordPlace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,7 +60,15 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import URL
 
 _AUTOCOMMIT = "AUTOCOMMIT"
+_ONE_CONNECTION_DIALECT = "sqlite"
+
+RECORD_DIALECTS: Final = ("sqlite", "postgresql")
+"""The dialects the kernel keeps its records in."""
+
 _ONE_CONNECTION = "an in-memory database lives in its one connection"
+
+# A SQLite URI that names the database in memory, which SQLAlchemy reads as a file.
+_MEMORY_URI: Final = "file::memory:"
 
 # Some system Pythons build sqlite3 without extension loading; the hook
 # then loads nothing and first touch refuses with the reason.
@@ -141,14 +154,71 @@ def merge_engine_arguments(url: str | URL, given: Mapping[str, Any] | None = Non
         _require(
             connect, "factory", ClosingConnection, "a cursor whose statement failed is closed at once", "connect_args"
         )
-        # The dialect says which URLs name a database in memory: it gives those the pool of one connection.
-        if address.get_dialect()().get_dialect_pool_class(address) is StaticPool:
+        if lives_in_one_connection(address):
             if "pool" in merged:
                 made = "VFS makes its pool, so leave it out"
                 raise ValueError(f"{_named('pool')} must not be given, because {_ONE_CONNECTION}; {made}")
             _require(merged, "poolclass", StaticPool, f"{_ONE_CONNECTION}, and another pool opens a second, empty one")
             _require(merged, "pool_recycle", -1, f"{_ONE_CONNECTION}, and a recycled connection is a new, empty one")
     return merged
+
+
+def lives_in_one_connection(url: str | URL) -> bool:
+    """Whether SQLAlchemy gives ``url`` the pool of one connection, which it gives a SQLite database in memory.
+
+    The dialect decides from the URL alone, so the answer is known
+    before any engine is built.
+    """
+    address = make_url(url)
+    if address.get_backend_name() != _ONE_CONNECTION_DIALECT:
+        return False
+    return address.get_dialect()().get_dialect_pool_class(address) is StaticPool
+
+
+# ---------------------------------------------------------------------------
+# Where the kernel keeps its records
+# ---------------------------------------------------------------------------
+
+
+def record_place_of(url: URL, engine_arguments: Mapping[str, Any] | None, schema: str | None) -> RecordPlace | None:
+    """The place a storage on ``url`` names for the kernel's records: its own database, read with no I/O.
+
+    A SQLite file names itself, labelled by its path; Postgres names its
+    database and ``schema``, labelled by the schema's name. Both pass on
+    ``engine_arguments`` without ``pool``, which belongs to one engine:
+    a ``creator`` or ``connect_args`` opens a connection each time it is
+    called, so a file only they can open is opened for the records too.
+    A database SQLAlchemy gives the pool of one connection names a
+    second database in memory. A ``file::memory:`` URI, which SQLAlchemy
+    reads as a file, and every other dialect name none.
+    """
+    if lives_in_one_connection(url):
+        return RecordPlace.in_memory()
+    arguments = None if engine_arguments is None else {k: v for k, v in engine_arguments.items() if k != "pool"}
+    backend = url.get_backend_name()
+    if backend == "sqlite" and not _memory_read_as_file(url):
+        return RecordPlace(url=url, label=str(url.database), engine_arguments=arguments)
+    if backend == "postgresql":
+        label = schema if schema is not None else "the default schema"
+        return RecordPlace(url=url, label=label, engine_arguments=arguments, schema=schema)
+    return None
+
+
+def url_of_place(place: RecordPlace) -> URL:
+    """Return the URL of ``place`` parsed, when it names a dialect the kernel keeps its records in.
+
+    Any other dialect raises a ``ValueError`` that names it and never the
+    URL, which can hold a password. It reads the URL alone, so it runs
+    before the kernel builds an engine on the place.
+    """
+    address = make_url(place.url)
+    given = address.get_backend_name()
+    if given not in RECORD_DIALECTS:
+        raise ValueError(
+            f"the kernel keeps its records in SQLite or Postgres, and the root storage's record_place names a URL "
+            f"of {given!r}"
+        )
+    return address
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +326,11 @@ def _require(arguments: dict[str, Any], key: str, value: object, reason: str, wi
     """Put ``value`` at ``key`` of ``arguments``, or raise if the application gave it another value."""
     if arguments.setdefault(key, value) != value:
         raise ValueError(f"{_named(key, within)} must be {value!r}, because {reason}; VFS sets it, so leave it out")
+
+
+def _memory_read_as_file(url: URL) -> bool:
+    """Whether ``url`` is a SQLite URI naming the database in memory, which SQLAlchemy opens as a file."""
+    return asbool(url.query.get("uri", False)) and str(url.database or "").startswith(_MEMORY_URI)
 
 
 def _named(key: str, within: str | None = None) -> str:
