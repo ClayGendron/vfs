@@ -56,7 +56,7 @@ class VidBackend(
     """The verb surface the vid contract calls."""
 
 
-# Each call of the nineteen, made on the world `_world` seeds; each returns rows with a version or none.
+# Each call the contract makes, unpaged and paged, on the world `_world` seeds; each returns rows with a version.
 CALLS: dict[str, Callable[[VidBackend], Awaitable[Result]]] = {
     "read": lambda s: s.read(path=Path("/d/a.txt")),
     "stat": lambda s: s.stat(observations=None, path=Path("/d")),
@@ -69,6 +69,9 @@ CALLS: dict[str, Callable[[VidBackend], Awaitable[Result]]] = {
     "write-created": lambda s: s.write(entries=[Entry(path=Path("/d/new.txt"), content="fresh")]),
     "write-updated": lambda s: s.write(entries=[Entry(path=Path("/d/a.txt"), content="alpha two")]),
     "write-unchanged": lambda s: s.write(entries=[Entry(path=Path("/d/b.txt"), content="beta")]),
+    "write-bumped-unchanged": lambda s: s.write(
+        entries=[Entry(path=Path("/d"), kind="directory"), Entry(path=Path("/d/new.txt"), content="fresh")]
+    ),
     "edit": lambda s: s.edit(path=Path("/d/a.txt"), edits=[EditOperation("alpha", "omega")]),
     "mkdir": lambda s: s.mkdir(path=Path("/e")),
     "move": lambda s: s.move(operations=[ResolvedPair(Path("/d/b.txt"), Path("/d/moved.txt"))]),
@@ -77,6 +80,10 @@ CALLS: dict[str, Callable[[VidBackend], Awaitable[Result]]] = {
     "restore": lambda s: _deleted_then(s, "/gone.txt", lambda path: s.restore(path=path)),
     "sweep": lambda s: s.sweep(path=Path("/d/sub")),
     "ls-trash": lambda s: _deleted_then(s, "/gone.txt", lambda path: s.ls(path=Path(TRASH_ROOT))),
+    "ls-page": lambda s: s.ls(path=Path("/d"), limit=1),
+    "tree-page": lambda s: s.tree(path=Path("/d"), limit=1),
+    "glob-page": lambda s: s.glob(patterns=("/d/**",), limit=1),
+    "ls-trash-page": lambda s: _deleted_then(s, "/gone.txt", lambda path: s.ls(path=Path(TRASH_ROOT), limit=1)),
 }
 
 
@@ -116,7 +123,18 @@ class VidContract:
         assert all(is_vid(vid) for vid in named)
 
     @pytest.mark.parametrize(
-        "call", ["write-created", "write-updated", "write-unchanged", "edit", "mkdir", "move", "copy", "restore"]
+        "call",
+        [
+            "write-created",
+            "write-updated",
+            "write-unchanged",
+            "write-bumped-unchanged",
+            "edit",
+            "mkdir",
+            "move",
+            "copy",
+            "restore",
+        ],
     )
     async def test_a_change_names_the_row_it_left(self, storage: VidBackend, call: str) -> None:
         """Mutation guarded: a result row minted at the version before an arbitration or a bump moved it."""

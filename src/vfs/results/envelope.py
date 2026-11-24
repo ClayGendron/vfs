@@ -500,7 +500,7 @@ class Result(BaseModel):
         # Two vids of one path at one version are two entries, so either disagreement nulls both.
         both = {"version", "vid"} & a.populated & b.populated
         if any(getattr(a, name) != getattr(b, name) for name in both):
-            updates |= dict.fromkeys(both, None)
+            updates |= dict.fromkeys({"version", "vid"} & (a.populated | b.populated), None)
         mask = a.populated | b.populated
         if mask != a.populated:
             updates["populated"] = mask

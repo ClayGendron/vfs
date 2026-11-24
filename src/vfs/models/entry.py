@@ -433,8 +433,8 @@ class Observation(BaseModel):
     twenty characters a storage mints from the entry and the version the
     row reports, which name that entry at that version and nothing else.
     It is filled wherever ``version`` is, shares its mask, is stored
-    nowhere, and is compared and never taken apart; a change can require
-    it. Query fields are facts about
+    nowhere, and is compared and never taken apart. Query fields are
+    facts about
     *(entry, operation)* — a score, the matched regions, a walk's depth,
     a write status — and are never persisted. ``name`` / ``ext`` / ``parent_dir`` need no
     mirrors:
