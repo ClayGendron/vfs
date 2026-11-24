@@ -358,7 +358,10 @@ class KernelStore:
         meta table is missing, and the meta row is written under a
         savepoint, so a rival's is harmless. A store of another format is
         refused, and the refusal names the tables to drop. A failure is
-        not remembered: the next call tries again.
+        not remembered: the next call tries again. So a store of another
+        format pays a first touch at every call before it is refused: on
+        SQLite the file settings and a ``BEGIN IMMEDIATE``, which waits
+        behind the mount's writer, a ``query`` among them.
         """
         self._enter()
         try:
