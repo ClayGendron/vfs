@@ -20,6 +20,8 @@ An attempt is marked when its caller is cancelled. The mark is the one thing the
 
 A storage builds its engine and owns it. `DatabaseStorage(url=..., engine_arguments={...})` passes the URL and the arguments to SQLAlchemy, and nothing but the storage makes a session, a connection or a transaction on the engine that comes back. That ownership is what lets the code on this page put a listener on the engine and on the class of its sessions. An application reaches the engine at `storage.engine`, and it is there for listeners alone: a `do_connect` hook or tracing, put on `storage.engine.sync_engine`. An application opens no connection and no session on it.
 
+A file system has a second engine, the [kernel's store](kernel-store.md)'s, on the root storage's own database. The store builds it on the same engine core, so everything on this page holds for it too. A listener on `storage.engine` does not reach it.
+
 ## Why SQLite needs it
 
 A call spends its database time waiting for the driver's worker thread. A cancellation lands on that wait, and SQLAlchemy then throws the connection away. On SQLite that costs more than a connection.
@@ -47,6 +49,16 @@ Before it raises, the function reads what the dropped attempt raised. A refused 
 The mark travels in a context variable, which is set inside the attempt's own task. A task copies the context it is started in. A task that is started inside an attempt and is to outlive it would therefore carry the attempt's mark, so it must be started outside the attempt or clear the mark first. VFS starts no such task today: the statistics pass is started after `with_retry` returns.
 
 Which storages do this is declared and not tested for by name. `DialectProfile.attempts_out_of_reach` is true for SQLite alone, and `with_retry` and `install_extensions` read it. The profile is known when the storage is constructed, with no I/O, so the first call of a storage is covered as well. The wait between two attempts stays in the caller's task, and a cancellation there is raised at once and touches no connection.
+
+## A record after a change runs to its end
+
+The kernel's store writes some records after a change has committed, in a transaction of its own, through `KernelStore.record_after`. Its attempts run through `run_to_its_end`, also in `attempts.py`, and not through `run_out_of_reach`.
+
+`run_to_its_end` waits as `run_out_of_reach` does. Each cancellation is caught, the wait goes on, and the caller is raised the cancellation it was cancelled with once the attempt has ended. The difference is the mark. The attempt is never marked, so it sends every statement and its commit whatever happens to its caller. Its task also clears the mark it would copy from its starter, so it runs to its end on SQLite too, where the core's retry already runs each attempt inside `run_out_of_reach`.
+
+The reason is what a stopped record would leave. The change has already landed in its own transaction. A record stopped by a cancellation would leave the change standing with no record, and a rewind would then not put that change back. Run to its end, the record is lost only when the process dies between the two commits, so the window is a crash's width and not a cancellation's.
+
+A caller cancelled inside `record_after` waits for the try in flight, which runs to its commit. No further try is started, because the cancellation is raised out of the core's retry when the try ends.
 
 ## Where a marked attempt is refused
 

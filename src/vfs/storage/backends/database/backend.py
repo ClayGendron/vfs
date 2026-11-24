@@ -215,6 +215,11 @@ class DatabaseStorage:
         process. The generic floor, and a ``file::memory:`` or ``memdb``
         URI that SQLAlchemy reads as a file, name none. The URL is SQLAlchemy's
         ``URL``, which masks its password when it is printed.
+
+        The kernel's tables there are its own, and their names begin
+        ``vfs_kernel_``, ``vfs_session`` or ``vfs_job``, as no table of a
+        mount's does. This storage never reads or writes them, and the
+        kernel never reads or writes the storage's.
         """
         return record_place_of(self._host.engine.url, self._host.engine_arguments, self._host.tables.entry.schema)
 

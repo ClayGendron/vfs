@@ -34,6 +34,7 @@
         {
           "title": null,
           "pages": [
+            "/how-to/take-vfs-to-production",
             "/how-to/load-a-folder-of-files",
             "/how-to/keep-a-session-for-each-conversation",
             "/how-to/rewind-a-conversation-and-put-its-files-back",
@@ -86,7 +87,7 @@
     },
     {
       "title": "Maintainers",
-      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work", "/maintainers/how-we-name", "/maintainers/how-we-document", "/maintainers/how-we-write-docstrings", "/maintainers/how-we-run-codex", "/maintainers/mounts", "/maintainers/cancellation"] }]
+      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work", "/maintainers/how-we-name", "/maintainers/how-we-document", "/maintainers/how-we-write-docstrings", "/maintainers/how-we-run-codex", "/maintainers/mounts", "/maintainers/cancellation", "/maintainers/kernel-store"] }]
     }
   ]
 }

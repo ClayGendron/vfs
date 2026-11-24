@@ -60,6 +60,7 @@ from vfs.cursor import Cursor
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.fanout import planned_scope, scope_argument
+from vfs.kernel_store import KernelStore
 from vfs.listing import SCOPED_REFINE_GUIDANCE, MountListing, PathFilters, gather_settled, skip_record
 from vfs.models import (
     Edge,
@@ -119,6 +120,7 @@ from vfs.results.kinds import Severity
 from vfs.session import AsyncSession
 from vfs.shell import LineResult, run_line
 from vfs.storage import (
+    RecordPlace,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
@@ -126,6 +128,7 @@ from vfs.storage import (
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
+    SupportsRecordPlace,
     SupportsRun,
     SupportsTraversal,
     TransportError,
@@ -310,7 +313,7 @@ class AsyncVirtualFileSystem:
         self._mount_lock = asyncio.Lock()
         self._posture_writes: set[int] = set()
         self._removals = Removals()
-        self._stranded_disposals: dict[int, StorageBackend] = {}
+        self._stranded_disposals: dict[int, StorageBackend | KernelStore] = {}
         root = Mount(
             path=ROOT,
             storage=storage,
@@ -322,6 +325,8 @@ class AsyncVirtualFileSystem:
         )
         self._mounts: dict[Path, Mount] = {ROOT: root}
         self._rebuild_sorted_mounts()
+        # The kernel's own records, in the place the root storage names; built with no I/O.
+        self._kernel_store = KernelStore(_record_place_of(storage), holds_durable_mount=self._holds_durable_mount)
         self._class_name = self.__class__.__name__
         warn_if_system_default(default_authority)
 
@@ -545,6 +550,12 @@ class AsyncVirtualFileSystem:
         error is raised at the end. Several errors are raised together as a group. A storage that was
         not closed because the call was cancelled is kept, and ``SupportsClose`` promises that closing
         twice is safe. So a second ``close()`` after a cancelled one finishes the job.
+
+        The kernel's own store of records is closed beside the storages, within the same
+        ``close_timeout``. It starts no transaction after this, waits for the ones in flight for all
+        but one second of the timeout, and then releases its connections. A transaction still running
+        then ends the try it has, starts no other, and closes its own connection. On SQLite the
+        directory is then left with the database file and nothing beside it.
         """
         async with self._mount_lock:
             mounts = [*self._mounts.values(), *self._removals.drain()]
@@ -555,15 +566,17 @@ class AsyncVirtualFileSystem:
         for mount in mounts:
             if mount.owned and isinstance(mount.storage, SupportsClose):
                 targets.setdefault(id(mount.storage), mount.storage)
+        targets.setdefault(id(self._kernel_store), self._kernel_store)
         # Parked before disposal so a cancelled gather leaves the snapshot
         # reachable — the retry drains it instead of leaking the engines.
         self._stranded_disposals = targets
-        if not targets:
-            return
 
-        async def _close_one(storage: StorageBackend) -> None:
-            assert isinstance(storage, SupportsClose)
-            await asyncio.wait_for(storage.close(), timeout=self._close_timeout)
+        async def _close_one(target: StorageBackend | KernelStore) -> None:
+            if isinstance(target, KernelStore):
+                await asyncio.wait_for(target.close(within=self._close_timeout), timeout=self._close_timeout)
+                return
+            assert isinstance(target, SupportsClose)
+            await asyncio.wait_for(target.close(), timeout=self._close_timeout)
 
         settled = await asyncio.gather(*(_close_one(s) for s in targets.values()), return_exceptions=True)
         self._stranded_disposals = {}
@@ -789,6 +802,10 @@ class AsyncVirtualFileSystem:
         """
         self._sorted_mount_paths: list[Path] = sorted(self._mounts.keys(), reverse=True)
         self._listing = MountListing(self._mounts)
+
+    def _holds_durable_mount(self) -> bool:
+        """Whether a mount in the table names a database that outlives the process, as a root would name it."""
+        return any(_record_place_of(mount.storage).durable for mount in self._mounts.values())
 
     # -------------------------------------------------------------------
     # public methods — reads
@@ -3165,6 +3182,12 @@ class AsyncVirtualFileSystem:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _record_place_of(storage: StorageBackend) -> RecordPlace:
+    """Where a file system whose root is ``storage`` keeps its records: the place it names, or memory."""
+    place = storage.record_place if isinstance(storage, SupportsRecordPlace) else None
+    return RecordPlace.in_memory() if place is None else place
 
 
 def _reaches_beneath(op: Op, rel: Path, kwargs: Mapping[str, Any]) -> bool:

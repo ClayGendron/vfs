@@ -30,6 +30,7 @@ from vfs.storage.backends.database.attempts import (
     AttemptSession,
     refuse_statements_of_marked_attempts,
     run_out_of_reach,
+    run_to_its_end,
 )
 
 if TYPE_CHECKING:
@@ -522,3 +523,47 @@ class TestWhatTheRefusalsCost:
             listened,
         )
         assert len(kept.sent) == self.CALLS + 1
+
+
+class TestAnAttemptRunToItsEnd:
+    async def test_it_commits_whatever_its_caller_does(self, kept: Kept) -> None:
+        """Guards ``run_to_its_end``: marked as ``run_out_of_reach`` marks, a record after its change is lost."""
+        gate = Waiting()
+
+        async def attempt() -> None:
+            async with kept.sessions() as session:
+                await session.execute(text(ADD_TWO))
+                await gate()
+                await session.commit()
+
+        caller = asyncio.ensure_future(run_to_its_end(attempt))
+        await gate.started.wait()
+        for message in ("first", "second"):
+            caller.cancel(message)
+            await turns_of_the_loop()
+        gate.let_go()
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await caller
+        assert (chain_of(raised.value), await kept.rows()) == ([("first",), ("second",)], [1, 2])
+
+    async def test_inside_a_marked_attempt_it_still_runs_to_its_end(self, kept: Kept) -> None:
+        """Guards the mark it clears: a task copies its starter's mark, and a marked starter's record is refused."""
+        gate = Waiting()
+
+        async def record() -> None:
+            async with kept.sessions() as session:
+                await session.execute(text(ADD_TWO))
+                await gate()
+                await session.commit()
+
+        refusal = await cancelled_at(gate, lambda: run_to_its_end(record))
+        assert (refusal, await kept.rows()) == (None, [1, 2])
+
+    async def test_the_caller_gets_what_it_returns_and_what_it_raises(self) -> None:
+        attempt = Waiting(then=lambda: "answered")
+        attempt.let_go()
+        assert await run_to_its_end(attempt) == "answered"
+        failed = Waiting(then=failing(LookupError("no row")))
+        failed.let_go()
+        with pytest.raises(LookupError, match="no row"):
+            await run_to_its_end(failed)
