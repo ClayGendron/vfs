@@ -18,7 +18,7 @@ The research is in `agents/2026-11-22-a-job-is-interrupted-and-resumed/research/
 - **Job.** One call through VFS. A direct verb is a job of one step, and a shell line is a job of many. A job that is interrupted is stored, and is resumed later with an answer, by any process.
 - **Interrupt.** What a stopped job is waiting for: a message, a schema for the answer, and a preview. A job has at most one waiting at a time.
 - **Session.** VFS's side of one conversation: who the agent is, what it has been shown, and where its shell is. It is stored under its owner and an id the caller may choose. The Python object is a handle that holds no state the store does not.
-- **Stamp.** A session's memory that it was shown a path at an etag. An etag names one entry at one version.
+- **Stamp.** A session's memory that it was shown a path at a vid. A vid names one entry at one version.
 - **Turn.** One message from the user and all the agent does in answer. A turn partitions a session's work, and is the point a session is rewound or forked to.
 
 Three things are kept apart on purpose, because the history of sessions shows designs fail where they are merged: the session's context (owner, id, parent, shell state), its record of what it saw (stamps), and the jobs it started. A job points at its session. A session does not contain its jobs.
@@ -28,9 +28,9 @@ Three things are kept apart on purpose, because the history of sessions shows de
 | # | Work directory under `agents/` | What it decides | Builds on |
 |---|---|---|---|
 | 0 | `2026-11-22-the-kernel-keeps-records-of-its-own` | Where the kernel's own records live on each engine, how their tables are made, the write-behind writer and the synchronous path, the sweep that removes expired records, and what `close` does to them | the log cost study |
-| 1 | `2026-11-22-a-row-carries-an-etag-and-a-change-can-require-it` | `etag` on every row with a version, and `if_match=` on `write`, `edit`, `delete` and `move` | the write preconditions |
+| 1 | `2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it` | `vid` on every row with a version, and `if_vid=` on `write`, `edit`, `delete` and `move` | the write preconditions |
 | 2 | `2026-11-22-a-session-is-stored-named-and-forked` | The session's identity and life: `fs.session`, the owner, the id, the handle, `exists`, `sessions`, `delete`, the lifetime, and the end of `open_session`, `close` and the context manager | 0 |
-| 3 | `2026-11-22-the-session-remembers-what-it-read` | Stamps: what is stamped, where stamps are stored, how a session fills in `if_match`, strict, the two refusals and their words, the bound, and the session a bare shell line gets. It rewrites the spec merged from pull request 42 | 0, 1, 2 |
+| 3 | `2026-11-22-the-session-remembers-what-it-read` | Stamps: what is stamped, where stamps are stored, how a session fills in `if_vid`, strict, the two refusals and their words, the bound, and the session a bare shell line gets. It rewrites the spec merged from pull request 42 | 0, 1, 2 |
 | 4 | `2026-11-22-a-session-works-in-turns-and-rewinds-or-forks-at-one` | `start_turn`, the turn record, shell state kept per turn, `rewind(before=)`, `fork(id, before=)`, lineage, and what each does to stamps and jobs | 2, 3 |
 | 5 | `2026-11-22-a-rewind-puts-a-sessions-files-back` | The record of what a session changed in each turn, and `rewind(before=, files=True)` | 1, 3, 4 |
 | 6 | `2026-11-22-a-policy-judges-each-step` | The typed `Step` classes, `@policy`, `Decision`, how policies combine, the session's own policies, failing closed, and the system authority's exemption | the parameter table |
@@ -65,7 +65,7 @@ Each was made on 2026-11-21 or 2026-11-22.
 
 ### Where records live
 
-The kernel's own records are kept by the storage of the root mount, which the kernel owns, in tables of their own. On SQLite they are in a database file beside the mount's file, never in it, because the log cost study found that kernel writes sharing the mount's file queue behind a batch for SQLite's one writer. A file system whose root storage is in memory keeps them in memory. Spec 0 owns all of this, and every other spec says "the kernel store" and names its tables.
+The kernel's own records are kept by the storage of the root mount, which the kernel owns, in tables of their own. On both engines they are in the root storage's own database, on connections of the store's own. On SQLite that is the mount's own file, by the ruling of 2026-11-23: the log cost study found that kernel writes sharing the mount's file queue behind a batch for SQLite's one writer, and spec 0's decision 4 states that as the price of one file. A file system whose root storage is in memory keeps them in memory, and no argument names another place: a system that goes to production gives its root a database. Spec 0 owns all of this, and every other spec says "the kernel store" and names its tables.
 
 ### Records and their owners
 
@@ -73,8 +73,8 @@ The kernel's own records are kept by the storage of the root mount, which the ke
 |---|---|---|
 | `vfs_sessions` | 2 | One row per session: a surrogate key, the owner key, the id, the parent session and fork point, a counter for turn numbers, created and last-used times, the expiry |
 | `vfs_session_turns` | 4 | One row per turn: the session, the turn id, its number, the shell state when it ended |
-| `vfs_session_stamps` | 3 | One row per session, path and turn: the etag seen, or a mark that the session removed the path in that turn |
-| `vfs_session_changes` | 5 | One row per entry a session changed in a turn: the etag before and after, and what was done |
+| `vfs_session_stamps` | 3 | One row per session, path and turn: the vid seen, or a mark that the session removed the path in that turn |
+| `vfs_session_changes` | 5 | One row per entry a session changed in a turn: the vid before and after, and what was done |
 | `vfs_jobs` | 7 | One row per stored job: its id, the caller, the session and turn if any, its state, its saved step or line, its interrupt, its expiry |
 | `vfs_job_pages` | 7 | What of a stored job does not fit in its row: a large saved step, and a stored result |
 | `vfs_job_replies` | 8 | The journal of a line's replies, in pages of at most 1 MiB |
@@ -110,7 +110,7 @@ fs.add_policy(policy)      fs.remove_policy(policy)      fs.policies()
 VirtualFileSystem(policies=[...], session_lifetime=..., job_lifetime=...)
 ```
 
-The value types are `Etag`, `ABSENT`, `SessionInfo`, `SessionPage`, `Turn`, `Rewind`, `Policy`, `Decision`, `Step` and its 26 classes, `Mutation`, `Line`, `Job`, `Interrupt`, `StepPreview`, `JobPage`, `Approval`, `Choice` and `Cancel`. A storage names where the kernel's records live through `RecordPlace` and its own `record_place`. Removing a session is `fs.remove_session`, because `delete` on a handle is the file verb.
+The value types are `Vid`, `ABSENT`, `SessionInfo`, `SessionPage`, `Turn`, `Rewind`, `Policy`, `Decision`, `Step` and its 26 classes, `Mutation`, `Line`, `Job`, `Interrupt`, `StepPreview`, `JobPage`, `Approval`, `Choice` and `Cancel`. A storage names where the kernel's records live through `RecordPlace` and its own `record_place`. Removing a session is `fs.remove_session`, because `delete` on a handle is the file verb.
 
 Every one exists on the asynchronous kernel and on the synchronous face, and the parity test covers them. What each returns follows the convention the management methods have today, which the owning spec reads from the code and states. `fs.session` is a noun used as a method, which `documentation/maintainers/how-we-name.md` forbids today with `session()` as its example; spec 2 carries the amendment to that page, with `use_session` as the choice if the amendment is refused.
 
@@ -132,13 +132,13 @@ Each new kind takes a row in `KIND_CONTRACTS` with its phrase, its retry class a
 | Name | Value | Owner |
 |---|---|---|
 | The longest session id and turn id | 255 characters | 2, 4 |
-| `session_lifetime` | 30 days since last use | 2 |
+| `session_lifetime` | none: a session never expires unless a developer sets a lifetime (ruled on 2026-11-23) | 2 |
 | `job_lifetime` | 24 hours | 7 |
 | The bound on what one session remembers | set by spec 3, in bytes, never in entries | 3 |
 
 ### The constitution
 
-Article 1 allows five first-class things, and requires everything first-class to have a path. A session, a turn and a job are not first-class. They are records the kernel keeps about calls, reached through management methods as grants and postures are, and they add no primitive. Each spec states this as a numbered decision. The etag composes two things the constitution already has, the entry's identity and its revision. A view of jobs or sessions in the namespace is left out of these nine.
+Article 1 allows five first-class things, and requires everything first-class to have a path. A session, a turn and a job are not first-class. They are records the kernel keeps about calls, reached through management methods as grants and postures are, and they add no primitive. Each spec states this as a numbered decision. The vid composes two things the constitution already has, the entry's identity and its revision. A view of jobs or sessions in the namespace is left out of these nine.
 
 ## What every spec carries
 

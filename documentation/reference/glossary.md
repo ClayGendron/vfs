@@ -32,18 +32,6 @@ An entry is one file or one directory in the file tree. A file is an entry with 
 
 The path a [mount](#mount) is attached at is an entry too. It is an empty directory, stored in the mount above it. The directory is the entry. The [storage](#storage) attached there is the mount.
 
-## Etag
-
-An etag is a short code that VFS returns with every [entry](#entry). The code stands for a file as it was at that moment. When the file changes, its etag changes too.
-
-An etag lets a caller say "change this file only if it is still the one I read". The caller reads a file and keeps its etag. Later it passes the etag back as `if_match` with its change. If the file still has that etag, the change is made. If the file has a different etag, nothing is changed and the call is refused with a conflict. The caller then reads the file again and tries once more.
-
-For example, an agent reads `/notes/plan.md` and edits it a minute later. If a teammate saved the file in that minute, the etag no longer matches and the edit is refused. The teammate's work is not written over. The same happens when the file was deleted and a new file was made at the same path.
-
-An etag is only for comparing. A caller cannot read a version number out of it, and holding one gives no access to the file. Moving, deleting or restoring a directory above a file leaves the file's etag as it was.
-
-The etag is part of a design that is not yet built. [Etags and Preconditions](planned-api/etags-and-preconditions.md) has its details.
-
 ## Interrupt
 
 An interrupt is a question that a person must answer before VFS goes on. It comes up when an agent tries something that needs a person's say, such as an edit to a contract. VFS stops the [job](#job) before anything is changed and hands the interrupt back to the application.
@@ -128,11 +116,11 @@ The stored session is part of a design that is not yet built. [Sessions and Turn
 
 ## Stamp
 
-A stamp is a note that a [session](#session) keeps about one path. The note says that the agent has seen the path, and what was there when it did. What was there is a file, a directory, or nothing. For a file, the stamp keeps the file's [etag](#etag).
+A stamp is a note that a [session](#session) keeps about one path. The note says that the agent has seen the path, and what was there when it did. What was there is a file, a directory, or nothing. For a file, the stamp keeps the file's [vid](#vid).
 
 A session writes its stamps by itself. It writes one each time a call shows the agent a file or a listing, and each time the session changes a file. A caller never writes a stamp and cannot read one.
 
-Stamps are how a session catches a stale change. Before it changes a file, the session checks that the file still has the etag in its stamp. If somebody else has changed the file, the change is refused and nothing is written. The agent reads the file again, which makes a new stamp, and the change then goes through.
+Stamps are how a session catches a stale change. Before it changes a file, the session checks that the file still has the vid in its stamp. If somebody else has changed the file, the change is refused and nothing is written. The agent reads the file again, which makes a new stamp, and the change then goes through.
 
 Stamps are saved with the session, one for each path in each [turn](#turn). A session keeps a limited number of them, and when it has too many it drops the oldest. Losing a stamp is safe. The worst that follows is a refusal, and the agent reads the file again.
 
@@ -178,3 +166,17 @@ The application starts a turn at the start of each request. It calls `start_turn
 Turns are what let a conversation go back. When a user edits an earlier message, the application rewinds the session to before that message's turn. The session forgets everything from that turn on and keeps everything before it. A fork uses a turn in the same way. It copies the session up to that turn into a new session and leaves the first one as it is.
 
 The turn is part of a design that is not yet built. [Sessions and Turns](planned-api/sessions-and-turns.md) has its details.
+
+## Vid
+
+A vid is a short code that VFS returns with every [entry](#entry). The name is short for version and id. The code stands for one file at one version, so when the file changes, its vid changes too.
+
+A vid lets a change say "only if this file is still the one that was read". A [session](#session) does this by itself. It keeps the vid of each file it was shown and sends it with each change, so an agent never handles a vid. Code that works without a session can pass one by hand, as `if_vid`. If the file still has that vid, the change is made. If the file has a different vid, nothing is changed and the call is refused with a conflict. The file is then read again and the change tried once more.
+
+For example, an agent reads `/notes/plan.md` and edits it a minute later. If a teammate saved the file in that minute, the vid no longer matches and the edit is refused. The teammate's work is not written over. The same happens when the file was deleted and a new file was made at the same path.
+
+A vid is only for comparing. A caller cannot read a version number out of it, and holding one gives no access to the file. Moving, deleting or restoring a directory above a file leaves the file's vid as it was.
+
+No change has to carry a vid. A change sent without one is made as it is sent.
+
+The vid is part of a design that is not yet built. [Vids and Preconditions](planned-api/vids-and-preconditions.md) has its details.

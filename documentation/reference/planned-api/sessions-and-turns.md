@@ -60,12 +60,12 @@ When the caller states no precondition of its own, the session fills one in.
 
 | Call | The session was shown the file | Not shown, and strict | Not shown, `strict=False` |
 |---|---|---|---|
-| `write` of one path | Sent with the etag it was shown | A new file is made. A file that is already there is refused as unread. | Sent as written |
+| `write` of one path | Sent with the vid it was shown | A new file is made. A file that is already there is refused as unread. | Sent as written |
 | `write(append=True)` | No precondition | No precondition | No precondition |
-| `edit`, `delete`, `move` | Sent with the etag it was shown | Refused as unread. Nothing is sent. | Sent as written |
+| `edit`, `delete`, `move` | Sent with the vid it was shown | Refused as unread. Nothing is sent. | Sent as written |
 | `copy`, `mkdir`, `restore` | No precondition | No precondition | No precondition |
 
-A session takes no etag from its caller. Its `write`, `edit`, `delete`, `move` and `restore` have no `if_match` argument, because the session fills the etag in. [Etags and Preconditions](etags-and-preconditions.md) describes `if_match`, which is for a call made on the file system with no session.
+A session takes no vid from its caller. Its `write`, `edit`, `delete`, `move` and `restore` have no `if_vid` argument, because the session fills the vid in. [Vids and Preconditions](vids-and-preconditions.md) describes `if_vid`, which is for a call made on the file system with no session.
 
 A read's stamps are written a moment after the read returns, so a read costs the same with a session as without one. A change's stamps are written before the change returns. `fs.close()` writes whatever is waiting. **A program that ends after each request should close the file system before it ends.**
 
@@ -174,7 +174,7 @@ session.exists() -> bool
 
 `fs.remove_session` removes a session at once and returns whether one was there. Its turns, its stamps and its record of changes are deleted. Its waiting jobs are cancelled. Its forks and the files it changed are untouched. Its id is free at once.
 
-A session expires 30 days after its last use. Set the time with `VirtualFileSystem(session_lifetime=...)`. An expired session is treated as removed.
+A session does not expire unless you set `VirtualFileSystem(session_lifetime=...)`. With a lifetime set, a session expires that long after its last use, and an expired session is treated as removed.
 
 ## What Is Removed
 
@@ -200,7 +200,7 @@ A session expires 30 days after its last use. Set the time with `VirtualFileSyst
 | What | Value |
 |---|---|
 | A session id, and a turn id | 1 to 255 visible ASCII characters |
-| `session_lifetime` | 30 days since the last use |
+| `session_lifetime` | None. A session does not expire |
 | What one session remembers | 16 MiB of stamps, about 90,000 files. The earliest turns are forgotten first. |
 | Stamps left by one listing | 1,024 |
 | The exported variables a session keeps | 32,768 bytes |
@@ -208,7 +208,7 @@ A session expires 30 days after its last use. Set the time with `VirtualFileSyst
 
 In a strict session, forgetting a stamp can only cause a refusal that one read clears.
 
-A file system whose root storage is in memory keeps its sessions in memory, even when a database is mounted beneath the root. On SQLite the sessions are in a second file beside your database.
+A file system whose root storage is in memory keeps its sessions in memory, even when a database is mounted beneath the root. To keep sessions across processes and restarts, give the root a database when you create the file system. On SQLite the sessions are kept in that same file.
 
 ## Mapping a Chat Stack
 

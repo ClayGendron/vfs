@@ -8,7 +8,7 @@ This section lists the API of two features that are designed and not yet built. 
 
 | Page | What it covers |
 |---|---|
-| [Etags and Preconditions](etags-and-preconditions.md) | `etag` on every row, and `if_match` on `write`, `edit`, `delete`, `move` and `restore` |
+| [Vids and Preconditions](vids-and-preconditions.md) | `vid` on every row, and `if_vid` on `write`, `edit`, `delete`, `move` and `restore` |
 | [Sessions and Turns](sessions-and-turns.md) | `fs.session`, what a session remembers, `start_turn`, `rewind`, `fork`, and putting files back |
 | [Policies and Steps](policies-and-steps.md) | `@policy`, `Decision`, the step classes, and when a policy is asked |
 | [Jobs and Interrupts](jobs-and-interrupts.md) | `interrupt`, `require_approval`, the answer schemas, `resume`, `jobs`, and a denial or a cancel |
@@ -26,7 +26,7 @@ Each name is imported from `vfs`.
 
 | For | Names |
 |---|---|
-| Etags | `Etag`, `ABSENT`, `EtagMint`, and the arguments `if_match` and `if_matches` |
+| Vids | `Vid`, `ABSENT`, `VidMint`, and the arguments `if_vid` and `if_vids` |
 | Sessions | `fs.session`, `fs.sessions`, `fs.remove_session`, `session.exists`, `SessionInfo`, `SessionPage`, and the argument `session_lifetime` |
 | Turns | `session.start_turn`, `session.turn`, `session.turns`, `session.rewind`, `session.fork`, `session.parent`, `Turn`, `Rewind` |
 | Policies | `policy`, `Policy`, `Decision`, `policies.review`, `fs.add_policy`, `fs.remove_policy`, `fs.policies`, and the argument `policies` |
@@ -50,7 +50,7 @@ Each name is imported from `vfs`.
 | Removed | Use instead |
 |---|---|
 | `fs.open_session(authority)`, `session.close()`, and `with fs.open_session(...)` | `fs.session(authority, id)`. There is nothing to close. |
-| `write(if_version=...)` and `write(if_versions=...)` | `if_match` and `if_matches`, with the row's `etag` |
+| `write(if_version=...)` and `write(if_versions=...)` | `if_vid` and `if_vids`, with the row's `vid` |
 
 ## What Is Not Designed Yet
 

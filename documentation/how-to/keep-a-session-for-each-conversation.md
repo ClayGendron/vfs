@@ -222,7 +222,7 @@ result = scout.resume(True, authority=ada)
 
 `fs.sessions(scout_is)` lists the sessions Scout owns, a page of 100 at a time, with each one's id, parent, number of turns and time of last use. The system authority may list every session. `scout.exists()` says whether a session has stored anything yet.
 
-A session that is not used for 30 days expires. You set the time with `VirtualFileSystem(session_lifetime=...)`. An expired session is deleted with what it had seen, and its waiting jobs are cancelled. If its id is used again, a new and empty session starts under that id, and the agent reads files again before it changes them. `fs.remove_session(scout_is, "conv_123")` does the same at once. On a session, `delete` is the file verb and removes a path, never the session.
+A session does not expire. It is part of the conversation, so a conversation taken up again months later still has what it had read. To remove sessions that have not been used for some time, set `VirtualFileSystem(session_lifetime=...)`, for example to 90 days. An expired session is deleted with what it had seen, and its waiting jobs are cancelled. If its id is used again, a new and empty session starts under that id, and the agent reads files again before it changes them. `fs.remove_session(scout_is, "conv_123")` does the same at once. On a session, `delete` is the file verb and removes a path, never the session.
 
 A session also has a limit on how much it remembers. When a long conversation passes it, the session forgets what it was shown in its earliest turns first. In a strict session, forgetting never lets a write through that would have been refused. It can only cause a "Not read yet" refusal, which one read clears.
 
@@ -257,7 +257,7 @@ To rewind a whole stack to one point, use the turn's id in each layer: cut your 
 
 ## Work Without a Session
 
-A session is never required. A call made on the file system with `authority=` works as it always has: it remembers nothing, and it guards a change only when you pass the etag you expect, as `if_match=`. A shell line run with `fs.cli(...)` and no session guards itself for the length of the line, so a command that reads a file and writes it back is still protected. It also refuses to remove, move or overwrite a file the line has not read or listed.
+A session is never required. A call made on the file system with `authority=` works as it always has: it remembers nothing, and it guards a change only when you pass the vid you expect, as `if_vid=`. A shell line run with `fs.cli(...)` and no session guards itself for the length of the line, so a command that reads a file and writes it back is still protected. It also refuses to remove, move or overwrite a file the line has not read or listed.
 
 ## What to Remember
 

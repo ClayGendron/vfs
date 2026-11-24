@@ -279,7 +279,7 @@ The cases:
 
 - **A read through such a handle.** The stamp is written behind and is filed at the flush. No statement runs during the read.
 - **A turn starts between the read and the flush.** The stamp is filed under the newer turn. A rewind to before that turn then forgets the read. The cost is one refusal as unread and a second read.
-- **A rewind lands between the read and the flush, in another process.** The stamp is filed under the latest turn that is left, and the session remembers one read the rewound conversation no longer holds. Spec 3 accepts this case as stated here (its decision 14, Stamps meet per path, and no order of arrival can let a stale write through). The etag of that stamp is still checked at the write, so no other caller's change is overwritten. In the process that rewinds it cannot happen, because a rewind drains first. A host that starts a turn on every request never meets it, since a started handle's late stamp is dead.
+- **A rewind lands between the read and the flush, in another process.** The stamp is filed under the latest turn that is left, and the session remembers one read the rewound conversation no longer holds. Spec 3 accepts this case as stated here (its decision 14, Stamps meet per path, and no order of arrival can let a stale write through). The vid of that stamp is still checked at the write, so no other caller's change is overwritten. In the process that rewinds it cannot happen, because a rewind drains first. A host that starts a turn on every request never meets it, since a started handle's late stamp is dead.
 - **A change, a line or an interrupted job.** Each writes its record with the change, so the turn is found in that transaction.
 
 Reason: the guide promises that calls made before any turn is started go into the session's latest turn, or into a first turn VFS makes. Looking the turn up on the first call would put a synchronous statement on a read. Resolving at the write keeps the read free.
@@ -417,7 +417,7 @@ Reason: ruling 13 says a rewind restores what earlier turns saw. With a stamp ro
 ### 13. A rewind changes no file, restores the shell by removing rows, and cannot be undone
 
 - A rewind with `files=False` issues no statement to any mount. Every file a removed turn changed stays as that turn left it.
-- A file read in a kept turn and changed in a removed one is remembered as it was read. Its etag has moved on, so the session's next change to it is refused with `vfs.conflict.changed` until the file is read again. This is spec 3's rule, working as the guide's table shows.
+- A file read in a kept turn and changed in a removed one is remembered as it was read. Its vid has moved on, so the session's next change to it is refused with `vfs.conflict.changed` until the file is read again. This is spec 3's rule, working as the guide's table shows.
 - The shell state after the rewind is decision 10's read over the turns that are left.
 - **The hook for spec 5.** With `files=True`, spec 5's rollback runs after step 3 and before step 4. The turns and their change rows are still stored then. Step 4 runs only when nothing in the rollback failed. If anything failed, the memory is untouched, `rewind` raises with the report, and the same rewind can be asked again: spec 5, decision 10. After step 4, spec 5 moves the stamps of the files it put back: its decision 14.
 - **A rollback that a policy interrupts.** Nothing is put back and step 4 does not run. `rewind` returns `Rewind(before, 0, 0, files=<the interrupted result>)`. When the job is resumed, spec 5 runs the rollback and then `rewind_turns`: its decision 13.
@@ -869,7 +869,7 @@ One need is not met, and its asker accepts that. Spec 3 asked that the turn numb
 - That bash run on a line prints nothing for `history`, and that bash exports `OLDPWD` after `cd`. The first is taken from the draft named under "Builds on". Neither was run against bash.
 - What the machine's report of its end state adds to a line's `fuel_used`. `tests/shell/test_host.py:738` reads that figure.
 - How often a user edits, regenerates or branches, and what share of calls are lines.
-- A fork or a rewind on SQLite while a 10,000-file batch runs. The kernel store is a file of its own, so the two should not meet. It was not run.
+- A fork or a rewind on SQLite while a 10,000-file batch runs. Since the ruling of 2026-11-23 the kernel's tables share the root file's one writer (spec 0, decision 4), so the two do meet: the fork or the rewind waits for the writer and is refused as unavailable when the batch outlasts its tries. It was not run.
 
 ## One line
 

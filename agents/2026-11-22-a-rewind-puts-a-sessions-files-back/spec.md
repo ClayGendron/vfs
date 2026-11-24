@@ -25,12 +25,12 @@ Each entry gives what this spec takes from it, by decision and heading, as the e
   - Decision 10, "A record that goes with a change is written in a transaction of the store's own, after the change or before it, and never inside it": the record-after form. It names this spec's change rows as one of the two records that take it, and says one `record_after` may write a change's stamps and its change rows together.
   - Decision 12, "A batch of rows is written in chunked statements through four helpers": `insert_rows`.
   - Decision 8, "The tables are made at the store's first use, and a store of another format is refused": `build_kernel_tables` in `src/vfs/models/kernel_rows.py`, `KERNEL_FORMAT_VERSION`, and the prefix `vfs_session`.
-- **Spec 1, a row carries an etag and a change can require it.**
-  - Decision 2, "An etag is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version": `Etag`, `ETAG_LENGTH`, `EtagMint.mint(entry_key, version)`. An etag is compared and never taken apart, so this spec stores the version and a name for the entry beside each etag it keeps.
-  - Decision 1, "Every row that carries a version carries an etag, and the storage mints it", and decision 4, "Each verb fills the etag on the rows it already returns".
-  - Decision 6, "`write`, `edit`, `delete` and `move` take `if_match`, and their batch forms take `if_matches`".
-  - Decision 10, "A directory is matched as a file is, by its entry and its version", and decision 12, "A mismatch is `conflict` with the version and the etag of the row at the path, and an etag from another mount is a mismatch like any other".
-  - Decision 17, "`restore` takes `if_match` and `if_matches`, and they name the tombstone", which meets the need of decision 7 here.
+- **Spec 1, a row carries a vid and a change can require it.**
+  - Decision 2, "A vid is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version": `Vid`, `VID_LENGTH`, `VidMint.mint(entry_key, version)`. A vid is compared and never taken apart, so this spec stores the version and a name for the entry beside each vid it keeps.
+  - Decision 1, "Every row that carries a version carries a vid, and the storage mints it", and decision 4, "Each verb fills the vid on the rows it already returns".
+  - Decision 6, "`write`, `edit`, `delete` and `move` take `if_vid`, and their batch forms take `if_vids`".
+  - Decision 10, "A directory is matched as a file is, by its entry and its version", and decision 12, "A mismatch is `conflict` with the version and the vid of the row at the path, and a vid from another mount is a mismatch like any other".
+  - Decision 17, "`restore` takes `if_vid` and `if_vids`, and they name the tombstone", which meets the need of decision 7 here.
 - **Spec 2, a session is stored, named and forked.**
   - Decision 13, "`vfs_sessions` holds one row per session, under a key that is never used twice": `session_key`, a 64-bit integer.
   - Decision 14, "The row is first written by the first record that needs it, through one function, `resolve`", and decision 16, "A handle keeps no copy of the row, so every record names its session by owner and id".
@@ -40,9 +40,9 @@ Each entry gives what this spec takes from it, by decision and heading, as the e
 - **Spec 3, the session remembers what it read.**
   - Decision 8, "A read writes its stamps behind, and a change writes them with the change": the guarded router and the eight steps of a change. Its step 7 writes this spec's change rows in the same `fn` as the stamps.
   - Decision 13, "A session's own change refreshes its stamps", and decision 17, "The shell's host sends what a line is shown and what it changes through the guarded router, and its probes through the kernel".
-  - Decision 4, "The table is `vfs_session_stamps`, one row per session, path and turn": a file stamp keeps its etag whole. Decision 5, "One stamp per path is current, and the stamp that arrives last is the current one".
+  - Decision 4, "The table is `vfs_session_stamps`, one row per session, path and turn": a file stamp keeps its vid whole. Decision 5, "One stamp per path is current, and the stamp that arrives last is the current one".
   - Decision 21, "Other specs reach the stamps through six functions of one module": `current_stamps` and `write_stamps`, which decision 14 here calls. This spec writes no statement against that table.
-  - Its decisions 10 and 13 read `Change.etag_before` and the `made` rows of kind `directory` from decision 2 here.
+  - Its decisions 10 and 13 read `Change.vid_before` and the `made` rows of kind `directory` from decision 2 here.
 - **Spec 4, a session works in turns and rewinds or forks at one.**
   - Decision 12, "`rewind(before=turn)` removes that turn and every later one, with their stamps, and cancels their waiting jobs, in one transaction": `Rewind`, to which this spec adds `files=`, `preview=` and the field `files`; step R4, which is no statement, by decision 16 here; and `rewind_turns(session, session_key, n)`, which a resumed rollback calls.
   - Decision 13, "A rewind changes no file, restores the shell by removing rows, and cannot be undone": the hook, after the read that finds the session key and the turn's number `n` and before the transaction that removes the turns.
@@ -74,7 +74,7 @@ Each entry gives what this spec takes from it, by decision and heading, as the e
 ## Terms
 
 - **Kernel store.** Where the kernel keeps its own records, apart from any mount's tables. Spec 0 owns it.
-- **Etag.** Twenty hexadecimal characters that name one entry at one version. Spec 1 owns it.
+- **Vid.** Twenty hexadecimal characters that name one entry at one version. Spec 1 owns it.
 - **Tombstone.** A deleted row that stays at its path with `deleted_at` set. It reads as absent and holds its path.
 - **Change.** One entry's own row changed by one call: it was made, its body was written, it was moved, deleted, restored, or brought back by a write. A row whose path changed because a directory above it moved is not a change of that row.
 - **Change row.** One row of `vfs_session_changes`: one change a session made.
@@ -147,8 +147,8 @@ class Change(NamedTuple):
     entry: str                  # names the entry alone
     path: Path                  # where the row is after the call, as the storage sees it
     path_before: Path | None    # set for "moved" alone
-    etag: Etag                  # the row after the call
-    etag_before: Etag | None    # the row before; None for "made"
+    vid: Vid                  # the row after the call
+    vid_before: Vid | None    # the row before; None for "made"
     version_before: int | None  # None for "made"
     mime_before: str | None     # the declared type before, for "written" and "revived"
 ```
@@ -163,13 +163,13 @@ class Change(NamedTuple):
 | `restored` | a tombstone | live | each row a restore named |
 | `bumped` | a live directory | the same directory, one version on | each parent whose version the call moved because a direct child was made, removed, renamed, or moved in or out |
 
-- `entry` is `EtagMint.mint(entry_key, 0)`: the mint of spec 1's decision 2 at version 0, which no row holds. It is twenty hexadecimal characters, the same for two changes exactly when they are of one entry of one mount, and it is no row's etag. It is what this spec keeps in place of the entry id, which spec 1's decision 1 keeps inside the storage.
-- `etag` and `etag_before` are minted by the storage from the versions its transaction holds. A delete's `etag` is the tombstone's, one version above the one its observation reports, since spec 1's decision 4 has a delete's row carry the etag from before the call.
-- No etag is taken apart anywhere in this spec. The version is carried beside it, as `version_before`, wherever a version is needed.
+- `entry` is `VidMint.mint(entry_key, 0)`: the mint of spec 1's decision 2 at version 0, which no row holds. It is twenty hexadecimal characters, the same for two changes exactly when they are of one entry of one mount, and it is no row's vid. It is what this spec keeps in place of the entry id, which spec 1's decision 1 keeps inside the storage.
+- `vid` and `vid_before` are minted by the storage from the versions its transaction holds. A delete's `vid` is the tombstone's, one version above the one its observation reports, since spec 1's decision 4 has a delete's row carry the vid from before the call.
+- No vid is taken apart anywhere in this spec. The version is carried beside it, as `version_before`, wherever a version is needed.
 - `Result` gains a private attribute, `_changes: tuple[Change, ...]`, empty by default. It is a pydantic `PrivateAttr`: it is not a field, it is not serialized, it does not render, and it is on no exported page.
 - Each mutating method of the storage sets it on a result that succeeded. The facts are the ones its transaction already holds: `StagedEntry` has the entry, the base version, the new version and `revive` (`staging.py:55-82`), and the trash and topology verbs hold each claimed row. No statement is added.
 - A row that came back `unchanged` reports nothing. A row beneath a deleted, restored or moved directory reports nothing: its own version did not move. `sweep` reports nothing.
-- **A parent whose version was bumped reports `bumped`,** by the ruling of 2026-11-23. Its `kind` is `directory`, its `etag` is minted at the version the bump left, and its `etag_before` at one version less: a bump is `version = version + 1` on a row the statement holds locked (`serialized.py:218-228`, `writes.py:1174`), so the version before is exactly one less than the version after, whatever a rival did earlier. A statement that bumps one parent twice, as a rename inside one directory does (`topology.py:355-358`), reports two changes in order. The new version comes back from the bump statement itself where the engine's path proves the bump by `RETURNING`. Where the path proves it by a row count, the storage reads the bumped rows back in one chunked statement, as a write already does for some of them. That is at most one statement more for a call that bumps a parent, and the test of decision 2 counts it.
+- **A parent whose version was bumped reports `bumped`,** by the ruling of 2026-11-23. Its `kind` is `directory`, its `vid` is minted at the version the bump left, and its `vid_before` at one version less: a bump is `version = version + 1` on a row the statement holds locked (`serialized.py:218-228`, `writes.py:1174`), so the version before is exactly one less than the version after, whatever a rival did earlier. A statement that bumps one parent twice, as a rename inside one directory does (`topology.py:355-358`), reports two changes in order. The new version comes back from the bump statement itself where the engine's path proves the bump by `RETURNING`. Where the path proves it by a row count, the storage reads the bumped rows back in one chunked statement, as a write already does for some of them. That is at most one statement more for a call that bumps a parent, and the test of decision 2 counts it.
 - **A `bumped` change is for a session's stamps alone.** Spec 3's decision 11 uses it to carry a directory's stamp forward through the session's own change. No row of `vfs_session_changes` is written for it (decision 3), and a rollback undoes none: a parent's version is no state a file can be put back to.
 - The router carries `_changes` through every merge and every path rewrite as it carries observations, and puts the mount's path in front of each path.
 - No storage is reached over a wire in the tree. One that is must carry these facts in its own framing.
@@ -187,11 +187,11 @@ changes = Table(
     Column("turn_number", BigInteger, nullable=False),
     Column("what", String(16), nullable=False),
     Column("kind", String(16), nullable=False),
-    Column("entry", String(ETAG_LENGTH), nullable=False),
+    Column("entry", String(VID_LENGTH), nullable=False),
     Column("path_before", BytewiseString(MAX_PATH_LENGTH)),
     Column("path_after", BytewiseString(MAX_PATH_LENGTH), nullable=False),
-    Column("etag_before", String(ETAG_LENGTH)),
-    Column("etag_after", String(ETAG_LENGTH), nullable=False),
+    Column("vid_before", String(VID_LENGTH)),
+    Column("vid_after", String(VID_LENGTH), nullable=False),
     Column("version_before", BigInteger),
     Column("mime_before", String(MAX_SEGMENT_LENGTH)),
     Column("rewind", String(ULID_LENGTH)),
@@ -204,15 +204,15 @@ changes = Table(
 - The table joins `build_kernel_tables` in `src/vfs/models/kernel_rows.py`, and the landing adds one to `KERNEL_FORMAT_VERSION`, by spec 0's decision 8. Its name begins with `vfs_session`, one of `KERNEL_TABLE_PREFIXES`. Its statements are in a new module of `vfs.kernel_store`, `changes.py`, by the second of spec 0's eight rules.
 - `session_key` is the key of spec 2's decision 13. `turn_number` is the `number` of spec 4's decision 2.
 - `id` is the order of the log. It is a counter the store hands out, never a clock, and never used again.
-- The columns from `what` to `mime_before` are decision 2's. A rollback writes one more value of `what`, `settled`, which decision 15 gives. Paths are the caller's paths, with the mount's path in front. `path_before` is null unless the row was moved. `etag_before` and `version_before` are null for `made`.
+- The columns from `what` to `mime_before` are decision 2's. A rollback writes one more value of `what`, `settled`, which decision 15 gives. Paths are the caller's paths, with the mount's path in front. `path_before` is null unless the row was moved. `vid_before` and `version_before` are null for `made`.
 - `rewind` is null for an ordinary change. For a row a rollback wrote it is that rollback's id. `undoes` is decision 15's.
 - A row is inserted and never updated. The table has no expiry of its own and so no sweeper: rows go with their session, by decision 16.
 - There is no foreign key. No table in the tree has one.
 
 | One row for each | Verdict |
 |---|---|
-| Entry a session changed in a turn, as the overview's table says | Rejected. The second change of a turn would update the first row, which is a read and a write on the synchronous path. Two calls of one turn that end out of order would leave a row whose last etag is not the entry's. A change by somebody else between two of the session's would vanish inside the row. |
-| Change | Chosen. An insert alone. Rows of one entry chain by their etags whatever order they arrived in, and a gap in the chain is somebody else's change, in plain sight. |
+| Entry a session changed in a turn, as the overview's table says | Rejected. The second change of a turn would update the first row, which is a read and a write on the synchronous path. Two calls of one turn that end out of order would leave a row whose last vid is not the entry's. A change by somebody else between two of the session's would vanish inside the row. |
+| Change | Chosen. An insert alone. Rows of one entry chain by their vids whatever order they arrived in, and a gap in the chain is somebody else's change, in plain sight. |
 
 The record is a table of its own and not rows of the action log. Story H0 is not built, and a rollback wanted for 0.1.0 cannot wait on it.
 
@@ -238,7 +238,7 @@ What each crash point leaves:
 | The process stops | The mount | The log | What a later rollback does |
 |---|---|---|---|
 | before the storage commits | unchanged | no row | nothing; there is nothing to undo |
-| after the commit, before the rows | changed | no row | with no other row for the entry: leaves the file and reports nothing. With earlier rows: the entry's etag is not the one the last row left, so it is left and reported `changed`. With later rows: the run starts after the gap, the file goes back to what the unrecorded change left, and it is reported `partly` |
+| after the commit, before the rows | changed | no row | with no other row for the entry: leaves the file and reports nothing. With earlier rows: the entry's vid is not the one the last row left, so it is left and reported `changed`. With later rows: the run starts after the gap, the file goes back to what the unrecorded change left, and it is reported `partly` |
 | after the rows | changed | the rows | undoes them |
 
 In none of the three is a file put into a state it never had, and in none is another caller's change removed. A missing row can only leave a file as it is.
@@ -263,14 +263,14 @@ What the verbs record:
 | The form | Verdict |
 |---|---|
 | Inside the mount's transaction | Not offered. Spec 0 rules that no record is written there, on either engine. |
-| Claim before, completed after | Rejected. It is two transactions for every change, where the log cost study measured an effect's two at +151 ms a write under 32 writers on Postgres. The etag after, the parents made and an arbitration's outcome are not known before the change. A claim with no completion is in doubt, and a file in doubt cannot be put back: the store cannot say whose change moved its etag. So the form would add a warning for such a file and no restore. |
+| Claim before, completed after | Rejected. It is two transactions for every change, where the log cost study measured an effect's two at +151 ms a write under 32 writers on Postgres. The vid after, the parents made and an arbitration's outcome are not known before the change. A claim with no completion is in doubt, and a file in doubt cannot be put back: the store cannot say whose change moved its vid. So the form would add a warning for such a file and no restore. |
 | Record after | Chosen. One transaction. A caller that has its result has its rows, so two calls made one after the other are recorded in order. |
 
 Reason: the direction of every failure is the same. The log may lack a change the files hold. It never holds a change the files lack. A rollback checks the file, not the log, before it touches anything, so a lost row loses a restore and never does harm.
 
 ### 5. A rollback reads the files through two storage methods, `find_entries` and `read_versions`, and no public verb is added
 
-`read_versions` is the one seam that reads an old body. By the ruling on that seam it also serves spec 8, whose decision 8, "The body is read through spec 5's `read_versions`, and this spec adds no seam", withdrew a method of its own. It lands first, with no session in it, and spec 8 builds on that landing. The heading above is kept as other specs cite it. The three things spec 8 asks of the seam are given below: an entry named by the etag and the version a read reported, a tombstoned row served, and the entry's own body when no later version exists.
+`read_versions` is the one seam that reads an old body. By the ruling on that seam it also serves spec 8, whose decision 8, "The body is read through spec 5's `read_versions`, and this spec adds no seam", withdrew a method of its own. It lands first, with no session in it, and spec 8 builds on that landing. The heading above is kept as other specs cite it. The three things spec 8 asks of the seam are given below: an entry named by the vid and the version a read reported, a tombstoned row served, and the entry's own body when no later version exists.
 
 `src/vfs/storage/protocol.py` gains a protocol, `SupportsVersions`, with two methods. It was `SupportsRollback` in this spec's first draft; the name changed because a replayed line uses it too. Neither is an `Op`, neither is routed by name, and no caller outside the kernel reaches them. The database storage has both and declares the trait `versions` with the value `kept`, which joins `TRAIT_KEYS` and `TRAIT_VALUES`. Through a storage that does not declare it, a rollback leaves every entry of that mount, each with a `vfs.unsupported` warning, and spec 8 journals a read with its bytes.
 
@@ -278,7 +278,7 @@ Reason: the direction of every failure is the same. The log may lack a change th
 class VersionTarget(NamedTuple):
     path: Path                   # where the entry is now, live or deleted
     version: int                 # a version the entry had: the one whose body is wanted
-    etag: Etag                   # the etag it had at that version
+    vid: Vid                   # the vid it had at that version
     holding: str | None = None   # a content hash; a body that has it is not sent
 
 class EntryTarget(NamedTuple):
@@ -291,7 +291,7 @@ async def find_entries(self, *, targets: list[EntryTarget], authority: Authority
 
 **`read_versions`** answers the body an entry held at a version.
 
-- **Which entry.** The storage reads the row at `path`, on either side of the tombstone. It mints the etag of that row's entry at `version` and compares it with `etag`. When they are equal, the row is the entry the caller means. No etag is taken apart, and no entry id crosses the seam. A path that holds no row, or a row of another entry, is that target's `not_found`. An entry that has moved is found only at its new path.
+- **Which entry.** The storage reads the row at `path`, on either side of the tombstone. It mints the vid of that row's entry at `version` and compares it with `vid`. When they are equal, the row is the entry the caller means. No vid is taken apart, and no entry id crosses the seam. A path that holds no row, or a row of another entry, is that target's `not_found`. An entry that has moved is found only at its new path.
 - **Which body.** The version row of that entry with the smallest number at or above `version`. When there is none, no body has replaced that one, and the answer is the body the row holds now. Each lookup is a seek on the primary key `(entry_id, version_number)`.
 - **What comes back.** One observation for each target served: the body as `content` or `data`, its `source`, its `content_hash` and its `size_bytes`. The hash is computed from the bytes returned and compared with the stored one, and a mismatch is that target's `vfs.internal` error.
 - **`holding`.** When the body found has that hash, the observation has status `unchanged` and no body, and no body is fetched.
@@ -305,19 +305,19 @@ The two callers:
 | | This spec | Spec 8 |
 |---|---|---|
 | `path` | where the entry is when its body is put back | where the line itself left the file it read |
-| `version`, `etag` | `version_before` and `etag_before` of a change row | the `version` and the `etag` of the row the line's `read` returned, which it journals |
+| `version`, `vid` | `version_before` and `vid_before` of a change row | the `version` and the `vid` of the row the line's `read` returned, which it journals |
 | `holding` | the hash the entry holds now, from `find_entries` | not given: the body is wanted even when the file still holds it |
 | `authority` | the session's | the system authority: the fetch is the kernel's own, as spec 8's decision 7 says |
 | the hash it journaled | not kept | compared by spec 8 with the `content_hash` returned |
 
 **`find_entries`** answers where an entry is and what it is now. It reads no old body and is this spec's alone.
 
-- It reads the row at each `path` on either side of the tombstone, and mints that row's `entry`. When it is the one named, it answers one observation: `path`, `kind`, `version`, `etag`, `content_hash`, and `deleted_at` when the row is a tombstone.
+- It reads the row at each `path` on either side of the tombstone, and mints that row's `entry`. When it is the one named, it answers one observation: `path`, `kind`, `version`, `vid`, `content_hash`, and `deleted_at` when the row is a tombstone.
 - When the path holds no row, or a row of another entry, it answers `not_found` for that path, and the rest are served.
 - A row is judged at `list`, as `stat` judges a live row and the trash view a deleted one. A row the caller may not see is `not_found`.
 - It issues one statement for each chunk of the membership budget and reads no body.
 
-Reason for `read_versions`: story K8 gives callers `versions(path)` and `read(version=)`, with a verb name, a page key and creator rows that are not ruled. A rollback and a replayed line each need one thing of K8: the body an entry held at a version. Built once as a seam method, both stand on it, and K8 can later stand its public read on it. Reason for naming the entry by an etag at a version: both callers hold exactly that pair, the storage can check it with one mint, and nothing has to be read out of an etag. Reason for `find_entries`: no public row says whether a directory at a path is the directory the session moved, since a directory's etag moves with its children. The storage can say, and the entry id stays inside it.
+Reason for `read_versions`: story K8 gives callers `versions(path)` and `read(version=)`, with a verb name, a page key and creator rows that are not ruled. A rollback and a replayed line each need one thing of K8: the body an entry held at a version. Built once as a seam method, both stand on it, and K8 can later stand its public read on it. Reason for naming the entry by a vid at a version: both callers hold exactly that pair, the storage can check it with one mint, and nothing has to be read out of a vid. Reason for `find_entries`: no public row says whether a directory at a path is the directory the session moved, since a directory's vid moves with its children. The storage can say, and the entry id stays inside it.
 
 ### 6. A rewind with files walks the session's change rows newest first and undoes each one
 
@@ -331,9 +331,9 @@ The rollback is given the session key and the number `n` of the turn, at the pla
 
 **Group.** Rows with one `entry` are grouped, oldest first.
 
-**Fold.** Walking a group from its newest row: a row with `undoes = j`, and every row of the group with an `id` from `j` to its own, become one segment. A segment starts at the `etag_before` and the path of its oldest row and ends at the `etag_after` and the path of its newest. It needs nothing done. What is left is the entry's chain.
+**Fold.** Walking a group from its newest row: a row with `undoes = j`, and every row of the group with an `id` from `j` to its own, become one segment. A segment starts at the `vid_before` and the path of its oldest row and ends at the `vid_after` and the path of its newest. It needs nothing done. What is left is the entry's chain.
 
-**Find the run.** The run is the longest tail of the chain in which each link starts where the one before ended. For a file that is `etag_before` equal to the earlier `etag_after`. For a directory it is the same path and the same liveness, because a directory's version moves with its children. Links before the run are buried and are not undone.
+**Find the run.** The run is the longest tail of the chain in which each link starts where the one before ended. For a file that is `vid_before` equal to the earlier `vid_after`. For a directory it is the same path and the same liveness, because a directory's version moves with its children. Links before the run are buried and are not undone.
 
 **Undo.** The rows of every run that are in no segment, taken together, are walked from the newest `id` to the oldest. Each row's undo is:
 
@@ -346,7 +346,7 @@ The rollback is given the session key and the number `n` of the turn, at the pla
 | `revived` | delete at `path_after` |
 | `made` | delete at `path_after`; `cascade=False` for a directory; decision 8 when the path is needed |
 
-**The body.** A file's body is put back once. Take the oldest row of its run that is in no segment. The body wanted is the one the file held at that row's `version_before`. It is read by `read_versions`, whose target carries that version, the row's `etag_before` and the hash the file holds now, and it is written with that row's `mime_before` declared. The write comes after that row's undo. When that row is `revived` or `restored`, the write comes just before its undo, so that the file goes back to the trash holding its old body. When that row is `made` there is no write. A body that `read_versions` answers `unchanged` needs no write.
+**The body.** A file's body is put back once. Take the oldest row of its run that is in no segment. The body wanted is the one the file held at that row's `version_before`. It is read by `read_versions`, whose target carries that version, the row's `vid_before` and the hash the file holds now, and it is written with that row's `mime_before` declared. The write comes after that row's undo. When that row is `revived` or `restored`, the write comes just before its undo, so that the file goes back to the trash holding its old body. When that row is `made` there is no write. A body that `read_versions` answers `unchanged` needs no write.
 
 Kind by kind:
 
@@ -385,45 +385,45 @@ An entry's path now is the `path_after` of its newest row, carried through every
 
 | The entry | The guard |
 |---|---|
-| A file, live or deleted | `find_entries` finds it at its path with the `etag_after` of the run's newest link. |
+| A file, live or deleted | `find_entries` finds it at its path with the `vid_after` of the run's newest link. |
 | A deleted directory | The same. A tombstone's version does not move. |
-| A live directory | `find_entries` finds it at its path. Its etag is not compared, because a child made by anyone moves its version. |
+| A live directory | `find_entries` finds it at its path. Its vid is not compared, because a child made by anyone moves its version. |
 
 Each step then carries the check into its own transaction:
 
-- The first step on a file carries `if_match`: the `etag_after`. Each later step on that entry carries the etag the step before returned.
-- A `restore` carries the tombstone's etag.
-- A live directory is looked up again by `find_entries` just before its step, because the rollback's own steps inside it move its version. A move carries the etag that lookup returned.
-- A made directory is deleted with `cascade=False` and no `if_match`, as spec 1's decision 10 says an emptied directory is. `not_empty` is its guard.
+- The first step on a file carries `if_vid`: the `vid_after`. Each later step on that entry carries the vid the step before returned.
+- A `restore` carries the tombstone's vid.
+- A live directory is looked up again by `find_entries` just before its step, because the rollback's own steps inside it move its version. A move carries the vid that lookup returned.
+- A made directory is deleted with `cascade=False` and no `if_vid`, as spec 1's decision 10 says an emptied directory is. `not_empty` is its guard.
 
 Every way another caller can have touched an entry, and what the report says:
 
 | Since the session's last change, somebody | What is seen | The entry is | Reason |
 |---|---|---|---|
-| wrote, edited or appended to the file | the entry, another etag | left | `changed` |
-| changed it and changed it back to the same body | the entry, another etag | left | `changed`; the guard is the version, never the body |
-| deleted it and wrote it again at the path | the entry, another etag | left | `changed` |
-| deleted it | the entry, a tombstone, another etag | left, in the trash | `changed` |
+| wrote, edited or appended to the file | the entry, another vid | left | `changed` |
+| changed it and changed it back to the same body | the entry, another vid | left | `changed`; the guard is the version, never the body |
+| deleted it and wrote it again at the path | the entry, another vid | left | `changed` |
+| deleted it | the entry, a tombstone, another vid | left, in the trash | `changed` |
 | moved it, or moved a directory above it | no row, or another entry, at the path | left where it now is | `not_there` |
 | moved it away and put another file at the path | another entry | left; the other file is not touched | `not_there` |
-| restored a file the session deleted, or wrote over its tombstone | the entry, live, another etag | left | `changed` |
+| restored a file the session deleted, or wrote over its tombstone | the entry, live, another vid | left | `changed` |
 | swept a file the session deleted | no row | lost | `gone` |
 | made a file inside a directory the session made | the delete answers `not_empty` | left, with what it holds | `not_empty` |
 | made a file inside a directory the session moved | nothing; the directory is the same entry | moved back, and the file rides with it | none |
 | put something at the path a moved entry came from | the `stat`, or the move's `exists` | left where it is | `path_taken` |
 | took a right from the session's authority | the step answers `permission_denied` | left | the verb's own refusal |
-| changed the entry between the plan and its step | the step's `if_match` fails | left | `changed` |
+| changed the entry between the plan and its step | the step's `if_vid` fails | left | `changed` |
 | removed the mount, or made it read-only | `not_found`, or `read_only` | left | `not_there`, or the verb's own refusal |
 
 The session's own later change counts as somebody else's when it is not in the selected rows: a change whose row was lost, or one a resumed job made under a kept turn. The words of `changed` say "after this session's last change in these turns" and name no one.
 
-**`restore` must take `if_match`.** Without it: the session deletes a file, another caller restores it, edits it and deletes it again, and an unguarded restore brings back the other caller's edit as if it were the session's file. Spec 1's decision 17 gives the precondition: it holds when the tombstone the restore would clear has the etag given, the claim that follows already compares the entry and the version, and a mismatch is `conflict`. The tombstone's etag is the `etag` of the `deleted` change, by decision 2.
+**`restore` must take `if_vid`.** Without it: the session deletes a file, another caller restores it, edits it and deletes it again, and an unguarded restore brings back the other caller's edit as if it were the session's file. Spec 1's decision 17 gives the precondition: it holds when the tombstone the restore would clear has the vid given, the claim that follows already compares the entry and the version, and a mismatch is `conflict`. The tombstone's vid is the `vid` of the `deleted` change, by decision 2.
 
 **Two windows are left open, and both are the ones spec 1's decision 10 leaves.** A made directory replaced by another empty directory between the plan and its delete is deleted: it held nothing, and the delete can be undone. A change deep inside a moved directory does not move the directory's version and is not seen: the directory still goes back, with that change in it.
 
 The `changed` of this spec is the plain `vfs.conflict`. It is not spec 3's `vfs.conflict.changed`, whose words tell an agent to read the file again; a rollback's report is read by the host.
 
-Reason: an etag names one entry at one version, versions only go up, and so an etag never comes back. A match means nobody has changed the entry since. Nothing else is known to mean that.
+Reason: a vid names one entry at one version, versions only go up, and so a vid never comes back. A match means nobody has changed the entry since. Nothing else is known to mean that.
 
 ### 8. A made entry that stands on a path an older step needs is moved to a holding name and deleted there
 
@@ -442,7 +442,7 @@ Run on 2026-11-22: move `/a` to `/a.bak`, write a new `/a`, then move the new on
 | When the path is held by what the session made | Verdict |
 |---|---|
 | Delete it and report that the older entry cannot come back | Rejected. "Move a file aside and write a new one in its place" is how a backup is kept, and how a refactor leaves a shim at the old path. |
-| Sweep it | Rejected. A sweep destroys, takes no `if_match`, and would make the rollback the one thing in this spec that cannot be undone. |
+| Sweep it | Rejected. A sweep destroys, takes no `if_vid`, and would make the rollback the one thing in this spec that cannot be undone. |
 | Move it to a holding name, then delete it | Chosen. Two guarded steps, both reversible, both recorded. |
 
 Reason: nothing a rollback does may destroy, and the trash does not give a path back.
@@ -454,8 +454,8 @@ Reason: nothing a rollback does may destroy, and the trash does not give a path 
 - **Below the policies.** The rollback is judged once, as decision 13 says. Its steps are dispatched inside `decisions.within(fs)`, which spec 6's decision 23 gives for a step carried out by many calls. Inside it only the policies are skipped: the gate runs, and the storage judges the caller's rights on every call.
 - **Recorded.** Each step's `Change` facts become rows by `record_after`, as decision 4's do, with `turn_number = n`, `rewind` set, and `undoes` as decision 15 says.
 - **Versioned.** A body put back is a `write`. The body it replaces is kept as a version row, attributed to the session's authority. Nothing is removed from history.
-- **Guarded.** In article 5's words, every write a rollback makes is revision-guarded, and none is last writer wins. The one step with no `if_match` is the delete of a made directory, which `not_empty` guards.
-- **Batches.** Steps that are next to each other in the walk, use the same verb with the same arguments, and touch different entries, go in one batch call: `write(entries=)`, `delete(observations=)`, `restore(observations=)`, `move(moves=)`, each with `if_matches`. A batch is cut at `REWIND_BATCH_ROWS`, 10,000 entries. A batch of writes is also cut where the bodies `read_versions` returned for one page end, so at most 8 MiB of old bodies are in hand, or one body when it is larger. The two steps of decision 8, and a step on a live directory, are single calls.
+- **Guarded.** In article 5's words, every write a rollback makes is revision-guarded, and none is last writer wins. The one step with no `if_vid` is the delete of a made directory, which `not_empty` guards.
+- **Batches.** Steps that are next to each other in the walk, use the same verb with the same arguments, and touch different entries, go in one batch call: `write(entries=)`, `delete(observations=)`, `restore(observations=)`, `move(moves=)`, each with `if_vids`. A batch is cut at `REWIND_BATCH_ROWS`, 10,000 entries. A batch of writes is also cut where the bodies `read_versions` returned for one page end, so at most 8 MiB of old bodies are in hand, or one body when it is larger. The two steps of decision 8, and a step on a live directory, are single calls.
 - **A refused batch.** A batch fails whole on each mount. Each error names a path. Those entries are left, with the reason their error gives, and the batch is sent again without them, at most `REWIND_BATCH_RESENDS`, 3, times. If an error names no entry of the batch, or the last resend is refused, every entry still in the batch has failed.
 - **An entry that is left.** Its later steps are dropped. A step of another entry that depended on it meets its own refusal and is left too.
 - **Timestamps.** `updated_at` is the time of the step. No time is put back.
@@ -469,7 +469,7 @@ Reason: a step is an ordinary change in everything but who asked for it. Rights,
 - **Failed.** A step that ended in `vfs.unavailable`, `vfs.timeout` or `vfs.cancelled`, or a batch that failed as decision 9 says. A second try may put it back.
 - **The order.** The rollback runs first. If nothing failed, spec 4's transaction then removes the turns. If anything failed, the memory is not touched, and `rewind` raises with the report.
 - **The retry is the same call.** The turn is still there. The rows of the steps already done are in the log, each finished entry closed with `undoes`, so the next plan folds them into segments and does nothing for them.
-- **A step done but not recorded.** A crash between a step and its row leaves the entry at an etag the log does not have. The retry reports it `changed` and leaves it where that step left it.
+- **A step done but not recorded.** A crash between a step and its row leaves the entry at a vid the log does not have. The retry reports it `changed` and leaves it where that step left it.
 - **A process that stops between the rollback and the memory.** The same call again finds every run folded, does no step, and rewinds the memory.
 - **Two rollbacks of one session at once.** Each file is put back once, by whichever step's guard holds. The other reports it `changed`. A host runs one rewind of a conversation at a time, as it runs one turn.
 - **A session still working.** A change made after the plan fails the guard of its entry, which is left. Rows newer than `through` are not read.
@@ -491,7 +491,7 @@ class Rewind(NamedTuple):
     files: Result | None = None   # None when files=False
 ```
 
-`files.ops` is `("rewind",)`. It has one observation for each entry put back, in the order of the walk, with `path`, `kind`, `status`, `version` and `etag` as they are after the rollback.
+`files.ops` is `("rewind",)`. It has one observation for each entry put back, in the order of the walk, with `path`, `kind`, `status`, `version` and `vid` as they are after the rollback.
 
 | The entry ends | `status` |
 |---|---|
@@ -527,7 +527,7 @@ Reason: spec 4 ruled that `rewind` returns a plain value and raises, so that a r
 
 `rewind(before=, files=True, preview=True)` runs decision 6 up to the plan and decision 7's reads, and returns `Rewind(before, 0, 0, files=report)`.
 
-- Each observation has the status the entry would have and the path it would be at. Its `version` and `etag` are the ones it has now.
+- Each observation has the status the entry would have and the path it would be at. Its `version` and `vid` are the ones it has now.
 - It foresees `changed`, `not_there`, `gone`, `path_taken` and `partly`. From landing 5 it also foresees a missing right, by decision 13's proof. It does not foresee `not_empty`, `no_version` or a read-only mount: those are judged when a step runs. It reads no version row.
 - It issues no `INSERT`, `UPDATE` or `DELETE` on any mount or on the kernel store. No turn is removed, no job is cancelled and no stamp is moved.
 - It is not shown to the policies. It changes nothing, and it is the host's read of its own session's record.
@@ -552,7 +552,7 @@ By the ruling that a step need not be a verb, the rollback is one step, `RewindS
 - **The preview.** The kind's `preview(step)` makes the plan again from the step's `session_key`, `turn_number` and `through`, by decision 12's reads, as the step's authority, and returns a `StepPreview`. Its first line is `rewind would put back: N entries`. Then one line for each of at most `PREVIEW_CHANGES` entries, the status and the path, and one line counting the rest. Then one line counting the entries that would be left. It changes nothing.
 - **Who may resume.** Spec 7's decision 17, over the step's paths: the system authority, or an authority that holds `read_write` on every one.
 - **The same call made again while the job waits** joins the job, by spec 7's decision 26.
-- **Resumed.** The policies are asked again, as spec 7's decision 20 has it. When they allow, spec 7 calls the kind's `carry_out(step, job)` in place of a verb's dispatch. The plan is made again from rows with `id <= through`, and every guard is checked again. An entry that changed while the job waited is left. A change the session made while the job waited is not in the plan, and its entry is left. So the resumed rollback can do less than the person saw and never more. No seen etag is saved with the step: the guards are the change rows' own. The memory is then rewound by spec 4's `rewind_turns(session, session_key, n)`, with the key and the number the step saved, and `resume` returns the report, a `Result`. When a step failed, `carry_out` returns the report with its errors and does not rewind the memory; the turn is still there, and the host asks the rewind again.
+- **Resumed.** The policies are asked again, as spec 7's decision 20 has it. When they allow, spec 7 calls the kind's `carry_out(step, job)` in place of a verb's dispatch. The plan is made again from rows with `id <= through`, and every guard is checked again. An entry that changed while the job waited is left. A change the session made while the job waited is not in the plan, and its entry is left. So the resumed rollback can do less than the person saw and never more. No seen vid is saved with the step: the guards are the change rows' own. The memory is then rewound by spec 4's `rewind_turns(session, session_key, n)`, with the key and the number the step saved, and `resume` returns the report, a `Result`. When a step failed, `carry_out` returns the report with its errors and does not rewind the memory; the turn is still there, and the host asks the rewind again.
 - **The system authority.** No policy is asked about its rollback, by spec 6's decision 18, and it is never interrupted.
 - **A rewind of the memory while the job waits.** Spec 4's step R2 cancels the waiting jobs of the removed turns, by spec 7's `cancel_session_jobs`. The rollback's job is one of them, because it is stored under turn `n`.
 - A policy typed for one verb, such as `DeleteStep`, is not asked about a `RewindStep`. A host that wants a rollback judged types its policy `Mutation` or names `RewindStep`.
@@ -566,12 +566,12 @@ Reason: a policy guards what an agent does. A rollback is the host's act, made o
 
 ### 14. After a rollback the session remembers a put-back file as the state it saw
 
-A file put back has a new etag: the same entry, a later version. A stamp from a kept turn names the old one, so the session would refuse its next change as changed, though the file holds exactly what was read.
+A file put back has a new vid: the same entry, a later version. A stamp from a kept turn names the old one, so the session would refuse its next change as changed, though the file holds exactly what was read.
 
-- After spec 4's transaction, for each entry whose run ends undone, by this call or by an earlier try of it, the rollback moves the session's stamp for the entry's path from the `etag_before` of the run's oldest link to the etag the entry has now.
-- It is one `commit` on the kernel store, through two of the six functions of spec 3's decision 21. It calls `current_stamps(transaction, session_key, paths)`. For each path whose current stamp is a file stamp with the etag named, it calls `write_stamps(store, transaction, rows)` with one row: the `session_key`, no turn number, the path, the kind `f` and the new etag. This spec writes no statement of its own against `vfs_session_stamps`.
+- After spec 4's transaction, for each entry whose run ends undone, by this call or by an earlier try of it, the rollback moves the session's stamp for the entry's path from the `vid_before` of the run's oldest link to the vid the entry has now.
+- It is one `commit` on the kernel store, through two of the six functions of spec 3's decision 21. It calls `current_stamps(transaction, session_key, paths)`. For each path whose current stamp is a file stamp with the vid named, it calls `write_stamps(store, transaction, rows)` with one row: the `session_key`, no turn number, the path, the kind `f` and the new vid. This spec writes no statement of its own against `vfs_session_stamps`.
 - A row with no turn number is filed under the session's latest turn, inside `write_stamps`, by spec 3's decision 6. That is the right turn: the handle has no turn after a rewind. A session left with no turn held no stamp to move.
-- A file stamp keeps its etag whole, by spec 3's decision 4, so the comparison is of two etags and nothing is read out of either.
+- A file stamp keeps its vid whole, by spec 3's decision 4, so the comparison is of two vids and nothing is read out of either.
 - The stamp moves only if the session holds exactly that state. A session that last saw an older state keeps its stamp, and its next change is refused until it reads the file.
 - An entry that was left has its stamp untouched.
 - A process that stops before the stamps are moved leaves them as they were. The cost is one refusal and one read for each file.
@@ -581,7 +581,7 @@ Reason: a stamp means this content was shown. After a rollback that is true of t
 ### 15. A rollback's own changes are rows of the log, marked with its id, and no call undoes a rollback yet
 
 - Each `rewind` with `files=True` that reaches its steps makes an id, a ULID of 26 characters. Every row a step leaves carries it in `rewind`.
-- When every step on an entry has succeeded, the rollback closes the entry with `undoes`: the `id` of the oldest row it undid. The row of the entry's last step carries it. When that step changed nothing, or the entry needed no step, the rollback writes one row for it with `what = "settled"`, the entry's etag as both `etag_before` and `etag_after`, its path, and `undoes`.
+- When every step on an entry has succeeded, the rollback closes the entry with `undoes`: the `id` of the oldest row it undid. The row of the entry's last step carries it. When that step changed nothing, or the entry needed no step, the rollback writes one row for it with `what = "settled"`, the entry's vid as both `vid_before` and `vid_after`, its path, and `undoes`.
 - That is what lets a later plan fold the undone rows and the rollback's own into a segment. An entry that was left, or whose steps did not all succeed, is not closed.
 - A later rewind to an earlier turn selects the rollback's rows with the rest, since they carry `turn_number = n`. A file edited in `msg_3`, edited in `msg_5`, put back by a rewind to `msg_5`, and then rewound to `msg_3`: its chain is the row of `msg_3` and one segment, the run is both, and one write puts back the body before `msg_3`.
 - A turn started after the rollback has a higher number. A rewind to it does not select the rollback's rows.
@@ -614,20 +614,20 @@ Reason: a hold would make every sweep read every session's log, to protect a rol
 
 ### 18. Edges, rights, sweeps and anything outside VFS are not put back
 
-- **Edges.** `mkedge` and `rmedge` are not recorded. An edge has no version and no etag, so there is nothing to guard it with.
+- **Edges.** `mkedge` and `rmedge` are not recorded. An edge has no version and no vid, so there is nothing to guard it with.
 - **Rights.** A grant, a revoke, a posture and a membership are not recorded.
 - **A sweep.** What it destroyed is gone.
 - **Mounts** added or removed, **jobs** cancelled by the rewind, and other sessions' stamps.
 - **Outside VFS.** A request a tool sent, a message, a process. Zheng et al. show that a restore cannot unsend one (`forking-files.md`, the survey).
 
-Reason: the rule of this spec is that a thing is put back only when nobody else has changed it, and that rule needs an etag. The guide lists what is not put back, as ADK's does.
+Reason: the rule of this spec is that a thing is put back only when nobody else has changed it, and that rule needs a vid. The guide lists what is not put back, as ADK's does.
 
 ### 19. The work is five landings, each green
 
 1. The seam: `SupportsVersions`, `read_versions`, the trait. It has no session in it. After spec 1's first landing, for the mint. Spec 8's second landing builds on it.
 2. The storage reports its changes: `Change`, `_changes`, every mutating method, the router's carry, and `find_entries`. After the same.
 3. The table and the rows a session writes. After specs 0, 2 and 3, and spec 4's first landing.
-4. `rewind(files=, preview=)`: the plan, the steps, the report and the stamps. After spec 4's third landing, and after spec 1's fourth, which carries `if_match` on `restore`.
+4. `rewind(files=, preview=)`: the plan, the steps, the report and the stamps. After spec 4's third landing, and after spec 1's fourth, which carries `if_vid` on `restore`.
 5. The `RewindStep`, the rights proof and the interrupted rollback. After specs 6 and 7. If spec 6 is built when landing 4 is cut, the two land as one, so that no tree has policies a rollback does not meet.
 
 Reason: the first two are of use with no session at all, to spec 8 and to stories H0, H2 and K8, and each later landing adds one thing that can be tested alone.
@@ -671,7 +671,7 @@ Costed against the reference deployment in the working agreement.
 - **`versions(path)` and `read(version=)`.** Story K8.
 - **The made parents in a write's result.** They are in `_changes` and not in the observations.
 - **A delete and a write that cancel out.** A file deleted and written again in the removed turns is put back by a delete, a restore and a write, where one write would do. It is correct, and it costs two steps.
-- **A directory's guard.** Somebody else's file in a directory the session moved goes back with it. Its body and its etag do not change.
+- **A directory's guard.** Somebody else's file in a directory the session moved goes back with it. Its body and its vid do not change.
 - **A file's executable bit.** The draft that adds it must say whether a version row keeps it and whether a write keeps it.
 - **A session's rows over a long life.** They are not pruned.
 - **A change made without a session.** A host that writes through the file system for a conversation leaves no row.
@@ -682,7 +682,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 `tests/storage/database/test_changes.py`, at the seam:
 
-- `test_each_mutation_reports_what_it_changed`, one case for each row of decision 2's table: the `what`, the `version_before`, and that `etag` is the etag a `stat` then returns. A write over a tombstone reports `revived`. A delete reports the tombstone's etag, not the one its observation shows.
+- `test_each_mutation_reports_what_it_changed`, one case for each row of decision 2's table: the `what`, the `version_before`, and that `vid` is the vid a `stat` then returns. A write over a tombstone reports `revived`. A delete reports the tombstone's vid, not the one its observation shows.
 - `test_two_changes_of_one_entry_share_its_name`: a write, a move and a delete of one file report one `entry`; a copy of it reports another.
 - `test_parents_made_by_a_write_are_reported`: `write(parents=True)` under three missing directories reports 4 changes and 1 observation.
 - `test_a_directory_delete_and_move_report_one_row`: a directory with 100 entries beneath reports 1 change for a delete, 1 for a restore and 1 for a move.
@@ -694,9 +694,9 @@ Each is written and seen failing before the code. Counts are of statements recor
 `tests/storage/database/test_version_reads.py`, with landing 1:
 
 - `test_the_body_at_a_version_is_the_next_version_row`: after a write, a move and a write, the body at the version after the first write is read from the row numbered one above it. 3 statements.
-- `test_a_version_nothing_replaced_is_the_body_held_now`: a target at the file's own version and etag, with no `holding`, answers the live body in 2 statements.
+- `test_a_version_nothing_replaced_is_the_body_held_now`: a target at the file's own version and vid, with no `holding`, answers the live body in 2 statements.
 - `test_a_body_still_held_is_unchanged`: a target whose `holding` is the hash of the body found answers `unchanged` with no body, and no body statement runs.
-- `test_an_etag_that_is_not_the_entrys_is_not_found`: a path that holds another entry, an etag of another version, and a path that holds nothing, each answer `not_found`.
+- `test_an_vid_that_is_not_the_entrys_is_not_found`: a path that holds another entry, a vid of another version, and a path that holds nothing, each answer `not_found`.
 - `test_a_deleted_file_is_read_until_it_is_swept`: its body is returned from the tombstone, and after a `sweep` of the path the target is `not_found`.
 - `test_bodies_stop_at_the_page`: ten targets of 1 MiB each are served 8, then 2, in two calls.
 - `test_a_target_the_caller_may_not_read_is_refused_alone`: one `permission_denied`, the rest served; the system authority is served all.
@@ -706,7 +706,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 
 `tests/storage/database/test_find_entries.py`, with landing 2:
 
-- `test_an_entry_is_found_on_either_side_of_the_tombstone`: a live file, a deleted one and a directory each answer one row with its etag; a path that holds another entry, and one that holds nothing, answer `not_found`. One statement for the five targets.
+- `test_an_entry_is_found_on_either_side_of_the_tombstone`: a live file, a deleted one and a directory each answer one row with its vid; a path that holds another entry, and one that holds nothing, answer `not_found`. One statement for the five targets.
 - `test_a_row_the_caller_may_not_see_is_not_found`.
 - `test_10000_targets_issue_a_bounded_number_of_statements`, with the membership budget narrowed to 1,000: 10 statements. Marked `slow`.
 
@@ -734,7 +734,7 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_directory_moved_after_its_files_were_edited`.
 - `test_a_moved_directory_the_session_then_filled_goes_back`: a directory moved and a file made in it; the file is deleted, the directory is looked up again and moved, and neither is reported left.
 - `test_a_file_another_caller_changed_is_left`, one case for each row of decision 7's table: the reason, and the other caller's body, path or tombstone unchanged. Zero mutation statements name that entry.
-- `test_a_change_between_the_plan_and_the_step_is_left`: a rival write at a seam before the step makes the step's `if_match` fail, and the rival's body survives.
+- `test_a_change_between_the_plan_and_the_step_is_left`: a rival write at a seam before the step makes the step's `if_vid` fail, and the rival's body survives.
 - `test_a_restore_is_guarded`: delete by the session, then restore, edit and delete by another caller; the rollback reports `changed` and the file stays deleted.
 - `test_a_buried_change_is_put_back_as_far_as_the_other_callers`: the file holds the other caller's body, and the report has `partly`.
 - `test_nothing_is_removed_from_history`: the count of version rows after a rollback is the count before plus the bodies it replaced, and no tombstone was swept.
@@ -784,7 +784,7 @@ In:
 - `Rewind.files`, in spec 4's `src/vfs/turns.py`, and the constants `CHANGE_PAGE_ROWS`, `REWIND_BATCH_ROWS` and `REWIND_BATCH_RESENDS`.
 - The tests above, and the docs below.
 
-Out: everything under "Left as it is"; spec 1's `if_match` on `restore`; spec 3's stamps; spec 6's `RewindStep` class and `_ask`; spec 7's job and `StepPreview`; spec 8's use of the seam.
+Out: everything under "Left as it is"; spec 1's `if_vid` on `restore`; spec 3's stamps; spec 6's `RewindStep` class and `_ask`; spec 7's job and `StepPreview`; spec 8's use of the seam.
 
 Files other specs also change: `src/vfs/session.py` and `src/vfs/sync_session.py`, by specs 2, 3, 4 and 7. `src/vfs/results/envelope.py`, by spec 7. `src/vfs/storage/protocol.py`, by specs 1, 6, 7 and 8. `trash.py`, `base.py` and the parameter table, by spec 1. `src/vfs/models/kernel_rows.py`, by every spec that keeps a record. `src/vfs/turns.py`, by spec 4.
 
@@ -806,7 +806,7 @@ Pages, each changed: the docstrings of `AsyncSession.rewind` and `Session.rewind
 ## Earlier decisions this reverses
 
 - **The draft that stood at this path.** Its decision 1 wrote the record "with the change"; the row is written after it, in another transaction. Its decision 3 deleted a made file where it stood; decision 8 moves it first when its path is needed. Its decision 5 made each restore a call of a public verb; a step is dispatched below the policies, as part of one step.
-- **This spec's own decision 2, as first drafted:** "a parent whose version was bumped reports nothing". By the ruling of 2026-11-23 it reports `bumped`, so that a session can hold a directory to its etag without refusing its own work (spec 3, decision 11).
+- **This spec's own decision 2, as first drafted:** "a parent whose version was bumped reports nothing". By the ruling of 2026-11-23 it reports `bumped`, so that a session can hold a directory to its vid without refusing its own work (spec 3, decision 11).
 - **Spec 3's decision 13**, a draft of the same day: a session's own change refreshes its stamps. A rollback's steps do not pass through the guarded router and refresh none. Decision 14 says what the stamps become.
 - **A decision record on the trash** says no transfer replaces an occupant, a tombstoned one included. It stands. Decision 8 works around it and does not change it.
 - **Roadmap story K8** gave the read of an old body to a public verb at gate `f`. The storage half is built here, earlier, with no verb.
@@ -829,7 +829,7 @@ Each is decided above and stands until it is ruled on. That a rollback is one st
 ## Where this spec disagrees with the overview or the guides
 
 1. **The overview's table says `vfs_session_changes` holds one row per entry a session changed in a turn.** Change proposed: "one row per change a session made to an entry". Evidence: decision 3's table. A row per entry and turn must be updated on the synchronous path and loses a change made between two of the session's.
-2. **The overview gives spec 1 `if_match=` on `write`, `edit`, `delete` and `move`.** Change proposed: add `restore`, as spec 1's decision 17 now has it. Evidence: decision 7's case of a file restored, edited and deleted again by another caller.
+2. **The overview gives spec 1 `if_vid=` on `write`, `edit`, `delete` and `move`.** Change proposed: add `restore`, as spec 1's decision 17 now has it. Evidence: decision 7's case of a file restored, edited and deleted again by another caller.
 3. **The overview's table has spec 5 build on 1, 3 and 4.** Change proposed: add 0 and 2, and 6 and 7 for its last landing; and spec 8 builds on spec 5's first landing. Evidence: decisions 4, 5 and 13.
 4. **The session guide says "A rewind and a fork change what a session remembers. They never change a file", twice, and calls putting files back "a separate feature, planned for the same release".** Change proposed: Step 5 gains `scout.rewind(before="msg_5", files=True)` with its report, the sentence "A rewind changes a file only when it is asked to, with `files=True`", and a third column in its table: with `files=True` the plan is "put back as it was read in `msg_4`, so Scout can change it without reading it again". Evidence: ruling 14 and decision 14.
 5. **The interrupt guide lists what a `Mutation` is and ends at "a restore".** Change proposed: add "and a rewind that puts files back". Evidence: decision 13.
@@ -849,18 +849,18 @@ What other specs asked of this one, and where it is met:
 - Spec 7, item 2 of its list: decision 13 here registers the kind `rewind` with `register_kind`, in its words.
 - Spec 2: `remove_changes(session, session_key, limit) -> int`, in `SESSION_CHILDREN`. Decision 16.
 - Spec 4: a change row names its turn by number (decision 3); the rollback runs before its transaction and is safe to run twice (decision 10); step R4 is no statement (decision 16).
-- Spec 8: the seam, with an entry named by an etag and a version, a tombstoned row served, and the entry's own body when no later version exists. Decision 5.
-- Specs 1 and 3: `Change`, with `etag_before`, and `EtagMint.mint(entry_key, 0)` as a name for an entry. Decision 2.
+- Spec 8: the seam, with an entry named by a vid and a version, a tombstoned row served, and the entry's own body when no later version exists. Decision 5.
+- Specs 1 and 3: `Change`, with `vid_before`, and `VidMint.mint(entry_key, 0)` as a name for an entry. Decision 2.
 
 What this spec asked, and where it is now met:
 
-- `restore` with `if_match` and `if_matches`: spec 1, decision 17.
+- `restore` with `if_vid` and `if_vids`: spec 1, decision 17.
 - The record-after form, one `fn` for the stamps and the change rows: spec 0, decision 10.
-- A file stamp that keeps its etag, `current_stamps` and `write_stamps`: spec 3, decisions 4, 7 and 21.
+- A file stamp that keeps its vid, `current_stamps` and `write_stamps`: spec 3, decisions 4, 7 and 21.
 - `RewindStep`, `fs._ask` and `decisions.within`: spec 6, decision 23.
 - The job of a `RewindStep`, its kind, its turn and its preview: spec 7, decision 40.
 - `rewind_turns`, and step R4 as no statement: spec 4, decision 12.
-- `read_versions` used by a path, a version and an etag, as the system authority, under the trait `versions`, after this spec's first landing: spec 8, decisions 7 and 8.
+- `read_versions` used by a path, a version and a vid, as the system authority, under the trait `versions`, after this spec's first landing: spec 8, decisions 7 and 8.
 
 ## Not checked
 
@@ -870,11 +870,11 @@ What this spec asked, and where it is now met:
 - One `record_after` that writes a change's stamps and its change rows together. Spec 0's decision 10 says one `fn` may write both. The two statements were read and not run together.
 - The size of a row, and what a `record_after` costs a write in round trips.
 - What a `bumped` change costs where the bump is proven by a row count and not by `RETURNING`. It was read from `_bump_parents` (`writes.py:1174`), `bump` and `bump_many` (`serialized.py:218-228`) and not run. To run: a create, a delete and a move of one file on a SQLite file and on the Postgres leg, counted with and without the report; the difference is expected to be 0 on the `RETURNING` path and at most 1 on the other.
-- The mint of an entry's etag at a version it no longer has, which `read_versions` rests on. `EtagMint.mint` takes any version by spec 1's decision 2; it was read and not run, since no mint is built.
+- The mint of an entry's vid at a version it no longer has, which `read_versions` rests on. `VidMint.mint` takes any version by spec 1's decision 2; it was read and not run, since no mint is built.
 - Two calls of one turn that overlap and touch each other's paths, such as a move away from a path and a create at it sent at once. Their rows can be inserted in the other order. The steps then meet a refusal and both entries are left and reported. It was reasoned and not run.
 - The rights a session needs for the holding move. It made the entry, so the owner floor should serve; read, not run.
 - The plan's memory and time at a million rows.
-- Whether a batch `delete`, `move` or `restore` names every refused path in its errors once each carries `if_matches`. `delete_rows`, `restore_rows` and `transfer_rows` collect an error for each target today (`trash.py:173-199`, `:312-327`, `topology.py:165-243`).
+- Whether a batch `delete`, `move` or `restore` names every refused path in its errors once each carries `if_vids`. `delete_rows`, `restore_rows` and `transfer_rows` collect an error for each target today (`trash.py:173-199`, `:312-327`, `topology.py:165-243`).
 - How often a turn changes a file through a session, and how often a user asks for the files back. One study measured up to 87% of turns changing no file (`forking-files.md`, Crab).
 
 ## One line

@@ -10,11 +10,6 @@
     "types": ["Entry"]
   },
   {
-    "term": "Etag",
-    "summary": "A short code that stands for one file as it was when read, so a later change can require the file to be unchanged.",
-    "types": []
-  },
-  {
     "term": "Interrupt",
     "summary": "A question a stopped job needs a person to answer, with a message, the form of the answer, and a preview of the change.",
     "types": []
@@ -62,6 +57,11 @@
   {
     "term": "Turn",
     "summary": "One message from the user and everything the agent does to answer it, as one part of a session.",
+    "types": []
+  },
+  {
+    "term": "Vid",
+    "summary": "A short code, named for version and id, that stands for one file at one version, so a change can require it.",
     "types": []
   }
 ]

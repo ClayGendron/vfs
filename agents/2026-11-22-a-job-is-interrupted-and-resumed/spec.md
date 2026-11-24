@@ -17,9 +17,9 @@ Each of the eight other specs is a draft of 2026-11-22, read in the second round
 | Spec or story | What this spec takes from it |
 |---|---|
 | 0, the kernel keeps records of its own | `KernelStore` (decision 22, "The interface is private, and this is all of it"). A read goes through `query` and a write that goes with no change through `commit` (decision 9, "The store is used through `query` and `commit`, and a failure is one exception"). The claim and the finish are the claim-before form, a `commit` and then a `record_after` (decision 10, "A record that goes with a change is written in a transaction of the store's own, after the change or before it, and never inside it"). Pages go in through `insert_rows` (decision 12, "A batch of rows is written in chunked statements through four helpers"). The insert that joins, every conditional update and `cancel_session_jobs` are statements of fixed binds (decision 25, "A statement of a spec's own is within the interface when its binds are fixed or its rows are cut by the store's budgets"). The sweep is `expiry_sweeper` (decision 26, "A table that expires with its dependents is swept by one ready-made sweeper"). Every time is `store.now()` (decision 18, "Every time comes from one clock that a test replaces"). A function that is handed a transaction takes spec 0's `Transaction`. A store that fails raises `KernelStoreUnavailable`. One of its rules is not met: "Needs no other spec meets yet", item 1. |
-| 1, a row carries an etag | `etag` on every row with a version (decision 1, "Every row that carries a version carries an etag, and the storage mints it"). `if_match` and `if_matches` on `write`, `edit`, `delete` and `move` (decision 6, "`write`, `edit`, `delete` and `move` take `if_match`, and their batch forms take `if_matches`"). The mark `ABSENT` (decision 18, "The mark `ABSENT`, in place of an etag, requires that the path holds no live row"). `stale_etag` (decision 19, "One constructor makes the refusal of a failed precondition, for a storage and for the kernel alike"). An etag that names one entry at one version and cannot be taken apart (decision 2, "An etag is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version"). A directory's etag that moves when its direct children change and for nothing deeper (decision 10, "A directory is matched as a file is, by its entry and its version"). The refusal of a mismatch (decision 12). The `etag` trait (decision 13, "A storage declares the `etag` trait, and a mount without it refuses a change that requires one"). |
+| 1, a row carries a vid | `vid` on every row with a version (decision 1, "Every row that carries a version carries a vid, and the storage mints it"). `if_vid` and `if_vids` on `write`, `edit`, `delete` and `move` (decision 6, "`write`, `edit`, `delete` and `move` take `if_vid`, and their batch forms take `if_vids`"). The mark `ABSENT` (decision 18, "The mark `ABSENT`, in place of a vid, requires that the path holds no live row"). `stale_vid` (decision 19, "One constructor makes the refusal of a failed precondition, for a storage and for the kernel alike"). A vid that names one entry at one version and cannot be taken apart (decision 2, "A vid is twenty hexadecimal characters: a keyed digest of the mount, the entry and the version"). A directory's vid that moves when its direct children change and for nothing deeper (decision 10, "A directory is matched as a file is, by its entry and its version"). The refusal of a mismatch (decision 12). The `vid` trait (decision 13, "A storage declares the `vid` trait, and a mount without it refuses a change that requires one"). |
 | 2, a session is stored | `owner_key(authority)`, 64 hexadecimal characters, which answers for every authority, the anonymous one included (decision 6, "The owner is the actor and the subjects, and the owner key is a SHA-256 over them"). `session_key`, the 64-bit key (decision 13, "`vfs_sessions` holds one row per session, under a key that is never used twice"). `resolve` and `SessionRef` (decision 14, "The row is first written by the first record that needs it, through one function, `resolve`"). A handle that keeps no key (decision 16). The handle's `strict` and `policies` (decision 4). Removal, which ruling 4 names `fs.remove_session`, and expiry, which call `cancel_session_jobs` in their first step (decision 22, "Removal frees the id in one commit and reclaims the rest in bounded chunks"). |
-| 3, the session remembers what it read | The guarded router and the order of a change through it (decision 8, "A read writes its stamps behind, and a change writes them with the change"). A precondition the caller states wins over the session's own (decision 9, "A session fills in the precondition and, when strict, refuses a change to what it was not shown"). A change made by a resumed job refreshes its session's stamps (decision 13, "A session's own change refreshes its stamps"), through `record_change_stamps` (decision 21, "Other specs reach the stamps through six functions of one module"). `GuardedRouter.for_job(fs, session_key, turn_number, authority, strict)` (decision 22, "What a table is shown is plain JSON, and a guarded router is made from a session key and a turn number alone"). A mount that issues no etag is outside the guard (decision 23). This spec writes no statement against `vfs_session_stamps`. |
+| 3, the session remembers what it read | The guarded router and the order of a change through it (decision 8, "A read writes its stamps behind, and a change writes them with the change"). A precondition the caller states wins over the session's own (decision 9, "A session fills in the precondition and, when strict, refuses a change to what it was not shown"). A change made by a resumed job refreshes its session's stamps (decision 13, "A session's own change refreshes its stamps"), through `record_change_stamps` (decision 21, "Other specs reach the stamps through six functions of one module"). `GuardedRouter.for_job(fs, session_key, turn_number, authority, strict)` (decision 22, "What a table is shown is plain JSON, and a guarded router is made from a session key and a turn number alone"). A mount that issues no vid is outside the guard (decision 23). This spec writes no statement against `vfs_session_stamps`. |
 | 4, a session works in turns | `vfs_session_turns`, with `number` and `turn_id` (decision 2, "`vfs_session_turns` holds one row per turn"). The turn a handle is in (decision 6). The latest-turn subquery and `make_first_turn` (decision 7, "A handle with no turn files each record under the session's latest turn, found when the record is written"). The predicate for a dead turn (decision 8, "A removed turn's number is never used again, and a record that names it is dead"). Step R2 of a rewind and `REWIND_CANCEL_REASON` (decision 12). A fork that leaves every job behind (decision 18). It offers no way to put a handle in a stored turn, and decision 34 here needs none. |
 | 5, a rewind puts a session's files back | `RewindStep`, one step and one job (decision 13, "A rewind with files is one step to the policies and one job to an interrupt"). Decision 40 here is its job. |
 | 6, a policy judges each step | `Step`, with `to_payload`, `Step.from_payload(payload, authority=)`, `canonical()` and `parameters()` (decision 21, "A step turns into JSON and back into an equal step, and has one canonical form", and decision 5). `judge(step, policies, *, of_session=(), run=None)` and its `Verdict`, with `refusals`, `asked`, `of_session`, `stopped` and `unfit` (decision 13, "Every policy typed for the step is asked, one after another in the order added, and the strictest answer wins"). `Decision.answered` and `Refusal.answered` (decision 12). Policy names that are unique among the policies asked (decision 17). A policy that swallows the stop fails as `"swallowed"` (decision 15). No policy for the system authority (decision 18). The rights proof before a change's policies, by `admits` (decisions 10 and 11). `fs._chosen(cls)`, `fs._ask(step)`, `decisions.within(fs)`, `STEP_CLASSES` and `RewindStep` (decision 23, "A step class need not be a verb's: `RewindStep` is one, and a step that is carried out by many calls is judged once"). `steps.py`, `decisions.py` and `judging.py`, which import nothing from `vfs.results`. |
@@ -42,13 +42,13 @@ Each of the eight other specs is a draft of 2026-11-22, read in the second round
 - **Answering principal.** The authority passed to `resume`. It is who answered, never who made the call.
 - **Caller.** The authority that made the call. A resumed step runs as the caller.
 - **Owner key.** The string `owner_key(authority)` returns, which spec 2 owns. Two calls have one owner when their keys are equal.
-- **Kernel store.** Spec 0's `KernelStore`, where the kernel keeps its own records. On SQLite it is a database file beside the mount's file. In memory it is in memory.
+- **Kernel store.** Spec 0's `KernelStore`, where the kernel keeps its own records. On SQLite its tables are in the root storage's own file, by the ruling of 2026-11-23 (spec 0, decision 4). In memory it is in memory.
 - **Run.** One asking of the policies about one step: the first, or one that a resume makes. The value `Run` holds what `interrupt` needs to know about it.
 - **Revision.** A counter on a job's row. Every change of state adds one to it. It is never a time.
 - **Claim.** The one conditional update that moves a job to `running`. Only one of two rivals changes a row with it.
 - **Lease.** How long a claim holds.
 - **Preview.** A bounded description of what a step would change, computed once, when the job is stored.
-- **Seen etag.** The etag an entry had when the preview was computed, or the mark `ABSENT` where it held nothing. The step is carried out only if the entry is still so.
+- **Seen vid.** The vid an entry had when the preview was computed, or the mark `ABSENT` where it held nothing. The step is carried out only if the entry is still so.
 - **Fingerprint.** A sha256 over the owner key, the session and the canonical form of a step. Two steps are the same when their fingerprints are equal.
 - **Place.** Where a step stands inside its job. It is `"0"` for a job of one step. For a step of a line it is the place the running line gives: the journal position of the request and the count of verb calls already made for it (spec 8, decision 27).
 - **Kind.** What a stored job is a job of: `step` for a verb's step, `line` for a shell line, and a name of its own for a step that is no verb.
@@ -60,7 +60,7 @@ Read at `6dae6a1d`. The rows marked "run" were run on 2026-11-22 with Python 3.1
 
 | Fact | How it is known |
 |---|---|
-| Nothing stops a call. The file system has no `resume`, no `jobs` and no `session`. A row carries no `etag`. | Run. Read, `src/vfs/base.py:251-331`. |
+| Nothing stops a call. The file system has no `resume`, no `jobs` and no `session`. A row carries no `vid`. | Run. Read, `src/vfs/base.py:251-331`. |
 | Every public verb checks its arguments, finds the mount, asks the gate, and calls the storage through one method. The gate does not know who is calling: the storage judges the caller's rights when it is called. | Read, `src/vfs/base.py:20-34`, `2690-2755`, `2852-2979`. |
 | A `Result` succeeds exactly when it holds no error of fatal severity. `success` is a property and is never stored. | Read, `src/vfs/results/envelope.py:387-390`. Run: a result with no error is a success. |
 | A failed result is read at its first failure. The shell's host does so for every refused verb. | Read, `src/vfs/shell/host.py:495-505`. |
@@ -101,7 +101,7 @@ The studies show what goes wrong when this is built without care. Four findings 
 
 ### 1. A job and an interrupt are records the kernel keeps, and neither is a first-class thing
 
-A job has no path. It is not an `Entry`, and `kind` gains no member for it. It is a record about a call, reached through two methods of the file system, `resume` and `jobs`, as a grant is reached through `grant` and `grants`. The five primitives of Article 1 are untouched: a job names entries by their paths and guards them by their etags, which compose the entry's identity and its revision. A view of jobs in the namespace is left out, as the overview rules.
+A job has no path. It is not an `Entry`, and `kind` gains no member for it. It is a record about a call, reached through two methods of the file system, `resume` and `jobs`, as a grant is reached through `grant` and `grants`. The five primitives of Article 1 are untouched: a job names entries by their paths and guards them by their vids, which compose the entry's identity and its revision. A view of jobs in the namespace is left out, as the overview rules.
 
 Reason: Article 1 makes everything first-class addressable by a path, and a job that had a path would be a sixth primitive. Article 3 keeps a concern out of the namespace when a file shape for it would be dishonest, and a thing that is answered once and then gone is not a file.
 
@@ -162,7 +162,7 @@ A session is named by its key and a turn by its number, by ruling 2 of the secon
 
 Indexes on `vfs_jobs`: a unique partial index on `(owner_key, fingerprint)` where `state` is `interrupted` or `running`; `(session_key, state)`; `(owner_key, job_id)`; `(state, job_id)`; and `(expires_at)` for the sweep.
 
-**The saved part** is one JSON document: a format number `1`; the step the job is stopped before, as `step.to_payload()` writes it (spec 6, decision 21); the seen etags, as a mapping from path to an etag or to `ABSENT`; and, for a kind that saves a document of its own, that document. A line's is spec 8's line record (spec 8, decision 3, "The line record holds everything the machine is started with"). The step is rebuilt by `Step.from_payload(payload, authority=...)` with the authority the `caller` column holds.
+**The saved part** is one JSON document: a format number `1`; the step the job is stopped before, as `step.to_payload()` writes it (spec 6, decision 21); the seen vids, as a mapping from path to a vid or to `ABSENT`; and, for a kind that saves a document of its own, that document. A line's is spec 8's line record (spec 8, decision 3, "The line record holds everything the machine is started with"). The step is rebuilt by `Step.from_payload(payload, authority=...)` with the authority the `caller` column holds.
 
 **A part is in the row or in pages.** A part of at most `JOB_INLINE_BYTES` (65,536) is stored in its column. A larger part leaves the column null and is cut into pages of `JOB_PAGE_BYTES` (1,048,576). Pages are written with spec 0's `insert_rows`, in calls of at most `JOB_STATEMENT_PAGES` (16) pages, so no call hands the driver more than 16 MiB of pages. They are read back in the same chunks, in `seq` order. A part that is written again, as a line's saved part is at each stop, has its old pages deleted by `(job_id, part)` in the same transaction.
 
@@ -357,11 +357,11 @@ Reason for an error entry, and so for a kind of its own: `success` is derived fr
 
 The preview is built when the job is stored, by calls of the public read verbs made as the caller. It is never computed again and never as the answering principal. Those calls are made inside `decisions.within(fs)` (spec 6, decision 23), so no policy is asked about a read that a preview makes.
 
-| Verb | The calls made | What the preview holds | Seen etags |
+| Verb | The calls made | What the preview holds | Seen vids |
 |---|---|---|---|
 | `edit` of one file | one `stat`; one `read` when the file is text of at most `PREVIEW_BODY_BYTES` | the changed lines of the file as the edit would leave it | the file |
 | `write` of one file | the same | the changed lines, or `(new)` and the first lines for a path that holds nothing | the file, or `ABSENT` |
-| `write` of a batch, `edit` or `delete` of a batch | one `stat` of every path, in one call | one line per entry, created or changed or removed | every path, each an etag or `ABSENT` |
+| `write` of a batch, `edit` or `delete` of a batch | one `stat` of every path, in one call | one line per entry, created or changed or removed | every path, each a vid or `ABSENT` |
 | `delete` of one entry | one `stat`; for a directory with `cascade`, one `tree` page of `PREVIEW_BENEATH` rows | the path, and for a directory how many entries lie beneath it, or "at least 1,000" | the entry named |
 | `move` | one `stat` of the source | `source -> target` | the source |
 | `copy`, `mkdir`, `restore` | none | the paths | none |
@@ -378,13 +378,13 @@ The class is `StepPreview`, a frozen dataclass of a `verb`, its entries and thei
 Two refusals are made while the preview is built, and neither stores a job.
 
 - A read verb that fails for a reason of the store, such as `vfs.unavailable`, fails the call with that reason.
-- A step that carries an `if_match` or an `if_matches` of its own, where the etag just seen at a path is another one, is refused with `stale_etag(path, version, etag)` of spec 1's decision 19, the fact a storage would give. The step could never land, so no person is asked about it. A session that filled the precondition in turns that refusal into `vfs.conflict.changed`, as it turns a storage's (spec 3, decision 12).
+- A step that carries an `if_vid` or an `if_vids` of its own, where the vid just seen at a path is another one, is refused with `stale_vid(path, version, vid)` of spec 1's decision 19, the fact a storage would give. The step could never land, so no person is asked about it. A session that filled the precondition in turns that refusal into `vfs.conflict.changed`, as it turns a storage's (spec 3, decision 12).
 
 A step the storage would refuse for a reason only it can judge, such as an `edit` whose text is not in the file or whose file is not there, is still stored and asked about, with `preview` set to `None`. It is refused when it is carried out.
 
-A directory's etag moves when a child is made in it, removed from it, moved into or out of it, or renamed in it, and for nothing deeper (spec 1, decision 10). So the seen etag of a directory guards its direct children. What lies deeper is counted for the person and is not guarded.
+A directory's vid moves when a child is made in it, removed from it, moved into or out of it, or renamed in it, and for nothing deeper (spec 1, decision 10). So the seen vid of a directory guards its direct children. What lies deeper is counted for the person and is not guarded.
 
-On a mount whose storage does not declare the `etag` trait, a row carries no etag, so none is seen and none is required (spec 1, decision 13). The step is carried out there with no guard. Every storage that ships declares the trait.
+On a mount whose storage does not declare the `vid` trait, a row carries no vid, so none is seen and none is required (spec 1, decision 13). The step is carried out there with no guard. Every storage that ships declares the trait.
 
 Reason for computing it as the caller, once: the step runs as the caller, so the caller's view is the true one, and one stored preview is what every process shows. The earlier story had the approver compute a plan as the approver, which shows a change the approver could make and the caller perhaps could not. Reason for the bounds: a preview is read by a person, and the approval study found that people who are shown more than they can read stop reading (`research/approval-modes.md`, finding 6).
 
@@ -542,20 +542,20 @@ No transaction of the kernel store is open while the step runs. The claim is one
 
 Reason: two processes that resumed one LangGraph pause both ran the side effect (`research/langgraph.md`, section D, executed). A conditional update on a counter is a claim both engines and the in-memory store give with one statement and no lock held past its commit.
 
-### 22. The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`
+### 22. The saved step is carried out as its caller, with rights judged again, and with the vids the preview saw as `if_vid`
 
 The winner dispatches the step it rebuilt: the step's public verb, called with `step.parameters()` and the caller's authority, inside `decisions.within(fs)` (spec 6, decision 23), so the policies the run has just asked are not asked a second time. Four things follow.
 
 - **It runs as the caller.** The gate runs, and the storage judges the caller's rights when it is called, as for any call. A right the caller lost while the job waited refuses the step there, after the policies were asked again. The answering principal's authority is passed to nothing.
 - **It is the step that was saved.** No argument is taken from `resume`. There is no way to edit a step before it is approved.
-- **It changes the entry the person saw.** For `write`, `edit`, `delete` and `move`, the call carries the seen etags: `if_match` for a single path and `if_matches` for a batch form, with `ABSENT` where the preview found nothing (spec 1, decisions 6 and 18). An entry that has changed is refused by the storage with the `conflict` of spec 1's decision 12, which carries the version and the etag now there, and nothing is written. That refusal is the job's result, returned unchanged. A step saved with `if_absent=True` is sent as it was saved, since that flag takes no precondition beside it and already requires what `ABSENT` would.
+- **It changes the entry the person saw.** For `write`, `edit`, `delete` and `move`, the call carries the seen vids: `if_vid` for a single path and `if_vids` for a batch form, with `ABSENT` where the preview found nothing (spec 1, decisions 6 and 18). An entry that has changed is refused by the storage with the `conflict` of spec 1's decision 12, which carries the version and the vid now there, and nothing is written. That refusal is the job's result, returned unchanged. A step saved with `if_absent=True` is sent as it was saved, since that flag takes no precondition beside it and already requires what `ABSENT` would.
 - **It runs in its session and turn**, when it has them (decision 34).
 
 **The dispatch takes the router it calls.** For a step with no session it is the file system. For a step made through a session it is the guarded router of decision 34. For a line, the line's kind passes the line's guarded router, so that the step's result refreshes the line's stamps and its writer mapping (spec 8, decisions 17 and 24). This is the text spec 8 asks of this decision.
 
 `copy`, `mkdir` and `restore` are carried out as saved. Their preview shows paths and no content, so there is nothing a person saw that could have changed, and a path that has since been taken is refused by the verb itself with `exists`.
 
-Reason: these are the guide's four rules. Terraform refuses a saved plan whose state has moved, and GitHub dismisses an approval when new commits arrive (`research/approval-modes.md`, finding 4). The etag is the same binding for a file.
+Reason: these are the guide's four rules. Terraform refuses a saved plan whose state has moved, and GitHub dismisses an approval when new commits arrive (`research/approval-modes.md`, finding 4). The vid is the same binding for a file.
 
 ### 23. A claim is a lease of five minutes, and a job left running past it is carried on again under the same guard
 
@@ -574,7 +574,7 @@ What a crash leaves, at each point:
 
 A resume cancelled after its claim leaves the same as a crash at that point. The cancellation page says a cancelled write has changed nothing or landed whole and that the caller cannot tell which, so the job is left `running` and its lease frees it. A finish that `record_after` could not write leaves the third row: the resume returns the step's result with spec 0's warning, and the job is `running` until its lease ends.
 
-The second and third rows look the same from the job's row. The guard is what makes carrying on safe in both: a step that landed moved the etag, so a second run of it cannot change the entry again, and cannot write over what a rival wrote either.
+The second and third rows look the same from the job's row. The guard is what makes carrying on safe in both: a step that landed moved the vid, so a second run of it cannot change the entry again, and cannot write over what a rival wrote either.
 
 **A refusal on a second claim is marked in doubt.** When `attempts` is more than one and the step is refused, the result gains one warning of the kind `vfs.conflict`, with `data` holding the job id and `in_doubt: true`, and the detail: an earlier resume of this job stopped before it recorded its result, so the step may already have been carried out; read the entry before making the change again. A step that succeeds on a second claim landed then, and carries no warning.
 
@@ -586,7 +586,7 @@ A kind of decision 40 says which of the two it is, by its `again`.
 
 The lease is judged by `store.now()`, which is the one clock a test replaces.
 
-Reason: a claim with no lease leaves a job `running` for 24 hours after one crash. A claim that any resume may take at once is no claim. The four ledger systems studied either refuse a step whose start was recorded and whose end was not, and ask the host, or run it again (`research/tools-that-interrupt.md`, B1). A step guarded by an etag can be run again without harm, which a line and a tool call cannot, so VFS runs the first again and says when it cannot tell, and ends the second.
+Reason: a claim with no lease leaves a job `running` for 24 hours after one crash. A claim that any resume may take at once is no claim. The four ledger systems studied either refuse a step whose start was recorded and whose end was not, and ask the host, or run it again (`research/tools-that-interrupt.md`, B1). A step guarded by a vid can be run again without harm, which a line and a tool call cannot, so VFS runs the first again and says when it cannot tell, and ends the second.
 
 ### 24. A finished or cancelled job answers `resume` with its result again until it lapses, and the stored result is bounded
 
@@ -775,7 +775,7 @@ A job made through a session is carried out in that session and in the turn it w
 
 The dispatch of decision 22 goes through `GuardedRouter.for_job(fs, session_key, turn_number, authority, strict)`, which spec 3 gives for this (spec 3, decision 22, "What a table is shown is plain JSON, and a guarded router is made from a session key and a turn number alone"). It is made from the job's `session_key` and `turn_number`, the caller's authority and `strict=False`, with no handle, no `resolve` and no read of a session's or a turn's id. So the step's stated preconditions reach the storage unchanged, and its result refreshes the session's stamps under the job's turn, by `record_change_stamps` at the router's seventh step (spec 3, decision 8, and decision 21, "Other specs reach the stamps through six functions of one module"). Spec 4 offers no way to put a handle in a stored turn, and none is needed.
 
-- **`strict=False`.** The session's `unread` refusal was judged when the call was made, before the kernel was reached (spec 3, decision 8, step 3). It is not judged again at the resume. The seen etags carry the protection from there, and a precondition the call states wins over the session's own (spec 3, decision 9).
+- **`strict=False`.** The session's `unread` refusal was judged when the call was made, before the kernel was reached (spec 3, decision 8, step 3). It is not judged again at the resume. The seen vids carry the protection from there, and a precondition the call states wins over the session's own (spec 3, decision 9).
 - **A turn started after the job was stored does not move it.** `turn_number` is written once.
 - **No job waits under a turn that is gone.** A removal and a rewind cancel a session's waiting jobs in the transaction that ends the session or removes the turn (decision 35), and decision 5 keeps a job from being stored under a dead turn.
 - A job being carried out at the moment its session is removed finishes. What it would have had the session remember stores nothing, since the session is gone (spec 3, decision 21).
@@ -897,7 +897,7 @@ def register_kind(kind: StepKind) -> None: ...
 ```
 
 - **The kind of a verb's step** is built in: its name is `step`, its preview is decision 13's, its `carry_out` is decision 22's dispatch, and `again` is true, by decision 23.
-- **A registered kind** is found by the class of the step that was stopped. Its `preview` is called where decision 13's would be, and returns a `StepPreview` within decision 13's bounds. It saves no seen etag. When the run of decision 20 allows the step and the claim is won, its `carry_out` is called in place of a verb's dispatch, and `resume` returns what it returns, a `Result`.
+- **A registered kind** is found by the class of the step that was stopped. Its `preview` is called where decision 13's would be, and returns a `StepPreview` within decision 13's bounds. It saves no seen vid. When the run of decision 20 allows the step and the claim is won, its `carry_out` is called in place of a verb's dispatch, and `resume` returns what it returns, a `Result`.
 - **`Interrupt.step`, `verb`, `path` and `paths_count`** are the step's own: `verb` is the class's `verb`, which is `"rewind"` for a `RewindStep` (spec 6, decision 23), and the paths are `step.paths`. Who may resume is decision 17's rule over those paths.
 - **The fingerprint** is decision 26's, over `step.canonical()`, so the same call made again while its job waits joins it.
 - **The turn.** A kind whose step names its turn files the job under that number, and not under the turn of the handle that made the call. Where the kind also gives `turn_id`, that is what `Job.turn` shows; where it gives none, `Job.turn` is `None`.
@@ -943,7 +943,7 @@ A 10,000-entry `write` that is interrupted: one `stat` of 10,000 paths, which th
 | Who may resume: one `holds_all` | 3 on the mount |
 | The policies, asked again | none of this spec's |
 | The claim, a `commit` | 1 on the kernel store |
-| The step, with `if_match` | the verb's own |
+| The step, with `if_vid` | the verb's own |
 | The finish, a `record_after` | 1 on the kernel store |
 
 So three statements on the kernel store. A resume that stops again, one that is denied and one that cancels are two. A wrong answer, a finished job and a refused principal are one. A resume of a paged job reads its pages in chunks of 16.
@@ -957,7 +957,7 @@ So three statements on the kernel store. A resume that stops again, one that is 
 | What is locked | One row of `vfs_jobs`, by one update. On SQLite, the kernel store's file for the length of that commit. |
 | For how long | One commit. No transaction of the kernel store is open while a step, a policy or a person runs. |
 | Who waits | Another writer of the kernel store: a job being stored, a flush of stamps, a new turn. On Postgres, only a rival on the same job's row. |
-| Who does not wait | Every read, list, glob, grep and search, and every writer of the mount. On SQLite the kernel store is a file of its own, so no call on the mount's file queues behind a job, and no job queues behind a batch. |
+| Who does not wait | Every read, list, glob, grep and search, on both engines. On Postgres, every writer of the mount too. On SQLite the kernel's tables share the root file's one writer since the ruling of 2026-11-23 (spec 0, decision 4): a write on the root mount waits a commit's length behind a job's row being stored or claimed, and while a batch holds the writer a job cannot be stored, claimed or finished, and is refused as unavailable until the batch ends. |
 
 `cancel_session_jobs` is one update with no bound on its rows, held for the commit it runs in. A session's waiting jobs are bounded by what its agent was stopped for in a day, and no cap is declared.
 
@@ -972,8 +972,8 @@ So three statements on the kernel store. A resume that stops again, one that is 
 - **An answer remembered for later calls**, for a session or for good. Each product studied chooses its own meaning of "the same action", and a remembered approval is consent, not a right (`research/approval-modes.md`, finding 5). A host keeps it in its own policy.
 - **Editing a step before approving it.** A denial's reason is how a person says "do it differently".
 - **A step the storage would refuse for a reason only it can judge** is still asked about (decision 13).
-- **What lies deeper than a directory's direct children** is not guarded by the preview's etag (decision 13).
-- **A source of `copy`, and the tombstone of a `restore`,** are not guarded (decision 22). Spec 1 gives `restore` an `if_match` that names the tombstone, and a preview cannot see a tombstone to take its etag.
+- **What lies deeper than a directory's direct children** is not guarded by the preview's vid (decision 13).
+- **A source of `copy`, and the tombstone of a `restore`,** are not guarded (decision 22). Spec 1 gives `restore` an `if_vid` that names the tombstone, and a preview cannot see a tombstone to take its vid.
 - **The rights proof at a resume.** At a first call a change's rights are proven before its policies (spec 6, decision 10). At a resume the policies are asked first and the storage judges the caller's rights when the step is dispatched. Spec 6 lists the other order among its choices.
 - **A heartbeat that extends a claim** (decision 23), **an encoder that writes a page at a time** (decision 4) and **an index of jobs by directory** (decision 31). Each is the named direction of a profile stated above.
 - **A job raised by a kernel reached through a storage.** No such storage ships. Its job would be in the inner kernel's store and its paths would not be rebased.
@@ -1041,7 +1041,7 @@ Each is written and seen failing before the code. Counts are of statements on th
 - `test_the_preview_is_the_guides`: `str(preview)` of the guide's edit equals its text.
 - `test_the_preview_is_bounded`: a 10,000-entry write lists 20 entries and counts 9,980; a file of 500 changed lines shows 40; a body over the bound and a bytes body show sizes and issue 0 `read` calls, spied.
 - `test_the_preview_is_computed_as_the_caller_and_asks_no_policy`: every read verb the preview calls carries the caller's authority, and a policy typed `Step` is called 0 times for them, spied.
-- `test_a_step_whose_own_if_match_is_stale_is_refused_and_not_stored`: 0 jobs, and the fact equals `stale_etag` of the row.
+- `test_a_step_whose_own_if_vid_is_stale_is_refused_and_not_stored`: 0 jobs, and the fact equals `stale_vid` of the row.
 - `test_the_same_step_made_again_joins_its_job`: the second call returns the first job's id; 1 row; the join issues 2 statements. With another session, another owner or one changed argument, a second job is stored.
 - `test_twenty_equal_calls_at_once_make_one_job`: 1 row and 20 results with one id.
 - `test_the_same_step_after_its_job_finished_is_a_new_job`.
@@ -1058,7 +1058,7 @@ Each is written and seen failing before the code. Counts are of statements on th
 - `test_two_resumes_at_once_carry_the_job_on_once`: 20 concurrent resumes: the version rises by 1; 1 result is the step's and 19 are `vfs.unavailable` or the stored result; the step was dispatched 1 time, spied.
 - `test_a_finished_job_returns_its_result_and_writes_nothing`: 1 statement, the read.
 - `test_a_stored_result_over_its_bound_keeps_the_verdict`: a result of 10,000 rows is stored without rows, with 1 warning.
-- `test_the_file_changed_since_the_preview`: `vfs.conflict` with the row's `version` and `etag` in `data`; 0 mutation statements; the rival's body stands.
+- `test_the_file_changed_since_the_preview`: `vfs.conflict` with the row's `version` and `vid` in `data`; 0 mutation statements; the rival's body stands.
 - `test_a_path_the_preview_found_empty_must_still_be_empty`: a batch of one file seen and one path seen empty, where a rival makes a file at the empty path, is refused whole, and 0 rows are written.
 - `test_a_right_lost_while_the_job_waited_refuses_the_step`.
 - `test_a_policy_that_now_denies_still_denies`, `test_a_second_policy_interrupts_after_the_first_is_answered` (the same job id, the second policy's message, policies asked in order, spied) and `test_one_policy_that_asks_twice_is_asked_one_question_at_a_time`.
@@ -1099,7 +1099,7 @@ The docs gate runs every code block of the guide's steps 1 to 6, "Cancel a Job",
 
 In: `src/vfs/authority.py` (the name); `src/vfs/results/kinds.py` (three kinds, their rows, the composed hints); `src/vfs/results/envelope.py` (three constructors, `job`, `interrupted`, the validator, the `WARNING`); `src/vfs/results/render.py` (the hint, and the table helper made public); a new package `src/vfs/jobs/` with `values.py` (`Job`, `Interrupt`, `StepPreview`, `Approval`, `Choice`, `Cancel`: a leaf that imports spec 6's `steps.py` and nothing from `vfs.results`, since the envelope imports it), `asking.py` (`Run`, `asking`, `interrupt`, `require_approval`, the ids: it imports `vfs.decisions` and never `vfs.judging`), `preview.py`, `listing.py` (`JobPage` and `jobs`, which draws its table with the renderer's helper), and `running.py` (the stored job, the join, `resume`, the kinds); one module of `vfs.kernel_store` for the two tables, the parts, the transitions, the sweeper and `cancel_session_jobs`, with the tables added to `build_kernel_tables` and `KERNEL_FORMAT_VERSION` raised by one; `src/vfs/base.py` and `src/vfs/sync.py` (`resume`, `jobs`, `job_lifetime`, as thin methods); `src/vfs/session.py` and `src/vfs/sync_session.py` (`resume`, `jobs`, and the mark around each call), which specs 2, 3, 4 and 5 also change; `src/vfs/ops.py` (the two sets); `src/vfs/storage/protocol.py` and the database backend (`holds_all`); `src/vfs/__init__.py` (the exports `Approval`, `Cancel`, `Choice`, `Interrupt`, `Job`, `JobPage`, `StepPreview`, `interrupt`, `require_approval`); the tests above; the docs below. `base.py` and `sync.py` are on the size list in `tests/lint/allowlist.py`, and their entries rise with the methods added. The Rust crate is not touched.
 
-Out: everything under "Left as it is"; the `Step` classes, `@policy`, `Decision` and the judging coroutine (spec 6); the kernel store and its sweep (spec 0); `etag` and `if_match` (spec 1); the session and the turn (specs 2 to 4); the rollback (spec 5); a line's job (spec 8).
+Out: everything under "Left as it is"; the `Step` classes, `@policy`, `Decision` and the judging coroutine (spec 6); the kernel store and its sweep (spec 0); `vid` and `if_vid` (spec 1); the session and the turn (specs 2 to 4); the rollback (spec 5); a line's job (spec 8).
 
 The four landings of decision 39 are each green alone. The first needs nothing unbuilt.
 
@@ -1137,7 +1137,7 @@ Roadmap domain B, read at `context/standards/roadmap.md:239-390` and `1220-1276`
 | D62, who may answer | Settled: the system authority, and `read_write` on every path; the tool half waits for tools. |
 | D63, D64, D65 | Left to the tools spec. |
 
-In the code and its tests: `FRONT_METHODS` is pinned to `{"cli"}` at `tests/test_sync.py:688` and `tests/test_ops.py:290`, and gains `resume`. The envelope's docstring says a `vfs.*` error is built only by `classified` and its two conveniences (`src/vfs/results/envelope.py:99-101`); this spec adds three, and spec 1 adds `stale_etag`. `Principal` equality was over every field (`src/vfs/authority.py:79-89`); `name` is outside it. Every child kind had its parent as a member; two now have none (decision 27).
+In the code and its tests: `FRONT_METHODS` is pinned to `{"cli"}` at `tests/test_sync.py:688` and `tests/test_ops.py:290`, and gains `resume`. The envelope's docstring says a `vfs.*` error is built only by `classified` and its two conveniences (`src/vfs/results/envelope.py:99-101`); this spec adds three, and spec 1 adds `stale_vid`. `Principal` equality was over every field (`src/vfs/authority.py:79-89`); `name` is outside it. Every child kind had its parent as a member; two now have none (decision 27).
 
 The draft of 2026-11-21 is replaced. Its two kinds of interrupt become one with a schema. Its `answer`, and a single call that continues by being made again, become `resume`, and the call made again joins its job. Its in-doubt refusal becomes decision 23. Its saved memory of a stopped line is refused by ruling 2.
 

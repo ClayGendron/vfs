@@ -14,10 +14,10 @@ A host asks for a session with `fs.session(authority, id)`, in any process, and 
   - `query` for a read and `commit` for a write, each handing its function a `Transaction`, with `KernelStoreUnavailable` as the one failure (its decision 9, "The store is used through `query` and `commit`, and a failure is one exception"). A `commit` begins as a writer on SQLite. On Postgres the store runs at READ COMMITTED (its decision 5, "On Postgres the place is the mount's database and schema, on a pool of the store's own").
   - `upsert_rows` and `key_chunks(pairs, width=2)` for a statement over many rows (its decision 12, "A batch of rows is written in chunked statements through four helpers").
   - `register_behind`, `put_behind` with a `scope`, and `drain` (its decisions 13 and 16), and `discard_behind`, `transaction.info` and the order of the kinds (its decision 24, "A caller can read and withdraw what waits in the buffer, and a deferred task is a kind").
-  - `register_sweeper` and `sweep` (its decision 17, "Expired records are removed by a counted sweep in bounded chunks, and a record past its expiry reads as absent before it is swept"). This spec registers two sweepers of its own, as its decision 26 notes.
+  - `register_sweeper` and `sweep` (its decision 17, "Expired records are removed by the public `sweep` in bounded chunks, and a record past its expiry reads as absent before it is swept"). This spec registers two sweepers of its own, as its decision 26 notes.
   - `store.now()` for every time, and `store.clock` for a test (its decision 18).
   - `store.engine` for a test's statement listener.
-  - On SQLite the store is a file of its own in WAL (its decision 4), so a `query` does not wait on the store's writer.
+  - On SQLite the store's tables are in the root's own file, in WAL (its decision 4, as ruled on 2026-11-23), so a `query` does not wait on the file's writer, and a `commit` shares that writer with the mount.
 - **Spec 3, the stamps: drafted.** It makes the row through `resolve` and reads through `find` (decision 14 here), and its handle keeps no session key (its decision 8, "A read writes its stamps behind, and a change writes them with the change"). Taken: `remove_stamps(transaction, session_key, limit) -> int` (its decision 21, "Other specs reach the stamps through six functions of one module"), which joins `SESSION_CHILDREN`, and the kinds `STAMPS` and `STAMP_TRIMS`, registered before this spec's own. Its bare line is a session that is never stored (its decision 16, "A bare line is a strict session of its own, and it is never stored"), which is what a caller that owns no session gets.
 - **Spec 4, turns, rewind and fork: drafted.** Taken: `remove_turns(session, session_key, limit) -> int` (its decision 2, "`vfs_session_turns` holds one row per turn"), which joins `SESSION_CHILDREN`; a fork that copies its rows and reads nothing through its parent (its decisions 17 and 19); `fork(id)` refused with `vfs.exists` when the owner has the id (its decision 16); a record that names a turn with no row is dead (its decision 8, "A removed turn's number is never used again, and a record that names it is dead"); and the `turn` and `parent` properties it adds to the handle (its decisions 6 and 19). At `7c383f32` its statements write `vfs_sessions` under the column names of this spec's first draft. The last round's first ruling has it adopt the columns of decision 13 here, and "Needs no other spec meets yet" gives the mapping. Decision 27 here gives it the function its fork needs.
 - **Spec 5, the change records: drafted.** Taken: `remove_changes(session, session_key, limit) -> int` (its decision 16, "A rewind of the memory alone removes no change row, and a fork copies none"), which joins `SESSION_CHILDREN`.
@@ -410,6 +410,12 @@ Reason: the overview's bar that a read adds no synchronous statement, which spec
 
 ### 18. A session expires 30 days after its last use, and is gone from that moment
 
+**Ruled on 2026-11-23, against this decision as it stands below: a session has no lifetime unless the developer sets one.** `session_lifetime` defaults to `None`, which means a session never expires for its age. A session is part of a conversation's state: a conversation taken up again after 90 days must find what it had read, and must not be made to read everything again because its session was removed. A developer who wants retention sets `session_lifetime` to a `timedelta`, and an expired session is then gone as this decision says and is removed by the sweep (spec 0, decision 17). `fs.remove_session` removes one session at once, and a host calls it when it deletes a conversation. A job keeps its default lifetime of 24 hours.
+
+What follows from the ruling and is not yet written into this spec: the heading above, the constructor's check, the 30 days in decisions 9 and 17 and under "What the docs must say", the test `test_session_lifetime_is_a_positive_timedelta`, and every statement that compares `expires_at`, which must treat a null as live. One choice is opened by it: whether the expiry stays a stored column, set at each touch by the lifetime of the process that touched the row, or is worked out from `last_used_at` and the lifetime of the process that asks. Under the first, a lifetime set for the first time does not reach a session until its next use, which is the session a developer most wants removed. This spec is rewritten for the ruling when it is prepared for review.
+
+The decision as first written:
+
 `AsyncVirtualFileSystem(session_lifetime=timedelta(days=30))`, and the same on `VirtualFileSystem`. The value is a `timedelta` greater than zero. Anything else raises `ValueError` from the constructor, as a bad `deny_ops` does: "session_lifetime must be a timedelta greater than zero". There is no value that means never.
 
 - **Never early.** The stored `expires_at` carries the slack of decision 17, so it is never before the true last use plus the lifetime. A new row is given the `expires_at` a touch would give it.
@@ -664,7 +670,7 @@ Costed against the reference deployment in the working agreement. Its callers st
 | the rows of one chunk of step 2 | one commit | no one who is served, since the marker's rows are reachable by no handle |
 | on SQLite, the kernel store's one writer | one commit, and for a chunk about 20 ms at the median and 200 ms at most, as the log cost study measured | a stamp flush, a job being stored, another chunk |
 
-No table lock is taken. No read of a file waits on any of this, because on SQLite the kernel store is a file of its own. No lock is held across a batch's body, a person's pause, or the whole of a removal.
+No table lock is taken. No read of a file waits on any of this: a read writes nothing to the store itself, and on SQLite a reader runs beside the file's one writer in WAL. A write on the root mount of a SQLite file can wait a commit's length behind a store write, since the two share that writer (spec 0, decision 4). No lock is held across a batch's body, a person's pause, or the whole of a removal.
 
 **Size.** A row is 13 columns and three indexes, and holds the 64-character key twice. It was not measured. By the log study's 572 to 620 bytes for a 15-column row with two indexes, about 450 bytes is the estimate, and 150,000 rows about 70 MB.
 
@@ -824,7 +830,7 @@ The guide `keep-a-session-for-each-conversation.md` changes in five places. Four
 2. **Anonymous callers.** Taken: an anonymous authority owns no session, and asking raises. The alternative is one owner shared by every anonymous caller, with the id as the only separation.
 3. **A changed subject set.** Taken: a new owner and a new, empty session. The alternative needs a copy of a session to another owner, which is not designed.
 4. **The id's alphabet.** Taken: visible ASCII. The alternative is any text without control characters, which makes a character more than one byte and brings Unicode look-alikes into a name. Spec 4 takes that alternative for a turn id (its decision 3), so the two ids have two alphabets.
-5. **No lifetime that means never.** Taken: `session_lifetime` is always a positive `timedelta`. The alternative is `None` for no expiry.
+5. **Ruled on 2026-11-23, against the decision first taken: `session_lifetime` defaults to `None`, and a session never expires unless a developer sets a lifetime.** The first form made it always a positive `timedelta`, 30 days by default. Decision 18 carries the ruling and what it leaves to be rewritten.
 6. **What the system authority's listing shows.** Taken: each row's actor and subjects in clear. The alternative is the owner key alone.
 
 ## Where this spec disagrees with the overview or the guides

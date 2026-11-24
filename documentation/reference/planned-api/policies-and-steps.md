@@ -77,7 +77,7 @@ VFS builds a step and hands it to a policy. A step is frozen, so a policy reads 
 | `step.parameters()` | Mapping | The verb's arguments, so the same call can be made again |
 | `step.to_payload()` | `dict` | The step as JSON-native data |
 
-Each step class adds the arguments of its own verb. An `EditStep` has `path`, `old`, `new` and `edits`. A `WriteStep` has `path`, `content`, `entries`, `if_match` and the rest. For `GlobStep`, `GrepStep` and `SearchStep`, the folders the search is scoped to are `step.roots`.
+Each step class adds the arguments of its own verb. An `EditStep` has `path`, `old`, `new` and `edits`. A `WriteStep` has `path`, `content`, `entries`, `if_vid` and the rest. For `GlobStep`, `GrepStep` and `SearchStep`, the folders the search is scoped to are `step.roots`.
 
 ### The Step Classes
 
