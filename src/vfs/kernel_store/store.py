@@ -455,11 +455,8 @@ class KernelStore:
 
             try:
                 return await core.with_retry((lambda: run_to_its_end(attempt)) if to_its_end else attempt)
-            except StaleSnapshot as exc:
-                detail = f"kernel store kept losing to concurrent changes: {exc.context}"
-                raise KernelStoreUnavailable(classified(ErrorKind.unavailable, retryable=True, detail=detail)) from exc
-            except (SQLAlchemyError, OSError) as exc:
-                raise KernelStoreUnavailable(self._classify(exc)) from exc
+            except (StaleSnapshot, SQLAlchemyError, OSError) as exc:
+                raise self._unavailable(exc) from exc
         finally:
             self._leave()
 
@@ -494,11 +491,8 @@ class KernelStore:
             core = self._engine_core()
             try:
                 found = await core.with_retry(lambda: self._try(self._verify_or_make))
-            except StaleSnapshot as exc:
-                detail = f"kernel store kept losing to concurrent changes: {exc.context}"
-                raise KernelStoreUnavailable(classified(ErrorKind.unavailable, retryable=True, detail=detail)) from exc
-            except (SQLAlchemyError, OSError) as exc:
-                raise KernelStoreUnavailable(self._classify(exc)) from exc
+            except (StaleSnapshot, SQLAlchemyError, OSError) as exc:
+                raise self._unavailable(exc) from exc
             if found != KERNEL_FORMAT_VERSION:
                 refusal = self._format_refusal(found)
                 if not self._warned_of_format:
@@ -556,6 +550,13 @@ class KernelStore:
     def _where(self) -> str:
         schema = self._place.schema
         return "the default schema" if schema is None else f"schema {schema}"
+
+    def _unavailable(self, exc: StaleSnapshot | SQLAlchemyError | OSError) -> KernelStoreUnavailable:
+        """A store failure that escaped the core's retry, as the one exception the store raises."""
+        if isinstance(exc, StaleSnapshot):
+            detail = f"kernel store kept losing to concurrent changes: {exc.context}"
+            return KernelStoreUnavailable(classified(ErrorKind.unavailable, retryable=True, detail=detail))
+        return KernelStoreUnavailable(self._classify(exc))
 
     def _classify(self, exc: BaseException) -> ResultError:
         """A store failure as a ``Result`` error; a refused privilege is the role's to fix, never a defect."""
