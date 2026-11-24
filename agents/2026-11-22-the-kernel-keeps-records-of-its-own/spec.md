@@ -762,7 +762,7 @@ Landing 1, `tests/storage/database/test_core.py`:
 
 - `test_a_core_opens_no_connection_when_it_is_built`: 0 `connect` events, and 0 files in the directory.
 - `test_a_core_without_the_vector_function_loads_no_extension`: 0 probes for the vector function in a checkout.
-- `test_the_engine_host_is_an_engine_core`: the members of decision 7 are the host's own. The suite of `tests/storage/database/test_engine.py` passes with its patches of `profile_for`, `create_async_engine` and `random` moved to the core module, where those names are read.
+- `test_the_engine_host_is_an_engine_core`: the members of decision 7 are the host's own. The suite of `tests/storage/database/test_engine.py` passes with its patches of `profile_for` and `random` moved to the core module, where those names are read.
 
 Landing 2, `tests/storage/test_record_place.py`:
 
