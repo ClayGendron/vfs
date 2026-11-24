@@ -201,6 +201,22 @@ def test_the_facade_forwards_an_edits_required_vids() -> None:
         batch = fs.edit(observations=rows, old="alpha", new="beta", if_vids={"/a.txt": stale})
         assert [error.kind for error in (*single.errors, *batch.errors)] == [vfs.ErrorKind.conflict] * 2
         assert fs.read(path="/a.txt").one().content == "alpha"
+
+@pytest.mark.parametrize("verb", ["delete", "move", "restore"])
+def test_the_facade_forwards_each_verbs_required_vid(verb: str) -> None:
+    """Mutation guarded: a twin that drops ``if_vid`` on a verb, which then changes the row unguarded."""
+    fs = vfs.VirtualFileSystem()
+    try:
+        assert fs.write(path="/a.txt", content="alpha").success is True
+        if verb == "restore":
+            assert fs.delete(path="/a.txt").success is True
+        stale = "0" * 20
+        calls = {
+            "delete": lambda: fs.delete("/a.txt", if_vid=stale),
+            "move": lambda: fs.move("/a.txt", "/b.txt", if_vid=stale),
+            "restore": lambda: fs.restore("/a.txt", if_vid=stale),
+        }
+        assert [error.kind for error in calls[verb]().errors] == [vfs.ErrorKind.conflict]
     finally:
         fs.close()
 
