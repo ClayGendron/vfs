@@ -22,7 +22,7 @@ from vfs import DatabaseStorage, InMemoryStorage, PostgresStorage, SQLiteStorage
 from vfs.models import Entry
 from vfs.paths import Path
 from vfs.storage import backends
-from vfs.storage.backends.database import engine as engine_module
+from vfs.storage.backends.database import core as core_module
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,13 +49,13 @@ async def _round_trip(storage: DatabaseStorage) -> str | None:
 def engines_built(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     """Every URL an engine is built from in the test, so a refusal can show it built none."""
     built: list[object] = []
-    real = engine_module.create_async_engine
+    real = core_module.create_async_engine
 
     def recording(url: Any, **arguments: Any) -> Any:
         built.append(url)
         return real(url, **arguments)
 
-    monkeypatch.setattr(engine_module, "create_async_engine", recording)
+    monkeypatch.setattr(core_module, "create_async_engine", recording)
     return built
 
 

@@ -32,6 +32,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import core as core_module
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.attempts import AttemptSession
 from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, profile_for
@@ -171,7 +172,7 @@ class TestFirstTouch:
         # SERIALIZABLE is a level the SQLite dialect accepts, so the pinned
         # provisioning transaction exercises the same wiring a real pin takes.
         pinned = replace(SQLITE, topology_isolation="SERIALIZABLE")
-        monkeypatch.setattr(engine_module, "profile_for", lambda _name: pinned)
+        monkeypatch.setattr(core_module, "profile_for", lambda _name: pinned)
         storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         assert storage._host.profile.topology_isolation == "SERIALIZABLE"
@@ -461,7 +462,7 @@ class TestLifecycle:
             return high  # the longest wait the draw allows
 
         monkeypatch.setattr(engine_module.asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(engine_module.random, "uniform", fake_uniform)
+        monkeypatch.setattr(core_module.random, "uniform", fake_uniform)
         calls = 0
 
         async def always_stale() -> None:
@@ -529,7 +530,7 @@ class TestWhereAnAttemptRuns:
     ) -> None:
         """Guards every other engine: nothing of the cancellation rule reaches a dialect that is not SQLite."""
         # An unknown dialect is served on the generic floor under its own name.
-        monkeypatch.setattr(engine_module, "profile_for", lambda _name: profile_for("duckdb"))
+        monkeypatch.setattr(core_module, "profile_for", lambda _name: profile_for("duckdb"))
         host = EngineHost(url=_fresh_url(tmp_path))
         ran: list[asyncio.Task[object] | None] = []
 

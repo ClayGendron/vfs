@@ -18,6 +18,7 @@ from tests.support.server_schemas import server_storage
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import core as core_module
 from vfs.storage.backends.database import drivers as drivers_module
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import (
@@ -108,7 +109,7 @@ class TestVectorProbe:
         # The pgvector shape: the catalog query returns no row when the extension is absent.
         url = _url(tmp_path)
         absent = replace(SQLITE, vector_function=VectorFunction("SELECT NULL WHERE 1 = 0", "install the function"))
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: absent)
+        monkeypatch.setattr(core_module, "profile_for", lambda name: absent)
         storage = DatabaseStorage(url=url)
         result = await storage.first_touch()
         assert result.success is False
@@ -132,7 +133,7 @@ class TestInstallExtensions:
         # The generic floor, declaring a function to prove. Nothing loads it off SQLite, so it is missing.
         url = _url(tmp_path)
         declared = replace(GENERIC, vector_function=VectorFunction(SQLITE_VEC_PROBE, "ask a DBA"))
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        monkeypatch.setattr(core_module, "profile_for", lambda name: declared)
         storage = DatabaseStorage(url=url)
         ran: list[asyncio.Task[Any] | None] = []
         probe = storage._host._probe_vector_function
@@ -150,7 +151,7 @@ class TestInstallExtensions:
     async def test_an_install_the_engine_refuses_classifies_and_never_raises(self, tmp_path: Any, monkeypatch) -> None:
         url = _url(tmp_path)
         declared = replace(SQLITE, vector_function=VectorFunction(SQLITE_VEC_PROBE, "ask a DBA", install=INSTALL))
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        monkeypatch.setattr(core_module, "profile_for", lambda name: declared)
         storage = DatabaseStorage(url=url)
         result = await storage.install_extensions()
         assert result.success is False
@@ -167,7 +168,7 @@ class TestInstallExtensions:
         # The SQLSTATE rides on the driver exception behind SQLAlchemy's wrapper, as asyncpg's refusal arrives.
         url = _url(tmp_path)
         declared = replace(SQLITE, vector_function=VectorFunction(SQLITE_VEC_PROBE, "ask a DBA", install=INSTALL))
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        monkeypatch.setattr(core_module, "profile_for", lambda name: declared)
         _raising_for(monkeypatch, INSTALL, _postgres_denies_create_extension(INSTALL))
         storage = DatabaseStorage(url=url)
         result = await storage.install_extensions()
@@ -183,7 +184,7 @@ class TestInstallExtensions:
         clash = "INSERT INTO vfs_meta (id, schema_format_version, mount_identity, grant_revision) VALUES (2, 0, 'x', 0)"
         rival = VectorFunction(SQLITE_VEC_PROBE, "ask a DBA", install=clash)
         declared = replace(SQLITE, vector_function=rival)
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        monkeypatch.setattr(core_module, "profile_for", lambda name: declared)
         storage = DatabaseStorage(url=url)
         result = await storage.install_extensions()
         assert result.success is True, result.errors
@@ -192,7 +193,7 @@ class TestInstallExtensions:
     async def test_a_dialect_with_nothing_declared_succeeds_without_probing(self, tmp_path: Any, monkeypatch) -> None:
         url = _url(tmp_path)
         declared = replace(SQLITE, vector_function=None)
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        monkeypatch.setattr(core_module, "profile_for", lambda name: declared)
         storage = DatabaseStorage(url=url)
         assert (await storage.install_extensions()).success is True
         assert storage._host.vector_version is None
@@ -221,7 +222,7 @@ class TestInstallExtensions:
         # A raise the retry policy would restart is no verdict on the function: it names the real error.
         url = _url(tmp_path)
         transient = VectorFunction("SELECT * FROM no_such_table", "install the function")
-        monkeypatch.setattr(engine_module, "profile_for", lambda name: replace(SQLITE, vector_function=transient))
+        monkeypatch.setattr(core_module, "profile_for", lambda name: replace(SQLITE, vector_function=transient))
         monkeypatch.setattr(engine_module, "is_retryable", lambda profile, exc: True)
         storage = DatabaseStorage(url=url)
         [refusal] = (await storage.install_extensions()).errors

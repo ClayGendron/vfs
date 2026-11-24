@@ -29,7 +29,6 @@ MODULE_LINE_BASELINE: dict[str, int] = {
     "src/vfs/storage/backends/database/rights.py": 1539,
     "src/vfs/storage/backends/database/reads.py": 1199,
     "src/vfs/storage/backends/database/writes.py": 1471,
-    "src/vfs/storage/backends/database/engine.py": 1017,
 }
 
 OPEN_QUESTION_ALLOWANCE: dict[str, int] = {
