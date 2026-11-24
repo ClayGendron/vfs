@@ -45,7 +45,7 @@ ADAPTER_IMPORTERS = frozenset(
 # belongs to the unit that is its deepest named prefix, and units that share a rung stay apart.
 LAYERS: Ladder = (
     ("vfs.native",),
-    ("vfs.deadline", "vfs.batching", "vfs.ops", "vfs.authority", "vfs.paths"),
+    ("vfs.deadline", "vfs.batching", "vfs.ops", "vfs.authority", "vfs.paths", "vfs.vid"),
     ("vfs.models",),
     ("vfs.results",),
     ("vfs.pattern_matching",),
@@ -71,7 +71,7 @@ LAYERS: Ladder = (
 # The package root: the prefix of every module, so a module it alone places has no rung of its own.
 ROOT = "vfs"
 # The modules that import no vfs module of either kind, whatever the ladder places beneath them.
-IMPORTS_NO_VFS_MODULE = ("vfs.deadline", "vfs.batching", "vfs.native")
+IMPORTS_NO_VFS_MODULE = ("vfs.deadline", "vfs.batching", "vfs.native", "vfs.vid")
 # A module over this many lines is held at its exact count in MODULE_LINE_BASELINE.
 MODULE_LINE_CEILING = 1000
 

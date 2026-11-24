@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.keyset import Emit, Fetch
     from vfs.storage.backends.database.rights import Visibility
+    from vfs.vid import VidMint
 
     # The statement of one stream, read strictly after a path and at most a batch of rows.
     Build = Callable[[str | None, int | None], Select[Any]]
@@ -82,6 +83,7 @@ async def ls_rows(
     *,
     after: Path | None = None,
     limit: int | None = None,
+    mint: VidMint,
 ) -> Result:
     """Each directory target's children, each file target itself; or one page of one directory.
 
@@ -103,7 +105,9 @@ async def ls_rows(
     the roots among them by path, a set ``sweep`` bounds.
     """
     if after is not None or limit is not None:
-        return await _ls_page(session, tables, profile, membership_budget, targets[0], columns, view, after, limit)
+        return await _ls_page(
+            session, tables, profile, membership_budget, targets[0], columns, view, after, limit, mint
+        )
     fetched = effective_columns(columns, content=False)
     found = await mappings_by_path(
         session, tables, profile, membership_budget, targets, fetched, with_entry_id=True, judged=view is not None
@@ -111,7 +115,7 @@ async def ls_rows(
     shown, road, missing = await screen(session, tables, profile, membership_budget, targets, found, view)
     directories = [t for t in targets if t in road or ((f := shown.get(t)) is not None and f["kind"] == "directory")]
     children = await _children_by_parent(
-        session, tables.entry, profile, membership_budget, directories, found.by_target, fetched, view=view
+        session, tables.entry, profile, membership_budget, directories, found.by_target, fetched, view=view, mint=mint
     )
     roots: list[Observation] | None = None
     rows: list[Observation] = []
@@ -120,12 +124,12 @@ async def ls_rows(
         mapping = shown.get(target)
         if target == TRASH_ROOT:
             if roots is None:
-                roots = await _trash_roots(session, tables, profile, fetched, view)
+                roots = await _trash_roots(session, tables, profile, fetched, view, mint)
             rows.extend(roots)
         elif mapping is None and target not in road:
             errors.append(missing[target])
         elif mapping is not None and mapping["kind"] != "directory":
-            rows.append(observe_for(view, mapping, fetched))
+            rows.append(observe_for(view, mapping, fetched, mint))
         else:
             listed = list(children.get(found.by_target[target]["entry_id"], ()))
             if target == METADATA_ROOT:
@@ -151,6 +155,7 @@ async def tree_rows(
     *,
     after: Path | None = None,
     limit: int | None = None,
+    mint: VidMint,
 ) -> Result:
     """Every row beneath *path*, in path order, to *max_depth* levels; or one page of them.
 
@@ -180,7 +185,7 @@ async def tree_rows(
     if target is None and path not in road and path != TRASH_ROOT:
         return Result(ops=("tree",), errors=[missing[path]])
     if target is not None and target["kind"] != "directory":
-        rows = [observe_for(view, target, fetched)]
+        rows = [observe_for(view, target, fetched, mint)]
         page = rows if after is None and limit is None else keyed(rows, None, after=after, limit=limit)[0]
         return Result(ops=("tree",), observations=page)
     address = address_of(str(path))
@@ -195,11 +200,11 @@ async def tree_rows(
         )
 
     if after is not None or limit is not None:
-        page = _TreePage(session, tables.entry, profile, membership_budget, fetched, view, address)
+        page = _TreePage(session, tables.entry, profile, membership_budget, fetched, view, address, mint)
         return await page.read(subtree, after, limit)
     stmt = subtree(None, None)
     if view is None:
-        rows = [observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
+        rows = [observe(mapping, fetched, mint) for mapping in (await session.execute(stmt)).mappings()]
         return Result(ops=("tree",), observations=rows)
     visible = await _visible_rows(session, stmt, view, address.stored)
     bare = {
@@ -208,7 +213,7 @@ async def tree_rows(
         for ancestor in _ancestors_below(mapping_path, address.stored)
         if ancestor not in visible
     }
-    observed = {p: observe_for(view, m, fetched) for p, m in visible.items()}
+    observed = {p: observe_for(view, m, fetched, mint) for p, m in visible.items()}
     observed |= {p: road_observation(p) for p in bare}
     return Result(ops=("tree",), observations=[observed[p] for p in sorted(observed)])
 
@@ -228,6 +233,7 @@ async def _ls_page(
     view: Visibility | None,
     after: Path | None,
     limit: int | None,
+    mint: VidMint,
 ) -> Result:
     """One page of ``ls`` of one target: its children, the trash view's roots, or a file's own row."""
     fetched = effective_columns(columns, content=False)
@@ -241,17 +247,17 @@ async def _ls_page(
     if target == TRASH_ROOT:
         roots = _trash_roots_statement(entry, profile, wanted)
         streams = _narrowed(session, lambda position, batch: _after(roots, entry, position, batch), view, None)
-        found_rows = await filled(streams, _shown_by(view, fetched), after=after, limit=limit)
+        found_rows = await filled(streams, _shown_by(view, fetched, mint), after=after, limit=limit)
         rows, key = keyed(found_rows.rows, found_rows.frontier, after=after, limit=limit)
     elif mapping is None and target not in road:
         return Result(ops=("ls",), errors=[missing[target]])
     elif mapping is not None and mapping["kind"] != "directory":
-        rows, key = keyed([observe_for(view, mapping, fetched)], None, after=after, limit=limit)
+        rows, key = keyed([observe_for(view, mapping, fetched, mint)], None, after=after, limit=limit)
     else:
         address = address_of(str(target))
         parent = found.by_target[str(target)]["entry_id"]
         children = _children_page(session, entry, profile, parent, address, wanted)
-        emit = _children_shown(session, view, fetched, trashed=address.trashed)
+        emit = _children_shown(session, view, fetched, mint, trashed=address.trashed)
         found_rows = await filled([children], emit, after=after, limit=limit)
         extras = [road_observation(TRASH_ROOT)] if target == METADATA_ROOT else []
         rows, key = keyed([*found_rows.rows, *extras], found_rows.frontier, after=after, limit=limit)
@@ -287,16 +293,18 @@ def _children_page(
     return fetch
 
 
-def _children_shown(session: AsyncSession, view: Visibility | None, fetched: frozenset[str], *, trashed: bool) -> Emit:
+def _children_shown(
+    session: AsyncSession, view: Visibility | None, fetched: frozenset[str], mint: VidMint, *, trashed: bool
+) -> Emit:
     """The children a caller is shown from one fetched batch, as :func:`_children_by_parent` shows them."""
 
     async def emit(mappings: Sequence[RowMapping]) -> list[Observation]:
         if view is None:
-            return [observe(mapping, fetched) for mapping in mappings]
+            return [observe(mapping, fetched, mint) for mapping in mappings]
         hidden = [m["path"] for m in mappings if m["kind"] == "directory" and not view.shows(m)]
         road = await view.road(session, hidden, trashed=trashed) if hidden else set()
         return [
-            observe_for(view, m, fetched) if view.shows(m) else road_observation(m["path"])
+            observe_for(view, m, fetched, mint) if view.shows(m) else road_observation(m["path"])
             for m in mappings
             if view.shows(m) or m["path"] in road
         ]
@@ -314,6 +322,7 @@ class _TreePage(NamedTuple):
     fetched: frozenset[str]
     view: Visibility | None
     address: Address
+    mint: VidMint
 
     async def read(self, subtree: Build, after: Path | None, limit: int | None) -> Result:
         """One page of the subtree: its rows after the key, and under a view the road directories in its range.
@@ -328,7 +337,7 @@ class _TreePage(NamedTuple):
         """
         view, stored = self.view, self.address.stored
         streams = _narrowed(self.session, subtree, view, stored)
-        found = await filled(streams, _shown_by(view, self.fetched), after=after, limit=limit)
+        found = await filled(streams, _shown_by(view, self.fetched, self.mint), after=after, limit=limit)
         rows, key = keyed(found.rows, found.frontier, after=after, limit=limit)
         if view is None:
             return Result(ops=("tree",), observations=rows, next_after=key)
@@ -378,7 +387,7 @@ class _TreePage(NamedTuple):
                 return stmt if batch is None else stmt.limit(batch)
 
             streams = _narrowed(self.session, beneath, view, door)
-            if (await filled(streams, _shown_by(view, self.fetched), after=None, limit=1)).rows:
+            if (await filled(streams, _shown_by(view, self.fetched, self.mint), after=None, limit=1)).rows:
                 roads.add(door)
         return roads
 
@@ -456,11 +465,11 @@ def _narrowed(session: AsyncSession, build: Build, view: Visibility | None, scop
     return [stream(index) for index in range(count)]
 
 
-def _shown_by(view: Visibility | None, fetched: frozenset[str]) -> Emit:
+def _shown_by(view: Visibility | None, fetched: frozenset[str], mint: VidMint) -> Emit:
     """The rows of a pushed-down batch the caller is shown: each that passes the view's own verdict."""
 
     async def emit(mappings: Sequence[RowMapping]) -> list[Observation]:
-        return [observe_for(view, m, fetched) for m in mappings if view is None or view.holds(m, view.need)]
+        return [observe_for(view, m, fetched, mint) for m in mappings if view is None or view.holds(m, view.need)]
 
     return emit
 
@@ -475,6 +484,7 @@ async def _children_by_parent(
     fetched: frozenset[str],
     *,
     view: Visibility | None = None,
+    mint: VidMint,
 ) -> dict[str, list[Observation]]:
     """Chunked ``parent_id IN`` children selects, regrouped per parent.
 
@@ -507,7 +517,7 @@ async def _children_by_parent(
             for mapping in (await session.execute(stmt)).mappings():
                 listed.setdefault(mapping["parent_id"], []).append(mapping)
         if view is None:
-            children |= {parent: [observe(m, fetched) for m in rows] for parent, rows in listed.items()}
+            children |= {parent: [observe(m, fetched, mint) for m in rows] for parent, rows in listed.items()}
             continue
         mappings = [m for rows in listed.values() for m in rows]
         hidden = [m["path"] for m in mappings if m["kind"] == "directory" and not view.shows(m)]
@@ -515,7 +525,7 @@ async def _children_by_parent(
         for parent, rows in listed.items():
             for mapping in rows:
                 if view.shows(mapping):
-                    children.setdefault(parent, []).append(observe_for(view, mapping, fetched))
+                    children.setdefault(parent, []).append(observe_for(view, mapping, fetched, mint))
                 elif mapping["path"] in road:
                     children.setdefault(parent, []).append(road_observation(mapping["path"]))
     return children
@@ -553,15 +563,20 @@ def _trash_roots_statement(entry: Table, profile: DialectProfile, wanted: frozen
 
 
 async def _trash_roots(
-    session: AsyncSession, tables: VFSTables, profile: DialectProfile, fetched: frozenset[str], view: Visibility | None
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    fetched: frozenset[str],
+    view: Visibility | None,
+    mint: VidMint,
 ) -> list[Observation]:
     """``ls`` of the trash view's head: every tombstoned root, at its own path, in path order."""
     wanted = fetched | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
     stmt = _trash_roots_statement(tables.entry, profile, wanted)
     if view is None:
-        return [observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
+        return [observe(mapping, fetched, mint) for mapping in (await session.execute(stmt)).mappings()]
     visible = await _visible_rows(session, stmt, view, None)
-    return [observe_for(view, visible[path], fetched) for path in sorted(visible)]
+    return [observe_for(view, visible[path], fetched, mint) for path in sorted(visible)]
 
 
 def _with_trash_view(listed: list[Observation]) -> list[Observation]:

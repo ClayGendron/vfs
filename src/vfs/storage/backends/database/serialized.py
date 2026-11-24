@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 from sqlalchemy import Update, bindparam, column, select, update, values
 
 from vfs.models import Observation
+from vfs.models.rows import vid_at
 from vfs.results import ErrorKind, ResultError, classified
 from vfs.storage.backends.database.descent import ancestor_chain, classify_miss, rows_by_path, targets_with_ancestors
 from vfs.storage.backends.database.dialects import (
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
 
     from vfs.paths import ObjectKind, Path
     from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.vid import VidMint
 
 # The pre-batch committed snapshot: classification and observation state.
 SNAPSHOT_COLUMNS: Final[tuple[str, ...]] = (
@@ -102,6 +104,7 @@ class PendingRow(NamedTuple):
     kind: ObjectKind
     version: int
     size_bytes: int
+    entry_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -283,11 +286,11 @@ async def final_rows(
     session: AsyncSession, entry: Table, profile: DialectProfile, membership_budget: int, paths: list[str]
 ) -> dict[str, RowMapping]:
     """One bounded re-read of every pending path after the batch."""
-    columns = [entry.c.path, entry.c.kind, entry.c.version, entry.c.size_bytes]
+    columns = [entry.c.entry_id, entry.c.path, entry.c.kind, entry.c.version, entry.c.size_bytes]
     return await rows_by_path(session, entry, paths, columns, profile, membership_budget)
 
 
-def observe_final(pending: PendingRow, final: RowMapping | None) -> Observation:
+def observe_final(pending: PendingRow, final: RowMapping | None, mint: VidMint) -> Observation:
     """The observation of one executed target: the re-read row where it still stands, else the captured values."""
     if final is None:
         return Observation(
@@ -295,6 +298,7 @@ def observe_final(pending: PendingRow, final: RowMapping | None) -> Observation:
             kind=pending.kind,
             size_bytes=pending.size_bytes,
             version=pending.version,
+            vid=vid_at(mint, pending.entry_id, pending.version),
             status=pending.status,
         )
     return Observation(
@@ -302,6 +306,7 @@ def observe_final(pending: PendingRow, final: RowMapping | None) -> Observation:
         kind=final["kind"],
         size_bytes=final["size_bytes"],
         version=final["version"],
+        vid=vid_at(mint, final["entry_id"], final["version"]),
         status=pending.status,
     )
 

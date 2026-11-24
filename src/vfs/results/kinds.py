@@ -51,9 +51,10 @@ class ErrorKind(StrEnum):
 
     **Per-kind ``data`` records** (absence means "not known", never a
     default): ``busy`` / ``unavailable.*`` / ``timeout`` may carry
-    ``retry_after_ms``; ``conflict`` may carry ``version`` (the current
-    version to retry with); ``exists`` from a create-only write may carry
-    the ``version`` and the ``content_hash`` of the file that is there.
+    ``retry_after_ms``; ``conflict`` may carry ``version`` and ``vid``
+    (the version and the vid of the row there now, to retry with);
+    ``exists`` from a create-only write may carry the ``version``, the
+    ``vid`` and the ``content_hash`` of the file that is there.
     A ``conflict`` is retryable only where the caller expected no
     version, since only then is the same call judged afresh. Envelope machinery writes only
     ``vfs.``-prefixed keys into ``data`` (``vfs.overflow``, ``vfs.rollup``,

@@ -62,6 +62,6 @@
   {
     "term": "Vid",
     "summary": "A short code, named for version and id, that stands for one file at one version, so a change can require it.",
-    "types": []
+    "types": ["Vid"]
   }
 ]

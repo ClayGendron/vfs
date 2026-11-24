@@ -954,7 +954,7 @@ class AsyncVirtualFileSystem:
 
         ``if_version`` is the version the caller expects to replace, as a read of the file returned
         it. If the file is at another version, the write is refused with ``conflict``, nothing is
-        written, and the error carries the version the file is at now in ``data["version"]``. Use it
+        written, and the error carries the ``version`` and the ``vid`` the file is at now. Use it
         to read a file, change it and write it back without erasing a change made in between. A
         file that is missing or deleted is refused with ``not_found``, and is not made. ``if_versions``
         is the same for a batch: it maps a path to the version expected there. Each key must be the
@@ -962,7 +962,7 @@ class AsyncVirtualFileSystem:
         whatever its version. One stale file refuses every entry that goes to the same mount.
 
         If ``if_absent`` is true, the write only creates. A path that already holds a file or a
-        directory is refused with ``exists``. The error carries the ``version`` of what is there and,
+        directory is refused with ``exists``. The error carries the ``version`` and ``vid`` of what is there and,
         for a file, the ``content_hash`` of its body, so a caller that never heard the answer to its own
         create can tell that it landed. An entry that meets another entry of the same call is refused
         with no ``data``. A deleted file counts as absent, and the write brings it back with the new

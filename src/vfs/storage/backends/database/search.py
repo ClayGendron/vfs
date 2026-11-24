@@ -108,12 +108,14 @@ from vfs.storage.backends.database.membership import live_chunks, membership
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
     CHANNEL_ARM_BINDS,
+    DERIVED_FIELDS,
     content_for_entries,
     effective_columns,
     kind_membership,
     meta_scoped,
     scope_facts,
     side_scope,
+    vid_of,
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 from vfs.storage.backends.database.scope import (
@@ -145,6 +147,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Clause, Visibility
     from vfs.storage.backends.database.scope import Pushdown
+    from vfs.vid import VidMint
 
 FUSION_K: Final = 1000
 """Chunk depth scored per query, the fusion leg's K; entries come from these chunks."""
@@ -254,6 +257,7 @@ async def search_rows(
     records: Sequence[ResultError] = (),
     view: Visibility | None = None,
     scope: AdmittedScope | None = None,
+    mint: VidMint,
 ) -> Result:
     """One row per entry, best first: the legs fused, the index side unioned with the overlay.
 
@@ -465,11 +469,13 @@ async def search_rows(
     # the preview read: absent, as grep leaves a body that did not come back.
     ordered = [(entry_id, score) for entry_id, score in ordered if entry_id not in overlay or entry_id in bodies]
     mask = frozenset(fetched | {"score", "matches"})
-    projected = tuple(fetched - {"content"})
+    projected = tuple(fetched - {"content"} - DERIVED_FIELDS)
     sources = _Sources(texts, bodies, terms)
     carried = ranker.aggregate.chunks_per_entry
     observed = [
-        _observe(rows[eid], _Hit(fused.entries[eid], fused.chunks[eid][:carried]), score, sources, projected, mask)
+        _observe(
+            rows[eid], _Hit(fused.entries[eid], fused.chunks[eid][:carried]), score, sources, projected, mask, mint
+        )
         for eid, score in ordered
     ]
     errors = [
@@ -519,7 +525,7 @@ async def _entries_for_chunks(
     entry, docs = tables.entry, tables.lex_docs
     columns = [
         docs.c.chunk_id,
-        *(entry.c[field] for field in sorted((fetched | FETCH_RIDE | {"entry_id"}) - {"content"})),
+        *(entry.c[field] for field in sorted((fetched | FETCH_RIDE | {"entry_id"}) - {"content", "vid"})),
     ]
     kinds = kind_membership(entry)
     per_chunk = max(1, membership_budget - scope.pushdown.binds - kinds.binds)
@@ -607,7 +613,7 @@ async def _vector_leg(
     columns = [
         chunks.c.id.label("chunk_id"),
         distance,
-        *(entry.c[field] for field in sorted((fetched | FETCH_RIDE | {"entry_id"}) - {"content"})),
+        *(entry.c[field] for field in sorted((fetched | FETCH_RIDE | {"entry_id"}) - {"content", "vid"})),
     ]
     kinds = kind_membership(entry)
     base = (
@@ -918,6 +924,7 @@ def _observe(
     sources: _Sources,
     projected: tuple[str, ...],
     mask: frozenset[str],
+    mint: VidMint,
 ) -> Observation:
     """One entry row with its best chunks as ``Match`` rows, chunk scores on the entry's scale.
 
@@ -956,6 +963,8 @@ def _observe(
         )
     values["score"] = score
     values["matches"] = matches
+    if "vid" in mask:
+        values["vid"] = vid_of(mint, mapping)
     values["populated"] = mask
     return Observation.model_validate(values)
 

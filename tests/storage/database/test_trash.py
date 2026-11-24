@@ -574,7 +574,7 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
     host = storage._host
     async with host.session_factory() as session:
         committed = await _fetch_committed(session, host.tables, host.profile, host.membership_budget, {entry.path})
-    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
+    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, mint=host.mint)
     staged = plan.put_file(
         entry.path,
         kind=entry.kind,

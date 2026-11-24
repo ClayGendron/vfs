@@ -324,7 +324,7 @@ async def entries_for_scan(
     base = [kinds.predicate]
     if not everything:
         base.append(rare(profile, ~entry.c.encoded))
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content", "vid"}))]
     clauses = None if view is None else view.clauses()
     cap = min(parameter_budget // 2, profile.expression_depth_budget - EXPRESSION_DEPTH_RESERVE)
     groups = [] if clauses is None else _packed(clauses, cap)

@@ -212,7 +212,8 @@ async def test_add_hears_exists_from_a_create_only_write_over_anothers_row(
     refused = await _write(storage, "/inbox/carol.md", who, if_absent=True)
     # The true answer, and what is there: add reads the row, and a create-only write replaces nothing.
     (error,) = refused.errors
-    assert (error.kind, error.data) == (ErrorKind.exists, {"version": 1, "content_hash": stored.content_hash})
+    named = {"version": 1, "content_hash": stored.content_hash, "vid": stored.vid}
+    assert (error.kind, error.data) == (ErrorKind.exists, named)
     assert _kind(await _write(storage, "/inbox/carol.md", who)) == ErrorKind.permission_denied
     # Another's tombstone: a write at it is a restore, which add lacks, create-only or not.
     assert (await storage.delete(path=Path("/inbox/carol.md"), authority=CAROL)).success is True

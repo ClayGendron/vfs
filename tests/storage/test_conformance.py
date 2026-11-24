@@ -40,6 +40,7 @@ from tests.support.plan_store import PlanBackend
 from tests.support.server_schemas import server_storage
 from tests.support.statements import is_statistics_statement
 from tests.support.storage_contract import StorageContract
+from tests.support.vid_contract import VidContract
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Observation
 from vfs.paths import Path
@@ -62,7 +63,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.slow
-class TestMemoryConformance(StorageContract, GrantsContract, CursorContract):
+class TestMemoryConformance(StorageContract, GrantsContract, CursorContract, VidContract):
     """The contract on the in-memory backend, in the slow tier.
 
     It is the same ``DatabaseStorage`` over ``sqlite+aiosqlite:///:memory:``
@@ -99,7 +100,7 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return path
 
 
-class TestSqliteConformance(StorageContract, GrantsContract, CursorContract):
+class TestSqliteConformance(StorageContract, GrantsContract, CursorContract, VidContract):
     plan_backend = PlanBackend("sqlite")
 
     @pytest.fixture
@@ -179,7 +180,7 @@ async def _closing(storage: DatabaseStorage) -> AsyncIterator[DatabaseStorage]:
 
 
 @pytest.mark.postgres
-class TestPostgresConformance(StorageContract, GrantsContract, CursorContract):
+class TestPostgresConformance(StorageContract, GrantsContract, CursorContract, VidContract):
     plan_backend = PlanBackend("postgres", "VFS_TEST_POSTGRES_URL")
 
     @pytest.fixture

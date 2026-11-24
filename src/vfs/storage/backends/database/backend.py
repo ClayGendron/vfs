@@ -246,6 +246,7 @@ class DatabaseStorage:
             "search_signals": "hybrid" if self._host.embedder is not None else "lexical",
             "search_staleness": "overlay",
             "listing_cursor": "keyset",
+            "vid": "entry_version",
         }
         # Tuned engines are the measured ones, and only they claim full durability: an unknown dialect is not one.
         if self._host.profile.name in PROFILES:
@@ -273,7 +274,7 @@ class DatabaseStorage:
                 authority,
                 [str(target) for target in targets],
                 lambda session, view: read_rows(
-                    session, host.tables, host.profile, host.membership_budget, targets, columns, view
+                    session, host.tables, host.profile, host.membership_budget, targets, columns, view, mint=host.mint
                 ),
             ),
         )
@@ -295,7 +296,7 @@ class DatabaseStorage:
                 authority,
                 [str(target) for target in targets],
                 lambda session, view: stat_rows(
-                    session, host.tables, host.profile, host.membership_budget, targets, columns, view
+                    session, host.tables, host.profile, host.membership_budget, targets, columns, view, mint=host.mint
                 ),
             ),
         )
@@ -330,6 +331,7 @@ class DatabaseStorage:
                     view,
                     after=after,
                     limit=limit,
+                    mint=host.mint,
                 ),
             ),
         )
@@ -364,6 +366,7 @@ class DatabaseStorage:
                     view,
                     after=after,
                     limit=limit,
+                    mint=host.mint,
                 ),
             ),
         )
@@ -414,14 +417,15 @@ class DatabaseStorage:
             limit,
             effective_columns(columns, content=False),
         )
-        site = Site(host.tables, host.profile, host.membership_budget)
         return await self._execute(
             "traverse",
             self._viewed(
                 "traverse",
                 authority,
                 [str(seed) for seed in seeds],
-                lambda session, view: traverse_rows(session, site, request, seeds, view),
+                lambda session, view: traverse_rows(
+                    session, Site(host.tables, host.profile, host.membership_budget, host.mint), request, seeds, view
+                ),
             ),
         )
 
@@ -477,6 +481,7 @@ class DatabaseStorage:
                     wall_seconds=self._glob_wall_seconds,
                     view=view,
                     scope=admitted,
+                    mint=host.mint,
                 ),
                 scoped=gate,
             ),
@@ -540,6 +545,7 @@ class DatabaseStorage:
                     columns=columns,
                     wall_seconds=self._grep_wall_seconds,
                     scope=admitted,
+                    mint=host.mint,
                 ),
                 scoped=gate,
             ),
@@ -603,6 +609,7 @@ class DatabaseStorage:
                     ranker=self._ranker,
                     records=records,
                     scope=admitted,
+                    mint=self._host.mint,
                 ),
                 scoped=gate,
             ),
@@ -731,6 +738,7 @@ class DatabaseStorage:
                     authority=self._named(authority),
                     executor=offload_pool(),
                     primary=needs.primary,
+                    mint=host.mint,
                 )
             return await write_rows(
                 session,
@@ -743,6 +751,7 @@ class DatabaseStorage:
                 parents=parents,
                 authority=self._named(authority),
                 if_versions=if_versions,
+                mint=host.mint,
             )
 
         return await (self._execute_append("write", run) if append else self._execute_write("write", run))
@@ -774,6 +783,7 @@ class DatabaseStorage:
                 targets=targets,
                 authority=self._named(authority),
                 executor=offload_pool(),
+                mint=host.mint,
             )
 
         return await self._execute_write("edit", run)
@@ -808,6 +818,7 @@ class DatabaseStorage:
                 cascade=cascade,
                 authority=authority,
                 gate=gate,
+                mint=self._host.mint,
             ),
         )
 
@@ -873,6 +884,7 @@ class DatabaseStorage:
                 authority=authority,
                 gate=gate,
                 permit=permit,
+                mint=self._host.mint,
             ),
         )
 
@@ -906,6 +918,7 @@ class DatabaseStorage:
                 trash_days=self._trash_days,
                 authority=authority,
                 gate=gate,
+                mint=self._host.mint,
             ),
         )
 
@@ -935,6 +948,7 @@ class DatabaseStorage:
                 parents=parents,
                 exist_ok=exist_ok,
                 authority=authority,
+                mint=host.mint,
             )
 
         return await self._execute_write("mkdir", run)
@@ -1439,6 +1453,7 @@ class DatabaseStorage:
                 operations=operations,
                 authority=authority,
                 gate=gate,
+                mint=self._host.mint,
             ),
         )
 

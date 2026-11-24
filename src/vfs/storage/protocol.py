@@ -84,6 +84,7 @@ TraitKey = Literal[
     "durability",
     "arbitration",
     "listing_cursor",
+    "vid",
 ]
 TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
@@ -96,6 +97,7 @@ TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
     "listing_cursor": frozenset({"keyset"}),
+    "vid": frozenset({"entry_version"}),
 }
 """Per-key value vocabulary; the traits drift test pins declarations to it."""
 
@@ -521,6 +523,15 @@ class SupportsTraits(Protocol):
     key is "not declared," never an implied default. Declaration beats
     discovery: staleness and durability are contracts a caller must be
     able to read, not surprises to probe for.
+
+    ``vid``, declared as ``entry_version``, is three promises: every row
+    the backend returns with a version carries a vid of the public shape
+    (:func:`vfs.vid.is_vid`); two of its rows carry equal vids when, and
+    only when, they are the same entry at the same version; and no vid of
+    another storage equals one of its own, short of a digest collision. A
+    backend that does not declare it fills no vid, and its rows carry a
+    version alone. A backend that wants to declare it may mint with
+    :class:`vfs.vid.VidMint` over any identity that is its own.
     """
 
     def traits(self) -> Mapping[str, str]: ...

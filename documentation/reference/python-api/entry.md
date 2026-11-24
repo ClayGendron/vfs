@@ -16,10 +16,11 @@ from vfs import Edge, Entry, Match, Observation
 
 ## Field Types
 
-These are the types of some of an entry's fields.
+These are the types of some of an entry's fields. A `Vid` is on every row a call returns with a version: it names that file or directory at that version, and it changes when the version does. It is compared and never taken apart.
 
 ```python
 from vfs import ContentHash, ObjectKind, RenderStatus, Source
+from vfs import Vid
 ```
 
 ::: vfs.ObjectKind
@@ -27,5 +28,7 @@ from vfs import ContentHash, ObjectKind, RenderStatus, Source
 ::: vfs.Source
 
 ::: vfs.ContentHash
+
+::: vfs.Vid
 
 ::: vfs.RenderStatus

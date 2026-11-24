@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url, begin_as_writer
+from tests.support.vids import TEST_MINT
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.offload import offload_pool
@@ -102,6 +103,7 @@ class TestWriteVsTopologyCoherence:
                     overwrite=True,
                     parents=False,
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         # Nothing committed: no torn child, and the parent stands untouched.
@@ -131,6 +133,7 @@ class TestWriteVsTopologyCoherence:
                     overwrite=True,
                     parents=False,
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         assert (await storage.stat(path=Path("/d/f.txt"))).success is False
@@ -189,6 +192,7 @@ class TestWriteVsTopologyCoherence:
                     targets=[Path("/d/f.txt")],
                     authority=None,
                     executor=offload_pool(),
+                    mint=host.mint,
                 )
             await session.rollback()
         assert result.success is False
@@ -267,6 +271,7 @@ class TestWriteVsTopologyCoherence:
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         # Nothing landed under the torn observation; the redrive copies the rival's coherent pair.
@@ -299,6 +304,7 @@ class TestWriteVsTopologyCoherence:
                     targets=[Path("/d")],
                     cascade=True,
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         # The verb redrives clean once the rival is out of the window.
@@ -327,6 +333,7 @@ class TestWriteVsTopologyCoherence:
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))])).success is True
@@ -358,6 +365,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     targets=[Path("/d/f.txt")],
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -389,6 +397,7 @@ class TestWriteVsTopologyCoherence:
                     path=Path("/d"),
                     trash_days=90,
                     authority=None,
+                    mint=host.mint,
                 )
             assert result.success is True
             leftovers = (await session.execute(select(tables.content.c.entry_id))).all()
@@ -479,6 +488,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     [stale],
                     now=datetime.now(UTC),
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -520,6 +530,7 @@ class TestWriteVsTopologyCoherence:
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -561,6 +572,7 @@ class TestWriteVsTopologyCoherence:
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -591,6 +603,7 @@ class TestWriteVsTopologyCoherence:
                     path=Path("/d"),
                     trash_days=90,
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -637,6 +650,7 @@ class TestWriteVsTopologyCoherence:
                     overwrite=True,
                     parents=False,
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -676,7 +690,7 @@ class TestWriteVsTopologyCoherence:
                 content="mine",
             )
             rows = [_entry_values(staged, d_id, None, now, 2)]
-            errors = await _resolve_rows(session, entry, [staged], rows, overwrite=True)
+            errors = await _resolve_rows(session, entry, [staged], rows, overwrite=True, mint=TEST_MINT)
             await session.rollback()
         [error] = errors
         assert error.kind == ErrorKind.conflict
@@ -693,7 +707,12 @@ class TestWriteVsTopologyCoherence:
             staged = _staged_material("/x.txt", str(ULID()))
             with pytest.raises(StaleSnapshot):
                 await _classify_arbitration_loss(
-                    session, host.tables.entry, staged, {"parent_id": str(ULID()), "name": "x.txt"}, clobber=False
+                    session,
+                    host.tables.entry,
+                    staged,
+                    {"parent_id": str(ULID()), "name": "x.txt"},
+                    clobber=False,
+                    mint=host.mint,
                 )
         await storage.close()
 
@@ -702,14 +721,17 @@ class TestWriteVsTopologyCoherence:
         staged = _staged_material("/x.txt", str(ULID()))
         double = _ReturningSession([])
         with pytest.raises(StaleSnapshot):
-            await _classify_guard_misses(cast("AsyncSession", double), tables.entry, REDRIVE, 900, [staged])
+            await _classify_guard_misses(
+                cast("AsyncSession", double), tables.entry, REDRIVE, 900, [staged], mint=TEST_MINT
+            )
 
     async def test_bump_parents_dispatches_by_declared_capability(self) -> None:
         tables = build_vfs_tables()
         parent_id = "D" * 26
 
         def plan() -> WritePlan:
-            built = WritePlan({"/d": {"entry_id": parent_id, "path": "/d"}}, authority=None, budget=4_096)  # ty: ignore[invalid-argument-type]
+            committed = {"/d": {"entry_id": parent_id, "path": "/d"}}
+            built = WritePlan(committed, authority=None, budget=4_096, mint=TEST_MINT)  # ty: ignore[invalid-argument-type]
             built.stage_create(Path("/d/f.txt"), kind="file", content="x")
             return built
 
@@ -860,6 +882,7 @@ class TestWriteVsTopologyCoherence:
                     targets=[Path("/d")],
                     cascade=True,
                     authority=None,
+                    mint=host.mint,
                 )
             assert result.success is True, result.errors
             live = (
@@ -917,6 +940,7 @@ class TestWriteVsTopologyCoherence:
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/" + "m" * 20))],
                     authority=None,
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -965,6 +989,7 @@ class TestWriteVsTopologyCoherence:
                     overwrite=False,
                     parents=True,
                     authority=None,
+                    mint=host.mint,
                 )
             stored = (await session.execute(select(entry.c.version).where(entry.c.path == "/x"))).scalar_one()
             await session.rollback()
@@ -1020,6 +1045,7 @@ class TestWriteVsTopologyCoherence:
                     overwrite=False,
                     parents=False,
                     authority=None,
+                    mint=host.mint,
                 )
             root_after = (await session.execute(select(entry.c.version).where(entry.c.path == "/"))).scalar_one()
             adopted = (await session.execute(select(entry.c.version).where(entry.c.path == "/x"))).scalar_one()
@@ -1207,7 +1233,14 @@ class TestWriteVsTopologyCoherence:
                 raise IntegrityError("stmt", None, Exception("duplicate"))
 
         errors = await _upsert_layer(
-            cast("AsyncSession", _EscapeSession()), tables.entry, SQLITE, [staged], rows, 50, overwrite=True
+            cast("AsyncSession", _EscapeSession()),
+            tables.entry,
+            SQLITE,
+            [staged],
+            rows,
+            50,
+            overwrite=True,
+            mint=TEST_MINT,
         )
         [error] = errors
         assert error.kind == ErrorKind.conflict

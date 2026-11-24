@@ -10,15 +10,20 @@ from uuid import UUID
 import pytest
 from sqlalchemy import (
     BigInteger,
+    Column,
     DateTime,
     Double,
     Engine,
     LargeBinary,
+    MetaData,
     String,
+    Table,
+    create_engine,
     create_mock_engine,
     insert,
     inspect,
     select,
+    type_coerce,
 )
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.dialects.mysql import mariadb
@@ -45,9 +50,11 @@ from vfs.models.rows import (
     ULID_LENGTH,
     VERSION_ROW_ONLY_COLUMNS,
     BytewiseString,
+    ULIDBytes,
     ULIDKey,
     VFSTables,
     build_vfs_tables,
+    entry_key_of,
 )
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, Path
@@ -497,6 +504,34 @@ class TestULIDKey:
         assert [key.process_result_value(b, dialect) for b in bound] == ulids
         assert key.process_bind_param(None, dialect) is None
         assert key.process_result_value(None, dialect) is None
+
+
+class TestULIDBytes:
+    """The identity column read as its 16 stored bytes, and text turned into those bytes."""
+
+    def test_the_id_reads_as_bytes_and_as_text_alike(self) -> None:
+        """Mutation guarded: a bytes arm or an ``entry_key_of`` that reorders or drops a byte."""
+        metadata = MetaData()
+        ids = Table("ids", metadata, Column("entry_id", ULIDKey(), nullable=False))
+        engine = create_engine("sqlite://")
+        metadata.create_all(engine)
+        with engine.begin() as conn:
+            conn.execute(insert(ids), [{"entry_id": str(ULID())} for _ in range(1_000)])
+            stmt = select(ids.c.entry_id, type_coerce(ids.c.entry_id, ULIDBytes()).label("entry_key"))
+            rows = conn.execute(stmt).all()
+        engine.dispose()
+        assert len(rows) == 1_000
+        assert sum(entry_key_of(row.entry_id) != row.entry_key for row in rows) == 0
+        assert all(isinstance(row.entry_key, bytes) and len(row.entry_key) == 16 for row in rows)
+
+    def test_the_uuid_arm_hands_on_its_bytes(self) -> None:
+        key = ULIDBytes()
+        ulid = ULID()
+        assert key.process_result_value(ulid.to_uuid(), postgresql.dialect()) == ulid.bytes
+        assert key.process_result_value(ulid.bytes, sqlite.dialect()) == ulid.bytes
+        assert key.process_result_value(None, sqlite.dialect()) is None
+        assert key.compile(dialect=postgresql.dialect()) == "UUID"
+        assert key.compile(dialect=sqlite.dialect()) == "BINARY(16)"
 
 
 class TestFixedNames:

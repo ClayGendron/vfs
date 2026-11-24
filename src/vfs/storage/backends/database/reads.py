@@ -35,11 +35,12 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import LargeBinary, and_, cast, or_, select
+from sqlalchemy import LargeBinary, and_, cast, or_, select, type_coerce
 
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
 from vfs.models.media import FAILURE_STATUSES
+from vfs.models.rows import ULIDBytes, vid_at
 from vfs.offload import judge_rows, wall_truncation
 from vfs.paths import (
     METADATA_ROOT,
@@ -83,7 +84,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import Column, ColumnElement, FromClause, Table
+    from sqlalchemy import ColumnElement, FromClause, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +93,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.keyset import Fetch
     from vfs.storage.backends.database.rights import Visibility
+    from vfs.vid import Vid, VidMint
 
 # Observation fields served directly by entries-table columns (the two
 # vocabularies share these names by construction). A file's current version
@@ -106,8 +108,15 @@ ENTRY_OBSERVATION_FIELDS: Final[frozenset[str]] = frozenset(
 # that carry bodies: ``content`` by default, ``data`` only when projected.
 BODY_FIELDS: Final[frozenset[str]] = frozenset({"content", "data"})
 
+# Observation fields worked out from a fetched row, with no column of their own: the
+# vid is minted from the entry id, selected as its stored bytes, and the version.
+DERIVED_FIELDS: Final[frozenset[str]] = frozenset({"vid"})
+
 # Identity fields every observation carries regardless of projection.
-ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version"})
+ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version", "vid"})
+
+# The label the entry id's stored bytes are selected under, for the mint.
+ENTRY_KEY: Final = "entry_key"
 
 # What a row shows to a caller holding ``list`` on it — a granted ``list``
 # row or a directory only on the road: its name and kind, nothing else.
@@ -138,7 +147,7 @@ def effective_columns(columns: frozenset[str] | None, *, content: bool) -> froze
     field with no backing column yet is simply not in the mask.
     """
     if columns is None:
-        fetched = set(ENTRY_OBSERVATION_FIELDS)
+        fetched = set(ENTRY_OBSERVATION_FIELDS | DERIVED_FIELDS)
         if content:
             fetched.add("content")
         return frozenset(fetched)
@@ -161,10 +170,12 @@ async def read_rows(
     targets: Sequence[Path],
     columns: frozenset[str] | None,
     view: Visibility | None = None,
+    *,
+    mint: VidMint,
 ) -> Result:
     fetched = effective_columns(columns, content=True)
     rows, errors = await _point_rows(
-        session, tables, profile, membership_budget, targets, fetched, content_only=True, view=view
+        session, tables, profile, membership_budget, targets, fetched, content_only=True, view=view, mint=mint
     )
     if "content" in fetched:
         rows, notes = render_notes(rows)
@@ -180,10 +191,12 @@ async def stat_rows(
     targets: Sequence[Path],
     columns: frozenset[str] | None,
     view: Visibility | None = None,
+    *,
+    mint: VidMint,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     rows, errors = await _point_rows(
-        session, tables, profile, membership_budget, targets, fetched, content_only=False, view=view
+        session, tables, profile, membership_budget, targets, fetched, content_only=False, view=view, mint=mint
     )
     return Result(ops=("stat",), observations=rows, errors=errors)
 
@@ -277,28 +290,48 @@ async def screen(
     return shown, road, misses
 
 
-def observe_for(view: Visibility | None, mapping: RowMapping, fetched: frozenset[str]) -> Observation:
+def observe_for(view: Visibility | None, mapping: RowMapping, fetched: frozenset[str], mint: VidMint) -> Observation:
     """The row whole when *view* reads it (or there is no view), else bare: path and kind, no ``deleted_at``."""
     if view is None or view.reads(mapping):
-        return observe(mapping, fetched)
+        return observe(mapping, fetched, mint)
     return bare_observation(mapping["path"], mapping["kind"])
 
 
-def observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:
+def observe(mapping: RowMapping, fetched: frozenset[str], mint: VidMint) -> Observation:
     """The fetched row as an observation, its mask the fields fetched; a tombstoned row adds ``deleted_at``."""
     # A tombstoned row reaches here only through the trash view, which projects when it was deleted.
     if mapping.get("deleted_at") is not None:
         fetched = fetched | {"deleted_at"}
     # Stored paths are canonical by invariant: re-brand, never re-gate.
-    values: dict[str, object] = {field: mapping[field] for field in fetched}
+    values: dict[str, object] = {field: mapping[field] for field in fetched - DERIVED_FIELDS}
     values["path"] = Path._brand(mapping["path"])
+    if "vid" in fetched:
+        values["vid"] = vid_of(mint, mapping)
     values["populated"] = fetched
     return Observation.model_validate(values)
 
 
-def entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]]:
-    """The entries-table columns that serve the fields in *fetched*, the body fields left to their own tables."""
-    return [entry.c[field] for field in sorted(fetched - BODY_FIELDS)]
+def vid_of(mint: VidMint, mapping: RowMapping) -> Vid:
+    """The vid of a fetched row: its id's stored bytes where it selected them, else its id's text, at its version."""
+    if ENTRY_KEY in mapping:
+        return mint.mint(mapping[ENTRY_KEY], mapping["version"])
+    return vid_at(mint, mapping["entry_id"], mapping["version"])
+
+
+def entry_key_column(entry: Table) -> ColumnElement[bytes]:
+    """The entry id selected as its 16 stored bytes, under the label the mint reads."""
+    return type_coerce(entry.c.entry_id, ULIDBytes()).label(ENTRY_KEY)
+
+
+def entry_columns(entry: Table, fetched: frozenset[str]) -> list[ColumnElement[Any]]:
+    """The entries-table columns that serve the fields in *fetched*, the body fields left to their own tables.
+
+    A derived field selects what it is worked out from: the vid, the id's stored bytes.
+    """
+    columns: list[ColumnElement[Any]] = [entry.c[field] for field in sorted(fetched - BODY_FIELDS - DERIVED_FIELDS)]
+    if "vid" in fetched:
+        columns.append(entry_key_column(entry))
+    return columns
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +381,7 @@ async def glob_rows(
     scope: AdmittedScope | None = None,
     after: Path | None = None,
     limit: int | None = None,
+    mint: VidMint,
 ) -> Result:
     """Rows matching **any** pattern, one snapshot, statements chunked by budget; or one page of them.
 
@@ -479,7 +513,7 @@ async def glob_rows(
                     matched.setdefault(mapping["path"], mapping)
                 elif mapping["kind"] == "directory":
                     hidden[trashed].append(mapping["path"])
-        observed = {path: observe_for(view, mapping, fetched) for path, mapping in matched.items()}
+        observed = {path: observe_for(view, mapping, fetched, mint) for path, mapping in matched.items()}
         for trashed, paths in hidden.items():
             if view is not None and paths:
                 observed |= {path: road_observation(path) for path in await view.road(session, paths, trashed=trashed)}
@@ -896,6 +930,7 @@ async def _point_rows(
     *,
     content_only: bool,
     view: Visibility | None = None,
+    mint: VidMint,
 ) -> tuple[list[Observation], list[ResultError]]:
     """Fetch, classify, and observe *targets* one row at a time, in order.
 
@@ -930,7 +965,7 @@ async def _point_rows(
             # A row the caller may name but not read: the refusal confirms only what a listing shows.
             errors.append(denied(target))
             continue
-        rows.append(observe_for(view, mapping, fetched))
+        rows.append(observe_for(view, mapping, fetched, mint))
     return rows, errors
 
 

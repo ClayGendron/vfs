@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ulid import ULID
 
+from vfs.models.rows import vid_at
 from vfs.paths import TRASH_ROOT, byte_length, is_trash_path
 from vfs.results import ErrorKind, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain, tombstone_miss, trashed_hint
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.media import Source
     from vfs.paths import ObjectKind, Path
+    from vfs.vid import Vid, VidMint
 
 Status = Literal["created", "updated", "unchanged"]
 # Which execution pass writes a staged row's material columns. Distinct
@@ -156,10 +158,12 @@ class WritePlan:
         *,
         authority: Authority | None,
         budget: int,
+        mint: VidMint,
     ) -> None:
         self.committed = committed
         self.authority = authority
         self.budget = budget
+        self.mint = mint
         self.staged: dict[Path, StagedEntry] = {}
         self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
@@ -323,7 +327,7 @@ class WritePlan:
         if path in self.staged:
             return already_exists(path)
         row = self.committed[str(path)]
-        return occupant_exists(path, row["version"], row["content_hash"])
+        return occupant_exists(path, row["version"], row["content_hash"], self.vid_of(row))
 
     def put_dir(self, target: Path, *, parents: bool, exclusive: bool = False) -> Status | None:
         """Gate and stage one directory; a tombstone at the site is absent, and only ``restore`` brings it back.
@@ -483,9 +487,13 @@ class WritePlan:
         for path, staged in self.staged.items():
             if staged.expected_version is None:
                 continue
-            current = self.committed[str(path)]["version"]
-            if staged.expected_version != current:
-                self.errors.append(stale_version(path, current))
+            row = self.committed[str(path)]
+            if staged.expected_version != row["version"]:
+                self.errors.append(stale_version(path, row["version"], self.vid_of(row)))
+
+    def vid_of(self, row: RowMapping) -> Vid:
+        """The vid of a committed row of the snapshot, at the version it was read at."""
+        return vid_at(self.mint, row["entry_id"], row["version"])
 
     def derive_bumps(self) -> dict[str, str]:
         """The directories whose membership this batch changes: path → entry_id.
@@ -518,24 +526,24 @@ class WritePlan:
 # ---------------------------------------------------------------------------
 
 
-def stale_version(path: Path, current: int) -> ResultError:
-    """The ``conflict`` of a write whose expected version is not the row's, naming the version there now.
+def stale_version(path: Path, current: int, vid: Vid) -> ResultError:
+    """The ``conflict`` of a write whose expected version is not the row's, naming the version and the vid there now.
 
     It is not retryable: the same call would carry the same stale
     version, so the caller reads the file again first.
     """
     detail = "the version expected is not the version stored"
-    return classified(ErrorKind.conflict, path, detail=detail, data={"version": current})
+    return classified(ErrorKind.conflict, path, detail=detail, data={"version": current, "vid": vid})
 
 
-def occupant_exists(path: Path, version: int, content_hash: str | None) -> ResultError:
-    """The ``exists`` of a create that found a live row at *path*, naming the row's version and its body's hash.
+def occupant_exists(path: Path, version: int, content_hash: str | None, vid: Vid) -> ResultError:
+    """The ``exists`` of a create that found a live row at *path*, naming the row's version, vid and body's hash.
 
-    A caller that lost the reply to its own create can tell from the
-    two that the row there is the one it made. A directory has no
-    body, and names its version alone.
+    A caller that lost the reply to its own create can tell from them
+    that the row there is the one it made. A directory has no body,
+    and names its version and its vid alone.
     """
-    data: dict[str, object] = {"version": version}
+    data: dict[str, object] = {"version": version, "vid": vid}
     if content_hash is not None:
         data["content_hash"] = content_hash
     return classified(ErrorKind.exists, path, data=data)

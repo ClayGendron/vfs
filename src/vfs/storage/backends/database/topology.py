@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.grants import PostureRows
     from vfs.storage.protocol import ResolvedPair
+    from vfs.vid import VidMint
 
 # A transfer subtree adds the material columns a copy reproduces.
 _SUBTREE_COLUMNS: Final[tuple[str, ...]] = (
@@ -126,6 +127,7 @@ async def transfer_rows(
     operations: list[ResolvedPair],
     authority: Authority | None,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
+    mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of moves or copies, pair by pair.
 
@@ -177,7 +179,11 @@ async def transfer_rows(
             continue
         if dest == src:
             # POSIX rename-to-self: a successful no-op, never a refusal.
-            pending.append(PendingRow(dest, "unchanged", src_row["kind"], src_row["version"], src_row["size_bytes"]))
+            pending.append(
+                PendingRow(
+                    dest, "unchanged", src_row["kind"], src_row["version"], src_row["size_bytes"], src_row["entry_id"]
+                )
+            )
             continue
         parent_id = await dest_parent_id(session, entry, dest, profile, membership_budget)
         if isinstance(parent_id, ResultError):
@@ -213,7 +219,7 @@ async def transfer_rows(
                 errors.append(error)
                 continue
             own.add(src_row["entry_id"])
-            version = src_row["version"] + 1
+            version, landed = src_row["version"] + 1, src_row["entry_id"]
         else:
             created = [(new_paths[row["entry_id"]], row["entry_id"]) for row in subtree]
             if refusal := await admit_created(
@@ -221,7 +227,7 @@ async def transfer_rows(
             ):
                 errors.append(refusal)
                 continue
-            await _execute_copy(
+            landed = await _execute_copy(
                 session,
                 tables,
                 profile,
@@ -238,11 +244,11 @@ async def transfer_rows(
                 own=own,
             )
             version = 1
-        pending.append(PendingRow(dest, "created", src_row["kind"], version, src_row["size_bytes"]))
+        pending.append(PendingRow(dest, "created", src_row["kind"], version, src_row["size_bytes"], landed))
     if errors:
         return Result(ops=(op,), errors=errors)
     finals = await final_rows(session, entry, profile, membership_budget, [str(p.path) for p in pending])
-    rows = [observe_final(p, finals.get(str(p.path))) for p in pending]
+    rows = [observe_final(p, finals.get(str(p.path)), mint) for p in pending]
     return Result(ops=(op,), observations=rows)
 
 
@@ -463,8 +469,8 @@ async def _execute_copy(
     authority: Authority | None,
     now: datetime,
     own: set[str],
-) -> None:
-    """Mint the copied tree under a probed-empty destination; the ids it mints join *own*.
+) -> str:
+    """Mint the copied tree under a probed-empty destination and return its root's id; the ids it mints join *own*.
 
     Every row is fresh: new ULIDs at version 1, ownership follows the
     writer, the everyone level is the destination's (*postures*), and
@@ -522,6 +528,7 @@ async def _execute_copy(
     await _copy_bodies(session, tables, profile, membership_budget, subtree, id_map, now)
     await bump(session, entry, dest_parent_id)
     own.update(id_map.values())
+    return id_map[root_id]
 
 
 async def _copy_bodies(

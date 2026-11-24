@@ -23,7 +23,12 @@ from vfs import Authority, Principal, VirtualFileSystem
 
 fs = VirtualFileSystem()
 system = Authority.system()
-fs.write(path="/notes/plan.md", content="Ship on Friday.\n", parents=True, authority=system)
+fs.write(
+    path="/notes/plan.md",
+    content="Ship on Friday.\n",
+    parents=True,
+    authority=system,
+)
 
 scout_is = Authority.of(Principal("scout"))
 scout = fs.session(scout_is, "conv_123")
@@ -57,9 +62,13 @@ When the session showed Scout the file, it recorded which file it was and which 
 
 ```python
 ada = Authority.of(Principal("ada", name="Ada Lovelace"))
-fs.edit("/notes/plan.md", old="Monday", new="Tuesday", authority=ada)
+fs.edit(
+    "/notes/plan.md", old="Monday", new="Tuesday", authority=ada
+)
 
-print(scout.edit("/notes/plan.md", old="Monday", new="Wednesday"))
+print(
+    scout.edit("/notes/plan.md", old="Monday", new="Wednesday")
+)
 ```
 
 ```text
@@ -72,7 +81,11 @@ Nothing was written, and the message tells the agent the one thing that will wor
 **A session also refuses to change a file it has never been shown.** An agent that deletes or overwrites a file it has not looked at is guessing, so the session stops it.
 
 ```python
-fs.write(path="/notes/budget.md", content="Budget: 40,000\n", authority=system)
+fs.write(
+    path="/notes/budget.md",
+    content="Budget: 40,000\n",
+    authority=system,
+)
 print(scout.delete("/notes/budget.md"))
 ```
 
@@ -127,7 +140,11 @@ The user sends another message, so start the next turn.
 ```python
 scout.start_turn("msg_5")
 
-print(scout.edit("/notes/plan.md", old="Wednesday", new="Thursday"))
+print(
+    scout.edit(
+        "/notes/plan.md", old="Wednesday", new="Thursday"
+    )
+)
 print(scout.cli("cd /notes && cat budget.md"))
 ```
 
