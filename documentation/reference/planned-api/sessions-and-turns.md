@@ -65,7 +65,7 @@ When the caller states no precondition of its own, the session fills one in.
 | `edit`, `delete`, `move` | Sent with the etag it was shown | Refused as unread. Nothing is sent. | Sent as written |
 | `copy`, `mkdir`, `restore` | No precondition | No precondition | No precondition |
 
-A precondition the caller states always wins. [Etags and Preconditions](etags-and-preconditions.md) describes `if_match`.
+A session takes no etag from its caller. Its `write`, `edit`, `delete`, `move` and `restore` have no `if_match` argument, because the session fills the etag in. [Etags and Preconditions](etags-and-preconditions.md) describes `if_match`, which is for a call made on the file system with no session.
 
 A read's stamps are written a moment after the read returns, so a read costs the same with a session as without one. A change's stamps are written before the change returns. `fs.close()` writes whatever is waiting. **A program that ends after each request should close the file system before it ends.**
 

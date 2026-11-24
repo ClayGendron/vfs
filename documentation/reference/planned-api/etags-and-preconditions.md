@@ -41,7 +41,7 @@ A row with no version carries no etag. That covers an edge row, a grant row, and
 
 ## Require an Etag
 
-`write`, `edit`, `delete`, `move` and `restore` each take `if_match` for one path and `if_matches` for many. Both are on the asynchronous and the synchronous file system and on a session.
+`write`, `edit`, `delete`, `move` and `restore` each take `if_match` for one path and `if_matches` for many. Both are on the asynchronous and the synchronous file system. A session has neither: it remembers the etag of each file it was shown and fills it in.
 
 ```python
 write(entries=None, *, path=None, content=None, data=None,
@@ -123,7 +123,7 @@ A refusal changes nothing. In a batch, every stale row is listed and the batch c
 An agent reads this line for a conflict.
 
 ```text
-ERROR /notes/plan.md: Conflict: the etag required is not the etag of what is stored — Read the entry again, then retry; a change that requires an etag takes the one that read returns. (retry: refresh)
+ERROR /notes/plan.md: Conflict: the etag required is not the etag of what is stored — Read the entry again, then retry. (retry: refresh)
 ```
 
 **Read the file before sending the etag from a refusal back.** The refusal carries the current etag so that a caller who already holds that state can go on. A caller who sends it back without reading replaces the very change the refusal reported.

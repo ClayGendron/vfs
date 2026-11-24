@@ -142,7 +142,7 @@ Reason: article 1 allows five first-class things, and the overview rules that a 
 
 ```python
 class Change(NamedTuple):
-    what: Literal["made", "written", "moved", "deleted", "restored", "revived"]
+    what: Literal["made", "written", "moved", "deleted", "restored", "revived", "bumped"]
     kind: Literal["file", "directory"]
     entry: str                  # names the entry alone
     path: Path                  # where the row is after the call, as the storage sees it
@@ -161,13 +161,16 @@ class Change(NamedTuple):
 | `moved` | live at another path | live | the named row of a move |
 | `deleted` | live | a tombstone | each row a delete named |
 | `restored` | a tombstone | live | each row a restore named |
+| `bumped` | a live directory | the same directory, one version on | each parent whose version the call moved because a direct child was made, removed, renamed, or moved in or out |
 
 - `entry` is `EtagMint.mint(entry_key, 0)`: the mint of spec 1's decision 2 at version 0, which no row holds. It is twenty hexadecimal characters, the same for two changes exactly when they are of one entry of one mount, and it is no row's etag. It is what this spec keeps in place of the entry id, which spec 1's decision 1 keeps inside the storage.
 - `etag` and `etag_before` are minted by the storage from the versions its transaction holds. A delete's `etag` is the tombstone's, one version above the one its observation reports, since spec 1's decision 4 has a delete's row carry the etag from before the call.
 - No etag is taken apart anywhere in this spec. The version is carried beside it, as `version_before`, wherever a version is needed.
 - `Result` gains a private attribute, `_changes: tuple[Change, ...]`, empty by default. It is a pydantic `PrivateAttr`: it is not a field, it is not serialized, it does not render, and it is on no exported page.
 - Each mutating method of the storage sets it on a result that succeeded. The facts are the ones its transaction already holds: `StagedEntry` has the entry, the base version, the new version and `revive` (`staging.py:55-82`), and the trash and topology verbs hold each claimed row. No statement is added.
-- A row that came back `unchanged` reports nothing. A row beneath a deleted, restored or moved directory reports nothing: its own version did not move. A parent whose version was bumped reports nothing. `sweep` reports nothing.
+- A row that came back `unchanged` reports nothing. A row beneath a deleted, restored or moved directory reports nothing: its own version did not move. `sweep` reports nothing.
+- **A parent whose version was bumped reports `bumped`,** by the ruling of 2026-11-23. Its `kind` is `directory`, its `etag` is minted at the version the bump left, and its `etag_before` at one version less: a bump is `version = version + 1` on a row the statement holds locked (`serialized.py:218-228`, `writes.py:1174`), so the version before is exactly one less than the version after, whatever a rival did earlier. A statement that bumps one parent twice, as a rename inside one directory does (`topology.py:355-358`), reports two changes in order. The new version comes back from the bump statement itself where the engine's path proves the bump by `RETURNING`. Where the path proves it by a row count, the storage reads the bumped rows back in one chunked statement, as a write already does for some of them. That is at most one statement more for a call that bumps a parent, and the test of decision 2 counts it.
+- **A `bumped` change is for a session's stamps alone.** Spec 3's decision 11 uses it to carry a directory's stamp forward through the session's own change. No row of `vfs_session_changes` is written for it (decision 3), and a rollback undoes none: a parent's version is no state a file can be put back to.
 - The router carries `_changes` through every merge and every path rewrite as it carries observations, and puts the mount's path in front of each path.
 - No storage is reached over a wire in the tree. One that is must carry these facts in its own framing.
 
@@ -220,7 +223,7 @@ Reason: an insert that depends on nothing is the one write that is safe when a p
 A change through a stored session follows the eight steps of spec 3's decision 8. This spec adds to two of them.
 
 1. At its step 5 the kernel dispatches the verb. The storage commits it and returns the result with `_changes`.
-2. At its step 7 the guarded router calls `store.record_after(fn)`, the record-after form of spec 0's decision 10. Inside it, `fn` builds one row for each `Change` and writes them with `insert_rows`. The stamps the change leaves are stored in the same call, so a change costs the kernel store one transaction for both.
+2. At its step 7 the guarded router calls `store.record_after(fn)`, the record-after form of spec 0's decision 10. Inside it, `fn` builds one row for each `Change` that is not `bumped` and writes them with `insert_rows`. The stamps the change leaves are stored in the same call, so a change costs the kernel store one transaction for both.
 3. The verb returns.
 
 - **The session.** `fn` finds `session_key` by spec 2's `resolve`, with `create=True`, inside the same transaction. A handle keeps no copy of the key. A session whose first record is a change is made by it.
@@ -803,6 +806,7 @@ Pages, each changed: the docstrings of `AsyncSession.rewind` and `Session.rewind
 ## Earlier decisions this reverses
 
 - **The draft that stood at this path.** Its decision 1 wrote the record "with the change"; the row is written after it, in another transaction. Its decision 3 deleted a made file where it stood; decision 8 moves it first when its path is needed. Its decision 5 made each restore a call of a public verb; a step is dispatched below the policies, as part of one step.
+- **This spec's own decision 2, as first drafted:** "a parent whose version was bumped reports nothing". By the ruling of 2026-11-23 it reports `bumped`, so that a session can hold a directory to its etag without refusing its own work (spec 3, decision 11).
 - **Spec 3's decision 13**, a draft of the same day: a session's own change refreshes its stamps. A rollback's steps do not pass through the guarded router and refresh none. Decision 14 says what the stamps become.
 - **A decision record on the trash** says no transfer replaces an occupant, a tombstoned one included. It stands. Decision 8 works around it and does not change it.
 - **Roadmap story K8** gave the read of an old body to a public verb at gate `f`. The storage half is built here, earlier, with no verb.
@@ -865,6 +869,7 @@ What this spec asked, and where it is now met:
 - The second plan a stopped rollback makes for its preview. It is a read of the same rows up to the same `through`, and was not costed apart from the first.
 - One `record_after` that writes a change's stamps and its change rows together. Spec 0's decision 10 says one `fn` may write both. The two statements were read and not run together.
 - The size of a row, and what a `record_after` costs a write in round trips.
+- What a `bumped` change costs where the bump is proven by a row count and not by `RETURNING`. It was read from `_bump_parents` (`writes.py:1174`), `bump` and `bump_many` (`serialized.py:218-228`) and not run. To run: a create, a delete and a move of one file on a SQLite file and on the Postgres leg, counted with and without the report; the difference is expected to be 0 on the `RETURNING` path and at most 1 on the other.
 - The mint of an entry's etag at a version it no longer has, which `read_versions` rests on. `EtagMint.mint` takes any version by spec 1's decision 2; it was read and not run, since no mint is built.
 - Two calls of one turn that overlap and touch each other's paths, such as a move away from a path and a create at it sent at once. Their rows can be inserted in the other order. The steps then meet a refusal and both entries are left and reported. It was reasoned and not run.
 - The rights a session needs for the holding move. It made the entry, so the owner floor should serve; read, not run.

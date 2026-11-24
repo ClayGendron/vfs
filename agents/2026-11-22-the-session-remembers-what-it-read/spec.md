@@ -31,7 +31,7 @@ Each line gives the state on 2026-11-22, then what is taken, by the name its own
   - The answers of a failed precondition, decisions 9 (The precondition is judged at the snapshot, and the guard each statement already carries holds it) and 12 (A mismatch is `conflict` with the version and the etag of the row at the path, and an etag from another mount is a mismatch like any other).
   - The `etag` trait, decision 13 (A storage declares the `etag` trait, and a mount without it refuses a change that requires one).
   - The mark `ABSENT`, decision 18 (The mark `ABSENT`, in place of an etag, requires that the path holds no live row). Decision 9 here fills it in for a path a strict session was not shown.
-  - Spec 1 matches a directory by its entry and its version, decision 10 (A directory is matched as a file is, by its entry and its version). This spec sends no precondition for a directory (decision 11 here), so that rule is never met through a session.
+  - Spec 1 matches a directory by its entry and its version, decision 10 (A directory is matched as a file is, by its entry and its version). By the ruling of 2026-11-23 a session sends a directory's etag on a `delete` and a `move` (decision 11 here), so that rule is met through a session.
 - **Spec 2**, `agents/2026-11-22-a-session-is-stored-named-and-forked/`. Drafted. Taken:
   - `session_key`, decision 13 (`vfs_sessions` holds one row per session, under a key that is never used twice).
   - `SessionRef`, its `scope`, `resolve` and `find`, decision 14 (The row is first written by the first record that needs it, through one function, `resolve`). A handle keeps no copy of the key, decision 16 (A handle keeps no copy of the row, so every record names its session by owner and id).
@@ -44,7 +44,7 @@ Each line gives the state on 2026-11-22, then what is taken, by the name its own
   - The latest-turn rule and `make_first_turn`, decision 7 (A handle with no turn files each record under the session's latest turn, found when the record is written).
   - Live and dead, and the refusal of a change through a removed turn, decision 8 (A removed turn's number is never used again, and a record that names it is dead).
   - Step R3 of decision 12 (`rewind(before=turn)` removes that turn and every later one, with their stamps, and cancels their waiting jobs, in one transaction) and step F6 of decision 17 (A fork copies the turns below the fork point, their stamps and their shell state, in statements with a fixed number of binds). Decision 21 here gives the two statements, as two functions.
-- **Spec 5**, `agents/2026-11-22-a-rewind-puts-a-sessions-files-back/`. Drafted, and built after this spec, but for its first two landings. Taken: `Change` and `Result._changes`, decision 2 (A storage reports every entry row a mutation changed, and what the row was before), which its second landing carries with no session in it. Its first landing is the `read_versions` seam alone. Decisions 10 and 13 here use it where a tree has it.
+- **Spec 5**, `agents/2026-11-22-a-rewind-puts-a-sessions-files-back/`. Drafted, and built after this spec, but for its first two landings. Taken: `Change` and `Result._changes`, decision 2 (A storage reports every entry row a mutation changed, and what the row was before), which its second landing carries with no session in it. Its first landing is the `read_versions` seam alone. Decisions 10 and 13 here use it where a tree has it. Decision 11 here needs its `bumped` change, the report of a parent whose version a call moved, and holds a directory to its etag only in a tree that has it.
 - **Spec 6**, `agents/2026-11-22-a-policy-judges-each-step/`. Drafted. Taken: a policy is asked inside the kernel's dispatch, decision 10 (A policy is asked after the kernel's gate, after the caller's rights are proven for a change, and before any storage is asked to act).
 - **Spec 7**, `agents/2026-11-22-a-job-is-interrupted-and-resumed/`. Drafted. Taken: a step that carries a stale `if_match` is refused when its preview is built, decision 13 (The preview is computed once, as the caller, for seven verbs, and every part of it is bounded); the saved step is carried out with its arguments as saved, decision 22 (The saved step is carried out as its caller, with rights judged again, and with the etags the preview saw as `if_match`); a job carries `session_key` and `turn_number`, decision 34 (A resumed job stays in its turn, and what it writes is remembered by its session).
 - **Spec 8**, `agents/2026-11-22-an-interrupted-line-replays-its-replies/`. Drafted. Taken: a bare line's stamps cross a stop, decision 24 (A resumed line runs as its caller, in the session and turn it started in, and its stamps cross the stop), by a journal of what its table was shown, decision 28 (What a bare line was shown is journaled with each entry, and the replay shows it again). Decision 22 here gives the interface it journals through.
@@ -123,13 +123,14 @@ Reason: Article 1 allows five first-class things and requires each to have a pat
 |---|---|
 | `read` | Every row it returns. |
 | `stat`, `ls`, `tree`, `glob`, `grep`, `search`, `traverse` | The rows it returns, up to the cap of decision 3. |
-| `ls` and `tree` that succeed | Also the directory listed, with a directory stamp. |
+| `ls` and `tree` that succeed | Also the directory listed, with a directory stamp that holds its etag, from `Result._listed`. |
 | `read`, `stat`, `ls` or `tree` answered `not_found` for a path it named | That path, with an absent stamp. The refusal may name the path or an ancestor of it. |
 | `glob`, `grep` or `search` with `observations=` | Nothing. |
 | A change that succeeds | Decision 13. |
 | A row with no etag: a bare row, an edge row, a row of a mount that issues none | Nothing. |
 
-- A row of kind `file` leaves a file stamp that holds its etag. A row of kind `directory` leaves a directory stamp, which holds none.
+- A row of kind `file` leaves a file stamp that holds its etag. A row of kind `directory` leaves a directory stamp, which holds its etag too (decision 11).
+- **The directory a listing lists.** The storage reads the row of each directory an `ls` lists before it lists it, with its entry id and its version (`listings.py:108`), and does not return it. It now reports those rows on a private attribute of the result, `_listed: tuple[Observation, ...]`, each with its etag. It is a pydantic `PrivateAttr`, as spec 5's `_changes` is: not a field, not serialized, not rendered and on no exported page, and the router carries it through every merge and path rewrite. No statement is added. The row is read before the children are, so its etag is never newer than the listing the session was shown, and the worst a rival inside that window causes is a refusal.
 - The key of a stamp is the path as the row carries it: the router's resolved, absolute path. A path a caller writes is resolved the same way before a stamp is looked up, so `/a//f.txt` and `/a/f.txt` are one key.
 - The result the caller gets is the kernel's result, unchanged.
 - An absent stamp matters. A session holds a file stamp. Another caller deletes the file. The session's write is refused as changed. Its read answers `not_found`. Without the absent stamp the stale file stamp would refuse every later write, and no read could clear it.
@@ -158,7 +159,7 @@ stamps = Table(
     Column("path", BytewiseString(MAX_PATH_LENGTH), primary_key=True),
     Column("turn_number", BigInteger, primary_key=True),
     Column("kind", String(1), nullable=False),      # "f" file, "d" directory, "a" absent
-    Column("etag", String(ETAG_LENGTH)),            # set for "f" alone
+    Column("etag", String(ETAG_LENGTH)),            # set for "f" and "d"
     sqlite_with_rowid=False,
 )
 ```
@@ -271,7 +272,7 @@ Reason: a change needs the stamp of each path it names and nothing else, so its 
 **A change.** The order of a change through the guarded router:
 
 1. Resolve the paths the call names.
-2. Look up their current stamps. First `store.waiting_behind(STAMPS, keys=...)`, with no statement: a stamp that still waits is the last to arrive, and so is the current one. Then, for the paths that had none waiting, one `store.query`: spec 2's `find(store, transaction, ref)`, and `current_stamps` (decision 7) when the session has a row.
+2. Look up their current stamps, and those of their parent directories, which decision 11 needs. First `store.waiting_behind(STAMPS, keys=...)`, with no statement: a stamp that still waits is the last to arrive, and so is the current one. Then, for the paths that had none waiting, one `store.query`: spec 2's `find(store, transaction, ref)`, and `current_stamps` (decision 7) when the session has a row.
 3. Refuse what cannot go on. A handle whose turn is dead is refused with spec 4's `vfs.not_found`, in the words of its decision 8: `turn '<id>' was removed by a rewind; nothing was changed`. What strict refuses is refused (decision 9). Nothing is dispatched. A call whose every path had a stamp waiting issues no statement and is not checked for a dead turn, which spec 4's decision 8 allows.
 4. Fill in the preconditions (decision 9).
 5. Dispatch through the kernel. Spec 6's policies and spec 7's interrupts are inside this step.
@@ -291,7 +292,7 @@ Reason: reads are about three calls in four. One synchronous row a read was meas
 
 ### 9. A session fills in the precondition and, when strict, refuses a change to what it was not shown
 
-A precondition the caller states always wins: `if_match`, a key of `if_matches`, or `if_absent=True`. It reaches storage unchanged, strict does not apply to that path, and its refusal is storage's own.
+A handle takes no `if_match` and no `if_matches`, by the ruling of 2026-11-23 recorded in spec 1, decision 14: a caller of a session never states an etag. The guarded router still takes one from code inside VFS, which is the line's host (decision 18) and a resumed job (spec 7, decision 22). A precondition stated there, and `if_absent=True` from any caller, always wins: it reaches storage unchanged, strict does not apply to that path, and its refusal is storage's own.
 
 Where the caller states none:
 
@@ -333,15 +334,27 @@ After it succeeds:
 
 Reason for no precondition: an append destroys nothing, the guide says it needs no read, and the landed append exists so that concurrent appends all land. A precondition from a stamp would refuse the append whenever another caller had appended first, and under contention the caller would read, lose and read again without end. Reason for the narrow move: a stamp moved by every append would let a session read a log at one version, miss a rival's append, append its own, and then overwrite the file with a fresh stamp. The rival's lines would be destroyed unseen. Reason for the etag before: a count of versions cannot tell an append that landed on the file the session saw from one that landed on another file at the same version, which is the case spec 1 exists to close.
 
-### 11. A directory takes no precondition, and being shown it is enough
+### 11. A directory is held to its etag, and a session's own change carries that etag forward
 
-A `delete` or `move` whose target has a directory stamp is sent with no precondition from the session. Under strict a directory with no stamp is refused as unread. A directory is shown by a listing of its parent, a `stat` of it, a `tree` above it, the result of the `mkdir` that made it, or a listing of the directory itself (decision 2).
+Ruled on 2026-11-23. This decision's first form was "A directory takes no precondition, and being shown it is enough", and other specs may still cite it under that heading.
 
+A `delete` or `move` whose target has a directory stamp is sent with `if_match` from the stamp, as a file is. Under strict a directory with no stamp is refused as unread. A directory is shown by a listing of its parent, a `stat` of it, a `tree` above it, the result of the `mkdir` that made it, or a listing of the directory itself (decision 2).
+
+What a directory's etag says is spec 1's decision 10: the same directory, with the same direct children.
+
+- A directory in which another caller made, removed or renamed a direct child after the session was shown it is refused as changed. A listing of it clears the refusal, and shows the session what it had not seen.
+- A directory that was replaced by another directory after it was shown is refused as changed.
 - A file stamp on a path that is now a directory fails `if_match`, and is refused as changed.
-- A directory that was replaced by another directory after it was shown is removed without a refusal. A delete can be undone from the trash, and a move destroys nothing.
-- A caller that wants spec 1's whole comparison states it: `delete(path, if_match=row.etag)`.
+- A change deeper than a direct child, and a change of a child's body, do not move the directory's version and are not seen. A cascading delete removes them unseen, as it did before.
 
-Reason: spec 1's decision 10 matches a directory by its entry and its version, and a directory's version moves when a direct child is made, removed or renamed (run 1), by the session as much as by anybody. A precondition filled from a stamp would refuse `rm -r` of a directory the session had itself written into, which is the false refusal opencode's users reported.
+**The session's own changes do not refuse it.** A change that moves a parent's version reports it as a `bumped` change, with the etag before and the etag after (spec 5, decision 2). Where the etag before equals the etag the session's stamp of that directory holds, the stamp moves to the etag after: nobody changed the directory between. Anything else leaves the stamp as it is, and the session's next `delete` or `move` of the directory is refused as changed until it lists it. This is decision 10's rule for an append, applied to a parent.
+
+- The stamp of each parent is read with the stamps of the paths a change names, in the lookup of step 2 of decision 8.
+- A session that holds no stamp of the parent stores none. A change does not show a directory.
+- Two changes of one session that bump one parent at the same time can be recorded in the other order. The one recorded second finds a stamp that is not its etag before, and leaves it. The stamp is then one step behind, and one listing clears the refusal that follows. A batch is one call and one bump, and has no such case.
+- **In a tree that does not yet carry `Result._changes`** a session sends no precondition for a directory, as this decision first had it. With no report of its own bumps, a session would refuse `rm -r` of a directory it had itself written into, which is the false refusal opencode's users reported. Spec 5's second landing switches the rule on.
+
+Reason: a session that deletes or moves a directory acts on everything in it, and strict exists so that an agent never destroys what it was not shown. The first form let an agent list a directory and then remove a file another caller had added to it a moment later, unseen. Its reason was the false refusal of a session's own work, and the `bumped` change removes that reason at no statement on most paths. The guard reaches direct children and no deeper, because that is as far as a directory's version reaches.
 
 ### 12. The two refusals are `vfs.conflict.changed` and `vfs.conflict.unread`, and neither carries a version
 
@@ -392,6 +405,7 @@ Reason for no version and no etag: the one use of a current etag in a model's ha
 | `delete` of a directory | An absent stamp at the path and at each path beneath it that has a current stamp. |
 | `move` of a file | An absent stamp at the source, and the destination row's stamp. |
 | `move` of a directory | The same, and each current stamp beneath the source is carried to the same place beneath the destination, with an absent stamp left behind. |
+| any change that moved a parent's version | The parent's directory stamp moves to the etag the bump left, where it held the etag from before the bump. Decision 11. |
 | each verb of a shell line | Its row above. Decision 17 sends every effect of a line through the guarded router. |
 | a change made by a resumed job | Its row above, written for the job's `session_key` and `turn_number` by `record_change_stamps` (decision 21). |
 
@@ -417,6 +431,7 @@ The invariant: every stamp a session holds was made from a row the store returne
 | A read is shown a file, and a change of the same session lands before the read returns | The read's stamp can be stored after the change's. The next change is then refused as changed, and one read clears it. |
 | A handle with no turn reads in one process, and a rewind lands in another before the flush | The stamp is filed under the latest turn left, and the session remembers one read the rewound conversation no longer holds. Spec 4's decision 7 states this case and accepts it. The etag is still checked at the write. |
 | Two calls change one file at once | Both hold the same stamp. Storage lets one through. The other is refused as changed. |
+| Two calls of one session each make a file in one directory at once | Both land. Each reports the directory `bumped`. The one recorded second may find a stamp that is not its etag before, and leave it. The next `delete` or `move` of the directory is then refused as changed, and one listing clears it (decision 11). |
 | Process A reads and has not flushed. Process B is asked to change the file | B is refused as unread or as changed. A read through B clears it. |
 | Two whole turns at once on one session | Each handle stamps under its own turn. A stamp of the earlier turn removes the path's rows of the later one. VFS queues no turns, as the guide says. |
 
@@ -520,7 +535,7 @@ Reason: a rule written twice drifts, and the synchronous twin already wraps the 
 1. **The rules and the line.** The two kinds and their words. The stamp, `GuardedRouter`, the line's table. `fs.cli` in a line session. The host's two routers, the chunk writer, and the two host errors in the crates. It needs spec 1's four landings. A stored session is not yet guarded.
 2. **Stored stamps.** `vfs_session_stamps`, the module `vfs.kernel_store.stamps`, the two kinds written behind, `record_after` for a change, the trim, strict on a stored session, `Session.cli`, and `remove_stamps` in `SESSION_CHILDREN`. It needs spec 0's four landings and spec 2's first. The docs land here.
 
-Spec 4's landings then add the turn to the statements: step 2 of decision 6 and the join to turns in its statement, the join and `live` of decision 7, step 1 of the trim, and the two functions its rewind and fork call. Spec 5's second landing, whenever it lands, gives decision 10 its exact rule.
+Spec 4's landings then add the turn to the statements: step 2 of decision 6 and the join to turns in its statement, the join and `live` of decision 7, step 1 of the trim, and the two functions its rewind and fork call. Spec 5's second landing, whenever it lands, gives decision 10 its exact rule and switches on decision 11's: until then a session sends no precondition for a directory. `Result._listed` of decision 2 lands with the first landing here, in `listings.py`.
 
 Reason: the first is of use alone, since it closes the shell's unguarded write-back. The second holds everything that touches the kernel store, so the bound lands with the rows it bounds.
 
@@ -574,7 +589,7 @@ Costed against the reference deployment. Its figures: 150,000 verb calls a day, 
 
 **Rows written behind.** An *assumption*: a session is shown about 320 rows, 10 listings of 30 rows and 20 single rows. That is about 1,100,000 stamps a day, 13 a second on average and about 50 at the 4× peak. No public measurement of rows per listing exists. A flush of stamps is 2 statements, `resolve` and the store statement, and 3 after spec 4 where a row's handle had a turn.
 
-**Per file write.** A change through a session adds a `query` and a `record_after` on the kernel store. They hold 4 statements: `find` and the lookup, then `resolve` and the store statement. They hold 2 when every stamp the change needs still waits in the buffer, since the lookup is then no statement. After spec 4 a handle with a turn adds one, the removal of later rows. A session's first record costs `resolve` one statement more. At the organic 50,000 writes a day, if every one went through a session, that is about 200,000 statements a day, between two and three a second. The nightly batch runs with no session and pays nothing.
+**Per file write.** A change through a session adds a `query` and a `record_after` on the kernel store. They hold 4 statements: `find` and the lookup, then `resolve` and the store statement. They hold 2 when every stamp the change needs still waits in the buffer, since the lookup is then no statement. After spec 4 a handle with a turn adds one, the removal of later rows. A session's first record costs `resolve` one statement more. Decision 11 adds no statement here: the parents' stamps are more keys of the same lookup, at most as many again as the paths, and a moved directory stamp is one more row of the same store statement for each distinct parent. What the report of a bump costs the mount is spec 5's, at most one statement for a call that bumps a parent. At the organic 50,000 writes a day, if every one went through a session, that is about 200,000 statements a day, between two and three a second. The nightly batch runs with no session and pays nothing.
 
 **Per batch.** A 10,000-entry `write` through a session adds 5 statements: `find`, one lookup of 10,000 keys, `resolve`, and two store statements at 6,540 rows to a statement and 5 bind parameters a row. A directory delete or move adds one range read and one store statement for each 6,540 stamps beneath it.
 
@@ -596,7 +611,7 @@ Costed against the reference deployment. Its figures: 150,000 verb calls a day, 
 - **A directory a `write(parents=True)` made is not stamped in a tree without `Result._changes`.** Decision 13 covers it where the tree has it.
 - **A stat inside a line never stamps.** The request would have to say whether its answer is printed.
 - **A writer opened with `>>` is not guarded between its chunks.** The request would have to name its writer.
-- **A directory is not held to its etag by a session.** Decision 11 gives the reason and the caller's own way.
+- **A directory is not held to what lies deeper than its direct children.** A directory's version does not move for it, so decision 11's guard does not see it. A guard over a whole subtree needs a recursive fact about a directory, which no row carries.
 - **No stamp travels with a request.** A host that keeps state itself could send its stamps as HTTP sends `If-Match`. Nothing here prevents it.
 - **Stamps over MCP, without a session object**, is roadmap decision D51.
 - **A count of refusals, and a body inside a refusal.** The host's wrapper does both.
@@ -619,7 +634,8 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_path_that_was_freed_is_refused`: four cases, a move away followed by a write, a move or a copy of another file to the path, and a move of the parent. Each `changed`.
 - `test_a_delete_and_a_recreate_is_refused`.
 - `test_a_session_reads_its_own_writes`: read, write, write. Both land, with no refusal.
-- `test_a_stated_precondition_reaches_storage_unchanged`: the recording storage sees the caller's `if_match`. Its refusal is `vfs.conflict` with `version` and `etag`.
+- `test_a_precondition_stated_to_the_guarded_router_reaches_storage_unchanged`: an `if_match` given to `GuardedRouter` by code inside VFS is the one the recording storage sees. Its refusal is `vfs.conflict` with `version` and `etag`.
+- `test_a_handle_takes_no_etag`: `write`, `edit`, `delete`, `move` and `restore` on `AsyncSession` and on `Session` have no parameter named `if_match` or `if_matches`, counted as 0 of 10 signatures.
 - `test_strict_refuses_what_was_not_shown`: one case a verb, as a named caller and as the system authority. `edit`, `delete` and `move` give `unread` and the recording storage sees 0 calls. A `write` of an absent path makes it. A `write` over an occupant gives `unread` and the body is intact.
 - `test_without_strict_an_unread_change_goes_through_and_a_changed_file_does_not`.
 - `test_each_read_verb_stamps`: one case each for `read`, `stat`, `ls`, `tree`, `glob`, the three modes of `grep`, `search` and `traverse`. A delete of a returned path then lands. A row with no etag stamps nothing.
@@ -628,7 +644,14 @@ Each is written and seen failing before the code. Counts are of statements recor
 - `test_a_listed_directory_can_be_removed`: `ls /d`, then `delete /d`. Without the `ls`, `unread`.
 - `test_a_read_that_finds_nothing_clears_a_stale_stamp`: stamp, a rival's delete, a write refused as changed, a read answered `not_found`, a write that makes the file. Counted: 1 refusal.
 - `test_an_append_is_never_refused_and_does_not_launder`: read, a rival's append, the session's append lands and the file has every line. The session's overwrite is then `changed`. And read, append, overwrite with no rival: all land, in a tree with `_changes`.
-- `test_a_session_can_remove_what_it_filled`: `mkdir`, two writes inside, `delete` of the directory. 0 refusals.
+- `test_a_session_can_remove_what_it_filled`: `mkdir`, two writes inside, `delete` of the directory. 0 refusals. In a tree with `_changes` the recording storage sees the directory's `if_match`, and it is the etag the second write's bump left.
+- `test_a_directory_another_caller_added_to_is_refused`: `ls /d`, a rival's write of `/d/new`, the session's `delete /d`. One `changed` error, 0 mutation statements on the mount, and `/d/new` intact. `ls /d` again, and the delete lands. Counted: 1 refusal, 1 listing. The same for `move`. In a tree with `_changes`.
+- `test_a_directory_swapped_for_another_is_refused`: `ls /d`, a rival's move of `/d` away and `mkdir /d`, the session's `delete /d`. One `changed` error.
+- `test_a_change_deeper_than_a_child_is_not_seen`: `ls /d`, a rival's write of `/d/sub/new`, the session's `delete /d`. It lands, with 0 refusals.
+- `test_a_stamp_moves_only_when_nobody_was_between`: `ls /d`, a rival's write of `/d/a`, the session's write of `/d/b`, the session's `delete /d`. One `changed` error: the session's bump did not carry a stamp that was already behind.
+- `test_two_writes_at_once_into_one_directory_cost_at_most_one_refusal`: two writes of one session gathered, then `delete` of the directory. At most 1 refusal, and after one `ls` it lands.
+- `test_a_listing_reports_the_directory_it_listed`: `ls /d` returns no row of `/d`, and `Result._listed` holds 1 row whose etag equals the etag of `stat /d`. The statements of the `ls` are the 2 it issues today.
+- `test_without_changes_a_directory_is_sent_with_no_precondition`: with `_changes` empty, a `delete` of a listed directory reaches the recording storage with no `if_match`.
 - `test_a_removed_directory_takes_its_stamps_with_it`: stamp three files beneath, delete the directory, write one of the paths. Made, with 0 refusals.
 - `test_a_moved_directory_carries_its_stamps`: stamp a file beneath, move the directory, edit the file at its new path with no read. Lands.
 - `test_a_batch_write_fills_each_path`: three stamped and two new entries land. With one stamped file changed, no row lands and the error names that path. With one new path occupied, no row lands and that path is `unread`.
@@ -696,6 +719,8 @@ Out: everything under "Left as it is", and what the other eight specs own.
 - A change to a file that changed since is refused, and so is a change to a file the session was never shown. One read clears either. A session's own writes never cause one.
 - Making a file and appending to one need no read.
 - A listing counts for the directory listed and for its first rows, 1,024 stamps in all.
+- A directory is guarded as a file is. Removing or moving a directory that someone else added to, removed from or renamed in since the session listed it is refused, and listing it again clears that. The session's own writes into a directory never cause it. The guard sees a directory's direct children and nothing deeper.
+- A session takes no etag from its caller. Its verbs have no `if_match`.
 - A read costs the same with a session as without.
 - For a host whose process ends after each request, the guide gains this sentence in step 3, after "a second read": "If your process ends after each request, close the file system before it ends, and what the session has seen is stored first."
 - A refusal is the same however often the call is sent. A tool wrapper that sees `vfs.conflict.changed` or `vfs.conflict.unread` reads the file and returns it with the refusal.
@@ -710,6 +735,7 @@ Pages: `documentation/how-to/keep-a-session-for-each-conversation.md`. The `Erro
 - **Ruling 6 of the verification**, that a multi-chunk writer is guarded by its stamp, each append refreshing it and the next requiring it. The outcome is kept. The etag is carried by the host and stated, because an append no longer takes a precondition from a stamp.
 - **The docstring of `src/vfs/session.py`**, that a call through a session and the direct call return the same result and that a session is sugar. A session can now refuse what the kernel would do.
 - **The first draft of this spec, where the reconciliation overruled it.** It stored an etag as an entry key and a version, and let a higher version of one entry win. Ruling 3 forbids taking an etag apart, so decisions 4, 5 and 10 are as they now read. It kept a table of waiting stamps in the kernel and wrote a change's stamps under a shield. Spec 0's `waiting_behind`, `discard_behind` and `record_after` replace both, so decision 8 is as it now reads. It sent an unstamped write with `if_absent=True` and a mixed batch as two calls. Spec 1's `ABSENT` replaces both, so decision 9 is as it now reads. It gave a host a drain to call. Decision 8 gives none.
+- **This spec's own decision 11 and decision 9, by the rulings of 2026-11-23.** A directory took no precondition from a session. It is now held to its etag, and the session's own change carries that etag forward. A precondition a caller stated through a handle won. A handle now takes none.
 - **Roadmap story K10**, already superseded by the merged spec.
 
 ## Choices for the owner
@@ -721,7 +747,7 @@ Each is decided above, and stands until it is ruled on.
 3. **A refusal carries no current version and no etag.** The session study's lesson 4 said to carry the version. This spec holds that an etag shows a model nothing and invites a write over an unseen body.
 4. **An append is never guarded by a stamp.** The merged spec guarded it.
 5. **A bare `fs.cli` line is strict.** `fs.cli("rm /f")` on a file the line was not shown is refused.
-6. **A directory needs only to have been shown.** No precondition is sent for one, so a directory swapped for another after it was listed is removed without a refusal.
+6. **Ruled on 2026-11-23, against the decision first taken: a directory is held to its etag.** The first form sent no precondition for one, so a directory another caller had added to after it was listed was removed without a refusal. Decision 11 now sends the etag and carries it forward through the session's own changes.
 7. **The session rules hold for the system authority.**
 8. **The stamp that arrives last wins.** Two shows of one file from two processes can leave the older in front, at the cost of one refusal. The other choice needs a counter that a read would have to fetch.
 9. **A mount that issues no etag is outside the guard,** and not refused.
@@ -735,7 +761,7 @@ With `documentation/how-to/keep-a-session-for-each-conversation.md`:
 
 1. **"Forgetting never lets a write through that would have been refused."** True of a strict session. With `strict=False` a forgotten stamp makes the file unread, and an unread file is let through. Proposed: begin the sentence "In a strict session," and add to the paragraph on `strict=False` that it protects only what the session still remembers. The same holds for a read lost when a process stops, in step 3. Evidence: decision 15, and the meaning the guide itself gives `strict=False`.
 2. **"Reading the file, or listing the directory it is in, is enough."** A listing counts for 1,024 stamps. Proposed: add "A listing of more than about a thousand rows counts for the first of them." Evidence: decision 3.
-3. **The hint of "Not read yet" says "Read it first".** A directory cannot be read (run 2: `wrong_kind`). Proposed hint: "This file has not been read in this conversation, so nothing was changed. Read it first, or list it if it is a directory, then make the change." This spec keeps the guide's words until that is ruled on.
+3. **The hint of "Not read yet" says "Read it first".** A directory cannot be read (run 2: `wrong_kind`). Proposed hint: "This file has not been read in this conversation, so nothing was changed. Read it first, or list it if it is a directory, then make the change." This spec keeps the guide's words until that is ruled on. The hint of "Changed since it was read" has the same fault since decision 11 holds a directory to its etag: it says "Read it again". Proposed hint: "This file or directory changed after it was last read or listed in this conversation, so nothing was changed. Read it again, or list it if it is a directory, then make the change."
 4. **"the session forgets the files it has gone longest without touching."** True by turn. Inside one turn no order is stored, and rows go in path order. Proposed: "the session forgets what it was shown in its earliest turns first."
 
 5. **Step 3 says nothing to a host whose process ends after each request.** Proposed, after "the worst that follows is a "Not read yet" refusal and a second read.": "If your process ends after each request, close the file system before it ends, and what the session has seen is stored first." Evidence: decision 8, and spec 0's decision 19.
@@ -782,7 +808,9 @@ What other specs ask of this one under their "Builds on":
 - **The time a change's two transactions add** under 32 sessions, on either engine.
 - **Rows shown per session.** The 320 is an assumption, and with it the 3 to 6 GB and the 13 rows a second.
 - **The turn statements against spec 4's code.** Run 5 used a turn table of two columns. `make_first_turn` and the handle's turn were not run, since spec 4 is not built.
-- **`Result._changes`.** Decision 10's rule was not run, since spec 5 is not built.
+- **`Result._changes`.** Decision 10's rule was not run, since spec 5 is not built. Neither was decision 11's rule for a `bumped` parent.
+- **`Result._listed`.** That `ls` reads each target's row with its entry id before the children was read at `listings.py:108` and not run with a mint. Whether `tree`, and the paged form of `ls`, hold the listed directory's row in the same way was not read. To run: `test_a_listing_reports_the_directory_it_listed` for `ls`, for a page of `ls` and for `tree`, on a SQLite file and on the Postgres leg.
+- **How often an agent writes into one directory with calls at the same time,** which is the one case where decision 11 costs a session a refusal for its own work.
 - **The tests strict changes.** How many tests under `tests/shell` remove, move or overwrite, through `fs.cli`, a file their line was not shown was not counted.
 - **The other eight specs after they were read.** Each was being revised. A heading cited here may have changed, and a need listed above may since be met. Spec 7 was read before and after its revision, and specs 5, 6 and 8 for their text on this spec alone.
 
