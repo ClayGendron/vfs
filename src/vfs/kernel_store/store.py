@@ -53,9 +53,7 @@ import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from sqlalchemy import Column, and_, delete, func, insert, inspect, select, tuple_, update
-from sqlalchemy.dialects.postgresql import insert as postgres_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import Column, and_, delete, insert, select, tuple_, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.util import greenlet_spawn
@@ -71,6 +69,7 @@ from vfs.storage.backends.database.dialects import (
     chunked,
     is_insufficient_privilege,
     rows_per_statement,
+    upsert_constructor,
 )
 from vfs.storage.backends.database.drivers import url_of_place
 from vfs.storage.backends.database.engine import advisory_key
@@ -98,9 +97,6 @@ _log: Final = logging.getLogger(__name__)
 # The context the core's classifier names, and the closed kernel's own words.
 _CONTEXT: Final = "kernel store"
 _CLOSED: Final = "the filesystem is closed"
-
-# Every store transaction on Postgres: a counter and a claim read what a rival committed while they waited.
-_PINNED_ISOLATION: Final = "READ COMMITTED"
 
 # Kept back from a close's budget for the dispose.
 _DISPOSE_SECONDS: Final = 1.0
@@ -280,8 +276,9 @@ class KernelStore:
             if all(earlier[name] == later[name] for name in key):
                 raise ValueError(f"upsert_rows was given the key {[later[name] for name in key]} twice")
         written = 0
+        constructor = upsert_constructor(self._engine_core().profile)
         for chunk in self.row_chunks(ordered):
-            statement = self._insert(table).values(list(chunk))
+            statement = constructor(table).values(list(chunk))
             if update:
                 newer = None if newest is None else statement.excluded[newest] >= table.c[newest]
                 fields = {name: statement.excluded[name] for name in update}
@@ -476,8 +473,9 @@ class KernelStore:
 
     def _options(self, *, writer: bool) -> dict[str, str | bool]:
         options: dict[str, str | bool] = {"vfs_writer": True} if writer else {}
-        if self._engine_core().profile.name == "postgresql":
-            options["isolation_level"] = _PINNED_ISOLATION
+        # As a topology verb's: a counter and a claim read what a rival committed while they waited for its lock.
+        if (isolation := self._engine_core().profile.topology_isolation) is not None:
+            options["isolation_level"] = isolation
         return options
 
     async def _first_touch(self) -> None:
@@ -525,13 +523,11 @@ class KernelStore:
         return found
 
     async def _serialization_point(self, connection: AsyncConnection) -> None:
-        # SQLite serializes first touch by the BEGIN IMMEDIATE already sent; Postgres by a lock of the store's own.
-        if self._engine_core().profile.name == "postgresql":
-            await connection.execute(select(func.pg_advisory_xact_lock(self._key)))
+        # Keyed by the store's own meta table, so first touch never waits on the mount's.
+        await self._engine_core().serialization_point(connection, self._key)
 
     def _has_meta_table(self, connection: Connection) -> bool:
-        meta = self.tables.meta
-        return inspect(connection).has_table(meta.name, schema=meta.schema)
+        return self._engine_core().has_table(connection, self.tables.meta)
 
     def _format_refusal(self, found: int) -> ResultError:
         names = ", ".join(self.tables.names_to_drop())
@@ -568,11 +564,6 @@ class KernelStore:
             )
             return classified(ErrorKind.unavailable, detail=detail)
         return self._engine_core().classify_failure(exc, context=_CONTEXT)
-
-    def _insert(self, table: Table) -> Any:
-        """The dialect's own ``INSERT``, which can say what a conflict does."""
-        maker = postgres_insert if self._engine_core().profile.name == "postgresql" else sqlite_insert
-        return maker(table)
 
     def _warn_of_memory(self) -> None:
         """Warn once, at a write, when records in memory sit beside a mount whose files outlive the process."""

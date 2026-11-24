@@ -29,6 +29,8 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeVar, cast
 
 from sqlalchemy import Table, bindparam, insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.schema import ColumnDefault
@@ -37,6 +39,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from sqlalchemy import Select
+    from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
+    from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
     from sqlalchemy.engine import Dialect
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql import ClauseElement
@@ -722,6 +726,11 @@ async def bulk_insert(session: AsyncSession, table: Table, rows: Sequence[Mappin
         params = [tuple(values[n] for n in statement.positional) for values in processed]
     for chunk in chunked(params, page):
         await connection.exec_driver_sql(statement.sql, list(chunk))
+
+
+def upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInsert | PostgresInsert]:
+    """The dialect's ``ON CONFLICT`` insert — only upsert-arbitration engines get here."""
+    return sqlite_insert if profile.name == "sqlite" else pg_insert
 
 
 # ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ import asyncio
 import random
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from sqlalchemy import event
+from sqlalchemy import event, func, inspect, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -62,9 +62,9 @@ from vfs.storage.backends.database.oneconnection import SerializedSessions, rear
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
-    from sqlalchemy import Engine
-    from sqlalchemy.engine import URL, Dialect
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+    from sqlalchemy import Engine, Table
+    from sqlalchemy.engine import URL, Connection, Dialect
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 T = TypeVar("T")
 
@@ -222,6 +222,22 @@ class EngineCore:
             conn = await session.connection(execution_options={"vfs_no_begin": True})
             for statement in self._profile.file_settings:
                 await conn.exec_driver_sql(statement)
+
+    async def serialization_point(self, connection: AsyncConnection, key: int) -> None:
+        """Take a writer transaction's serialization point, keyed by *key* and held until the transaction ends.
+
+        On Postgres it is an advisory lock on *key*. SQLite serializes by
+        the writer ``BEGIN IMMEDIATE`` the listener already sent, and an
+        engine with no declared point relies on unique-violation
+        arbitration.
+        """
+        if self.profile.name == "postgresql":
+            await connection.execute(select(func.pg_advisory_xact_lock(key)))
+
+    @staticmethod
+    def has_table(connection: Connection, table: Table) -> bool:
+        """Whether *table* exists, in its schema, on the database *connection* reaches; for ``run_sync``."""
+        return inspect(connection).has_table(table.name, schema=table.schema)
 
     async def close(self) -> None:
         """Dispose the engine; every close releases what it holds now, so a second finds empty pools and does nothing.

@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from sqlalchemy import Select, event, insert, select, update
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ulid import ULID
 
 from tests.support.commit_worlds import (
@@ -60,7 +58,6 @@ from vfs.storage.backends.database.writes import (
     _material_values,
     _resolve_rows,
     _update_materials,
-    _upsert_constructor,
     _upsert_layer,
 )
 from vfs.storage.backends.memory import InMemoryStorage
@@ -1163,10 +1160,6 @@ class TestArbitration:
         assert result.errors[0].message == "Conflict: concurrent modification"
         assert (await storage.read(path=target)).observations[0].content == "v3"
         await storage.close()
-
-    def test_upsert_constructor_is_dialect_bound(self) -> None:
-        assert _upsert_constructor(SQLITE) is sqlite_insert
-        assert _upsert_constructor(POSTGRESQL) is pg_insert
 
 
 class TestGuardedAttribution:

@@ -16,6 +16,8 @@ import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table, event, insert, select
 from sqlalchemy.dialects import postgresql as postgresql_dialect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
@@ -46,6 +48,7 @@ from vfs.storage.backends.database.dialects import (
     op_execution_options,
     profile_for,
     rows_per_statement,
+    upsert_constructor,
 )
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.labels import hold_postures, open_relabel, watch_postures
@@ -974,6 +977,14 @@ class TestBulkInsert:
         # assumes an unknown driver's executemany is a batch.
         assert GENERIC.bulk_insert == "core"
         assert {p.name: p.bulk_insert for p in (SQLITE, POSTGRESQL)} == {"sqlite": "driver", "postgresql": "copy"}
+
+
+class TestUpsertConstructor:
+    """The one home of the dialect's ``ON CONFLICT`` insert, which the write path and the kernel's store share."""
+
+    def test_upsert_constructor_is_dialect_bound(self) -> None:
+        assert upsert_constructor(SQLITE) is sqlite_insert
+        assert upsert_constructor(POSTGRESQL) is pg_insert
 
 
 class TestValueTooLarge:
