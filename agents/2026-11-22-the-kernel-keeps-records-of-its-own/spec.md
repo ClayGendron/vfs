@@ -1,6 +1,6 @@
 # The kernel keeps records of its own
 
-A draft, written on 2026-11-22 and read against `a-job-is-interrupted-and-resumed` at `6dae6a1d`. It is not reviewed, and nothing is built. It is spec 0 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It rests on the study `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`, on roadmap decision D67 (`context/standards/roadmap.md:1278`), and on five probe scripts run on 2026-11-22 against SQLite 3.50.4 and SQLAlchemy 2.0.52 on Python 3.13.11, which are named where they are used. No probe ran on Postgres. It was reconciled on 2026-11-22 with the eight other drafts as they stood at `59946f0d`: decisions 24 to 27 are that round's, a sixth probe was run for them, and no decision was renumbered. A last round on 2026-11-22 read the eight again at `7c383f32`, where every name is frozen, and changed what decisions 3, 13, 22, 24, 26 and 27 say without renaming anything.
+A draft, written on 2026-11-22 and read against `a-job-is-interrupted-and-resumed` at `6dae6a1d`. It was reviewed on 2026-11-23 (`reviews/2026-11-23-spec-review.md`), and nothing is built. It is spec 0 of the nine that `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md` maps. It rests on the study `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`, on roadmap decision D67 (`context/standards/roadmap.md:1278`), whose SQLite half the ruling of 2026-11-23 reversed, and on five probe scripts run on 2026-11-22 against SQLite 3.50.4 and SQLAlchemy 2.0.52 on Python 3.13.11, which are named where they are used. Probes ran on SQLite and on Postgres 19.0 on 2026-11-23, in the spec review. They are kept in `probes/`, and `probes/output.md` holds what they printed. It was reconciled on 2026-11-22 with the eight other drafts as they stood at `59946f0d`: decisions 24 to 27 are that round's, a sixth probe was run for them, and no decision was renumbered. A last round on 2026-11-22 read the eight again at `7c383f32`, where every name is frozen, and changed what decisions 3, 13, 22, 24, 26 and 27 say without renaming anything.
 
 ## The outcome wanted
 
@@ -10,7 +10,7 @@ This spec builds no session and no job. It builds the place and the interface.
 
 ## Builds on
 
-- **The log cost study**, `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`. Run on 2026-11-21. It is the measured basis: written behind, a read adds zero synchronous statements; on SQLite the kernel's rows cannot share the mount's file; one buffer for each router with one flusher held at most 258 rows.
+- **The log cost study**, `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`. Run on 2026-11-21. It is the measured basis: written behind, a read adds zero synchronous statements; on SQLite the kernel's rows queue behind the mount's writes when they share its file, which decision 4 takes as its price; one buffer for each router with one flusher held at most 258 rows.
 - **Roadmap decision D67**, decided on 2026-11-22 and reversed for SQLite by the ruling of 2026-11-23: it put the log on SQLite in a database file of its own beside the mount's file. The records are now in the mount's own file (decision 4). Its Postgres half stands: the root mount's schema.
 - **`agents/2026-11-20-vfs-serves-sqlite-and-postgres-only/spec.md`**, landed as pull request 30. Two engines, and a generic floor fit for testing only.
 - **`context/specifications/archive/2026-11-12-close-leaves-no-sqlite-side-files.md`** and **`agents/2026-11-21-a-timed-out-close-leaves-no-connection-open/spec.md`**, both landed. A closed SQLite storage leaves its database file and nothing beside it.
@@ -47,14 +47,14 @@ This spec builds no session and no job. It builds the place and the interface.
 
 ## What the code does today
 
-Read on 2026-11-22 at `6dae6a1d`. A probe is a script that was run. The scripts are under the session's scratch directory, in `specs/spec0/`, and none is kept in the repository.
+Read on 2026-11-22 at `6dae6a1d`. A probe is a script that was run. The scripts of 2026-11-22 are under the session's scratch directory, in `specs/spec0/`, and are not kept in the repository. A row that cites `probes/` was run on 2026-11-23 at `1c10dca1`, by a script kept in this work directory.
 
 | Fact | How it is known |
 |---|---|
 | The kernel's constructor takes `storage`. With none it makes an `InMemoryStorage`. The root mount is `owned`. | Read, `src/vfs/base.py:301-302` and `:319-327`. Run: the default root is an `InMemoryStorage` and is owned. |
 | The constructor does no I/O and binds nothing to a loop. The synchronous face builds the kernel on the caller's thread and starts one loop thread. | Read, `src/vfs/base.py:286-331` and `src/vfs/sync.py:120-135`, `:648-656`. Run: the facade starts one thread, `vfs-sync-loop`, and `close()` ends it. |
 | The kernel keeps no table of its own. Every call on a storage goes through `_call_storage`, and a storage "opens and commits its own transaction inside each method, and the kernel never sees one". | Read, `src/vfs/base.py:2852-2879`. |
-| `close()` empties the mount table, then closes each owned storage once, all at the same time, each within `close_timeout`. A close that was cancelled keeps what it had not closed, and a second `close()` finishes. | Read, `src/vfs/base.py:539-579`. |
+| `close()` empties the mount table, then closes each owned storage once, all at the same time, each within `close_timeout`. A close that was cancelled keeps what it had not closed, and a second `close()` finishes. A storage whose own close outlived `close_timeout` is not kept: the timeout is collected as an error, and the kept set is emptied after the gather. | Read, `src/vfs/base.py:539-579`. Run, `probes/probe_close_timeout.py`: after a timeout the second `close()` did not enter the storage's close again, and after a cancellation it did. |
 | A session is an object in memory. `open_session` returns `AsyncSession(self, authority)`. | Read, `src/vfs/base.py:655-663`. |
 | A storage declares verbs through `capabilities()`, a set of `Op`. What is not a verb is an optional protocol: `SupportsHolds`, `SupportsTraits`, `SupportsRebuild`, `SupportsClose`. | Read, `src/vfs/storage/protocol.py:469-577`. Run: the default root satisfies all four, and its 24 capabilities are verb names. |
 | One class serves every storage. `SQLiteStorage` and `PostgresStorage` construct `DatabaseStorage`, and `InMemoryStorage` is a `SQLiteStorage` whose path is `:memory:`. | Read, `src/vfs/storage/backends/sqlite.py:77-85`, `memory.py:36-77`. |
@@ -68,9 +68,10 @@ Read on 2026-11-22 at `6dae6a1d`. A probe is a script that was run. The scripts 
 | On SQLite an attempt runs in a task its caller's cancellation does not enter. A task started inside an attempt copies the attempt's mark. | Read, `attempts.py:97`, `documentation/maintainers/cancellation.md`. |
 | No work in `src/vfs` starts on a timer of its own. The statistics pass is started by a write, and expired trash is removed when a caller runs `sweep`, whose cutoff reads `datetime.now(UTC)` in place. | Read, `engine.py:449-462`, `trash.py:388`. |
 | `BEGIN IMMEDIATE` on a connection that has attached a second database locks that database too. A second connection's write to the attached file was refused `database is locked`. | Run, `probe_sqlite_files.py`, step 2. |
-| Two files, two connections: while the mount's writer was held, a write to the sibling was served. | Run, the same probe, step 3. |
+| Two engines on one SQLite file, the mount's and a second, leave the file and no side file once both are closed, in either order and together. With one connection of the second engine still out at the dispose, `-wal` and `-shm` stay, and they stay after that connection is returned. | Run, `probes/probe_sqlite_close.py`. |
 | A SQLite connection creates its file when it is opened, before any statement. Two engines that were built and never connected created no file. | Run, `probe_sqlite_files.py` step 1, `probe_vfs.py` step B. |
-| A second engine on `knowledge.db-kernel` in WAL, beside a live mount on `knowledge.db`, left four side files while open. After its dispose and the kernel's close the directory held `knowledge.db` and `knowledge.db-kernel`, and nothing else. | Run, `probe_vfs.py` step D. |
+| A mount opened on a file that already holds tables it did not make verifies its own meta row and serves. A store's first touch before the mount's leaves the file at page size 16,384 in WAL, and the mount then makes its 24 tables beside the store's. Eight first touches at once made one meta row. | Run, `probes/probe_sqlite_first_touch.py`. |
+| A role with no `CREATE` on the schema, or with no rights on the tables, is refused with SQLSTATE `42501`. The adapter has a test for that code, `is_insufficient_privilege`, and `classify_failure` does not use it: it reads the refusal as a permanent statement defect, `vfs.internal`. | Read, `dialects.py:832`, `engine.py:373-399`. Run, `probes/probe_postgres_refusals.py`. |
 | A SQLite mount whose file is read-only serves a read, and refuses a write with `vfs.unavailable`, retryable. It serves a read when its directory is read-only too. | Run, `probe_readonly.py`. |
 | SQLAlchemy gives a SQLite file a queue pool and `:memory:` a pool of one connection. It reads `file::memory:?cache=shared&uri=true` as a file. | Run, `probe_vfs.py` steps B and G. Read, `drivers.py:124-127`, `:145`. |
 | `UPDATE … RETURNING`, an upsert with a `WHERE` on the update, and `DELETE … WHERE key IN (SELECT … ORDER BY … LIMIT)` compile for both dialects and ran on SQLite. Two connections handed out 2, 3, 4, 5, 6, 7 with no repeat. | Run, `probe_statements.py` and `probe_sqlite_files.py` step 5. |
@@ -81,7 +82,7 @@ Read on 2026-11-22 at `6dae6a1d`. A probe is a script that was run. The scripts 
 
 The kernel keeps nothing. Eight specs each need a row that outlives a call: what a session saw, where a turn ended, a job that waits for an answer. Three facts decide where such rows can live.
 
-- **On SQLite they share the mount's one writer, wherever they are written from.** The study shared the file and 12 of 19 flushes failed after the five-second lock wait, the buffer grew to 2,360 rows, and claims timed out and refused the writes they guarded (`research.md:13`). With a file of its own no flush failed. The ruling of 2026-11-23 keeps one file all the same, so the store has to be built so that every one of those failures is a delay or a refusal and never a loss (decision 4).
+- **On SQLite they share the mount's one writer, wherever they are written from.** The study shared the file and 12 of 19 flushes failed after the five-second lock wait, the buffer grew to 2,360 rows, and claims timed out and refused the writes they guarded (`research.md:13`). With a file of its own no flush failed. The ruling of 2026-11-23 keeps one file all the same, so the store has to be built so that every one of those failures is a delay or a refusal, or a loss that decision 4 names and a caller is told of.
 - **A read cannot write them itself.** One synchronous row for each call turned a SQLite read into a writer: during a batch its median went from 70 ms to 856 ms (`research.md:15`). The reference deployment refuses any design where a read waits on a writer.
 - **A record cannot join the mount's transaction.** A storage commits inside its own method, and a change may land on a mount that is not the root. So "with the change" has to mean something other than one transaction, and every spec that writes a record beside a change has to know exactly what.
 
@@ -137,6 +138,7 @@ class SupportsRecordPlace(Protocol):
 - `DatabaseStorage` gains the read-only property `record_place`. It does no I/O. What it returns on each engine is decisions 4, 5 and 6.
 - The kernel asks once, in its constructor. A storage with no such attribute, or one that returns `None`, gets `RecordPlace.in_memory()`.
 - A third-party storage has to provide nothing. To have the kernel's records kept, it returns a `RecordPlace` that names a SQLite file or a Postgres database. It writes no table and no statement.
+- A place never prints a password. `DatabaseStorage.record_place` hands the URL as SQLAlchemy's `URL`, which masks its password when it is printed, and `RecordPlace` leaves `url` and `engine_arguments` out of its `repr`. A place printed in a log or a traceback shows its label, its schema and `durable`.
 - A place whose URL is of another dialect raises `ValueError` when the store is built, which is when the file system is made. It names the dialect and never the URL, as `url_of_engine` does (`drivers.py:78-94`): "the kernel keeps its records in SQLite or Postgres, and the root storage's record_place names a URL of {dialect!r}". A `DatabaseStorage` on the generic floor returns `None`, so it never raises.
 - It is not a capability. `capabilities()` is a set of verbs that the gate reads, and a record is reached by no verb.
 - `RecordPlace` is exported from `vfs` and `SupportsRecordPlace` from `vfs.storage`, because the docs export refuses a public signature that names a type no exported name reaches (`documentation/maintainers/how-we-name.md`, "Public and private").
@@ -147,7 +149,7 @@ Reason: an optional protocol is how a storage already says what is not a verb (`
 
 Ruled on 2026-11-23. This decision's first form was "On SQLite the place is a second file beside the mount's, named with `-kernel`", which the study recommended and roadmap decision D67 had taken. The ruling reverses both, and states the price below.
 
-For a storage on a SQLite file, `record_place` is the storage's own URL: the same file. The kernel's tables are made in it, beside the mount's, under names that begin with `vfs_kernel_`, `vfs_session` or `vfs_job`. The store reaches the file through an engine of its own, so a store transaction is never a mount's transaction and never rides a mount's connection. The storage's `engine_arguments` are not passed on: a `creator` or a `pool` made for the mount's engine belongs to that engine. The label is the file's path as text. The schema is `None`.
+For a storage on a SQLite file, `record_place` is the storage's own URL: the same file. The kernel's tables are made in it, beside the mount's, under names that begin with `vfs_kernel_`, `vfs_session` or `vfs_job`. The store reaches the file through an engine of its own, so a store transaction is never a mount's transaction and never rides a mount's connection. The storage's `engine_arguments` are passed on without `pool`, as on Postgres. A `pool` object belongs to one engine. A `creator` or `connect_args` makes a connection each time it is called and belongs to none, and a file that only they can open, an encrypted one for example, must be opened by the store's connections too. The label is the file's path as text. The schema is `None`.
 
 This is the rule Postgres has in decision 5: the kernel's tables live in the root storage's database, on connections of the store's own.
 
@@ -159,8 +161,8 @@ This is the rule Postgres has in decision 5: the kernel's tables live in the roo
 | `ATTACH` | Never used. |
 | `:memory:` | Decision 6. |
 | `file::memory:` with `uri=true` | `record_place` is `None`. SQLAlchemy reads that URL as a file. |
-| A mount file that is read-only | The mount serves reads. The store cannot be written: a row written behind is held and in the end dropped, by decisions 14 and 15, a synchronous call raises `KernelStoreUnavailable`, and one `WARNING` names the path. The store does not fall back to memory. |
-| `close()` | The file stays, with its records in it. Its `-wal` and `-shm` files are removed once the last connection of either engine closes. |
+| A mount file that is read-only | The mount serves reads. The store cannot be written: a row written behind is held and in the end dropped, by decisions 14 and 15, a synchronous call raises `KernelStoreUnavailable`, and one `WARNING` names the path. Each row put behind starts one attempt, which fails at once and waits for nothing (`probes/output.md`, section 7). The store does not fall back to memory. After `close()` the `-wal` and `-shm` files stay, as they do today for a read-only mount with no store: a connection that cannot write does not remove them. |
+| `close()` | The file stays, with its records in it. Its `-wal` and `-shm` files are removed once the last connection of either engine closes (decision 19). |
 | A copy or a backup of the file | Carries the sessions and the jobs with the files. |
 
 **The price, which is SQLite's alone.** A SQLite file has one writer. The store's writes and the mount's writes now share it.
@@ -168,10 +170,28 @@ This is the rule Postgres has in decision 5: the kernel's tables live in the roo
 - **A read still never waits.** A read's whole dealing with the store is `put_behind`, and a `query` reads beside the writer in WAL.
 - **A store write waits behind a mount write, and a mount write behind a store write.** A flush holds the writer for one batch of at most 1,024 rows, a `commit` for its statements, a sweep for one chunk. Each is a commit's length.
 - **During a batch on the mount, the store's writes stall.** A 10,000-entry write held the writer for about 28 seconds in the study. With the log in the mount's file, 12 of 19 flushes failed, the buffer grew to 2,360 rows, and claims timed out (`research.md:13`, `:89`). With a file of its own no flush failed. That measured difference is what this ruling gives up.
-- **Every such failure is a delay or a refusal.** A flush that fails keeps its rows (decision 15). A change checks the buffer before the store, so in one process a session still finds what it was shown. Another process finds the stamp late, and its change is refused until one read. A `record_after` that cannot land returns its warning and the change stands (decision 10). A job that cannot be stored or claimed is refused as unavailable and can be tried again. A one-file write by another caller is already refused in that window today (`agents/2026-11-21-a-write-beside-a-batch-on-sqlite-is-refused-after-twenty-seconds/spec.md`).
 - **The action log, when it is built, shares the same writer** and writes twice for each change. Its spec costs that against this decision.
 
-Reason: one file is what a person who keeps a SQLite database expects. There is one thing to copy, to back up and to delete, the tutorial's sentence that `vfs.db` is the only file stays true for every file system, and the rule is the same on both engines. The price falls on long batches and on many writers at once, and the working agreement gives that load to Postgres: SQLite serves demos and local applications. Reason against a fallback to memory: a failure to write can be passing, and a process that silently kept its jobs in memory would save a job that no other process can resume.
+**What was measured on 2026-11-23**, on a stand-in for this store beside today's code (`probes/output.md`, sections 1 to 5). The stand-in waits four tries and flushes as soon as it is free, as this store does. In every window no read waited and no read failed.
+
+| The file's writer is | Flushes that failed | Most rows in the buffer, of 16,384 | A change's record that was lost |
+|---|---|---|---|
+| free, with eight readers and one writer | 0 of 155 | 213 | 0 |
+| held about 8 seconds by a 10,000-entry write | 0 of 38 | 1,503 | 0 |
+| held 30 seconds, three times over | 3 of 4 | 12,210 | 1 of 7 |
+| held 60 seconds | 2 of 3 | 16,384, and 9,047 rows dropped | 0 of 3 |
+
+In a file of the store's own, the first three windows failed no flush and lost no record, and the buffer held 12 rows at most. The 60-second window was run in the mount's file alone.
+
+- **Most failures are a delay or a refusal.** A flush that fails keeps its rows (decision 15). A change checks the buffer before the store, so in one process a session still finds what it was shown. Another process finds the stamp late, and its change is refused until one read. A job that cannot be stored or claimed is refused as unavailable and can be tried again. A one-file write by another caller is already refused in that window today (`agents/2026-11-21-a-write-beside-a-batch-on-sqlite-is-refused-after-twenty-seconds/spec.md`).
+- **A record that goes with a change can be lost, and not only delayed.** A `record_after` that waits out its four tries, about 21 seconds, returns its warning, and the change stands with no record, for good (decision 10). The caller is told: the result carries the warning. A stamp lost this way costs the session one refusal, which one read clears. A change row lost this way is a change that a rewind does not put back (spec 5, decision 4). It took a writer held longer than 20 seconds to do it: 1 one-file write of 7 behind 30-second holds, and none behind an 8-second batch.
+- **Rows written behind are dropped when a writer is held longer than the buffer lasts.** At 439 reads a second the buffer was full after 37 seconds, and a 60-second hold dropped 9,047 rows. Each is a stamp of a read or a session's use, which decision 14 lets go, and each costs a refusal that one read clears.
+- **A sweep pass takes most of the writer while it runs.** Its chunks follow each other, and a SQLite writer that waits polls for the file with sleeps of up to 100 ms. Beside a pass of 600,000 rows a one-file writer landed 17 writes in 9 seconds, against 102 beside a pass in another file. None was refused. A long pass is run when the root is quiet (decision 17).
+- **The one read that calls the store waits on the mount's writer.** A read that a policy stops stores its job with `commit` (decision 22, rule 3), behind a batch on the root for up to four tries.
+- **A process that closes behind a held writer drops what it had buffered.** Its last flush makes one try and gives up (decision 19).
+- **With nothing else running the cost is small.** A read's median did not move, 21.4 ms to 21.9. A one-file write's moved from 49 ms to 52. The store wrote 17 batches a second where a file of its own wrote 115, and a store commit waited 4.5 ms at the median to begin and 0.56 seconds at most.
+
+Reason: one file is what a person who keeps a SQLite database expects. There is one thing to copy, to back up and to delete, the tutorial's sentence that `vfs.db` is the only file stays true for every file system, and the rule is the same on both engines. The price falls on a writer held for longer than about 20 seconds, which on SQLite is a long batch or batches one after another, and the working agreement gives that load to Postgres: SQLite serves demos and local applications. On Postgres no flush and no record failed in any window that was run, a 10,000-entry write among them. Reason against a fallback to memory: a failure to write can be passing, and a process that silently kept its jobs in memory would save a job that no other process can resume.
 
 ### 5. On Postgres the place is the mount's database and schema, on a pool of the store's own
 
@@ -179,18 +199,18 @@ For a storage on Postgres, `record_place` is the storage's URL, its schema, and 
 
 - **The same database and schema.** The tables sit beside the mount's. Their names begin with `vfs_kernel_`, `vfs_session` or `vfs_job`, and no mount table's name does. A lint holds both halves.
 - **A pool of its own.** The store builds a second engine. Its pool has the class and the size of the mount's, because both come from the same arguments. A `pool` object the application made belongs to one engine and is left out, and the store's pool is then SQLAlchemy's default.
-- **READ COMMITTED, with no pin.** A counter and a claim must read what a rival committed while they waited for its row lock. The topology verbs take the same isolation for the same reason (`dialects.py:492-504`).
+- **READ COMMITTED, pinned.** A counter and a claim must read what a rival committed while they waited for its row lock. Every store transaction carries the isolation level in its execution options, as a topology verb does (`dialects.py:492-504`), so a default of another level on the role, the database or the server changes nothing. Without the pin, and with the server's default at REPEATABLE READ, two connections that took 50 numbers each had 50 statements refused `40001` (`probes/output.md`, section 10).
 - **Every supported major version, 15 to 19.** The store issues `CREATE TABLE`, `INSERT … ON CONFLICT`, `UPDATE … RETURNING`, `DELETE … WHERE … IN (SELECT … LIMIT)` and `pg_advisory_xact_lock`. None is newer than Postgres 9.5. It needs no extension and does not probe for pgvector.
-- **The role.** First touch makes the tables, so it needs `CREATE` on the schema once, as the mount's first touch does. Where the serving role may not create tables, the first record call of a role that may makes them.
+- **The role.** First touch makes the tables, so it needs `CREATE` on the schema once, as the mount's first touch does. Where the serving role may not create tables, the first record call of a role that may makes them, and the serving role is granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on each kernel table. Until both are done, the serving role's record calls are refused as decision 9 says, with a detail that names the grant.
 - **A listener on `storage.engine` is not on the store's engine.** What reaches both is `engine_arguments`: `async_creator`, `connect_args`, the pool's size.
 
-Reason for the schema: the study put the log in the mount's schema and found nothing waited (`research.md:107`). Reason for a pool of its own: it is the configuration that was measured, a second engine with the same pool defaults (`research.md:29`). A flusher that drew on the mount's pool would wait behind a storm of batches, which on Postgres already waits 30 seconds for a connection (`research.md:142`). The size follows the mount's because a call's store transaction and its mount transaction never overlap, so the store needs one connection for each change in flight and one for the flusher, which is what the mount's pool was sized for.
+Reason for the schema: the study put the log in the mount's schema and found nothing waited (`research.md:107`). Reason for a pool of its own: it is the configuration that was measured, a second engine with the same pool defaults (`research.md:29`), and it was measured again on 2026-11-23 against the mount's pool (`probes/output.md`, sections 13 and 14). With 32 writing sessions a record added 22 to 25 ms to a write's median of 192 ms on the mount's pool, on a pool of 15 and on a pool of 32 alike, and the store's pool never held more than 8 connections. Beside 32 batches of 10,000, which exhaust the mount's pool, a record on the mount's pool failed 5 times and a flush once, each after the pool's 30-second wait, and on a pool of its own nothing failed. A larger pool bought nothing. The size follows the mount's because a call's store transaction and its mount transaction never overlap, so the store needs one connection for each change in flight and one for the flusher, which is what the mount's pool was sized for.
 
 ### 6. A root in memory keeps its records in a second database in memory
 
 A storage whose URL SQLAlchemy gives the pool of one connection returns `RecordPlace.in_memory()`. That is the test `merge_engine_arguments` already uses (`drivers.py:145`), and `InMemoryStorage` meets it. The store then has a private in-memory database of its own, with its own connection and its own turn lock. A store transaction never takes the mount's turn, and a verb never waits behind a flush. The records end when the store is closed or the process ends.
 
-A file system whose records are in memory, and which holds a mount whose storage names a durable place, logs one `WARNING` on `vfs.kernel_store`, at the first record it writes:
+A file system whose records are in memory, and which holds a mount whose storage names a durable place, logs one `WARNING` on `vfs.kernel_store`, at the first record it writes while such a mount is held, whenever the mount was added:
 
 > this file system keeps its sessions and jobs in memory, because its root storage names no database for them; they end with this process and no other process sees them. A mount beneath the root is a database: make the root storage a database to keep them there.
 
@@ -237,7 +257,7 @@ The detail of that refusal is:
 
 > the kernel store at {label} has format {found} and this build keeps format {expected}; no session or job is kept until it is made again: {remedy}
 
-The remedy on both engines is to drop the kernel's tables and nothing else: on SQLite "close every process that uses {path} and drop its tables whose names begin with vfs_kernel_, vfs_session or vfs_job", and on Postgres "drop the tables in schema {schema} whose names begin with vfs_kernel_, vfs_session or vfs_job". The remedy never names the file for deletion, since the file holds the mount.
+The remedy on both engines is to drop the kernel's tables and nothing else: on SQLite "close every process that uses {path} and drop these tables: {names}", and on Postgres "drop these tables in schema {schema}: {names}". `{names}` is the list of `build_kernel_tables`, in the order they are to be dropped, dependents first. The remedy names the tables and not a prefix, because neither engine reserves the prefixes: a file that held an application's own `vfs_session_notes` was served by both first touches (`probes/output.md`, section 7), and a person told to drop by prefix would drop that table too. The remedy never names the file for deletion, since the file holds the mount.
 
 Reason for refusing: it is the mount's own rule, "verified, never repaired" (`engine.py:635-637`). Reason against a reset: two builds can serve one store at once during a deployment, and each would drop the other's tables; and a reset would end every waiting job with no word. The design is not released, so there is no store to migrate. When the first release ships, this decision is rewritten with the working agreement's section on the project's stage.
 
@@ -257,6 +277,7 @@ class KernelStoreUnavailable(Exception):
 - The `fn` of a `query` writes nothing. A SQLite transaction that reads and then writes is refused whenever another connection committed in between, and that refusal is not retried (`dialects.py:382-384`).
 - A `commit` waits as a mount's write does: four tries, and on SQLite five seconds a try.
 - A driver failure that escapes the retry, retries that run out, a pool that gives no connection, a refused first touch and a closed store each raise `KernelStoreUnavailable`. Its `error` is classified by the core's `classify_failure` with the context `kernel store`, or is first touch's refusal. The kinds are the ones that exist: `vfs.unavailable`, `vfs.unavailable.backend`, `vfs.unavailable.schema` and `vfs.internal`. Retries that run out are `vfs.unavailable` and retryable, and not the `vfs.conflict` a mount's write answers, because no precondition of a caller's is stale. Their detail is "kernel store kept losing to concurrent changes: {the retry's own words}", as a mount's is with the verb's name. The error names no path. A closed store answers `vfs.unavailable.backend` with "the filesystem is closed", the kernel's own words (`base.py:3069-3071`).
+- **A refusal for want of a privilege is not a defect in VFS.** A first touch or a write refused with SQLSTATE `42501`, which `is_insufficient_privilege` tests (`dialects.py:832`), is `vfs.unavailable`, not retryable, and never the `vfs.internal` that the core's classifier gives it. The store checks for it before it calls the classifier. Its detail is "the role may not make or write the kernel's tables in {label}: make them once with a role that may, and grant this role SELECT, INSERT, UPDATE and DELETE on these tables: {names}".
 - No new error kind is added.
 
 Reason: a caller of the store is kernel code that turns a failure into a `Result`. One exception that carries a classified error lets each of eight specs do that in one `except`.
@@ -309,7 +330,7 @@ async def next_number(self, transaction, counter: Column[int], *where: ColumnEle
 It issues `UPDATE <table> SET <counter> = <counter> + :count WHERE <where> RETURNING <counter>`, inside the caller's `commit`, and returns the last number of the block. The block is the `count` numbers that end there. A column that starts at 0 hands out 1 first. When no row matches it raises `LookupError`, so the owner makes the row first, in the same `commit`, with an upsert that does nothing on a conflict.
 
 - The counter is a column on the row that owns the sequence. A session's row holds the counter of its turn numbers, and spec 4's statement S3 is this statement (its decision 4, "`start_turn` stores the turn at once, takes its number from the session's counter, and returns the turn id"). No counter is shared by the whole store. A sequence that only one process at a time can advance needs no `next_number`: spec 8 keeps its journal's counters in the line record, which the holder of the job's claim alone writes (its decision 9).
-- Two processes never get the same number. On SQLite one writer holds the file. On Postgres the second update waits for the first one's row lock and then reads the committed value, at READ COMMITTED.
+- Two processes never get the same number. On SQLite one writer holds the file. On Postgres the second update waits for the first one's row lock and then reads the committed value, at READ COMMITTED, which decision 5 pins.
 - The numbers have no gap when the number is used in the `commit` that took it, because a rollback returns the number with everything else.
 
 Reason: the overview rules that an order is a counter and never a clock. One statement on the owner's row needs no sequence object and no lock of its own, and it queues only the callers of one session or one job.
@@ -326,7 +347,7 @@ async def delete_expired(self, transaction, table: Table, *, key: Column[Any], e
 ```
 
 - `insert_rows` is the adapter's `bulk_insert` (`dialects.py:673-724`): `COPY` on Postgres, the driver's `executemany` on SQLite, paged under the live parameter budget.
-- `upsert_rows` sorts the rows by `key`, cuts them by `rows_per_statement` under the same budget, and issues one `INSERT … ON CONFLICT (key) DO UPDATE SET …` for each chunk. An empty `update` makes it `DO NOTHING`. It returns how many rows it inserted or updated, so an insert that did nothing says so. With `newest`, the update carries `WHERE excluded.<newest> >= <table>.<newest>`, so an older row never replaces a newer one. Two rows with one key in one call raise `ValueError`, because Postgres refuses a statement that would update one row twice.
+- `upsert_rows` sorts the rows by `key`, cuts them by `rows_per_statement` under the same budget, and issues one `INSERT … ON CONFLICT (key) DO UPDATE SET …` for each chunk. An empty `update` makes it `DO NOTHING`. It returns how many rows it inserted or updated, so an insert that did nothing says so. With `newest`, the update carries `WHERE excluded.<newest> >= <table>.<newest>`, so an older row never replaces a newer one. Two rows with one key in one call raise `ValueError`, because Postgres refuses a statement that would update one row twice (`21000`) and SQLite does not: it counted 2 rows and stored the later one (`probes/output.md`, sections 9 and 10). The check is what keeps the two engines alike.
 - `key_chunks` cuts a key list by the membership budget, for an `IN` list. `width` is the binds one key takes, 2 for a pair.
 - `delete_expired` issues `DELETE FROM t WHERE key IN (SELECT key FROM t WHERE expires <= :now [AND where] ORDER BY expires LIMIT :limit)` and returns the rows removed. It is the statement the study measured for reclaim (`research.md:42`). Its text and its binds, three on SQLite and two on Postgres, do not change with the rows it removes.
 
@@ -367,16 +388,16 @@ Reason for flushing as soon as free: a session used in the next request, by anot
 
 **Every record written behind may be dropped. A record that may not be dropped is never written behind.** It is written with `commit` or `record_after`, and decision 10 says what its failure leaves. So a kind is written behind only when losing a row errs toward a refusal or a second read: a stamp from a read (spec 3, decision 8), a session's use (spec 2, decision 17, "Every call through a handle reports one use, written behind, and a row is touched at most once in five minutes"), the trim of a session's stamps (spec 3, decision 15).
 
-Reason for the oldest: after an outage the rows that land are the newest, which are the ones a session acts on next. Reason for a bound in rows: a row of a record is a few short columns, bounded by its column widths, so 16,384 rows is about 16 MB at ordinary widths, by estimate. The bound guards against rows piling up while the store cannot be written. It is not a limit on a call: the store's capacity is the flusher's, estimated at about 30,000 rows a second on a SQLite file by `probe_flush.py`. A byte budget, through `vfs.batching`, is the direction if a kind with wide rows appears.
+Reason for the oldest: after an outage the rows that land are the newest, which are the ones a session acts on next. Reason for a bound in rows: a row of a record is a few short columns, bounded by its column widths, so 16,384 rows is about 16 MB at ordinary widths, by estimate. The bound guards against rows piling up while the store cannot be written. It is not a limit on a call: the store's capacity is the flusher's, estimated at about 30,000 rows a second on a SQLite file of its own by `probe_flush.py`. In the mount's file it is what the file's writer leaves it, and the bound was reached when that writer was held for 37 seconds (decision 4). A byte budget, through `vfs.batching`, is the direction if a kind with wide rows appears.
 
 ### 15. A failed flush keeps its rows when a retry can clear the failure, and drops them when none can
 
 Every log record of the store goes to the logger `vfs.kernel_store`.
 
-- **A failure a retry can clear.** The store cannot be reached, its writer is held past the retry budget, a connection is lost. The rows go back to the head of the buffer. The task waits for the next `put_behind`, `drain` or `close` and tries again. The first failed flush after a good one logs one `WARNING`: "the kernel store at {label} could not be written ({cause}); records written behind are held in memory, and the oldest are dropped past {capacity}". The first good flush after a failure logs one `INFO`: "the kernel store at {label} is written again after {n} failed flushes; {m} records were dropped".
-- **A failure no retry can clear.** An integrity error, a statement defect, a value over the engine's cap, a store of another format. The batch is dropped and counted. One `ERROR` is logged, "a flush of {n} records to the kernel store at {label} can never land ({cause}); they are dropped", except for a store of another format, which has decision 8's one `WARNING`.
+- **A failure a retry can clear.** The store cannot be reached, its writer is held past the retry budget, a connection is lost, or the role lacks a privilege that a grant gives it (decision 9), in which case the one `WARNING` names the grant. The rows go back to the head of the buffer. The task waits for the next `put_behind`, `drain` or `close` and tries again. In a process that puts nothing more, the rows of a failed flush wait until `close`, and another process does not find them until then. The first failed flush after a good one logs one `WARNING`: "the kernel store at {label} could not be written ({cause}); records written behind are held in memory, and the oldest are dropped past {capacity}". The first good flush after a failure logs one `INFO`: "the kernel store at {label} is written again after {n} failed flushes; {m} records were dropped".
+- **A failure no retry can clear.** An integrity error, a statement defect, a value over the engine's cap, a store of another format. The batch is tried once more in one transaction, a kind at a time, each kind under a savepoint. The kinds that fail again are dropped and counted, and the others are written. One `ERROR` is logged for each kind dropped, "a flush of {n} {kind} records to the kernel store at {label} can never land ({cause}); they are dropped". A store of another format drops the whole batch with no second try, and has decision 8's one `WARNING`.
 
-Reason: a short outage should cost no row, as it cost none in the study (`research.md:101`). A batch that can never land would otherwise block the head of the buffer until every row behind it was dropped.
+Reason: a short outage should cost no row, as it cost none in the study (`research.md:101`). A batch that can never land would otherwise block the head of the buffer until every row behind it was dropped. A flush carries up to 1,024 rows of every kind and every session, so without the second try one row that can never land would drop the rows of kinds that have nothing wrong with them.
 
 ### 16. `drain` waits for the records of one scope
 
@@ -403,12 +424,13 @@ async def sweep(self) -> int
 
 - **Expiry does not depend on the sweep.** Every read of a table that expires filters on its expiry against `store.now()`. The sweep only gives the space back.
 - **A sweeper.** A spec that owns a table with an expiry registers one, in the order parents and dependents need. It is handed the store, a transaction, the pass's one reading of the clock, and a limit. One call removes at most `limit` rows in all, in the `commit` it is given, and returns how many. It removes a parent only when its dependents are gone. Its statements are `delete_expired` and decision 25's `delete_where`, and decision 26 gives the common case ready-made.
-- **A pass.** For each sweeper in turn, the store calls it in a `commit` of its own with `SWEEP_CHUNK`, which is 5,000, until a call removes no row. There is no cap on the chunks of a pass: a pass ends when nothing expired is left. Each chunk is a transaction of its own, so a lock is held for a commit's length, a flush runs between two chunks, and a pass that is cancelled or fails has removed whole chunks and nothing else. A sweeper that works in smaller batches than its limit is called again while it still finds work. A pass that fails logs one `WARNING` and ends, and the next pass starts over.
+- **A pass.** For each sweeper in turn, the store calls it in a `commit` of its own with `SWEEP_CHUNK`, which is 5,000, until a call removes no row. There is no cap on the chunks of a pass: a pass ends when one of its calls removes no row. Beside another pass that can be before the table is clean, and the other pass goes on. Each chunk is a transaction of its own, so a lock is held for a commit's length, and a pass that is cancelled or fails has removed whole chunks and nothing else. On Postgres a write beside a pass did not slow. On SQLite a pass's chunks follow each other and a waiting writer polls for the file, so a write gets through between two chunks only now and then: beside a pass of 600,000 rows a one-file writer landed 17 writes in 9 seconds and none was refused (decision 4, the price). A long pass on SQLite is run when the root is quiet. The store's own flush is not left to that chance: between two chunks a pass waits for a flush of its own store that has rows to write, until that flush ends, landed or failed. So a process's rows written behind are held for a chunk and not for a pass. A sweeper that works in smaller batches than its limit is called again while it still finds work. A pass that fails logs one `WARNING` and ends, and the next pass starts over.
 - **When: only when the public `sweep` is called.** `AsyncVirtualFileSystem.sweep()` on the trash view of the root mount, which is its default path, runs the storage's retention as it does today and then awaits one pass of the store. Nothing else starts a pass: no count of writes, no timer, no `close`. The store's background task writes and never removes.
 - **For whom.** The pass runs only when the storage's retention succeeded, so only for a caller allowed to sweep the root's trash. A `sweep` of any other path, or of another mount's trash, runs none.
+- **A root that cannot be swept.** Where the root mount masks `sweep` with `deny_ops`, where its storage declares none, or where the caller may not write the root's trash, no pass runs and no other call removes an expired record. Expired records read as absent and their rows stay, as that root's trash stays too. A deployment that masks `sweep` on the file system its agents use calls it from a file system of its own over the same database, with no mask.
 - **What the caller gets.** The result is the storage's own. A pass that fails adds one error of severity `warning` to it, as a failed `record_after` does.
 - **A file system that keeps no record.** A pass on a store whose meta table is missing removes nothing and makes no table.
-- **By which process.** Any process that calls `sweep`. No process leads. Two passes at once remove each row once: on SQLite they take turns on the file's one writer, and on Postgres the second waits a chunk for the first one's row locks and then finds the rows gone.
+- **By which process.** Any process that calls `sweep`. No process leads. Two passes at once remove each row once: on SQLite they take turns on the file's one writer, and on Postgres the second waits a chunk for the first one's row locks and then finds the rows gone. A pass whose call finds its rows already taken counts none and ends, so one of two passes can end early. Of two passes over 40,000 rows on Postgres, one ended after 10,000 and the other removed the rest (`probes/output.md`, section 10).
 - **In a test.** `store.sweep()` is the pass itself, with no trash retention before it, and returns the rows removed.
 - It lands with landing 4.
 - **A record with no expiry is never removed.** An expiry column may be null, which means never: `delete_expired` compares `expires <= :now`, which a null does not meet, and a read that filters on an expiry treats a null as live. A session has no expiry unless the developer sets `session_lifetime` (spec 2, decision 18, as ruled on 2026-11-23), so by default the sweep removes expired jobs and no session.
@@ -428,17 +450,28 @@ Reason: a test of expiry that waited for time to pass would read a clock, and a 
 `AsyncVirtualFileSystem.close()` closes the store as one more target of the gather it already runs (`base.py:569-573`), within the same `close_timeout`, beside the storages and not after them.
 
 1. The mount table is emptied first, as today, so a later verb is refused.
-2. The store stops taking rows. A `put_behind` after this is dropped and raises nothing. A `query`, `commit` or `record_after` after this raises or returns `vfs.unavailable.backend`.
-3. The task flushes until the buffer is empty. A flush that fails ends the flushing, the rows left are dropped, and one `WARNING` says how many. A failed flush is not raised from `close`, since every such row may be dropped.
+2. The store stops taking rows and starts no further try. A `put_behind` after this is dropped and raises nothing. A `query`, `commit` or `record_after` after this raises or returns `vfs.unavailable.backend`. One that began before this ends the attempt it has in hand and starts no other: if that attempt fails, a `query` or a `commit` raises and a `record_after` returns its warning.
+3. The task flushes until the buffer is empty, one try for each flush and not four. A flush that fails ends the flushing, the rows left are dropped and counted, and one `WARNING` says how many. A failed flush is not raised from `close`, since every such row may be dropped.
 4. The task ends. It is awaited and never interrupted, so no interrupt is left pending on a connection.
-5. The engine core is disposed. An error here is raised with the storages' errors, alone or in the group.
+5. The store waits for its transactions in flight. It counts every `query`, `commit` and `record_after` that began before step 2, and waits for that count to reach zero.
+6. The engine core is disposed, in a `finally`, as a storage's is (`engine.py:541-547`). An error here is raised with the storages' errors, alone or in the group.
+
+**The store ends inside the kernel's timeout by its own bounds, and does not lean on a second `close()` after a timeout.** Today's kernel keeps a target only when its own `close` is cancelled. A target whose close outlives `close_timeout` is collected as an error and is not kept (`base.py:569-574`), so a second `close()` never enters it again. The store is one more target and gets the same. What keeps it inside the timeout is what steps 2, 3 and 5 can cost.
+
+- `KernelStore.close(*, within=None)` takes the seconds it has, and the kernel passes its `close_timeout`, 10 by default.
+- On SQLite the one wait that has no bound of its own is the wait for the file's writer. At close the last flush's one try waits at most the smaller of `busy_timeout`, 5 seconds, and half of `within`. It sets that on its own connection before its `BEGIN IMMEDIATE`.
+- An attempt in hand at step 2 began under the ordinary `busy_timeout`, so it ends within 5 seconds and the length of its statements.
+- Steps 3 and 5 run at the same time. With the defaults a close behind a held writer ends in about 5 seconds, where four tries would have taken about 21 against a timeout of 10.
+
+Other cases:
 
 - A store that was never used has no engine and no task, and its close does nothing.
-- A close that is cut short, by its timeout or by a cancellation, keeps the store, as it keeps a storage (`base.py:559-565`). `KernelStore.close()` can be called again, and a second `close()` finishes it. On SQLite a flush in flight ends its statement first, which is at most one `busy_timeout`.
+- **A close that is cancelled** keeps the store, as it keeps a storage (`base.py:559-565`). `KernelStore.close()` can be called again, and a second `close()` finishes it.
+- **A close that the timeout still cuts short,** because `close_timeout` was set below what one statement in flight takes, is not kept. The dispose has run, since it is in a `finally`. A flush or a transaction still running then closes its own connection when it ends and does not return it to a pool, as an analysis pass that a close left running does (`engine.py:536-539`). The side files go when that connection closes.
 - A durable store keeps its records. An in-memory store loses them, with the jobs that were waiting.
-- On SQLite the directory then holds the mount's file and no side file. Two engines hold connections on that file, the mount's and the store's, and SQLite removes the `-wal` and `-shm` files when the last connection of either closes, so the close of whichever engine ends second is the one that leaves the directory clean.
+- On SQLite the directory then holds the mount's file and no side file. Two engines hold connections on that file, the mount's and the store's, and SQLite removes the `-wal` and `-shm` files when the last connection of either closes, so the close of whichever engine ends second is the one that leaves the directory clean. A connection that is still out when its engine is disposed is not closed by the dispose, and the side files stay (`probes/output.md`, section 6), which is why step 5 comes before step 6.
 
-Reason: the store has an engine and a task, and they follow the rule every storage follows. Flushing at close is what makes a short script's last reads reach the next process.
+Reason: the store has an engine and a task, and they follow the rule every storage follows. Flushing at close is what makes a short script's last reads reach the next process. Reason for one try at close: with one file, a process that closes while another process's batch holds the writer is an ordinary case, and four tries there outlast the default timeout, leave the engine undisposed and leave the side files beside the database, which the landed close specs promise cannot happen. Reason against keeping a timed-out target for a second `close()`: it would change what today's kernel does for every storage, and a store that bounds its own close needs no second call.
 
 ### 20. Many processes share one store, and the synchronous face adds nothing of its own
 
@@ -447,7 +480,7 @@ Reason: the store has an engine and a task, and they follow the rule every stora
 **Many processes.**
 
 - First touch is serialized by decision 8, and a rival's meta row is harmless.
-- A counter, an upsert and a sweep are correct under rivals by decisions 11, 12 and 17. A deadlock between two flushes on Postgres is retried by the core.
+- A counter, an upsert and a sweep are correct under rivals by decisions 11, 12 and 17. A deadlock on Postgres between two flushes, or between a flush or a `commit` and a sweep chunk, is `40P01` and is retried by the core. Sorted keys make two upserts lock rows in one order, and none deadlocked when they did. A sweep's delete locks rows in the order its scan finds them, which sorting keys does not govern.
 - On SQLite every process shares the file's one writer, and the store shares it with the mount. A flush holds it for one batch, a `commit` for its statements, a sweep for one chunk. A process that finds it held, by the store or by a mount's write, waits as any SQLite writer does.
 - A row in one process's buffer is not seen by another until it is flushed, which is a moment after it was put.
 - A process on another build is refused the store by decision 8, and still serves files.
@@ -509,7 +542,7 @@ class KernelStore:
 
     # life: decisions 8 and 19
     async def ensure_ready(self) -> None     # raises KernelStoreUnavailable
-    async def close(self) -> None
+    async def close(self, *, within: float | None = None) -> None
 ```
 
 `vfs.kernel_store` exports `KernelStore`, `KernelStoreUnavailable`, `BehindKind`, `Sweeper`, `Transaction`, decision 26's `expiry_sweeper` and the constants. The members that decisions 24 to 26 add are in the listing above. It is documented on a Maintainers page and carries no compatibility promise.
@@ -650,17 +683,23 @@ Read from each spec's "Builds on" at `59946f0d`, and checked against each spec's
 
 Reason: each of the eight was written without sight of this spec, and each named what it needed in its own words. One table shows that no need was left to be met by an invention at build time.
 
+### 28. Where this spec leaves Plan 9 and Unix it says so, with the constraint that moved it
+
+Article 3 of the constitution has VFS follow a convention of Plan 9 or Unix wherever one exists, and requires a deviation to be a numbered decision that names the principle, the deviation, the motivating constraint and the expected expiry. This is that decision. The section "Prior art, and where this spec departs" lists each point where a convention exists, what this spec does, and for each departure the four things the Article asks for. The conventions are those of a file system keeping its own bookkeeping: where it lives, when the record of a read is written, who removes what has expired, how a second writer waits, and what `close` owes.
+
+Reason: a person who knows `noatime`, a journal inode, `cron` and `fsync` should be able to predict what the kernel's records do, and where they cannot, the place to learn why is the spec that decided it.
+
 ## Cost
 
 Costed against the reference deployment in the working agreement. A store transaction is counted as the study counted: cursor statements, with SQLite's explicit `BEGIN` among them and no `COMMIT`.
 
-**Per verb call, about 150,000 a day.** A read through a session adds no synchronous statement and awaits nothing of the store. The one read that does is a read a policy stops, which stores its job in one `commit` and has read nothing (spec 7, decision 6); it is costed there. Its rows ride a flush: one transaction with one statement for each kind present. At the peak of 20 calls a second, three in four of them reads, that is at most 15 flushes a second, and fewer as load makes batches. A flush of one row took 0.5 ms on a SQLite file of its own, and one of 1,024 rows about 30 ms, on a laptop whose `synchronous = FULL` does not force the disk. Those are an estimate from `probe_flush.py` and not a test. A call with no session and no job touches the store not at all.
+**Per verb call, about 150,000 a day.** A read through a session adds no synchronous statement and awaits nothing of the store. The one read that does is a read a policy stops, which stores its job in one `commit` and has read nothing (spec 7, decision 6); it is costed there. Its rows ride a flush: one transaction with one statement for each kind present. At the peak of 20 calls a second, three in four of them reads, that is at most 15 flushes a second, and fewer as load makes batches. Measured in the mount's own SQLite file with eight readers and one writer (`probes/output.md`, section 1), on a laptop whose `synchronous = FULL` does not force the disk: the store wrote 17 batches a second, a store commit waited 4.5 ms at the median to begin and 0.56 seconds at most, and a read's median was 21.9 ms against 21.4 with no store. On Postgres a read's median was 11.6 ms against 9.5. Those are sizes from one machine and not a test. A call with no session and no job touches the store not at all.
 
-**Per file write, about 1,050,000 a day.** Only a write that carries a record pays. The nightly million and the day's machine writes carry none. A write through a session, about a quarter of the verb calls and so about 37,500 a day, adds one store transaction when it records after and two when it claims before, which is the study's "an effect adds exactly two". That is 5 to 10 store transactions a second at the peak. The study measured the time of two such transactions on Postgres under 32 writing sessions: a one-file write's median moved from 188 ms to 338 ms (`research.md:77`). This spec inherits that cost and does not measure it again. A `drain` adds no statement of its own.
+**Per file write, about 1,050,000 a day.** Only a write that carries a record pays. The nightly million and the day's machine writes carry none. A write through a session, about a quarter of the verb calls and so about 37,500 a day, adds one store transaction when it records after and two when it claims before, which is the study's "an effect adds exactly two". That is 5 to 10 store transactions a second at the peak. The study measured the time of two such transactions on Postgres under 32 writing sessions: a one-file write's median moved from 188 ms to 338 ms (`research.md:77`). Measured again on 2026-11-23 with one record transaction after each write, under 32 writing sessions on Postgres: a write's median moved from 192 ms to between 214 and 217 ms, on the mount's pool, on a pool of 15 and on a pool of 32 (`probes/output.md`, section 13). On SQLite under 32 writing sessions no write was refused and no record failed. A `drain` adds no statement of its own.
 
 **Per index visit, about 11,000,000 a day.** Nothing. The index reads and writes no kernel table.
 
-**Per batch, 100 a night.** A batch with no session adds nothing. A 10,000-entry write through a session is one store transaction of `ceil(10,000 / floor(32,700 / columns))` statements: 2 for a row of 5 columns and 5 for a row of 15.
+**Per batch, 100 a night.** A batch with no session adds nothing. A 10,000-entry write through a session is one store transaction of `ceil(10,000 / floor(32,700 / columns))` statements: 2 for a row of 5 columns and 5 for a row of 15. Measured for the 20,000 rows that specs 3 and 5 write together, 10,000 stamps and 10,000 change rows of 15 columns: one transaction of 1.17 seconds on SQLite and 1.72 to 1.81 seconds on Postgres (`probes/output.md`, sections 4 and 12).
 
 **Per corpus.** Nothing is done for each file. A sweep is for each expired row: one statement for each 5,000. The study reclaimed 150,000 rows in 31 statements, in 1.2 s on SQLite and 2.0 s on Postgres.
 
@@ -669,19 +708,21 @@ Costed against the reference deployment in the working agreement. A store transa
 | Question | Answer |
 |---|---|
 | What is locked on SQLite | The one writer of the root's file, which the mount's writes take too (decision 4). |
-| Who holds it, and for how long | A flush, for one batch of at most 1,024 rows. A `commit`, for its statements, which for a 10,000-row record write is about a third of a second by the estimate above. A sweep, for one chunk of 5,000 rows, 21 ms at the median and 202 ms at most in the study. First touch, once for each process. Each is a commit's length. A mount's write holds the same writer for its own length, and a 10,000-entry write for about 28 seconds in the study. |
-| Who waits | Another writer of the file: a flush, a record write of a change, a sweep chunk, and a write, edit, delete or move on the root mount, in this process or another. Behind a store write the wait is a commit's length. Behind a batch on the mount, a store write waits five seconds a try for four tries and then fails as decision 4 says. |
-| Who does not wait | Every read, list, glob, grep and search of every mount. Every write on a mount that is not the root. Every `query` of the store, since WAL serves a reader beside the writer. |
+| Who holds it, and for how long | A flush, for one batch of at most 1,024 rows. A `commit`, for its statements, which was 1.2 seconds for the 20,000 rows of a 10,000-entry write's stamps and change rows, measured. A sweep, for one chunk of 5,000 rows, 21 ms at the median and 202 ms at most in the study, and 70 ms at the median and 302 ms at most in the mount's file. First touch, once for each process. Each is a commit's length. A pass's chunks follow each other, so what a waiter sees on SQLite is most of the pass (decision 17). A mount's write holds the same writer for its own length, and a 10,000-entry write for about 28 seconds in the study. |
+| Who waits | Another writer of the file: a flush, a record write of a change, a sweep chunk, and a write, edit, delete or move on the root mount, in this process or another. Behind a store write the wait is a commit's length. Behind a batch on the mount, a store write waits five seconds a try for four tries and then fails as decision 4 says. A read that a policy stops waits there too, because it stores its job with `commit`. |
+| Who does not wait | Every read, list, glob, grep and search of every mount that no policy stops. Every write on a mount that is not the root. Every `query` of the store, since WAL serves a reader beside the writer. |
 | What is locked on Postgres | The rows a statement writes, and at first touch one advisory lock for the length of that transaction. No table lock is taken. |
 | In memory | The store's own turn lock, on its own connection. A verb takes the mount's, which is another. |
 
-A read never waits on the store, because a read never calls it. The store's own longest hold is a batch's record write, which on SQLite queues other writers of the file and no reader. No table lock is taken on either engine, so the working agreement's rule for a table lock does not arise. SQLite's one writer is the engine's own, and it leaves every read running.
+A read never waits on the store, because a read never calls it, the read that a policy stops excepted. The store's own longest hold is a batch's record write, which on SQLite queues other writers of the file and no reader. No table lock is taken on either engine, so the working agreement's rule for a table lock does not arise. SQLite's one writer is the engine's own, and it leaves every read running.
 
 **What decisions 24 to 26 add.** `waiting_behind` and `discard_behind` issue no statement and cost the rows of one scope in memory. `expiry_sweeper` is one statement for each dependent and one for the parents in a call, each with the same few binds. A statement of fixed binds costs the store one statement at any size, and holds the SQLite store's writer for as long as it runs; the spec that owns it costs that hold against its own bound.
 
 **Connections.** On Postgres a process holds two pools on the root's database, each of the mount's size: by default 5 kept and up to 15 at a peak, each. A pool opens a connection when one is asked for and none is free, so the store's pool holds what its own work needs and no more. A process that mostly reads holds one store connection, the flusher's. A process with many changes in flight at once holds up to 5 kept and 15 at a peak. A store that is not used opens none.
 
-**Memory.** The buffer holds at most 16,384 rows, about 16 MB at ordinary widths.
+**Memory.** The buffer holds at most 16,384 rows, about 16 MB at ordinary widths. Each store connection on SQLite carries the profile's settings as a mount's does, among them a page cache of up to 256 MiB (`dialects.py:368-376`), and the store's pool holds up to 15.
+
+**Storage.** Nothing of a session is removed unless a lifetime is set, so the store grows with use and has no bound. That is the ruling of 2026-11-23, and it is not a designed cap. Each owning spec states its rows. At spec 3's and spec 4's figures a year is up to about 41 million stamp rows, from 112,500 reads a day through sessions, and 5.5 million turn rows, from 15,000 turns a day. They are in the root's database, and on SQLite in the mount's file. This is an estimate from those specs' Cost sections and was not run.
 
 **First touch.** Once for each process and store: the file settings, a look for the meta table, one read of its row.
 
@@ -689,8 +730,10 @@ A read never waits on the store, because a read never calls it. The store's own 
 
 - **No session, job, stamp, turn or change is built.** Specs 2 to 8 own them. This spec registers no kind and no sweeper.
 - **The action log.** It will be a kind and a sweeper of this store, on this file. Its completion, which the study says is retried and never dropped, is a record that may not be dropped, so by decision 14 it is not written behind. How it is retried, and what bounds the backlog while the store cannot be written, is the action log's spec.
-- **One transaction for a change and its record on a Postgres root.** The study names it and did not measure it (`research.md:158`).
-- **The store sharing the mount's pool on Postgres.**
+- **One transaction for a change and its record on a root mount.** The study names it for Postgres and did not measure it (`research.md:158`). Since the ruling of 2026-11-23 the same is open on SQLite, where the change and its record are now in one file. It is the direction that would end the lost record decision 4 names, for a change on the root.
+- **The store sharing the mount's pool on Postgres.** Measured, and it failed records beside a storm of batches (decision 5).
+- **Planner statistics for the kernel's tables on SQLite.** The statistics pass is the mount's and analyses the mount's tables alone (`engine.py:732-742`). The kernel's tables are planned without `sqlite_stat1`: after 3,000 rows in a store table it named six mount tables and none of the store's.
+- **A store connection with settings of its own on SQLite.** It carries the mount's page cache and memory map, which a few narrow tables do not need.
 - **An engine shared by several storages**, which `a-storage-owns-its-engine-well` leaves to a later spec.
 - **The session settings sent at every checkout on SQLite.** The store's connections pay them as a mount's do, until that spec's decision 1 lands.
 - **A way to remove the kernel's records from a SQLite file and keep the files.** The tables can be dropped by hand, as decision 8's remedy says. No call does it.
@@ -700,7 +743,7 @@ A read never waits on the store, because a read never calls it. The store's own 
 
 ## Tests
 
-Each is written and seen failing before the code. A count is of cursor statements recorded by a `before_cursor_execute` listener on `store.engine`, of rows read back, of files in a directory, of log records, or of an exit status. None reads a clock. Two seams are added through the adapter's `seam` (`seams.py:41-52`): `kernel-store:before-commit`, inside `commit` and `record_after` before the commit is sent, and `kernel-store:before-flush`, in the task before it takes a batch. *Both engines* means a SQLite file and the Postgres leg behind `VFS_TEST_POSTGRES_URL`; every other test runs on a SQLite file and in memory.
+Each is written and seen failing before the code. A count is of cursor statements recorded by a `before_cursor_execute` listener on `store.engine`, of rows read back, of files in a directory, of log records, or of an exit status. None reads a clock. Three seams are added through the adapter's `seam` (`seams.py:41-52`): `kernel-store:before-try`, at the start of each try of a `query`, a `commit` or a `record_after`; `kernel-store:before-commit`, inside `commit` and `record_after` before the commit is sent; and `kernel-store:before-flush`, in the task before it takes a batch. *Both engines* means a SQLite file and the Postgres leg behind `VFS_TEST_POSTGRES_URL`; every other test runs on a SQLite file and in memory.
 
 Landing 1, `tests/storage/database/test_core.py`:
 
@@ -710,25 +753,26 @@ Landing 1, `tests/storage/database/test_core.py`:
 
 Landing 2, `tests/storage/test_record_place.py`:
 
-- `test_a_sqlite_storage_names_its_own_file`: the place's database is the storage's path, `durable` is true, the arguments are `None`, and 0 files exist after the property is read.
+- `test_a_sqlite_storage_names_its_own_file`: the place's database is the storage's path, `durable` is true, the arguments are the storage's without `pool`, a `creator` among them, and 0 files exist after the property is read.
 - `test_a_path_with_a_question_mark_keeps_it`: `notes?v2.db` gives `notes?v2.db`, and the URL's query is the storage's.
 - `test_an_in_memory_storage_names_a_place_in_memory`: `durable` is false.
 - `test_a_memory_url_read_as_a_file_names_no_place`, and `test_a_storage_on_the_generic_floor_names_no_place`: `None`.
 - `test_a_postgres_storage_names_its_own_database_and_schema`: the URL and schema are the storage's, the arguments carry `pool_size` and not `pool`. No connection is made.
-- `test_a_label_never_holds_the_password`.
+- `test_a_label_never_holds_the_password`: neither the label nor `repr(place)` holds it, for a URL given as text and for one given as SQLAlchemy's `URL`.
 - `test_a_place_of_another_dialect_is_refused_when_the_store_is_built`: a `ValueError` that names both dialects and not the URL.
 
-Landing 3, `tests/kernel_store/test_store.py`:
+Landing 3, `tests/kernel_store/test_store.py`. A test that writes rows writes them in `vfs_kernel_probe`, a table that `tests/support/kernel_store.py` makes, since this spec's one table holds one row:
 
 - `test_a_file_system_that_keeps_no_record_makes_no_file`: a write, a read and a close on a SQLite root leave exactly one file, and the store's engine saw 0 connections.
 - `test_first_use_makes_the_kernel_tables_in_the_mounts_file`: the directory holds 1 file, that file holds `vfs_kernel_meta` whose row holds `KERNEL_FORMAT_VERSION`, and the mount's meta row and `SCHEMA_FORMAT_VERSION` are as they were.
 - `test_close_leaves_one_file_and_no_side_file`: after records were written and the kernel closed, the directory holds exactly `knowledge.db`. The same with the store's engine disposed before the mount's and after it.
 - `test_a_store_commit_waits_for_the_mount_writer_and_then_lands`: a mount write is held at the `write:before-apply` seam, one `commit` is started and has not returned, counted as 0 rows; the write is released and the row is there, counted as 1.
 - `test_a_store_commit_behind_a_held_mount_writer_fails_as_unavailable`: with each checkout's `busy_timeout` at 0 and the mount's writer held, 4 `BEGIN IMMEDIATE`, one `KernelStoreUnavailable` that is retryable, and the mount's write lands when released.
-- `test_a_flush_behind_a_held_mount_writer_keeps_its_rows`: 3 rows put behind while the mount's writer is held stay in the buffer after the failed flush, 1 `WARNING` is logged, `waiting_behind` returns the 3, and after the release and one more put all are written.
 - `test_a_mount_read_returns_while_the_store_writer_is_held`: a rival holds the file's writer through the store's engine, and a `read`, a `grep`, a `glob` and a `search` each return, counted as 4 results. An `edit` with no session started meanwhile has not returned, and lands when the rival commits.
 - `test_two_stores_touch_one_place_first_together`: both are ready and the meta table holds 1 row. Both engines.
-- `test_a_store_of_another_format_is_refused_and_named`: the raise carries `vfs.unavailable.schema` with `found` and `expected`, the detail names the remedy, and a file `read` still succeeds. Both engines.
+- `test_a_store_of_another_format_is_refused_and_named`: the raise carries `vfs.unavailable.schema` with `found` and `expected`, the detail names each kernel table and no prefix, and a file `read` still succeeds. Both engines.
+- `test_the_store_pins_read_committed`: on the Postgres leg, with `default_transaction_isolation` set to `repeatable read` in the connection's settings, two stores take 50 numbers each, the 100 are exactly 1 to 100, and the store's engine saw 0 statements refused.
+- `test_a_role_that_may_not_create_is_told_the_grant`: on the Postgres leg, a role with no `CREATE` on the schema calls `commit`. It raises `KernelStoreUnavailable` of kind `vfs.unavailable`, not retryable, whose detail names the grant and each table, counted as 1 raise and 0 errors of kind `vfs.internal`. The same for a role with no rights on tables that exist.
 - `test_a_query_is_not_a_writer`: on SQLite its transaction begins with `BEGIN` and 0 `BEGIN IMMEDIATE`.
 - `test_a_commit_behind_a_held_writer_gives_up_after_four_tries`: with each checkout's `busy_timeout` at 0, 4 `BEGIN IMMEDIATE` and one `KernelStoreUnavailable` that is retryable.
 - `test_a_closed_store_answers_as_the_closed_kernel_does`: kind `vfs.unavailable.backend`, detail "the filesystem is closed".
@@ -737,7 +781,7 @@ Landing 3, `tests/kernel_store/test_store.py`:
 - `test_next_number_on_no_row_raises`.
 - `test_insert_rows_stays_under_the_parameter_budget`: 10,000 rows of 5 columns with the budget narrowed to 1,000 go in 50 pages of at most 200 rows, counted by cursor events on SQLite and by a spy on the driver's `copy_records_to_table` on Postgres. Marked `slow`. Both engines.
 - `test_upsert_rows_chunks_sorts_and_keeps_the_newest`: 10,000 rows under the same budget are 50 statements of at most 1,000 binds, with keys in order; a second call with lower `newest` values changes 0 rows, and one with higher changes 10,000. Marked `slow`. Both engines.
-- `test_an_upsert_that_names_a_key_twice_is_refused`.
+- `test_an_upsert_that_names_a_key_twice_is_refused`: a `ValueError`, and 0 statements sent. Both engines, since on SQLite nothing but this check refuses it.
 - `test_delete_expired_binds_the_same_values_whatever_it_removes`: with 3 expired rows and with 12,000, the statement's text and its bind count are the same, and it removes at most `limit`.
 - `test_record_after_survives_its_callers_cancellation`: the caller is cancelled at the `kernel-store:before-commit` seam, the row is there, counted as 1, and the error raised is the object the caller was cancelled with.
 - `test_record_after_returns_a_warning_when_the_store_cannot_be_written`: one error of severity `warning` and kind `vfs.unavailable`, and no raise.
@@ -756,17 +800,24 @@ Landing 3, `tests/base/test_kernel_store.py`:
 - `test_the_kernel_builds_its_store_with_no_io`: 0 connections on either engine after construction.
 - `test_an_in_memory_root_keeps_records_on_a_connection_of_their_own`: the store's engine opened 1 connection, which is not the mount's, and a `commit` returns while a mount call holds its turn.
 - `test_a_root_that_names_no_place_keeps_records_in_memory`: a storage with no `record_place`, and `store.durable` is false.
-- `test_records_in_memory_beside_a_database_mount_warn_once`: 1 `WARNING` on `vfs.kernel_store` at the first write, 0 at the second.
-- `test_close_closes_the_store_within_the_close_timeout`, `test_a_close_cut_short_keeps_the_store_for_a_second_close`, and `test_a_store_that_fails_to_close_joins_the_storages_errors`: counted as closes and as errors in the group.
+- `test_records_in_memory_beside_a_database_mount_warn_once`: 1 `WARNING` on `vfs.kernel_store` at the first write, 0 at the second. When the database mount is added after the first record, 0 at that record and 1 at the next.
+- `test_close_closes_the_store_within_the_close_timeout`, `test_a_cancelled_close_keeps_the_store_for_a_second_close`, and `test_a_store_that_fails_to_close_joins_the_storages_errors`: counted as closes and as errors in the group.
+- `test_close_waits_for_a_record_in_flight`: a `record_after` is held at the `kernel-store:before-commit` seam, `close()` is started, and the record is released. The row is there, counted as 1, the store's engine has 0 connections open, and the directory holds 1 file.
+- `test_a_commit_in_hand_at_close_starts_no_further_try`: with the file's writer held and each checkout's `busy_timeout` at 0, a `commit` is held at the `kernel-store:before-try` seam of its first try and `close()` is started. Released, it has sent 1 `BEGIN IMMEDIATE` and not 4, and raises `KernelStoreUnavailable`.
 - `test_no_verb_shows_a_kernel_table`: after 3 records are written, `tree("/")`, `glob("**")` and the `/.vfs` listing return the rows they returned before, counted.
 - `test_a_session_cannot_reach_the_kernel_store`: no public attribute of `AsyncSession` or `Session` is or returns a `KernelStore`.
 
-Landing 3, `tests/test_sync.py`:
+Landing 4, `tests/test_sync.py`:
 
 - `test_the_facade_closes_the_kernel_store`: 3 rows put behind through the facade's kernel are in the root's file after `close()`, the directory holds 1 file, and no `vfs-sync-loop` thread is left.
 
 Landing 4, `tests/kernel_store/test_behind.py`:
 
+- `test_a_flush_behind_a_held_mount_writer_keeps_its_rows`: 3 rows put behind while the mount's writer is held stay in the buffer after the failed flush, 1 `WARNING` is logged, `waiting_behind` returns the 3, and after the release and one more put all are written.
+- `test_close_behind_a_held_writer_still_disposes_the_store`: the file's writer is held by another connection and 3 rows are put behind. `close()` sends 1 `BEGIN IMMEDIATE` on the store's engine and not 4, logs 1 `WARNING` that counts 3 rows dropped, and leaves 0 store connections open. When the holder closes, the directory holds 1 file.
+- `test_a_read_only_file_holds_its_rows_and_warns_once`: on a file made read-only, 3 rows put behind one at a time leave 3 rows waiting and 1 `WARNING` that names the path, the task made 3 tries, counted at the `kernel-store:before-flush` seam, and a `commit` raises `KernelStoreUnavailable`.
+- `test_a_role_that_may_not_write_keeps_its_rows_and_names_the_grant`: on the Postgres leg, 3 rows put behind by a role with no rights on the tables are still waiting after the flush, counted as 1 `WARNING` that names the grant and 0 `ERROR`. After the grant and one more put, 4 rows are written.
+- `test_a_kind_that_can_never_land_drops_its_own_rows_alone`: a flush holds 3 rows of a kind whose `write` breaks a constraint and 3 of a kind that is sound. 3 rows are written, `dropped` grows by 3, and 1 `ERROR` names the first kind.
 - `test_put_behind_sends_nothing_before_it_returns`: with the task held at the `kernel-store:before-flush` seam, the store has issued 0 statements when `put_behind` returns; released and drained, the rows are there.
 - `test_the_task_runs_in_a_context_of_its_own`: a context variable the putter set is unset inside the kind's `write`, counted as 1 observation.
 - `test_rows_put_in_one_turn_ride_one_flush`: 300 rows are 1 writer transaction, and 3,000 are 3.
@@ -775,7 +826,7 @@ Landing 4, `tests/kernel_store/test_behind.py`:
 - `test_a_full_buffer_drops_its_oldest_and_counts_them`: with a capacity of 8 and the task held, 12 puts leave `dropped == 4` and the newest 8 are written.
 - `test_a_flush_stays_under_the_parameter_cap`: 10,000 rows of a 15-column kind are 10 flushes, and no statement binds more than the budget. Marked `slow`. Both engines.
 - `test_a_failed_flush_keeps_its_rows_and_the_next_put_sends_them`: 3 rows stay, 1 `WARNING` is logged, and after one more put 4 rows are written and 1 `INFO` is logged.
-- `test_a_flush_that_can_never_land_drops_its_batch`: 1 `ERROR`, `dropped` grows by the batch, and a later batch is written.
+- `test_a_flush_that_can_never_land_drops_its_batch`: a batch of one kind that can never land is tried 2 times and no more, counted as writer transactions. 1 `ERROR`, `dropped` grows by the batch, and a later batch is written.
 - `test_drain_returns_at_once_when_its_scope_has_nothing_waiting`: 0 statements.
 - `test_drain_waits_for_its_scope_alone`, `test_drain_raises_when_its_flush_fails`, and `test_a_cancelled_drain_loses_no_row`.
 - `test_a_put_after_close_is_dropped_and_raises_nothing`, and `test_close_flushes_what_the_buffer_holds`.
@@ -794,8 +845,9 @@ Landing 4, `tests/kernel_store/test_sweep.py`:
 - `test_a_pass_goes_on_until_nothing_expired_is_left`: 60,000 expired rows are removed by one pass in 13 delete statements, 12 that remove 5,000 and 1 that removes none. Marked `slow`.
 - `test_nothing_is_swept_until_sweep_is_called`: with expired rows in a registered table, 2,000 commits, 20 flushes and a `close` call the sweeper 0 times and remove 0 rows.
 - `test_a_cancelled_pass_has_removed_whole_chunks`: a pass over 12,000 expired rows is cancelled at the `kernel-store:before-commit` seam of its second chunk. 5,000 rows are gone and 7,000 are left, counted.
-- `test_two_passes_at_once_remove_each_row_once`: two stores remove 2,000 rows between them. Both engines.
-- `test_a_flush_runs_between_two_chunks`.
+- `test_two_passes_at_once_remove_each_row_once`: two stores remove 2,000 rows between them, and the two counts add up to 2,000 whichever pass ends first. Both engines.
+- `test_a_flush_runs_between_two_chunks`: a pass over 12,000 expired rows is held at the `kernel-store:before-commit` seam of its first chunk, and 3 rows are put behind. Released, the flush's writer transaction begins before the second chunk's, counted in the order of the store's `BEGIN IMMEDIATE` statements.
+- `test_a_root_that_masks_sweep_runs_no_pass`: a root built with `deny_ops={"sweep"}` and 3 expired rows calls the sweeper 0 times, and a second file system over the same file with no mask removes the 3.
 - `test_a_sweeper_with_small_batches_is_called_until_it_finds_nothing`: a sweeper that removes 100 rows a call is called 4 times for 300 expired rows.
 - `test_an_expiry_sweeper_removes_dependents_before_parents`: 3 expired parents with 4 dependent rows each, and 1 live parent with 2. A call with a limit of 5 removes 5 dependent rows and 0 parents. The calls that follow remove the other 7 and then the 3 parents. 1 parent and 2 dependent rows are left, and no call removes more than 5. Both engines.
 - `test_an_expiry_sweeper_binds_the_same_values_at_any_size`.
@@ -817,10 +869,10 @@ In, by landing:
 
 1. `src/vfs/storage/backends/database/core.py` (new), `engine.py`, `tests/lint/allowlist.py` for the lowered count.
 2. `src/vfs/storage/protocol.py`, `src/vfs/storage/__init__.py`, `src/vfs/__init__.py`, `src/vfs/storage/backends/database/backend.py` for the property.
-3. `src/vfs/models/kernel_rows.py` (new), `src/vfs/kernel_store/__init__.py` and `store.py` (new), one function in `attempts.py`, `src/vfs/base.py` for the construction and the close, `tests/lint/test_code_shape.py` for the rung and the importer, `tests/support/kernel_store.py` (new).
-4. `src/vfs/kernel_store/behind.py` (new).
+3. `src/vfs/models/kernel_rows.py` (new), `src/vfs/kernel_store/__init__.py` and `store.py` (new), one function in `attempts.py`, `src/vfs/base.py` for the construction and the close, `tests/lint/test_code_shape.py` for the rung and the importer, `tests/support/kernel_store.py` (new). The support module holds a clock that a test steps, and `probe_table(store)`, which makes a table named `vfs_kernel_probe` with a key, a counter and an expiry in a `commit` of the store's own, for the tests of this spec that write rows. The table is a test's and is in no build of `build_kernel_tables`.
+4. `src/vfs/kernel_store/behind.py` and `src/vfs/kernel_store/sweep.py` (new), and `src/vfs/base.py` for the pass that `sweep` awaits.
 
-The docs: `documentation/maintainers/kernel-store.md` (new) with landings 3 and 4, `documentation/maintainers/cancellation.md`, `documentation/reference/python-api/storage.md`, and the docstrings in `sqlite.py`, `postgres.py`, `memory.py`, `backend.py` and `base.py`.
+The docs: `documentation/how-to/take-vfs-to-production.md` (new) with landing 3 and completed by landing 4, with its entry in `documentation/navigation.json` and its one link from `documentation/tutorials/keep-your-files-in-a-database.md`; `documentation/maintainers/kernel-store.md` (new) with landings 3 and 4, `documentation/maintainers/cancellation.md`, `documentation/reference/python-api/storage.md`, and the docstrings in `sqlite.py`, `postgres.py`, `memory.py`, `backend.py` and `base.py`.
 
 `base.py` is held at 3,090 lines and grows by the store's construction and its close, so its entry is raised by that count, as the write preconditions raised it.
 
@@ -828,18 +880,52 @@ Out: every table but `vfs_kernel_meta`, every public method of a session or a jo
 
 ## What the docs must say
 
-- **An early page for a reader who is going to production,** by the ruling of 2026-11-23: the tutorial `documentation/tutorials/keep-your-files-in-a-database.md`, or a page of its own that the tutorials link to. It says three things. `VirtualFileSystem()` with no storage keeps everything in memory, sessions and jobs included, and all of it ends with the process. A production system gives the root a database, `VirtualFileSystem(storage=PostgresStorage(...))`, and its sessions and jobs are then kept there and seen by every process. A database mounted beneath an in-memory root keeps its files and not the sessions, and VFS logs one warning when that is the shape. The same page says to call `fs.sweep()` on a schedule: it empties the trash and removes expired jobs, and expired sessions where `session_lifetime` is set, and nothing is removed until it is called.
+- **An early page for a reader who is going to production,** by the ruling of 2026-11-23: a page of its own, `documentation/how-to/take-vfs-to-production.md`, first in the how-to section of `documentation/navigation.json`, which the last section of the tutorial `documentation/tutorials/keep-your-files-in-a-database.md` links to. It says three things. `VirtualFileSystem()` with no storage keeps everything in memory, sessions and jobs included, and all of it ends with the process. A production system gives the root a database, `VirtualFileSystem(storage=PostgresStorage(...))`, and its sessions and jobs are then kept there and seen by every process. A database mounted beneath an in-memory root keeps its files and not the sessions, and VFS logs one warning when that is the shape. The same page says to call `fs.sweep()` on a schedule: it empties the trash and removes expired jobs, and expired sessions where `session_lifetime` is set, and nothing is removed until it is called. It says that a file system which masks `sweep` for its agents runs no sweep, and that the schedule then calls it from a file system of its own over the same database, with no mask. It says that on SQLite a long sweep is run when the file is quiet, and that Postgres is the engine for a system with long batches or many writers. For Postgres it names the grant a serving role needs when it may not create tables.
 - **`documentation/maintainers/kernel-store.md`, new.** What the store is and why it is one for each file system. Where it lives on each engine. The two transactions and the two forms of decision 10, with both tables. The writer, what it drops and when. The sweep and the clock. The eight rules of decision 22. That it is private.
 - **`documentation/maintainers/cancellation.md`.** `record_after` runs out of its caller's reach and is not marked, and why.
-- **The docstring of `SQLiteStorage`.** A file system whose root is this storage keeps its sessions and jobs in the same file, in tables of their own. A copy of the file carries them. SQLite has one writer for a file, so while a large batch is being written a session's records are written late, and a job cannot be stored or resumed until the batch ends. Postgres has no such wait.
+- **The docstring of `SQLiteStorage`.** A file system whose root is this storage keeps its sessions and jobs in the same file, in tables of their own. A copy of the file carries them. SQLite has one writer for a file, so while a large batch is being written a session's records are written late, and a job cannot be stored or resumed until the batch ends. A change made through a session while another writer holds the file for longer than about 20 seconds can land without its record, and its result then carries a warning that says so. Postgres has no such wait.
 - **The docstring of `PostgresStorage`.** The kernel's tables are in the same schema, on a second pool of the same size, and a listener put on `storage.engine` does not reach it.
 - **The docstring of `InMemoryStorage`.** Sessions and jobs are in memory too, and end with the process.
 - **The docstring of `DatabaseStorage.record_place`,** and the Storage reference page under "Writing a Storage Backend", for `RecordPlace`.
-- **The docstring of `AsyncVirtualFileSystem.sweep`.** A sweep of the root's trash also removes the kernel's expired records: jobs past `job_lifetime`, and sessions past `session_lifetime` where one is set. A session is never removed for its age unless a lifetime is set.
-- **The docstring of `AsyncVirtualFileSystem.close`.** It writes what the file system had not yet written about its sessions, and then releases the store.
-- **`documentation/tutorials/keep-your-files-in-a-database.md` is not changed.** Its last step says `vfs.db` is the only file to remove (`:96`), and that stays true, because the tutorial keeps no record. A test holds it.
+- **The docstring of `AsyncVirtualFileSystem.sweep`.** A sweep of the root's trash also removes the kernel's expired records: jobs past `job_lifetime`, and sessions past `session_lifetime` where one is set. A session is never removed for its age unless a lifetime is set. A root that masks `sweep`, or a caller who may not write the root's trash, removes none of them, and no other call does.
+- **The docstring of `AsyncVirtualFileSystem.close`.** It writes what the file system had not yet written about its sessions, and then releases the store. When another process holds a SQLite file's writer, it tries once and drops what it could not write.
+- **`documentation/tutorials/keep-your-files-in-a-database.md` gains one link, to the production page, and is otherwise not changed.** Its last step says `vfs.db` is the only file to remove (`:96`). Since the ruling of 2026-11-23 that is true of every file system on SQLite, with records or without. A test holds it.
 
 A docstring changes, so `scripts/docs.sh check` runs before the pull request.
+
+## Prior art, and where this spec departs
+
+Read on 2026-11-23 in the clones and at the lines the research memo `research/2026-11-23-where-a-system-keeps-its-own-records.md` records. `systemd` is not cloned, so its `tmpfiles` rules for age were not read.
+
+Where this spec agrees:
+
+- **Bookkeeping lives in the store it describes.** ext4's journal is inode 8 of the file system it protects, FFS's is a file in the root directory, and SQLite's and Postgres's own tables are in the user's file and the user's database. The kernel's tables are in the root storage's own file and its own database (decisions 4 and 5), and a copy of the store carries them.
+- **The record of a read is made after the read, in memory, by a call that cannot fail the read.** That is `touch_atime` in Linux, `IN_ACCESS` in FFS and `fileRAccess` in fossil. It is `put_behind` here (decision 13).
+- **Most reads leave no new record.** `relatime` writes a time only when it is stale, and a day apart at most. Rows of one key become one row here, and a session's use is written at most once in five minutes.
+- **A crash loses what was only in memory.** `lazytime` holds a time for up to a day, and Postgres discards its statistics after a crash. A process that dies here loses its buffer.
+- **A store of another format is refused and not repaired.** ext4 refuses an unknown feature, fossil another version of its super block, and Postgres another catalog version. Decision 8 refuses another `format_version`.
+- **Expired state is removed by a job that somebody schedules, and nothing is removed until then.** FreeBSD's cleaner of `/tmp` is a `cron` script that ships turned off, Plan 9 ships none, and fossil discards no snapshot until an operator sets a lifetime. Decision 17 removes nothing until `sweep` is called.
+- **What has expired reads as gone before it is removed.** A Linux key past its time is refused on use before its collector runs. Every read of a table that expires filters on the expiry.
+- **Nothing expires unless a lifetime is set.** A file does not, and a fossil snapshot does not by default. A session does not.
+- **Reclaim is a privileged act.** The `cron` job runs as root and fossil's commands are console commands. The pass runs only for a caller allowed to sweep the root's trash.
+- **One writer, taken when the transaction begins.** That is SQLite's rule for a file in WAL, and every store transaction that writes begins as a writer.
+- **The shutdown of a file system flushes.** fossil's `fsClose` writes its metadata before it ends. The kernel's `close` writes what the store had buffered.
+
+Where this spec departs. Each row is a deviation under Article 3.
+
+| The convention | What this spec does | The constraint that moved it | Expiry |
+|---|---|---|---|
+| Plan 9 serves a server's own state as files: fossil's snapshots, its archive and its users file are in the tree. | A record has no path, and no verb shows it (decision 1). | Article 1 gives a path only to an Entry, which has a kind, a revision and rights. A session row has none of the three, and Article 3's own limit is to keep out what would need a dishonest file shape. | When a view of sessions and jobs under `/.vfs` is designed. All nine specs leave it out. |
+| An access time is advisory. No operation in Unix or Plan 9 is refused because one was not written. | A stamp that was dropped refuses the session's next change of that path until one read (decision 14). | The record is what a session's protection against a lost update rests on, so its loss must err toward a refusal and never toward a change that should have been refused. | None. |
+| A delayed record is written on a timer: each second in fossil, 30 seconds in FFS, 12 hours under `lazytime`. | It is written as soon as the store's one task is free, with no timer (decision 13). After a failed flush it waits for the next row and for no clock (decision 15). | Another process takes up the same session in the next request and must find what this one saw; and a timer would put a clock in every test. | None. |
+| A journaling file system writes a change and its record as one transaction. | Two transactions, on both engines and for every mount (decision 10). A change can land without its record, and the caller is told. | The change may land on a mount that is not the root, and a storage commits inside its own method. | When a change and its record on a root mount share one transaction, which "Left as it is" names. |
+| A file system's bookkeeping is made when the file system is made, by `newfs`, `tunefs` or `flfmt`. | The tables are made at the store's first use (decision 8). | VFS has no provisioning step: a mount makes its own tables at first touch, and a file system that keeps no record must make none. | None. |
+| ext4 can keep its journal on another device, and fossil its archive on another server. | No argument names another place for the records (choice 3). | One thing to copy, to back up and to delete, and a root in memory that keeps everything in memory. | When a deployment needs the records apart from the root; "Left as it is" names a storage that is not the root. |
+| The system's own names are out of the user's reach: SQLite refuses a table named `sqlite_…`, and no name reaches an ext4 journal's inode. | Three prefixes are reserved by a lint in VFS. Neither engine knows them, and an application's table in the same file or schema can take one. The remedy of decision 8 therefore names tables and never a prefix. | The database is the application's, and VFS reserves nothing in it that the engine would enforce; the mount's own tables stand the same way. | None. |
+| A store of another format does not mount at all. | The records are refused and the files are served (decision 8). | The mount has a format number of its own, and a difference in the records' format says nothing about the files. | The first release, when decision 8 is rewritten. |
+| A second writer waits without end (`flock`), or is refused at once and tries again itself (Plan 9's exclusive-use files). | It waits five seconds a try for four tries and is then refused as unavailable; rows written behind are tried again by the store (decisions 4, 9 and 15). | SQLite's one writer and its timed poll, and the rule a mount's write already follows; an agent must be answered in a bounded time. | None. |
+| Where a lifetime is set, the system reaps by itself: fossil from a timer, Linux from its collectors. | No timer and no leader; only the public `sweep` (decision 17). | A storage does no work in the background, and nothing is destroyed that a developer did not ask to have destroyed. | None. |
+| `close` writes nothing that was delayed; where it does (NFS) it returns the error; a closed descriptor is gone, error or not; and `fsync` is the call that waits. | `close` flushes; a failed flush is logged and not raised; a `close` that was cancelled is finished by a second; and no public call waits for the records (decision 19). | `close` here is the unmount of a file system and not the close of a file. Every record written behind may be dropped (decision 14), so no caller is owed its arrival, and a change that must read its own session's rows drains them inside the kernel (decision 16). | None. |
 
 ## Earlier decisions this reverses
 
@@ -852,14 +938,17 @@ A docstring changes, so `scripts/docs.sh check` runs before the pull request.
 - **This spec's first draft named the record of what a session changed as the case for the claim-before form.** Spec 5 writes that record after the change (its decision 4), and decision 10 now says so. The claim-before form's case is a job's step.
 - **This spec's own decision 17, as first drafted:** each process swept by itself, after its first 64 writes to the store and after every 1,024 from then on, eight chunks at most a pass. By the ruling of 2026-11-23 a pass runs only when the public `sweep` is called, and goes on until nothing expired is left.
 - **This spec's first draft ended a sweeper's turn when a call removed fewer than 5,000 rows.** Decision 17 now ends it when a call removes none, so a sweeper with smaller batches finishes its work.
+- **This spec's own decision 19, as first drafted:** a close cut short by its timeout kept the store for a second `close()`. Today's kernel keeps a target only on a cancellation. The store now bounds its own close, with one try for the last flush, and leans on no second call.
+- **This spec's own decision 5, as first drafted:** READ COMMITTED "with no pin". The level is pinned.
+- **This spec's own decision 15, as first drafted:** a batch that can never land was dropped whole. It is tried once more a kind at a time.
 - **`documentation/maintainers/cancellation.md` says "nothing but the storage makes a session, a connection or a transaction on the engine".** That stays true of the storage's engine. A file system now has a second engine, the store's, which a listener on `storage.engine` does not reach.
 
 ## Choices for the owner
 
 Each is decided above, and the decision stands until it is ruled on. Two that earlier rounds listed are ruled and are not here: `RecordPlace` is a public name, and no public call flushes the writer.
 
-1. **Ruled on 2026-11-23: on SQLite the records are in the mount's own file, and there is no second file.** Decision 4 states the price. The choice this item first held, the suffix of a sibling file, has nothing left to name.
-2. **Ruled on 2026-11-23, subject to one measurement: the store has a pool of its own on Postgres,** of the mount's size. The kernel's store is its own thing and not the storage's, so it does not borrow the storage's connections. The other choice is the mount's pool: no second set of connections, and a flusher that can wait behind batches. The spec review measures both before the default is fixed ("Not checked", the pool).
+1. **Ruled on 2026-11-23: on SQLite the records are in the mount's own file, and there is no second file.** Decision 4 states the price. The choice this item first held, the suffix of a sibling file, has nothing left to name. The spec review of 2026-11-23 measured the price after the ruling, and decision 4 now carries the figures. One of them the ruling did not have before it: behind a writer held longer than about 20 seconds, a change made through a session can land without its record, for good, and the caller is told by a warning. With nothing else running, and beside a 10,000-entry write of about 8 seconds, nothing failed and nothing was lost. The ruling stands until it is ruled on again with that figure in view. The other choice is still a second file, in which the same windows lost nothing.
+2. **Ruled on 2026-11-23, and since measured: the store has a pool of its own on Postgres,** of the mount's size. The kernel's store is its own thing and not the storage's, so it does not borrow the storage's connections. The other choice is the mount's pool: no second set of connections, and a flusher that can wait behind batches. Measured in the spec review of 2026-11-23 (`probes/output.md`, sections 13 and 14): with 32 writing sessions a record costs the same 22 to 25 ms on the mount's pool, on a pool of 15 and on one of 32, and the store's pool was never more than 8 deep. Beside 32 batches the mount's pool gave a record no connection in 30 seconds five times and a flush once, and a pool of the store's own failed nothing. The default stands: a pool of the store's own, of the mount's size.
 3. **Ruled on 2026-11-23: no argument names another storage for the records.** A root in memory keeps them in memory, and warns once when a database is mounted beneath it. The other choice was `VirtualFileSystem(records=…)`. Reason: a file system made with no storage is in memory, its sessions and jobs with its files, which is right for a first trial and for a test. A system that goes to production gives its root a database, and an early page of the docs says so ("What the docs must say").
 4. **A store of another format is refused, never reset.** A reset would be kinder while the design is unreleased, and would end waiting jobs without a word.
 5. **A place that cannot be written is not replaced by memory.**
@@ -869,7 +958,7 @@ Each is decided above, and the decision stands until it is ruled on. Two that ea
 
 ## Where this spec disagrees with the overview or the guides
 
-1. **`documentation/how-to/interrupt-a-job-and-ask-a-person.md`, "Find Jobs That Are Waiting".** It says "A file system that keeps its files in memory keeps its jobs in memory too". Proposed: "A file system whose root storage is in memory keeps its jobs in memory too, even when a database is mounted beneath the root. To resume a job from another process, make the root storage a database." Evidence: the overview's own ruling, and the default root, which is in memory.
+1. **`documentation/how-to/interrupt-a-job-and-ask-a-person.md`, "Find Jobs That Are Waiting".** The first draft proposed a sentence here. The guide already carries it (`:477`, "A file system whose root storage is in memory keeps its jobs in memory too, even when a database is mounted beneath the root"), and no change is proposed.
 2. **`documentation/how-to/keep-a-session-for-each-conversation.md`, the paragraph that begins "A session is stored in the database".** It says VFS keeps the session "in the database you already run". Since the ruling of 2026-11-23 that is true as written on both engines, and no change is proposed.
 3. **The overview's "kept by the storage of the root mount".** This spec reads it as "kept in the place the root storage names". The storage class gains one property and no record logic. No change to the overview's words is proposed.
 
@@ -877,7 +966,13 @@ The first draft listed a fourth: the overview's public names held none of this s
 
 ## Needs no other spec meets yet
 
-Nothing. Read again at `7c383f32`.
+Nothing was open at `7c383f32`. The rulings of 2026-11-23 came after it, and four specs still say what the rulings reversed. Each is its owner's to change, and none is needed to build this spec.
+
+- **Spec 2.** Its Cost has the counted sweep, "a pass calls it up to eight times, and a pass is due every 1,024 writes of a process". Its decision 18 is still headed by a session that expires after 30 days, under the ruling's note. Its reclaim ends a step when a call "returns fewer than it was asked for", where a sweeper here ends when a call removes none.
+- **Spec 3.** Its Cost says "Sessions live 30 days".
+- **Spec 4.** Its decision on turns and its Cost bound a session's turns by the 30 days.
+- **Spec 5.** Its line on a session's age reasons from the 30 days.
+- **An expiry must be a stored column.** `delete_expired` compares a stored column with the pass's one reading of the clock. Spec 2's decision 18 has yet to settle whether a session's expiry is stored, or worked out from `last_used_at` and the lifetime of the process that asks. This store's sweep needs the first, or a sweeper of spec 2's own whose `where` works the expiry out from the lifetime it is handed.
 
 The six items of the second round are closed:
 
@@ -900,19 +995,19 @@ Two sentences in other specs differ from this one and break nothing. Each is its
 
 ## Not checked
 
-- **The store in the mount's SQLite file, as now designed.** The study ran a log in the mount's file that gave up after one five-second wait and flushed every 256 rows. This store waits four tries and flushes as soon as it is free. To run, on a SQLite file with eight readers through sessions and one one-file writer: a 10,000-entry write, counted as flushes that failed, the buffer's high water against `BEHIND_CAPACITY`, record writes that returned a warning, and jobs refused as unavailable; then the same with no batch and 32 writing sessions.
-- **Two engines on one SQLite file at `close`.** That the directory holds no `-wal` and no `-shm` whichever engine is disposed first was not run. The landed close spec was written for one engine.
-- **The mount's first touch beside tables it did not make.** It is read to verify its meta row and not its table list. To run: a mount opened on a file that already holds the kernel's tables.
-- **Postgres.** No probe ran on a server. The counter under two processes, a sweep under two processes, and a deadlock between two flushes are read from how READ COMMITTED treats a row a rival changed, and are pinned by tests on the Postgres leg. Postgres 15 to 18 were not run by the study either.
-- **The flusher as designed.** The study measured a flusher that waits for 256 rows. A flusher that flushes as soon as it is free was not measured under 32 sessions, and neither was its effect on a read's time.
-- **The pool, and the time a record write adds to a change.** The study's +151 ms on Postgres, a one-file write's median moving from 188 ms to 338 ms under 32 writing sessions, had the log's own pool of 15 as its first suspect, and no run used a larger one or the mount's. To run before the default of choice 2 is fixed, on the Postgres leg, 32 sessions each writing one file through a session, three ways: the store on the mount's pool, the store on a pool of its own of 15, and on one of 32. Reported for each: the write's median and 95th percentile against the same run with no store, the connections open at the peak, and pool checkouts that waited. The same three with 32 batches of 10,000 running beside them, to show what a record write does when the mount's pool is exhausted.
+What the spec review of 2026-11-23 ran is no longer here: the store in the mount's SQLite file, two engines at `close`, the mount's first touch beside tables it did not make, the counter, a sweep and a deadlock on Postgres 19, the flusher as designed, the three pool shapes, a read-only Postgres, and `bulk_insert` from outside a storage's session. Each is cited where it is used, and `probes/output.md` holds the figures. All of it ran on a stand-in for the store beside today's code, on one machine, since nothing of this spec is built.
+
+- **The store itself.** Every figure is the stand-in's. The rules this spec adds after the review were not run at all: one try at close, the wait for transactions in flight, a pass that lets its own store's flush go first, a batch tried again a kind at a time, the pinned isolation level, and the privilege refusal.
+- **A root that cannot be swept.** That a masked `sweep`, a storage that declares none, or a caller with no rights runs no pass is read from the gate (`base.py:258-267`, `ops.py:101`, `:174`) and was not run.
+- **Postgres 15 to 18.** One container ran, Postgres 19.0. The study did not run them either.
+- **`expiry_sweeper`,** on either engine.
+- **The batch storm on Postgres.** The run beside 32 batches is one window of 90 seconds for each pool shape, and was not repeated.
+- **The size of the store over a year.** The 41 million stamp rows and 5.5 million turn rows of "Cost" are worked out from specs 3 and 4 and were not run.
 - **A loss of power.** The tests of decision 10 end a process between two commits. None cuts the power, so what the two engines keep of a commit that had returned rests on `synchronous = FULL` and on Postgres's own durability.
 - **A real `fsync`.** The flush times are from a laptop whose `synchronous = FULL` does not force the disk.
-- **A read-only Postgres**, such as a standby. The store cannot be written there, and the result is read to be decision 4's unavailable store.
 - **The line counts** `engine.py` falls to and `base.py` rises to.
-- **Whether `bulk_insert` needs a change to be called from outside a storage's session.** It takes a session and a table, and is read to need none.
 - **The other eight specs after `7c383f32`.** Each was read there in its "Builds on", its list of unmet needs and the decisions cited here. Names are frozen from that commit. What a decision says may still have changed in the last round, which every spec revised at once.
-- **Decisions 24 to 26 on Postgres.** The bounded delete by a row value, the row count of an insert that does nothing, and a dependent's delete through a subquery were compiled for Postgres and run on SQLite. To run: the tests marked *Both engines* that name `delete_where`, `upsert_rows` and `expiry_sweeper`, on the Postgres leg.
+- **Decision 26 on Postgres.** The bounded delete by a row value and the row count of an insert that does nothing ran on Postgres 19 and held. A dependent's delete through a subquery was compiled for Postgres and run on SQLite. To run: the tests marked *Both engines* that name `expiry_sweeper`, on the Postgres leg.
 - **How long a statement of fixed binds holds the SQLite store's writer** at the sizes specs 3 and 4 allow: a rewind that removes 16 MiB of stamps, a fork that copies 100,000 turns. To run: each on a SQLite file with a second task counting its own `commit` calls served meanwhile.
 
 ## One line
