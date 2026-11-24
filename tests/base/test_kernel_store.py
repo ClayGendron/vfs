@@ -315,6 +315,42 @@ async def test_a_first_touch_in_hand_at_close_starts_no_further_try(
     assert files_in(tmp_path) == ["knowledge.db"]
 
 
+async def test_a_close_between_first_touchs_two_checkouts_leaves_no_connection(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards a try that disposes only the pool it began on, when a close replaced the pool in between."""
+    first = _file_kernel(tmp_path)
+    assert (await first.write(path="/a.txt", content="kept")).success
+    await first.close()
+    fs = _file_kernel(tmp_path)
+    store = fs._kernel_store
+    core = store._engine_core()
+    connections = Connections(store)
+    reached, go = asyncio.Event(), asyncio.Event()
+    settings = core.apply_file_settings
+
+    async def held() -> None:
+        await settings()
+        reached.set()
+        await go.wait()
+
+    async def nothing(_transaction: Transaction) -> None:
+        return None
+
+    monkeypatch.setattr(core, "apply_file_settings", held)
+    commit = asyncio.ensure_future(store.commit(nothing))
+    await reached.wait()
+    await store.close(within=0)
+    go.set()
+    with pytest.raises(KernelStoreUnavailable):
+        await commit
+    await turns_of_the_loop()
+    left = connections.open
+    await fs.close()
+    assert (left, connections.open) == (0, 0)
+    assert files_in(tmp_path) == ["knowledge.db"]
+
+
 # ---------------------------------------------------------------------------
 # Out of every verb's reach
 # ---------------------------------------------------------------------------
