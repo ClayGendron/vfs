@@ -217,3 +217,29 @@ Run on 2026-11-24 at 27f3d24 of dev, Python 3.13, SQLite 3.53.1 in memory, Postg
 == a move of a directory holding 100 live files and 1000 deleted ones
   move: statements=19 {'SELECT': 13, 'UPDATE': 6}
   entry rows whose path changed: 101 live, 1000 deleted; posting rows removed and added: 1100 and 1100
+
+######## p06_the_newest_deleted_row_for_a_list_of_targets.py
+== SQLite 3.53.1
+    in: the row's id among the targets' newest ids: 3 targets, 3 rows, vm_steps=122, a target=40.7
+    in: the row's id among the targets' newest ids: 1000 targets, 1000 rows, vm_steps=31029, a target=31.0
+    in: the row's id among the targets' newest ids: 32000 targets, 32000 rows, vm_steps=992029, a target=31.0
+    join: each target joined to the row its newest id names: 3 targets, 3 rows, vm_steps=91, a target=30.3
+    join: each target joined to the row its newest id names: 1000 targets, 1000 rows, vm_steps=24019, a target=24.0
+    join: each target joined to the row its newest id names: 32000 targets, 32000 rows, vm_steps=768019, a target=24.0
+    staged: the newest ids gathered first, then joined: 3 targets, 3 rows, vm_steps=116, a target=38.7
+    staged: the newest ids gathered first, then joined: 1000 targets, 1000 rows, vm_steps=5311030, a target=5311.0
+    staged: the newest ids gathered first, then joined: 32000 targets, 32000 rows, vm_steps=7202030, a target=225.1
+    lateral: each target reads its own newest row: not run, SQLite has no LATERAL
+== Postgres 16.15
+    in: the row's id among the targets' newest ids: 3 targets, 3 rows, buffers=36, a target=12.0, sequential scans of the table=0
+    in: the row's id among the targets' newest ids: 1000 targets, 1000 rows, buffers=12000, a target=12.0, sequential scans of the table=0
+    in: the row's id among the targets' newest ids: 32000 targets, 32000 rows, buffers=394871, a target=12.3, sequential scans of the table=1
+    join: each target joined to the row its newest id names: 3 targets, 3 rows, buffers=24, a target=8.0, sequential scans of the table=0
+    join: each target joined to the row its newest id names: 1000 targets, 1000 rows, buffers=8000, a target=8.0, sequential scans of the table=0
+    join: each target joined to the row its newest id names: 32000 targets, 32000 rows, buffers=266871, a target=8.3, sequential scans of the table=1
+    staged: the newest ids gathered first, then joined: 3 targets, 3 rows, buffers=24, a target=8.0, sequential scans of the table=0
+    staged: the newest ids gathered first, then joined: 1000 targets, 1000 rows, buffers=8000, a target=8.0, sequential scans of the table=0
+    staged: the newest ids gathered first, then joined: 32000 targets, 32000 rows, buffers=141738, a target=4.4, sequential scans of the table=0
+    lateral: each target reads its own newest row: 3 targets, 3 rows, buffers=12, a target=4.0, sequential scans of the table=0
+    lateral: each target reads its own newest row: 1000 targets, 1000 rows, buffers=4000, a target=4.0, sequential scans of the table=0
+    lateral: each target reads its own newest row: 32000 targets, 32000 rows, buffers=128000, a target=4.0, sequential scans of the table=0
