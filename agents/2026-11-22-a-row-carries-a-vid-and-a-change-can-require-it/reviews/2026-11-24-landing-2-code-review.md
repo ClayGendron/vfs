@@ -94,7 +94,17 @@ Records. (1) `rejected`: a marked call at `add` cannot replace a row, since ever
 
 ## Disposition
 
-Awaits an answer to each finding.
+Answered on 2026-11-24 at `f144e68`.
+
+1. H1: fixed in `f144e68`. `TestLandingJudgment::test_a_marked_create_never_lands_on_a_rivals_row`, parametrized over `upsert` and `catch_retry` and over a marked entry alone and beside a plain one, stages a rival's create at the marked path through `land(sessions[-1], ...)` at `write:before-apply` and requires one `exists` and the plain entry unwritten. The rival rides the attempt's own session, so the refused call takes it back too, and the test reads the refusal and the plain entry. Each mutant was applied from a copy and run on that class: `(exclusive, False)` to `(exclusive, overwrite)` gave 2 failed, 2 passed (the upsert arm); dropping `and not staged.exclusive` in `_resolve_rows` gave 2 failed, 2 passed (the catch-retry arm). Restored from the copies.
+2. H2: fixed in `f144e68`. `tests/test_sync.py::test_the_facade_forwards_a_required_vid` writes through `VirtualFileSystem` with a stale `if_vid` and requires `conflict` with the body unchanged. The mutant `if_vid=None` in the synchronous `write` gave 1 failed. Restored from its copy. Landings 3 and 4 forward the same argument on `edit`, `delete`, `move` and `restore` through the same `_result` call.
+3. M1: answered. The Scope's size paragraph estimates and asks the build to say where it differs. At `f144e68`, `backend.py` is 1,533 (from 1,524: the argument, the rung for a call of marked entries alone, and L1's refusal), `writes.py` is 1,459 (from 1,448: `exclusive`, the second insert group and `_conflict`'s two cases), and `base.py` falls to 3,085 as the key routing moves to `vfs/preconditions.py`. Across this landing and the first, `writes.py` has grown 44 lines against the estimate of about 40 for the spec; most of the first landing's 33 is the mint threaded into the arbitration and guard helpers, which the estimate did not count. Landings 3 and 4 add 12 to `writes.py` (the edit comparison) and none to the insert path.
+4. M2: closed by runs at `f144e68`. `scripts/ci.sh`: every step PASS (install, lint, format, types, tests under coverage with 8,116 passed and 18 skipped at 16,374 statements and 100%, the docs examples 44 passed, the wheel size, the shell crate); exit 0. An earlier run on a machine loaded by two other agents failed one test, `tests/shell/test_host.py::test_the_facts_a_line_keeps_are_bounded_and_the_rest_counted`, whose line met its wall-clock deadline (exit code 124); it passed alone, and the race is the subject of the drafted spec `agents/2026-11-22-two-loop-tests-of-a-lines-facts-race-its-deadline`. The Postgres 19 leg: 626 passed. `scripts/docs.sh check`: the export, the build, `svelte-check` (0 errors) and 23 build tests passed; its 20 Playwright tests passed on `/opt/pw-browsers/chromium` through a scratch config that sets only the executable path.
+5. L1: fixed in `f144e68`, with the fix text given; `TestRequiredVid::test_an_append_with_the_mark_is_refused_at_the_seam` pins it.
+6. L2: fixed in `f144e68`: the Storage page counts four promises and states the fourth.
+7. L3: fixed in `f144e68`, by the second form of the fix text: `stale_vid` takes `version: int | None` and `vid: Vid | None` and leaves `data` off when both are `None`, and `_conflict` calls it; `writes.py` imports nothing from `vfs.results.envelope`.
+8. L4: fixed in `f144e68`, with the fix text given.
+9. L5: fixed in `f144e68`: both lines compare with `==` again.
 
 ## Verdict
 
