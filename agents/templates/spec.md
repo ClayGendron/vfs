@@ -7,7 +7,7 @@ A spec is the one document every change has: a work package one pull request can
 - Objective and impersonal. No person's name, no mention of a person or an agent, no "I", "we" or "you". A ruling is written "Decided 2026-11-15: ..." with its reason.
 - One line per paragraph. No header lines under the title: the date is the directory name.
 - A claim about the tree is labelled EXECUTED (a command ran), READ (read in a cited file, as `path:line`) or INFERRED (reasoning).
-- No open question. No clarification marker, no note that a choice is made later, no heading that opens a list of questions. A choice that sense and precedent do not settle is named in the first paragraph as "Waits on a ruling: ..." with its options, and the spec is not fit to build until the ruling is recorded as a decision.
+- No open question. No clarification marker, no note that a choice is made later, no heading that opens a list of questions. A choice that sense and precedent do not settle becomes a provisional decision, in the form given under Decisions. Only a choice with no reversible option (one that would destroy data, publish a name that cannot be withdrawn, or commit money) is named in the first paragraph as "Waits on a ruling: ..." with its options, and that spec is not fit to build until the ruling is recorded.
 - Links are relative Markdown links to files that exist. Code is cited as `path:line`.
 - Code comments and docstrings written from a spec never name the spec.
 
@@ -24,7 +24,8 @@ Then nine sections, in this order.
    - `Basis: verified lean, <the roadmap decision or the source marker>; precedent: <the landed code, the archived spec, the memo line or the standard>.`
    - `Basis: the source spec, <section>; still true at <commit> (<how it was checked>).`
    - `Basis: decided in drafting, because <the rule it follows from>.`
-   A decision that departs from a landed spec or a standard names the departure.
+   - `Basis: provisional, no ruling on record; the options were <each option>; chosen because <why this one is the cheaper to reverse or the nearer to precedent>.`
+   A decision that departs from a landed spec or a standard names the departure. A provisional decision is a product choice that sense and precedent did not settle: the spec takes the option that is additive or the cheaper to reverse, says so, and the work directory's ledger of provisional decisions lists it so that a ruling can overturn it before the build.
 4. `## Intent` One paragraph beginning "After this spec, ...": the observable state once it is merged, in the caller's terms.
 5. `## Design` The files, functions, types and tests that change, with sizes where a ceiling matters, and the order of work: each test first, then the code that passes it. For every statement, loop or in-memory structure added: what grows with input, and the declared budget that bounds it on the least generous engine.
 6. `## Scope` In: the decisions by number and the files by path. Out: each neighbouring thing the spec does not do, and where it belongs.
@@ -32,10 +33,14 @@ Then nine sections, in this order.
 8. `## Landing notes` "Filled in when the pull request is opened." until then. Then: the commits, the reviews by link, the gate's counts, the engine legs run and not run, measurements labelled EXECUTED, the answer to every review finding, differences from the text above with their reasons, and one `**Changelog:**` line.
 9. `## One line` The whole change in one sentence.
 
+## Dependencies
+
+A spec names everything it builds on, with its state: landed (the commit or the archived spec), drafted (the work directory, by link), or a roadmap story with no spec. For a dependency that is not landed, the spec quotes what it relies on, by the other spec's decision number or the story's acceptance line, so that a disagreement between the two can be read off the page, and it states the build order. It never restates the other spec's design as its own decision.
+
 ## What makes a spec fit to build
 
-Its spec review, written to [the review template](review.md) by a reader that did not write the spec, has a standing verdict that begins "Fit to build". One pull request to `dev` then carries the build, green at its end.
+Its spec review, written to [the review template](review.md) by a reader that did not write the spec, has a standing verdict that begins "Fit to build". Fit to build means fit to build in its turn: once the dependencies it names have landed in the order it states. One pull request to `dev` then carries the build, green at its end.
 
 ## A spec converted from an earlier shape
 
-The first paragraph names the source by path. Every marker in the source becomes a numbered decision with its basis line, or a "Waits on a ruling" line in the first paragraph. Every name, argument, kind, path and count is checked against the tree and the later rulings before it is carried over; the source is evidence of intent, never of the present state of the code. Content the source repeats from a retired record is restated in the spec with its reason, since the record no longer governs.
+The first paragraph names the source by path. Every marker in the source becomes a numbered decision with its basis line. Every name, argument, kind, path and count is checked against the tree and the later rulings before it is carried over; the source is evidence of intent, never of the present state of the code. Content the source repeats from a retired record is restated in the spec with its reason, since the record no longer governs.
