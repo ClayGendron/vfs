@@ -5,7 +5,7 @@ index, one seek per arm, and the cost grows with the store. These pins
 hold the fix: each write detects inside the lock it already holds, a
 crossing write returns at once and one host-tracked pass lands the
 statistics, pooled connections replace themselves when the statistics
-move, in-memory and borrowed connections reload at their next write,
+move, in-memory connections reload at their next write,
 and ``close()`` interrupts a running pass rather than waiting on it.
 Every assertion counts statements, events, rows or plan details.
 """
@@ -13,22 +13,24 @@ Every assertion counts statements, events, rows or plan details.
 from __future__ import annotations
 
 import asyncio
+import math
 import shutil
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import aiosqlite
 import pytest
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
 
-from tests.support.database_helpers import _fresh_url, _url
+from tests.support.database_helpers import _fresh_url, _url, _waits_out_every_lock, begin_as_writer, writer_engine
 from tests.support.plan_store import (
+    PATH_INDEXES,
     PLAN_ARMS,
     PLAN_EXTENSIONS,
     chunk_entries,
@@ -223,10 +225,10 @@ async def _stat_rows(storage: DatabaseStorage, table: str | None = None) -> list
     return [(str(row[0]), None if row[1] is None else str(row[1]), str(row[2])) for row in rows]
 
 
-async def _deleted_at_stat(storage: DatabaseStorage) -> str:
-    """The tombstone index's ``sqlite_stat1`` text: the row count, then the rows per distinct value."""
+async def _trash_root_stat(storage: DatabaseStorage) -> str:
+    """The trash-root index's ``sqlite_stat1`` text: the row count, then the rows per distinct value, all one NULL."""
     [stat] = [
-        stat for _tbl, idx, stat in await _stat_rows(storage, "vfs_entries") if idx == "ix_vfs_entries_deleted_at"
+        stat for _tbl, idx, stat in await _stat_rows(storage, "vfs_entries") if idx == "ix_vfs_entries_trash_root"
     ]
     return stat
 
@@ -245,7 +247,7 @@ async def _own_tables_listed(storage: DatabaseStorage) -> list[str]:
     """
     own = {f'ANALYZE "main"."{table.name}"': table.name for table in storage._host.tables.metadata.tables.values()}
     async with storage._host.session_factory() as session:
-        conn = await session.connection(execution_options={"vfs_writer": True})
+        conn = await begin_as_writer(session)
         listed = [str(row[0]) for row in (await conn.exec_driver_sql(LISTING)).all()]
         indexed = [
             own[statement]
@@ -376,8 +378,8 @@ class TestPlannerStatistics:
         storage = DatabaseStorage(url=_copied(large_store, tmp_path))
         rows = await _stat_rows(storage, "vfs_entries")
         indexes = await _index_list(storage, "vfs_entries")
-        assert len(rows) == len(indexes) == 14
-        assert await _deleted_at_stat(storage) == "11201 11201"
+        assert len(rows) == len(indexes) == 16
+        assert await _trash_root_stat(storage) == "11201 11201"
         await storage.close()
 
     @pytest.mark.slow
@@ -396,7 +398,9 @@ class TestPlannerStatistics:
             details = await _plan(storage, statement, parameters)
             searches += [detail for detail in details if detail.startswith("SEARCH vfs_entries")]
             assert not any("SCAN vfs_entries" in detail for detail in details), details
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
+        assert searches and all(any(f"INDEX {name} " in detail for name in PATH_INDEXES) for detail in searches), (
+            searches
+        )
         assert not any("ix_vfs_entries_deleted_at" in detail or "ix_vfs_entries_kind" in detail for detail in searches)
         await storage.close()
 
@@ -451,12 +455,14 @@ class TestPlannerStatistics:
         """Guards: a second pass that analyzes again instead of reloading and re-listing under its own lock."""
         url = _url(tmp_path)
         x, y = DatabaseStorage(url=url), DatabaseStorage(url=url)
+        _waits_out_every_lock(x)
+        _waits_out_every_lock(y)
         traces = [_trace(x._host.engine), _trace(y._host.engine)]
         first = await asyncio.gather(
             x.write(entries=_entries(CROSSING_ROOTS, "/x"), parents=True),
             y.write(entries=_entries(CROSSING_ROOTS, "/y"), parents=True),
         )
-        assert all(result.success for result in first)
+        assert all(result.success for result in first), [result.errors for result in first]
         await x._host.settle_statistics()
         await y._host.settle_statistics()
         assert sum(_count(traced, ENTRIES_ANALYZE) for traced in traces) == 1
@@ -468,7 +474,7 @@ class TestPlannerStatistics:
             x.write(entries=_entries(1_200, "/p"), parents=True),
             y.write(entries=_entries(1_200, "/q"), parents=True),
         )
-        assert all(result.success for result in second)
+        assert all(result.success for result in second), [result.errors for result in second]
         await x._host.settle_statistics()
         await y._host.settle_statistics()
         assert sum(_count(traced, ENTRIES_ANALYZE) for traced in traces) == 1
@@ -497,7 +503,9 @@ class TestPlannerStatistics:
             for detail in await _plan(y, statement, parameters)
             if detail.startswith("SEARCH")
         ]
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
+        assert searches and all(any(f"INDEX {name} " in detail for name in PATH_INDEXES) for detail in searches), (
+            searches
+        )
         for index in range(100):
             assert (await y.stat(path=Path(f"/d{index % CROSSING_ROOTS:05d}/a/f00.py"))).success is True
         assert len(invalidations) == 1
@@ -534,7 +542,7 @@ class TestPlannerStatistics:
         assert _count(traced, SCHEMA_RELOAD) == 1
         await storage._host.settle_statistics()
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.exec_driver_sql("DELETE FROM sqlite_stat1")
             await session.commit()
         failing = _fail_analyze(engine, ordinal=2)
@@ -546,38 +554,6 @@ class TestPlannerStatistics:
         read = await storage.read(observations=[Observation(path=entry.path) for entry in entries])
         assert read.success is True and len(read.observations) == len(entries)
         await storage.close()
-
-    async def test_a_borrowed_engine_gains_no_replacement_listener(self, tmp_path) -> None:
-        """Guards: a replacement listener on a host application's pool, replacing connections vfs did not make."""
-        url = _url(tmp_path)
-        engine = create_async_engine(url)
-        borrowed = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-        assert (await borrowed.first_touch()).success is True
-        assert len(list(cast("Any", engine.sync_engine.pool).dispatch.checkout)) == 1
-        assert (await borrowed.stat(path=Path("/"))).success is True
-        invalidations = _invalidations(engine)
-        built = DatabaseStorage(url=url)
-        assert (await built.write(entries=_entries(CROSSING_ROOTS), parents=True)).success is True
-        await built._host.settle_statistics()
-        for _ in range(100):
-            assert (await borrowed.stat(path=Path("/"))).success is True
-        assert invalidations == []
-        traced = _trace(engine)
-        selects = _recorded_selects(engine)
-        assert (await borrowed.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
-        assert _count(traced, SCHEMA_RELOAD) == 1
-        await borrowed._host.settle_statistics()
-        assert (await borrowed.glob(patterns=_fan_patterns(50))).success is True
-        searches = [
-            detail
-            for statement, parameters in selects
-            for detail in await _plan(borrowed, statement, parameters)
-            if detail.startswith("SEARCH")
-        ]
-        assert searches and all("ix_vfs_entries_path" in detail for detail in searches), searches
-        await built.close()
-        await borrowed.close()
-        await engine.dispose()
 
     async def test_a_failed_fingerprint_read_keeps_the_checkout(self, tmp_path, monkeypatch) -> None:
         """Guards: a fingerprint read whose failure fails the caller's verb, or leaves the connection trusted."""
@@ -604,26 +580,24 @@ class TestPlannerStatistics:
         async with storage._host.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_no_begin": True})
             assert (await conn.exec_driver_sql("PRAGMA analysis_limit")).scalar_one() == 0
-        stat = await _deleted_at_stat(storage)
+        stat = await _trash_root_stat(storage)
         first, second = stat.split()
         assert first == second and first.isdigit()
         await storage.close()
 
-    async def test_a_borrowed_engine_analyzes_only_vfs_tables(self, tmp_path) -> None:
-        """Guards: a pass acting on every statement the listing prints, a host application's tables included."""
-        engine = create_async_engine(_url(tmp_path))
-        async with engine.begin() as conn:
-            await conn.exec_driver_sql("CREATE TABLE host_rows (id INTEGER PRIMARY KEY, label TEXT)")
-            await conn.exec_driver_sql("CREATE INDEX ix_host_rows_label ON host_rows (label)")
+    async def test_the_pass_analyzes_only_the_tables_of_the_mount(self, tmp_path) -> None:
+        """Guards: a pass acting on every statement the listing prints, tables that are not the mount's included."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        async with writer_engine(storage.engine).begin() as conn:
+            await conn.exec_driver_sql("CREATE TABLE other_rows (id INTEGER PRIMARY KEY, label TEXT)")
+            await conn.exec_driver_sql("CREATE INDEX ix_other_rows_label ON other_rows (label)")
             for index in range(1_000):
-                await conn.exec_driver_sql(f"INSERT INTO host_rows (label) VALUES ('row{index}')")
-        borrowed = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
-        assert (await borrowed.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
-        await borrowed._host.settle_statistics()
-        assert await _stat_rows(borrowed, "host_rows") == []
-        assert len(await _stat_rows(borrowed, "vfs_entries")) >= 1
-        await borrowed.close()
-        await engine.dispose()
+                await conn.exec_driver_sql(f"INSERT INTO other_rows (label) VALUES ('row{index}')")
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await storage._host.settle_statistics()
+        assert await _stat_rows(storage, "other_rows") == []
+        assert len(await _stat_rows(storage, "vfs_entries")) >= 1
+        await storage.close()
 
     async def test_a_failed_pass_keeps_the_write_and_the_next_public_write_reports_it(self, tmp_path) -> None:
         """Guards: a pass failure failing the write, or going unreported, or reported more than once."""
@@ -701,8 +675,8 @@ class TestPlannerStatistics:
             await asyncio.Event().wait()
 
         task = asyncio.create_task(caller())
+        # The cancel lands while the pass runs its first ANALYZE, the moment a pass the caller owned would lose.
         await first.wait()
-        await asyncio.sleep(0.005)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -710,7 +684,7 @@ class TestPlannerStatistics:
         assert read.success is True and len(read.observations) == len(entries)
         await storage._host.settle_statistics()
         rows = len(entries) + CROSSING_ROOTS * 3 + 1
-        assert await _deleted_at_stat(storage) == f"{rows} {rows}"
+        assert await _trash_root_stat(storage) == f"{rows} {rows}"
         assert _count(traced, PASS_BEGIN) == 1
         assert _count(traced, ENTRIES_ANALYZE) == 1
         assert _pass_outcome(traced) == "commit"
@@ -718,11 +692,11 @@ class TestPlannerStatistics:
 
     @pytest.mark.slow
     async def test_close_interrupts_a_running_pass_and_disposes(self, tmp_path, large_store, monkeypatch) -> None:
-        """Guards: a close that waits on the pass past its bound, or skips the dispose when the bound fires.
+        """Guards: a close that waits on the pass to its end instead of interrupting it, or skips the dispose.
 
-        The bound is a second, not the millisecond the interrupt takes, so a
-        saturated machine cannot fake a timeout; the rollback and the empty
-        ``sqlite_stat1`` are what prove the pass was interrupted, not awaited.
+        The close is given no bound, so no machine is slow enough to fire
+        one; the rollback and the empty ``sqlite_stat1`` are what prove the
+        pass was interrupted, not awaited.
         """
         url = _copied(large_store, tmp_path)
         _empty_statistics(url)
@@ -736,7 +710,7 @@ class TestPlannerStatistics:
             await dispose(self, close)
 
         monkeypatch.setattr(AsyncEngine, "dispose", counted)
-        fs = AsyncVirtualFileSystem(storage=storage, close_timeout=1.0)
+        fs = AsyncVirtualFileSystem(storage=storage, close_timeout=math.inf)
         traced = _trace(engine)
         first = asyncio.Event()
         _first_analyze(engine, first)
@@ -748,7 +722,7 @@ class TestPlannerStatistics:
         assert isinstance(pool, QueuePool) and pool.checkedout() == 0
         assert disposed == [id(engine)]
         assert _pass_outcome(traced) == "rollback"
-        with sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///")) as connection:
+        with closing(sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"))) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
         assert [task for task in asyncio.all_tasks() if task is not asyncio.current_task()] == []
         reopened = DatabaseStorage(url=url)
@@ -796,15 +770,15 @@ class TestPlannerStatistics:
         traced = _trace(engine)
         first = threading.Event()
         _first_analyze(engine, first)
-        facade = VirtualFileSystem(storage=storage)
+        facade = VirtualFileSystem(storage=storage, close_timeout=math.inf)
         assert facade.write(entries=[Entry(path=Path("/one.txt"), content="x")]).success is True
-        assert first.wait(timeout=10.0) is True
+        first.wait()
         facade.close()
         assert [path.name for path in tmp_path.iterdir() if path.name.endswith(("-wal", "-shm"))] == []
         assert facade._thread.is_alive() is False
         assert pending == [0]
         assert disposed == [id(engine)]
-        with sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///")) as connection:
+        with closing(sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"))) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
         assert len(interrupted) >= 1
         assert _pass_outcome(traced) == "rollback"
@@ -941,7 +915,7 @@ class TestPlannerStatistics:
         assert (await storage.write(entries=_entries(LARGE_ROOTS), parents=True)).success is True
         await storage._host.settle_statistics()
         rows = await _stat_rows(storage, "vfs_entries")
-        assert len(rows) == len(await _index_list(storage, "vfs_entries")) == 14
+        assert len(rows) == len(await _index_list(storage, "vfs_entries")) == 16
         assert invalidations == []
         await storage.close()
         assert (await storage.first_touch()).success is True
@@ -997,7 +971,7 @@ class TestPlannerStatistics:
         roots = [f"/d{index:05d}" for index in range(20)]
         reader = Authority.of(Principal("reader"))
         assert (await storage.rebuild()).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for root in roots:
             granted = await storage.grant(path=Path(root), principal="reader", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
@@ -1077,6 +1051,7 @@ class TestPlannerStatistics:
                 held.set()
 
         fs = AsyncVirtualFileSystem(storage=storage, close_timeout=0.01)
+        disposed_pool = engine.sync_engine.pool
         traced = _trace(engine)
         assert (await fs.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
         await held.wait()
@@ -1087,13 +1062,56 @@ class TestPlannerStatistics:
         rival.close()
         named = [task for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)]
         if named:
-            await asyncio.wait(named, timeout=10.0)
+            await asyncio.wait(named)
         assert [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)] == []
         [pass_begin] = [index for index, item in enumerate(traced) if item.text == PASS_BEGIN]
         connection = traced[pass_begin].connection
         assert [item for item in traced[pass_begin:] if item.kind == "commit" and item.connection == connection] == []
-        with sqlite3.connect(file) as connection:
+        with closing(sqlite3.connect(file)) as connection, connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
+        # The pass checked its connection back in to the pool the timed-out close had disposed, and closed it there.
+        assert isinstance(disposed_pool, QueuePool) and disposed_pool is not engine.sync_engine.pool
+        assert disposed_pool.checkedin() == 0
+
+    async def test_a_close_retried_while_the_pass_is_held_leaves_no_pass_running(
+        self, tmp_path, large_store, monkeypatch
+    ) -> None:
+        """Guards: a retried close cancelling the pass again, ending its interrupt loop while it still runs."""
+        url = _copied(large_store, tmp_path)
+        _empty_statistics(url)
+        storage = DatabaseStorage(url=url)
+        host = storage._host
+        file = url.removeprefix("sqlite+aiosqlite:///")
+        rival = sqlite3.connect(file, timeout=0, isolation_level=None)
+        held, stopping = asyncio.Event(), asyncio.Event()
+        real_stop = host.stop_analysis
+
+        @event.listens_for(host.engine.sync_engine, "before_cursor_execute")
+        def hold(conn, cursor, statement, parameters, context, executemany) -> None:
+            if statement == PASS_BEGIN and not held.is_set():
+                rival.execute("BEGIN IMMEDIATE")
+                held.set()
+
+        async def stop_analysis() -> None:
+            stopping.set()
+            await real_stop()
+
+        monkeypatch.setattr(host, "stop_analysis", stop_analysis)
+        first_pool = host.engine.sync_engine.pool
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await held.wait()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(storage.close(), 0.01)
+        stopping.clear()
+        retried = asyncio.ensure_future(storage.close())
+        await stopping.wait()
+        rival.execute("COMMIT")
+        rival.close()
+        await retried
+        assert [task for task in asyncio.all_tasks() if task.get_name().startswith(STATISTICS_NAME)] == []
+        with closing(sqlite3.connect(file)) as connection, connection:
+            assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
+        assert isinstance(first_pool, QueuePool) and first_pool.checkedin() == 0
 
     @pytest.mark.slow
     async def test_a_held_advisory_rides_on_a_topology_verb_and_on_posture(self, tmp_path) -> None:
@@ -1117,7 +1135,7 @@ class TestPlannerStatistics:
         await storage._host.settle_statistics()
         assert second["seen"] >= 1
         second["armed"] = False
-        postured = await storage.posture(path=Path("/p00000"), posture="read_write", authority=SYSTEM)
+        postured = await storage.set_posture(path=Path("/p00000"), posture="read_write", authority=SYSTEM)
         assert postured.success is True and len(_statistics_errors(postured)) == 1
         after_posture = await storage.write(entries=[Entry(path=Path("/two.txt"), content="x")])
         assert after_posture.success is True and _statistics_errors(after_posture) == []

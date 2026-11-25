@@ -7,13 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from typing import Any
 
 import pytest
 from sqlalchemy import event, func, select, update
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.documents import (
     docx_bytes,
     encrypted_pdf_bytes,
@@ -36,7 +35,6 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import render as render_module
 from vfs.storage.backends.database import topology as topology_module
-from vfs.storage.backends.database.dialects import ValueCap
 from vfs.storage.backends.database.maintenance import lease_lost
 from vfs.storage.backends.database.render import RenderReport, RenderRow, land_renderings, render_rows
 from vfs.storage.backends.database.seams import installed
@@ -180,12 +178,23 @@ class TestRenderings:
 
 
 class TestSkipLaw:
-    async def test_a_same_bytes_overwrite_renders_once_more_and_settles(self, tmp_path) -> None:
-        # The write clears the stamp and drops the rendering, so the skip
+    async def test_a_same_bytes_overwrite_keeps_its_rendering(self, tmp_path) -> None:
+        # The overwrite is unchanged: the stamp stands and nothing renders again.
+        storage = _mount(tmp_path)
+        await _put(storage, "/q.pdf", QUOKKA_PDF)
+        assert (await storage.rebuild()).success is True
+        await _put(storage, "/q.pdf", QUOKKA_PDF)
+        assert (await _row(storage, "/q.pdf")).render_status == "ok"
+        assert "rendering" not in ((await storage.rebuild()).model_extra or {})
+        await storage.close()
+
+    async def test_bytes_written_away_and_back_render_once_more_and_settle(self, tmp_path) -> None:
+        # Each write clears the stamp and drops the rendering, so the skip
         # law has nothing to compare: one re-render, then settled again.
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
+        await _put(storage, "/q.pdf", pdf_bytes(["A bilby instead"]))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
         result = await storage.rebuild()
@@ -226,7 +235,7 @@ class TestSkipLaw:
         await _put(storage, "/w.docx", WOMBAT_DOCX)
         assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).where(entry.c.mime_type == PDF).values(render_generation="pdf/0+old"))
         result = await storage.rebuild()
         assert _report(result) == _counts(rendered=2)
@@ -265,7 +274,7 @@ class TestSkipLaw:
         await _put(storage, "/one.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
         tables = storage._host.tables
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(tables.content.delete())
         await _put(storage, "/two.pdf", QUOKKA_PDF)
         result = await storage.rebuild()
@@ -279,18 +288,21 @@ class TestSkipLaw:
 
 
 class _Slow:
-    """A renderer that spends the wall budget between units."""
+    """A renderer that spends the wall budget between units, on the Builder clock *now* that it moves itself."""
 
     name = "slow"
     extra = "slow"
     mimes = (PDF,)
     version: str | None = "1"
 
+    def __init__(self, now: list[float] | None = None) -> None:
+        self._now = [0.0] if now is None else now
+
     def render(self, source: RenderSource, limits: RenderLimits) -> Rendering:
         builder = Builder(limits, input_bytes=len(source.data), total_units=2)
         assert builder.unit("page", 1)
         builder.paragraph("first page text")
-        time.sleep(limits.seconds + 0.02)
+        self._now[0] += limits.seconds + 0.02
         builder.unit("page", 2)
         return builder.build()
 
@@ -390,8 +402,11 @@ class TestStatuses:
         assert [str(r.path) for r in (await storage.grep(pattern="quokka")).observations] == ["/q.pdf"]
         await storage.close()
 
-    async def test_the_time_budget_keeps_the_text_so_far_as_partial(self, tmp_path) -> None:
-        storage = _mount(tmp_path, renderers=RendererRegistry((_Slow(),)), render_limits=RenderLimits(seconds=0.01))
+    async def test_the_time_budget_keeps_the_text_so_far_as_partial(self, tmp_path, monkeypatch) -> None:
+        now = [0.0]
+        monkeypatch.setattr("vfs.rendering.markdown.monotonic", lambda: now[0])
+        slow = _Slow(now)
+        storage = _mount(tmp_path, renderers=RendererRegistry((slow,)), render_limits=RenderLimits(seconds=0.01))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
@@ -478,7 +493,7 @@ class TestLanding:
         monkeypatch.setattr(maintenance_module, "land_renderings", counted)
 
         async def rival_claims() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(
                     update(index_state).values(lease_holder="RIVAL", lease_heartbeat=maintenance_module._now_ms())
                 )
@@ -544,6 +559,7 @@ class TestLanding:
         )
         report = RenderReport()
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             tables = storage._host.tables
             await land_renderings(session, tables, storage._host.profile, 500, [item], report)
         assert report.rendered == 0  # the guarded UPDATE reached no row: its rowcount is the proof
@@ -745,7 +761,7 @@ class TestRetryByType:
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).values(render_source_hash="f" * 64))
         assert _report(await storage.rebuild()) == _counts(rendered=1)
         row = await _row(storage, "/q.pdf")
@@ -799,27 +815,6 @@ class TestBounds:
         monkeypatch.setattr(maintenance_module, "select_render_dirty", recording)
         assert _report(await storage.rebuild()) == _counts(rendered=5)
         assert pages == [2, 2, 1, 0]
-        await storage.close()
-
-    async def test_a_body_past_the_engine_cap_is_refused_naming_the_setting(self, tmp_path) -> None:
-        storage = _mount(tmp_path)
-        await storage.first_touch()
-        storage._host.value_cap = ValueCap(8, "max_allowed_packet")
-        result = await storage.write(entries=[Entry(path=Path("/big.bin"), data=b"abcdefghi")])
-        assert result.success is False
-        [error] = result.errors
-        assert (error.kind, error.retryable) == (ErrorKind.unsupported, False)
-        assert (
-            error.message
-            == "Unsupported: a body of 9 bytes on the wire exceeds this engine's max_allowed_packet of 8 bytes"
-        )
-        assert error.path == "/big.bin"
-        assert (await storage.write(entries=[Entry(path=Path("/ok.bin"), data=b"abcdefgh")])).success is True
-        # Measured as the driver sends it: five NULs are ten bytes on the wire.
-        nul = await storage.write(entries=[Entry(path=Path("/nul.bin"), data=bytes(5))])
-        assert nul.success is False and "a body of 10 bytes on the wire" in nul.errors[0].message
-        text = await storage.write(entries=[Entry(path=Path("/t.md"), content="x" * 9)])
-        assert text.success is False and "a body of 9 bytes on the wire" in text.errors[0].message
         await storage.close()
 
     async def test_copy_moves_bodies_in_bounded_pages(self, tmp_path, monkeypatch) -> None:

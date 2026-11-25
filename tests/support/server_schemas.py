@@ -12,10 +12,8 @@ never tear each other down.
     with server_schema("VFS_TEST_POSTGRES_URL") as (url, schema):   # a caller that owns its own loop
         ...
 
-What a schema is differs by engine. On Postgres and SQL Server it is a
-schema; on MariaDB it is a database; on Oracle it is a user, created
-schema-only (no password, no login). Names are lowercase ascii and
-digits, so no engine needs them quoted; Oracle folds them to uppercase.
+On Postgres a schema is a schema. Names are lowercase ascii and digits,
+so none needs quoting.
 """
 
 from __future__ import annotations
@@ -30,24 +28,18 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from vfs.models.rows import build_vfs_tables
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.postgres import PostgresStorage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
     from sqlalchemy.ext.asyncio import AsyncConnection
 
+    from vfs.storage.backends.database import DatabaseStorage
+
 # Per dialect: the statement that makes a schema, and the one that removes it.
 _SCHEMA_DDL: dict[str, tuple[str, str]] = {
     "postgresql": ("CREATE SCHEMA {schema}", "DROP SCHEMA {schema} CASCADE"),
-    "mssql": ("CREATE SCHEMA {schema}", "DROP SCHEMA {schema}"),
-    "mariadb": ("CREATE DATABASE {schema}", "DROP DATABASE {schema}"),
-    "mysql": ("CREATE DATABASE {schema}", "DROP DATABASE {schema}"),
-    "oracle": (
-        "CREATE USER {schema} NO AUTHENTICATION DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS",
-        "DROP USER {schema} CASCADE",
-    ),
 }
 
 
@@ -59,26 +51,23 @@ _SCHEMA_DDL: dict[str, tuple[str, str]] = {
 # One leg per server engine, each marked so an unset URL deselects it.
 ENGINE_LEGS = [
     pytest.param("VFS_TEST_POSTGRES_URL", marks=pytest.mark.postgres, id="postgres"),
-    pytest.param("VFS_TEST_MARIADB_URL", marks=pytest.mark.mariadb, id="mariadb"),
-    pytest.param("VFS_TEST_MSSQL_URL", marks=pytest.mark.mssql, id="mssql"),
-    pytest.param("VFS_TEST_ORACLE_URL", marks=pytest.mark.oracle, id="oracle"),
 ]
 
 
 @asynccontextmanager
-async def server_storage(env_var: str, **options: Any) -> AsyncIterator[DatabaseStorage]:
+async def server_storage(env_var: str, **options: Any) -> AsyncIterator[PostgresStorage]:
     """A backend on the server named by *env_var*, in a schema of its own.
 
     Skips when *env_var* is unset. *options* pass through to
-    :class:`DatabaseStorage`. Teardown closes the backend, then drops the
-    schema and everything in it.
+    :class:`PostgresStorage`, the one server engine. Teardown closes the
+    backend, then drops the schema and everything in it.
     """
     url = os.environ.get(env_var)
     if url is None:
         pytest.skip(f"{env_var} is not set")
     schema = f"vfs_t_{uuid4().hex[:12]}"
     await _apply(url, schema, create=True)
-    storage = DatabaseStorage(url=url, schema=schema, **options)
+    storage = PostgresStorage(url=url, schema=schema, **options)
     try:
         yield storage
     finally:
@@ -106,9 +95,9 @@ def server_schema(env_var: str) -> Iterator[tuple[str, str]]:
         asyncio.run(_apply(url, schema, create=False))
 
 
-def sibling(env_var: str, storage: DatabaseStorage, **options: Any) -> DatabaseStorage:
+def sibling(env_var: str, storage: DatabaseStorage, **options: Any) -> PostgresStorage:
     """A rival handle on *storage*'s own schema — a second process on the same mount."""
-    return DatabaseStorage(url=os.environ[env_var], schema=storage._host.tables.entry.schema, **options)
+    return PostgresStorage(url=os.environ[env_var], schema=storage._host.tables.entry.schema, **options)
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +116,6 @@ async def _apply(url: str, schema: str, *, create: bool) -> None:
 
 
 async def _run(conn: AsyncConnection, schema: str, *, create: bool) -> None:
-    """The dialect's schema statement; SQL Server drops only an empty schema, so its tables go first."""
+    """The dialect's schema statement."""
     make, remove = _SCHEMA_DDL[conn.dialect.name]
-    if not create and conn.dialect.name == "mssql":
-        await conn.run_sync(build_vfs_tables(schema=schema).metadata.drop_all)
     await conn.execute(text((make if create else remove).format(schema=schema)))

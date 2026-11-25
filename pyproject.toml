@@ -53,9 +53,6 @@ langchain = ["langchain-core>=0.3"]
 embed-local = ["model2vec>=0.5"]
 # Database drivers: SQLAlchemy loads the driver named in the URL.
 postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
-mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
-mariadb = ["aiomysql>=0.2"]
-oracle = ["oracledb>=2.0"]
 # Document renderers: one parser per format, and the umbrella for all of them.
 pdf = ["pypdf>=5.0"]
 docx = ["python-docx>=1.2"]
@@ -64,7 +61,7 @@ pptx = ["python-pptx>=1.0"]
 # releases' own walk drops duration formats); a new minor line is admitted once that test passes on it.
 xlsx = ["openpyxl>=3.1.3,<3.2"]
 documents = ["vfs-py[pdf,docx,pptx,xlsx]"]
-all = ["vfs-py[openai,langchain,embed-local,postgres,mssql,mariadb,oracle,documents]"]
+all = ["vfs-py[openai,langchain,embed-local,postgres,documents]"]
 
 [dependency-groups]
 dev = [
@@ -85,6 +82,8 @@ dev = [
     "pytest-timeout>=2.3",
     # scripts/bump_version.py parses and orders versions with it
     "packaging>=24",
+    # the cancelled-call tests cancel a call from a cancel scope, which knows its own cancellation by its message
+    "anyio>=4.0",
     # tests/scripts/test_docs_export.py runs the docs export
     { include-group = "docs" },
 ]
@@ -97,6 +96,8 @@ docs = [
 line-length = 120
 target-version = "py311"
 src = ["src", "tests"]
+# The shell corpus's seed tree is data the cases read, not code.
+extend-exclude = ["tests/shell/world"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -140,6 +141,7 @@ known-first-party = ["vfs"]
 
 [tool.ty.src]
 include = ["src", "tests"]
+exclude = ["tests/shell/world"]
 
 [tool.ty.environment]
 python-version = "3.11"
@@ -150,6 +152,15 @@ testpaths = ["tests"]
 # One worker per core, stealing work so the heavy tail does not run alone at the end;
 # the real-engine legs are selected in tests/conftest.py.
 addopts = "-n auto --dist worksteal"
+# A hang guard, never an assertion: a test stuck this long fails alone, its stacks in test-hangs/ (tests/conftest.py).
+timeout = 600
+timeout_method = "signal"
+# A connection left open or a thread left running is a failure of the test that left it, never a note in the summary.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+]
 asyncio_mode = "auto"
 norecursedirs = ["tests/fixtures"]
 markers = [
@@ -157,9 +168,6 @@ markers = [
     "integration: marks integration tests",
     "needs(*ops): ops a storage-conformance test requires the backend to declare",
     "postgres: conformance leg against a real PostgreSQL server (VFS_TEST_POSTGRES_URL)",
-    "mariadb: conformance leg against a real MariaDB server (VFS_TEST_MARIADB_URL)",
-    "mssql: conformance leg against a real SQL Server instance (VFS_TEST_MSSQL_URL)",
-    "oracle: conformance leg against a real Oracle server (VFS_TEST_ORACLE_URL)",
 ]
 
 [tool.coverage.run]

@@ -48,6 +48,8 @@ def render_result(result: Result, *, projection: tuple[str, ...] | list[str] | N
       formatter regardless of projection.
     - For other ops, a failed result with no observations short-circuits
       to the error block alone.
+    - A listing page with a key appends ``more: after=<key>`` after the
+      body, so a reader sees the listing goes on and what to pass next.
     - Any remaining errors (warnings, info, partial failures) append as an
       error block after the body.
 
@@ -67,7 +69,8 @@ def render_result(result: Result, *, projection: tuple[str, ...] | list[str] | N
     body = _render_body(result, resolved)
     note = _render_unpopulated_projection_note(result, proj)
 
-    blocks = [block for block in (body, note, _render_errors(result.errors)) if block]
+    more = "" if result.next_after is None else f"more: after={result.next_after}"
+    blocks = [block for block in (body, note, more, _render_errors(result.errors)) if block]
     return "\n\n".join(blocks)
 
 

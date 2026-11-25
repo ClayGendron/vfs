@@ -2,7 +2,7 @@ import { marked, type Token } from "marked";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, posix, resolve } from "node:path";
 import { highlightCode, type HighlightedLine } from "#lib/highlighter";
-import { api, DocsError, nameOf, pageFiles } from "./content.server";
+import { api, DocsError, nameOf, navigation, pageFiles } from "./content.server";
 import type {
   ApiExport,
   ApiMember,
@@ -10,8 +10,12 @@ import type {
   ApiSymbol,
   Block,
   ExportedMember,
+  ExportedName,
+  ExportedTerm,
+  GlossaryTerm,
   Inline,
   Page,
+  TermRow,
   TocEntry,
 } from "./types";
 
@@ -50,7 +54,8 @@ export async function renderPage(route: string): Promise<Page> {
   const file = pageFiles().get(route);
   if (!file) throw new DocsError(`${route} has no file under documentation/`);
   const context: Context = { where: nameOf(file), route, file, anchors: new Set(), toc: [], export: null };
-  const blocks = await blocksOf(marked.lexer(readFileSync(file, "utf8")), context);
+  const drawn = await blocksOf(marked.lexer(readFileSync(file, "utf8")), context);
+  const blocks = route === GLOSSARY_ROUTE ? withTerms(drawn, context) : drawn;
   const titles = blocks.filter((block) => block.type === "heading" && block.depth === 1);
   if (titles.length !== 1) {
     throw new DocsError(`${context.where}: a page has one first-level heading, and this one has ${titles.length}`);
@@ -227,6 +232,80 @@ function plainText(inlines: Inline[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Glossary terms
+// ---------------------------------------------------------------------------
+
+// The glossary page: each second-level heading on it is a term.
+const GLOSSARY_ROUTE = "/reference/glossary";
+
+/** The glossary's blocks with each term's rows placed after its description: its types, then what the build found. */
+function withTerms(blocks: Block[], context: Context): Block[] {
+  context.export ??= api();
+  const exported = context.export.glossary ?? {};
+  const tabs = tabsByRoute();
+  const drawn = new Set<string>();
+  const result: Block[] = [];
+  let term: string | null = null;
+  // A term ends where the next one's heading begins, and the last one ends with the page.
+  const close = () => {
+    if (term === null) return;
+    const found = exported[term];
+    if (!found) throw new DocsError(`${context.where}: the term "${term}" is not in the export; run scripts/docs.sh export`);
+    drawn.add(term);
+    result.push({ type: "term", term: termOf(found, tabs) });
+  };
+  for (const block of blocks) {
+    if (block.type === "heading" && block.depth === 2) {
+      close();
+      term = plainText(block.children);
+    }
+    result.push(block);
+  }
+  close();
+  const missing = Object.keys(exported).filter((name) => !drawn.has(name));
+  if (missing.length) {
+    throw new DocsError(`${context.where}: the export holds terms the page does not draw: ${missing.join(", ")}`);
+  }
+  return result;
+}
+
+function termOf(found: ExportedTerm, tabs: Map<string, string>): GlossaryTerm {
+  // A class or a function is its name alone: the name already says which class it is on.
+  const named = (cited: ExportedName): TermRow => ({
+    name: cited.name,
+    href: cited.page === null ? null : `${routeOfPage(cited.page)}#${cited.id}`,
+    where: null,
+    code: true,
+  });
+  return {
+    types: found.types.map(named),
+    code: found.code.map(named),
+    documentation: found.documentation.map((page) => {
+      const route = routeOfPage(page.page);
+      return { name: page.title, href: route, where: tabs.get(route) ?? null, code: false };
+    }),
+    related: found.related.map((name) => ({ name, href: `#${anchorOf(name)}`, where: null, code: false })),
+  };
+}
+
+/** Each page's tab in the navigation, by the page's route. */
+function tabsByRoute(): Map<string, string> {
+  const tabs = new Map<string, string>();
+  for (const tab of navigation()) {
+    for (const group of tab.groups) {
+      for (const page of group.pages) tabs.set(page.route, tab.title);
+    }
+  }
+  return tabs;
+}
+
+/** A page's path inside the documentation folder, as the route the site serves it at. */
+function routeOfPage(page: string): string {
+  const route = `/${page.replace(/\.md$/, "")}`;
+  return route.endsWith("/index") ? route.slice(0, -"/index".length) : route;
+}
+
+// ---------------------------------------------------------------------------
 // API blocks
 // ---------------------------------------------------------------------------
 
@@ -252,7 +331,7 @@ async function apiObject(name: string, context: Context): Promise<ApiObject> {
     symbol,
     labels: object.labels,
     bases: object.bases,
-    code: object.signature === null ? null : await declaration(name, object),
+    code: await declaration(name, object),
     doc: await docstring(object.doc, id),
     members,
   };

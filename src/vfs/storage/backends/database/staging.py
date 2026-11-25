@@ -37,7 +37,6 @@ from ulid import ULID
 from vfs.paths import TRASH_ROOT, byte_length, is_trash_path
 from vfs.results import ErrorKind, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain, tombstone_miss, trashed_hint
-from vfs.storage.backends.database.dialects import wire_bytes
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
@@ -45,7 +44,6 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.media import Source
     from vfs.paths import ObjectKind, Path
-    from vfs.storage.backends.database.dialects import ValueCap
 
 Status = Literal["created", "updated", "unchanged"]
 # Which execution pass writes a staged row's material columns. Distinct
@@ -78,8 +76,10 @@ class StagedEntry:
     base_version: int | None = None  # the version the guarded arm compares against
     base_size_bytes: int | None = None  # the replaced body's size at snapshot; the mint pages its reads by it
     base_content: str | None = None  # the replaced text body, when the snapshot joined it; the mint keeps it unread
+    base_data: bytes | None = None  # the replaced bytes body, when the snapshot joined it; its text rides base_content
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
     revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
+    expected_version: int | None = None  # the version the caller said it replaces; settle refuses any other
 
     def __post_init__(self) -> None:
         self.ext = self.path.ext
@@ -156,12 +156,10 @@ class WritePlan:
         *,
         authority: Authority | None,
         budget: int,
-        value_cap: ValueCap | None = None,
     ) -> None:
         self.committed = committed
         self.authority = authority
         self.budget = budget
-        self.value_cap = value_cap
         self.staged: dict[Path, StagedEntry] = {}
         self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
@@ -203,24 +201,6 @@ class WritePlan:
         if parent is not None:
             return parent.entry_id
         return self.committed[str(staged.parent)]["entry_id"]
-
-    def within_value_cap(self, path: Path, body: bytes | str | None) -> bool:
-        """A body past the engine's single-value cap is refused up front, naming the setting.
-
-        The cap is the server's own (the MySQL family's packet), read at
-        first touch; there is no vfs ceiling. The body is measured as
-        the driver sends it — escaped bytes count twice — so the refusal
-        is the engine's verdict given early, never a guess.
-        """
-        cap = self.value_cap
-        if cap is None or body is None:
-            return True
-        size = wire_bytes(body if isinstance(body, bytes) else body.encode())
-        if size <= cap.limit:
-            return True
-        detail = f"a body of {size} bytes on the wire exceeds this engine's {cap.setting} of {cap.limit} bytes"
-        self.errors.append(classified(ErrorKind.unsupported, path, detail=detail))
-        return False
 
     def within_budget(self, path: Path) -> bool:
         """A lawful path can still exceed an engine's index-key byte cap."""
@@ -281,6 +261,7 @@ class WritePlan:
         owner_id: str | None = None,
         data: bytes | None = None,
         source: Source = "text",
+        expected: int | None = None,
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended.
 
@@ -288,15 +269,22 @@ class WritePlan:
         the row's identity, whatever ``overwrite`` says, since no live row
         occupies the path. A tombstoned directory refuses ``wrong_kind``
         with the trashed hint, as a live one refuses without it.
+
+        *expected* is the version the caller says it replaces. A row
+        that is expected exists, so nothing is made for it: no parent,
+        no file, and no revive of a deleted one. Whether the version is
+        the row's is judged later, by :meth:`settle`.
         """
         if not self.within_namespace(target) or not self.within_budget(target):
             return None
-        if not self.within_value_cap(target, data if data is not None else content):
-            return None
-        if not self.parent_gate(target, parents=parents, target=target):
+        if not self.parent_gate(target, parents=parents and expected is None, target=target):
             return None
         occupant = self.kind_of(target)
         tombstone = self.tombstone_of(target) if occupant is None else None
+        # Occupied is answered before the occupant's kind, as O_EXCL answers EEXIST over a directory.
+        if occupant is not None and not overwrite:
+            self.errors.append(self.occupied(target))
+            return None
         if occupant == "directory":
             self.errors.append(wrong_kind("directory", target))
             return None
@@ -304,8 +292,8 @@ class WritePlan:
             hint = {"kind": "directory", **trashed_hint(tombstone["deleted_at"])}
             self.errors.append(classified(ErrorKind.wrong_kind, target, detail="directory", data=hint))
             return None
-        if occupant is not None and not overwrite:
-            self.errors.append(already_exists(target))
+        if expected is not None and occupant is None:
+            self.errors.append(tombstone_miss(target, None if tombstone is None else tombstone["deleted_at"]))
             return None
         self.mint_chain(target)
         stage = self.stage_create if occupant is None and tombstone is None else self.stage_update
@@ -323,14 +311,33 @@ class WritePlan:
         )
         if tombstone is not None:
             self.staged[target].revive = True
+        self.staged[target].expected_version = expected
         return "created" if occupant is None and tombstone is None else "updated"
 
-    def put_dir(self, target: Path, *, parents: bool) -> Status | None:
-        """Gate and stage one directory; a tombstone at the site is absent, and only ``restore`` brings it back."""
+    def occupied(self, path: Path) -> ResultError:
+        """The ``exists`` of a create-only write at the live row at *path*, naming what the stored row holds.
+
+        A row this batch itself staged is named bare: it is not stored,
+        and the refusal means it never will be.
+        """
+        if path in self.staged:
+            return already_exists(path)
+        row = self.committed[str(path)]
+        return occupant_exists(path, row["version"], row["content_hash"])
+
+    def put_dir(self, target: Path, *, parents: bool, exclusive: bool = False) -> Status | None:
+        """Gate and stage one directory; a tombstone at the site is absent, and only ``restore`` brings it back.
+
+        *exclusive* refuses any live occupant with ``exists``, a
+        directory too, as ``mkdir`` does without ``exist_ok``.
+        """
         if not self.within_namespace(target):
             return None
         occupant = self.kind_of(target)
         if occupant is not None:
+            if exclusive:
+                self.errors.append(self.occupied(target))
+                return None
             if occupant != "directory":
                 self.errors.append(wrong_kind(occupant, target))
                 return None
@@ -443,9 +450,42 @@ class WritePlan:
             owner_id=owner_id,
             base_version=row["version"],
             base_size_bytes=row["size_bytes"],
-            base_content=row["content"] if "content" in row and row["source"] == "text" else None,
+            # A text row's body is its text. A bytes row's is its bytes, with the rendering beside them.
+            base_content=row["content"] if "content" in row and (row["source"] == "text" or "data" in row) else None,
+            base_data=row.get("data"),
             version=row["version"] + 1,
         )
+
+    def settle(self) -> None:
+        """Drop each staged update that would leave its row as it is, then refuse each stale expected version.
+
+        It runs once, after every entry is staged, so a path written twice
+        is judged on its last body. A revive is a change whatever its
+        body, since it clears a tombstone, and a create has no row to
+        equal. A dropped row reports ``unchanged`` and writes nothing: its
+        version, its stamps and its index marks stay as they were.
+
+        The drop comes first, so a call sent twice meets its own body and
+        hears ``unchanged``, whatever version it expected. Every row left
+        whose expected version is not the committed one is a ``conflict``.
+        """
+        same = frozenset(
+            path
+            for path, staged in self.staged.items()
+            if staged.persistence == "update"
+            and not staged.revive
+            and _same_material(staged, self.committed[str(path)])
+        )
+        for path in same:
+            del self.staged[path]
+        if same:
+            self.pending = [(path, "unchanged" if path in same else status) for path, status in self.pending]
+        for path, staged in self.staged.items():
+            if staged.expected_version is None:
+                continue
+            current = self.committed[str(path)]["version"]
+            if staged.expected_version != current:
+                self.errors.append(stale_version(path, current))
 
     def derive_bumps(self) -> dict[str, str]:
         """The directories whose membership this batch changes: path → entry_id.
@@ -471,3 +511,53 @@ class WritePlan:
             elif parent.persistence != "insert":
                 bumps[str(parent.path)] = parent.entry_id
         return bumps
+
+
+# ---------------------------------------------------------------------------
+# Refusals
+# ---------------------------------------------------------------------------
+
+
+def stale_version(path: Path, current: int) -> ResultError:
+    """The ``conflict`` of a write whose expected version is not the row's, naming the version there now.
+
+    It is not retryable: the same call would carry the same stale
+    version, so the caller reads the file again first.
+    """
+    detail = "the version expected is not the version stored"
+    return classified(ErrorKind.conflict, path, detail=detail, data={"version": current})
+
+
+def occupant_exists(path: Path, version: int, content_hash: str | None) -> ResultError:
+    """The ``exists`` of a create that found a live row at *path*, naming the row's version and its body's hash.
+
+    A caller that lost the reply to its own create can tell from the
+    two that the row there is the one it made. A directory has no
+    body, and names its version alone.
+    """
+    data: dict[str, object] = {"version": version}
+    if content_hash is not None:
+        data["content_hash"] = content_hash
+    return classified(ErrorKind.exists, path, data=data)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _same_material(staged: StagedEntry, row: RowMapping) -> bool:
+    """Whether *staged* would store what *row* already holds: the same kind, source, body hash and type.
+
+    Every other column a write sets is worked out from these four, or is
+    a stamp that stays true while the body does. Text and bytes of the
+    same body hash alike, which is why the source is compared. A body
+    with no hash equals nothing.
+    """
+    return (
+        staged.content_hash is not None
+        and staged.content_hash == row["content_hash"]
+        and staged.kind == row["kind"]
+        and staged.source == row["source"]
+        and staged.mime_type == row["mime_type"]
+    )

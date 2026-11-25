@@ -14,13 +14,14 @@ import re
 import threading
 from collections import Counter
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, func, select, true
-from sqlalchemy.dialects import mssql, sqlite
+from sqlalchemy.dialects import sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
 from tests.support.oracles.postings import decode_postings, decode_varints
 from tests.support.partial_callers import BOB, SYSTEM, partial_store
@@ -44,7 +45,7 @@ from vfs.storage.backends.database import lexical as lexical_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
-from vfs.storage.backends.database.dialects import MSSQL, SQLITE, membership_budget
+from vfs.storage.backends.database.dialects import SQLITE, membership_budget
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.reads import AdmittedScope
@@ -68,6 +69,9 @@ if TYPE_CHECKING:
 # The overlay's three SQL legs as SQLite spells them: the body fetch (the
 # preview fetch takes the same shape), the surrogate-id fetch and the
 # path-ordered nominee fetch.
+# A profile with no row constructors in IN, so the tail fetch takes its OR arms over SQLite's compiler.
+NO_TUPLES = replace(SQLITE, tuple_in=False)
+
 _BODY_FETCH = re.compile(r"\bFROM vfs_content\b")
 _SURROGATE_FETCH = re.compile(r"^SELECT vfs_entries\.entry_id, vfs_entries\.id\s+FROM vfs_entries\b")
 _NOMINEE_FETCH = re.compile(r"\bFROM vfs_entries\b.*\bORDER BY vfs_entries\.path\b", re.S)
@@ -192,7 +196,7 @@ async def _twenty_folders(tmp_path: Any, readable: Sequence[str], hidden: Sequen
     folders = [f"/f{n:02}" for n in range(20)]
     docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words\n") for folder in folders]
     assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     for folder in folders:
         granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
         assert granted.success is True, granted.errors
@@ -491,7 +495,7 @@ class TestRounds:
         files = {f"/z/{i:04}.txt": f"zeta word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
         files |= {f"/a/{i:04}.txt": f"alpha word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
         storage = await _indexed(tmp_path, files)
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.exec_driver_sql("ANALYZE")
             stat_rows = (await conn.exec_driver_sql("SELECT count(*) FROM sqlite_stat1")).scalar_one()
         assert stat_rows > 0
@@ -568,20 +572,20 @@ class TestProbes:
         assert [binds // 3 for _, binds in tuple_form] == [2, 2, 2, 1]
         assert all("IN (VALUES" in text and " OR " not in text for text, _ in tuple_form)
         # The arms pack under the membership budget, which nets the reserve, never the whole parameter budget.
-        arms = compiled(MSSQL, mssql.dialect(), 8)
+        arms = compiled(NO_TUPLES, sqlite.dialect(), 8)
         assert [binds for _, binds in arms] == [5, 6]
         assert all(" OR " not in text and "VALUES" not in text for text, _ in arms)
-        [(packed, binds)] = compiled(MSSQL, mssql.dialect(), 16)
+        [(packed, binds)] = compiled(NO_TUPLES, sqlite.dialect(), 16)
         assert binds == 11 and " OR " in packed and "VALUES" not in packed
 
-    def test_the_tail_fetch_keeps_the_reserve_on_sql_server(self) -> None:
+    def test_the_tail_fetch_keeps_the_reserve_under_a_tight_budget(self) -> None:
         """Guards: the ``OR`` arms packed to the whole parameter budget, leaving the driver's reserve no room."""
         postings = build_vfs_tables().lex_postings
         wanted = {(epoch, term): list(range(40)) for epoch in range(1, 97) for term in ("heron", "kestrel")}
-        budget = membership_budget(MSSQL, 2_099)
-        statements = lexical_module.tail_block_statements(postings, wanted, MSSQL, budget)
+        budget = membership_budget(NO_TUPLES, 2_099)
+        statements = lexical_module.tail_block_statements(postings, wanted, NO_TUPLES, budget)
         compile_kwargs = {"render_postcompile": True}
-        binds = [len(s.compile(dialect=mssql.dialect(), compile_kwargs=compile_kwargs).params) for s in statements]
+        binds = [len(s.compile(dialect=sqlite.dialect(), compile_kwargs=compile_kwargs).params) for s in statements]
         assert sum(binds) == 96 * 2 * 42 and all(count <= budget for count in binds), (budget, binds)
 
 
@@ -1033,7 +1037,7 @@ class TestBudgets:
     ) -> None:
         """Guards: the kernel's completion flag ignored, a stopped batch's postings dropped,
         or the wall recorded once per batch instead of once per call."""
-        storage = await _indexed(tmp_path)
+        storage = await _indexed(tmp_path, search_wall_seconds=WALL_TIME_BUDGET)
         dirty = [
             Entry(path=Path("/dirty/a.txt"), content="tokens early\n"),
             Entry(path=Path("/dirty/b.txt"), content="tokens later\n"),
@@ -1048,11 +1052,12 @@ class TestBudgets:
             return OverlayPostings(counted.postings, 1, counted.total_dl, False)
 
         monkeypatch.setattr(search_module, "overlay_postings", stopping)
+        # A clock that stands still: only the kernel's own stop ends the call, however slow the machine.
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 0.0)
         result = await storage.search(query="tokens")
         assert result.success is True
         # The hop's budget is the wall's remainder cut at worker start, never unbounded.
-        [budget] = budgets
-        assert budget is not None and 0.0 <= budget <= WALL_TIME_BUDGET
+        assert budgets == [WALL_TIME_BUDGET]
         [wall] = _walls(result)
         assert (wall.kind, wall.severity, wall.data) == (ErrorKind.truncated, Severity.warning, None)
         indexed = {"/notes.txt", "/src/lexer.py", "/src/parser.py", "/docs/tokens.md"}
@@ -1065,19 +1070,16 @@ class TestBudgets:
         """Guards: the deadline unread between batches, so an expired call keeps fetching bodies,
         or the batches counted before the wall dropped from the answer."""
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
-        storage = await _fresh(tmp_path, files)
+        storage = await _fresh(tmp_path, files, search_wall_seconds=WALL_TIME_BUDGET)
         monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
-        real_clock, real_kernel = deadline_module.monotonic, search_module.overlay_postings
-        skew = {"seconds": 0.0}
-
-        def skewed_clock() -> float:
-            return real_clock() + skew["seconds"]
+        real_kernel = search_module.overlay_postings
+        now = {"seconds": 0.0}
 
         def counting_kernel(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
-            skew["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
+            now["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
             return real_kernel(docs, terms, budget=budget)
 
-        monkeypatch.setattr(deadline_module, "monotonic", skewed_clock)
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: now["seconds"])
         monkeypatch.setattr(search_module, "overlay_postings", counting_kernel)
         with _recorded(storage) as statements:
             result = await storage.search(query="tokens")
@@ -1108,14 +1110,14 @@ async def _partial_store(tmp_path: Any = None) -> DatabaseStorage:
     storage = InMemoryStorage() if tmp_path is None else DatabaseStorage(url=_url(tmp_path))
     entries = [Entry(path=Path(path), content=body) for path, body in PARTIAL.items()]
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success is True
     assert (await storage.rebuild()).success is True
     return storage
 
 
 def _read_committed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Model an engine whose read statements each see the latest commit, as SQL Server and Oracle do.
+    """Model an engine whose read statements each see the latest commit, as one at READ COMMITTED does.
 
     A read op's connection is told to issue no ``BEGIN``, so SQLite takes
     no snapshot for the call and a rival committed at a seam is seen by
@@ -1501,7 +1503,7 @@ class TestVanishedChunks:
         storage = await _fresh(tmp_path)
         emptied = Entry(path=Path("/notes.txt"), content="")
         binary = Entry(path=Path("/docs/tokens.md"), data=b"\x89PNG\r\n\x00\xff\xfe")
-        assert (await storage.write(entries=[emptied, binary], overwrite=True)).success is True
+        assert (await storage.write(entries=[emptied, binary])).success is True
         host = storage._host
         asked = sorted(await _entry_ids(storage, ["/notes.txt", "/docs/tokens.md", "/src/lexer.py"]))
         [kept] = await _entry_ids(storage, ["/src/lexer.py"])
@@ -1526,7 +1528,7 @@ class TestVanishedChunks:
 
         async def rival() -> None:
             if not committed:  # once: the second attempt meets the state this left
-                written = await storage.write(entries=[body], overwrite=True)
+                written = await storage.write(entries=[body])
                 committed.append(written.success and (await storage.rebuild()).success)
 
         with installed("search:before-chunk-texts", rival):
@@ -1554,7 +1556,7 @@ class TestVanishedChunks:
                 pair = ResolvedPair(src=Path("/d/a.txt"), dest=Path("/h/a.txt"))
                 moved = await storage.move(operations=[pair], authority=SYSTEM)
                 rewritten = [Entry(path=Path("/h/a.txt"), content="tokens moved\n")]
-                written = await storage.write(entries=rewritten, overwrite=True, authority=SYSTEM)
+                written = await storage.write(entries=rewritten, authority=SYSTEM)
                 committed.append(moved.success and written.success and (await storage.rebuild()).success)
 
         with installed("search:before-chunk-texts", rival):
@@ -1804,7 +1806,7 @@ class TestLiveSet:
             return None
 
         storage = InMemoryStorage()
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
         monkeypatch.setattr(maintenance_module, "refresh_refusal", no_refusal)

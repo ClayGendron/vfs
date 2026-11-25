@@ -26,6 +26,7 @@ any required op — partial backends are first-class.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from functools import partial
 from typing import Any, ClassVar, NamedTuple, Protocol, cast
@@ -121,6 +122,11 @@ def _rebuilder_of(storage: ConformanceBackend) -> SupportsRebuild:
     if not isinstance(storage, SupportsRebuild):
         pytest.skip("backend does not expose rebuild")
     return storage
+
+
+def _file(path: str, body: str | bytes) -> Entry:
+    """A file entry at *path* that holds *body*, as text or as bytes."""
+    return Entry(path=Path(path), data=body) if isinstance(body, bytes) else Entry(path=Path(path), content=body)
 
 
 async def _revision_of(storage: ConformanceBackend, path: str) -> int:
@@ -374,13 +380,63 @@ class StorageContract:
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.wrong_kind
 
-    @needs("write")
-    async def test_write_onto_an_existing_file_without_overwrite_is_exists(self, storage: ConformanceBackend) -> None:
+    @needs("write", "stat", "read")
+    async def test_a_create_only_write_over_a_live_file_is_exists_and_names_what_is_there(
+        self, storage: ConformanceBackend
+    ) -> None:
         # The create leaf table: existence outranks everything else at the leaf.
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="first")])
-        result = await storage.write(entries=[Entry(path=Path("/a.txt"), content="second")], overwrite=False)
-        assert result.success is False
-        assert result.errors[0].kind == ErrorKind.exists
+        await storage.write(entries=[_file("/a.txt", "first")])
+        stored = (await storage.stat(path=Path("/a.txt"))).observations[0]
+        result = await storage.write(entries=[_file("/a.txt", "second")], if_absent=True)
+        assert result.success is False and result.observations == []
+        (error,) = result.errors
+        assert (error.kind, error.path, error.retryable) == (ErrorKind.exists, "/a.txt", False)
+        assert error.data == {"version": 1, "content_hash": stored.content_hash}
+        # The same body is refused too, or two callers that create one lock file would both hold it.
+        same = await storage.write(entries=[_file("/a.txt", "first")], if_absent=True)
+        assert [e.kind for e in same.errors] == [ErrorKind.exists]
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "first"
+        assert await _revision_of(storage, "/a.txt") == 1
+
+    @needs("write", "read")
+    async def test_a_create_only_write_of_an_absent_file_creates_it(self, storage: ConformanceBackend) -> None:
+        result = await storage.write(entries=[_file("/d/a.txt", "body")], if_absent=True, parents=True)
+        assert result.success is True, result.errors
+        assert [(o.path, o.status, o.version) for o in result.observations] == [("/d/a.txt", "created", 1)]
+        assert (await storage.read(path=Path("/d/a.txt"))).observations[0].content == "body"
+
+    @needs("write", "mkdir", "stat")
+    async def test_a_create_only_write_is_exists_over_any_occupant(self, storage: ConformanceBackend) -> None:
+        # Occupied is answered before the occupant's kind is, as O_EXCL answers EEXIST over a directory.
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[_file("/f.txt", "body")])
+        directory = Entry(path=Path("/d"), kind="directory")
+        for entry in (_file("/d", "body"), directory, Entry(path=Path("/f.txt"), kind="directory")):
+            result = await storage.write(entries=[entry], if_absent=True)
+            assert [(e.kind, e.path) for e in result.errors] == [(ErrorKind.exists, entry.path)], entry
+        # Without the flag a directory entry at a directory is forgiven, and a file at one is the wrong kind.
+        assert (await storage.write(entries=[directory])).success is True
+        assert (await storage.write(entries=[_file("/d", "body")])).errors[0].kind == ErrorKind.wrong_kind
+
+    @needs("write", "stat")
+    async def test_a_create_only_batch_that_names_a_path_twice_is_refused_whole(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # The second entry meets the first, which is staged and not stored: there is no version to name.
+        twice = [_file("/a.txt", "first"), _file("/b.txt", "other"), _file("/a.txt", "second")]
+        result = await storage.write(entries=twice, if_absent=True)
+        assert [(e.kind, e.path, e.data) for e in result.errors] == [(ErrorKind.exists, "/a.txt", None)]
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+        assert (await storage.stat(path=Path("/b.txt"))).success is False
+
+    @needs("write", "read")
+    async def test_twenty_create_only_writes_of_one_path_admit_one(self, storage: ConformanceBackend) -> None:
+        claims = [storage.write(entries=[_file("/lock", f"holder {n}")], if_absent=True) for n in range(20)]
+        results = await asyncio.gather(*claims)
+        won = [n for n, result in enumerate(results) if result.success]
+        assert len(won) == 1, [result.errors for result in results]
+        assert {error.kind for result in results for error in result.errors} == {ErrorKind.exists}
+        assert (await storage.read(path=Path("/lock"))).observations[0].content == f"holder {won[0]}"
 
     @needs("write", "mkdir")
     async def test_write_entries_creates_and_forgives_directories(self, storage: ConformanceBackend) -> None:
@@ -905,7 +961,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="one")])
         first = (await storage.stat(path=Path("/a.txt"))).observations[0].version
         assert (await storage.delete(path=Path("/a.txt"))).success is True
-        revived = await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")], overwrite=False)
+        revived = await storage.write(entries=[Entry(path=Path("/a.txt"), content="two")], if_absent=True)
         assert revived.success is True and revived.observations[0].status == "updated"
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
         later = (await storage.stat(path=Path("/a.txt"))).observations[0].version
@@ -1480,18 +1536,12 @@ class StorageContract:
         walks = {
             "sqlite": r"\bSCAN vfs_\w+",
             "postgresql": r"Seq Scan on vfs_\w+",
-            "mariadb": r"'table': 'vfs_\w+', 'type': '(?:ALL|index)'",
-            "mssql": r'PhysicalOp="(?:Table Scan|Clustered Index Scan|Index Scan)"',
-            "oracle": r"TABLE ACCESS FULL\s*\|\s*VFS_|INDEX (?:FAST )?FULL SCAN",
         }[plan_store.engine]
         for name, plan in plan_store.refresh_plans.items():
             table, index = REFRESH_INDEXES[name]
             shape = {
                 "sqlite": rf"SEARCH {table} USING (?:COVERING )?(?:INDEX )?{index} \(",
                 "postgresql": rf"(?:Index (?:Only )?Scan (?:Backward )?using|Bitmap Index Scan on) {index}",
-                "mariadb": rf"'table': '{table}', 'type': '\w+', 'possible_keys': '[^']*', 'key': '{index}'",
-                "mssql": rf'PhysicalOp="(?:Clustered )?Index Seek"[^>]*>.*?Index="\[{index}\]"',
-                "oracle": rf"INDEX (?:RANGE|UNIQUE) SCAN\s*\|\s*{index}",
             }[plan_store.engine]
             assert re.search(shape, plan, flags=re.IGNORECASE | re.DOTALL), (name, plan)
             assert not re.search(walks, plan, flags=re.IGNORECASE), (name, plan)
@@ -1581,9 +1631,8 @@ class StorageContract:
 
     @needs("write", "delete", "tree", "stat")
     async def test_cascade_delete_of_a_bracket_directory_leaves_no_orphans(self, storage: ConformanceBackend) -> None:
-        # T-SQL LIKE reads [...] as a class: an unescaped bracket prefix
-        # marks the root but strands its live descendants — the orphan
-        # shape. The subtree must be marked whole.
+        # A LIKE that read [...] as a class would mark the root but strand its
+        # live descendants — the orphan shape. The subtree must be marked whole.
         await _mint_metachar_tree(storage)
         result = await storage.delete(path=Path("/a[1]b"))
         assert result.success is True
@@ -1874,7 +1923,7 @@ class StorageContract:
         assert (await rebuilder.rebuild()).success is True
         assert (await rebuilder.rebuild()).success is True
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
-        assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
+        assert (await storage.write(entries=[rewrite])).success is True
         assert (await rebuilder.rebuild()).success is True
         stale = await storage.grep(pattern="magnet")
         assert stale.success is True and stale.observations == []
@@ -2036,7 +2085,7 @@ class StorageContract:
         found = await storage.search(query="magnet")
         assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
-        assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
+        assert (await storage.write(entries=[rewrite])).success is True
         stale = await storage.search(query="magnet")
         assert [str(o.path) for o in stale.observations] == ["/fresh.txt"]
         fresh = await storage.search(query="lodestone")
@@ -2601,6 +2650,258 @@ class StorageContract:
         assert await _revision_of(storage, "/docs/a.md") == target
 
     # ------------------------------------------------------------------
+    # A write of the body a row already holds is unchanged
+    # ------------------------------------------------------------------
+
+    @needs("write", "stat", "read")
+    @pytest.mark.parametrize("body", ["one\n", b"\x00one"], ids=["text", "bytes"])
+    async def test_an_identical_write_is_unchanged_and_keeps_its_version(
+        self, storage: ConformanceBackend, body: str | bytes
+    ) -> None:
+        entry = _file("/a.dat", body)
+        assert (await storage.write(entries=[entry])).success is True
+        before = (await storage.stat(path=Path("/a.dat"))).observations[0]
+        again = await storage.write(entries=[_file("/a.dat", body)])
+        assert again.success is True
+        assert [(str(o.path), o.status, o.version) for o in again.observations] == [("/a.dat", "unchanged", 1)]
+        after = (await storage.stat(path=Path("/a.dat"))).observations[0]
+        assert (after.version, after.content_hash, after.updated_at) == (1, before.content_hash, before.updated_at)
+
+    @needs("write", "stat", "read")
+    async def test_a_mixed_batch_writes_only_what_changed(self, storage: ConformanceBackend) -> None:
+        paths = [f"/f{i}.txt" for i in range(6)]
+        assert (await storage.write(entries=[_file(path, "old") for path in paths])).success is True
+        bodies = ["new", "old", "new", "old", "new", "old"]
+        result = await storage.write(entries=[_file(path, body) for path, body in zip(paths, bodies, strict=True)])
+        assert result.success is True
+        assert [o.status for o in result.observations] == ["updated", "unchanged"] * 3
+        assert [o.version for o in result.observations] == [2, 1] * 3
+        for path, body in zip(paths, bodies, strict=True):
+            assert (await storage.read(path=Path(path))).observations[0].content == body
+            assert await _revision_of(storage, path) == (2 if body == "new" else 1)
+
+    @needs("write", "stat", "read")
+    async def test_a_batch_that_writes_a_path_back_to_its_body_is_unchanged(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "stored")])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "other"), _file("/a.txt", "stored")])
+        assert result.success is True
+        assert [(o.status, o.version) for o in result.observations] == [("unchanged", 1)] * 2
+        assert await _revision_of(storage, "/a.txt") == 1
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "stored"
+
+    @needs("write", "stat")
+    async def test_the_same_body_under_a_new_type_or_source_is_an_update(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "body")])).success is True
+        typed = await storage.write(entries=[Entry(path=Path("/a.txt"), content="body", mime_type="text/x-log")])
+        assert [(o.status, o.version) for o in typed.observations] == [("updated", 2)]
+        as_bytes = await storage.write(entries=[Entry(path=Path("/a.txt"), data=b"body", mime_type="text/x-log")])
+        assert [(o.status, o.version) for o in as_bytes.observations] == [("updated", 3)]
+        assert (await storage.stat(path=Path("/a.txt"))).observations[0].source == "bytes"
+
+    @needs("write", "edit", "stat", "read")
+    async def test_an_edit_whose_steps_cancel_out_is_unchanged(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one two")])).success is True
+        there_and_back = [EditOperation(old="two", new="2"), EditOperation(old="2", new="two")]
+        result = await storage.edit(path=Path("/a.txt"), edits=there_and_back)
+        assert result.success is True
+        assert [(o.status, o.version) for o in result.observations] == [("unchanged", 1)]
+        assert await _revision_of(storage, "/a.txt") == 1
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "one two"
+
+    @needs("write", "delete", "stat", "read")
+    async def test_a_revive_with_the_body_the_deleted_row_held_is_updated(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "body")])).success is True
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        revived = await storage.write(entries=[_file("/a.txt", "body")])
+        assert revived.success is True
+        assert [o.status for o in revived.observations] == ["updated"]
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "body"
+
+    # ------------------------------------------------------------------
+    # A write that states the version it expects to replace
+    # ------------------------------------------------------------------
+
+    @needs("write", "stat", "read")
+    async def test_a_stale_expected_version_is_conflict_and_writes_nothing(self, storage: ConformanceBackend) -> None:
+        for body in ("one", "two"):
+            assert (await storage.write(entries=[_file("/a.txt", body)])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "three")], if_versions={Path("/a.txt"): 1})
+        assert result.success is False and result.observations == []
+        (error,) = result.errors
+        assert (error.kind, error.path, error.data, error.retryable) == (
+            ErrorKind.conflict,
+            "/a.txt",
+            {"version": 2},
+            False,
+        )
+        assert await _revision_of(storage, "/a.txt") == 2
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
+
+    @needs("write", "stat", "read")
+    async def test_a_matching_expected_version_updates(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "two")], if_versions={Path("/a.txt"): 1})
+        assert result.success is True, result.errors
+        assert [(o.status, o.version) for o in result.observations] == [("updated", 2)]
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
+
+    @needs("write", "stat")
+    async def test_a_write_with_an_expected_version_sent_twice_is_unchanged(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        expecting_one = {Path("/a.txt"): 1}
+        assert (await storage.write(entries=[_file("/a.txt", "two")], if_versions=expecting_one)).success is True
+        # The reply was lost and the call is sent again: it meets its own body.
+        replay = await storage.write(entries=[_file("/a.txt", "two")], if_versions=expecting_one)
+        assert replay.success is True, replay.errors
+        assert [(o.status, o.version) for o in replay.observations] == [("unchanged", 2)]
+        other = await storage.write(entries=[_file("/a.txt", "three")], if_versions=expecting_one)
+        assert [(e.kind, e.data) for e in other.errors] == [(ErrorKind.conflict, {"version": 2})]
+
+    @needs("write", "delete", "stat")
+    async def test_an_expected_version_on_no_live_row_is_not_found(self, storage: ConformanceBackend) -> None:
+        absent = await storage.write(entries=[_file("/nope.txt", "x")], if_versions={Path("/nope.txt"): 1})
+        assert [(e.kind, e.path) for e in absent.errors] == [(ErrorKind.not_found, "/nope.txt")]
+        # A row that is expected to exist has its parents, so the parents are never made for it.
+        orphan = await storage.write(
+            entries=[_file("/no/dir/f.txt", "x")], if_versions={Path("/no/dir/f.txt"): 1}, parents=True
+        )
+        assert [(e.kind, e.path) for e in orphan.errors] == [(ErrorKind.not_found, "/no")]
+        assert (await storage.stat(path=Path("/no"))).success is False
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        deleted = (await storage.stat(path=Path("/.vfs/trash/a.txt"))).observations[0].version
+        assert deleted is not None
+        for expected in (1, deleted):
+            gone = await storage.write(entries=[_file("/a.txt", "two")], if_versions={Path("/a.txt"): expected})
+            (error,) = gone.errors
+            assert (error.kind, error.path) == (ErrorKind.not_found, "/a.txt")
+            assert (error.data or {}).get("vfs.trashed") is True
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+
+    @needs("write", "stat", "read")
+    async def test_stale_keys_refuse_the_whole_batch_and_each_is_named(self, storage: ConformanceBackend) -> None:
+        paths = ["/a.txt", "/b.txt", "/c.txt", "/d.txt"]
+        assert (await storage.write(entries=[_file(path, "old") for path in paths])).success is True
+        moved_on = [_file("/b.txt", "rival"), _file("/d.txt", "rival")]
+        assert (await storage.write(entries=moved_on)).success is True
+        result = await storage.write(
+            entries=[_file(path, "new") for path in paths], if_versions={Path(path): 1 for path in paths}
+        )
+        assert result.success is False and result.observations == []
+        assert sorted((e.kind, e.path, (e.data or {}).get("version")) for e in result.errors) == [
+            (ErrorKind.conflict, "/b.txt", 2),
+            (ErrorKind.conflict, "/d.txt", 2),
+        ]
+        bodies = [(await storage.read(path=Path(path))).observations[0].content for path in paths]
+        assert bodies == ["old", "rival", "old", "rival"]
+
+    @needs("write", "stat")
+    async def test_a_key_covers_its_own_row_and_no_other(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "old"), _file("/b.txt", "old")])).success is True
+        assert (await storage.write(entries=[_file("/b.txt", "rival")])).success is True
+        # /b.txt moved on, and no key names it: it is replaced, as a plain write replaces.
+        result = await storage.write(
+            entries=[_file("/a.txt", "new"), _file("/b.txt", "new")], if_versions={Path("/a.txt"): 1}
+        )
+        assert result.success is True, result.errors
+        assert [(o.status, o.version) for o in result.observations] == [("updated", 2), ("updated", 3)]
+
+    # ------------------------------------------------------------------
+    # An append adds to the end of one file, and loses no line to a rival
+    # ------------------------------------------------------------------
+
+    @needs("write", "read")
+    @pytest.mark.parametrize("seeded", [True, False], ids=["a-file-that-is-there", "an-absent-path"])
+    async def test_twenty_concurrent_appends_keep_every_line(self, storage: ConformanceBackend, seeded: bool) -> None:
+        if seeded:
+            assert (await storage.write(entries=[_file("/log.txt", "line0\n")])).success is True
+        appends = [storage.write(entries=[_file("/log.txt", f"{n}\n")], append=True) for n in range(20)]
+        results = await asyncio.gather(*appends)
+        assert [result.errors for result in results] == [[]] * 20
+        body = (await storage.read(path=Path("/log.txt"))).observations[0].content
+        assert body is not None
+        lines = body.splitlines()
+        assert sorted(lines) == sorted((["line0"] if seeded else []) + [str(n) for n in range(20)])
+        assert await _revision_of(storage, "/log.txt") == len(lines)
+
+    @needs("write", "read", "stat")
+    async def test_an_append_reports_what_it_did_to_the_row(self, storage: ConformanceBackend) -> None:
+        made = await storage.write(entries=[_file("/d/log.txt", "one\n")], append=True, parents=True)
+        assert [(o.path, o.status, o.version) for o in made.observations] == [("/d/log.txt", "created", 1)]
+        grown = await storage.write(entries=[_file("/d/log.txt", "two\n")], append=True)
+        assert [(o.status, o.version, o.size_bytes) for o in grown.observations] == [("updated", 2, 8)]
+        assert (await storage.read(path=Path("/d/log.txt"))).observations[0].content == "one\ntwo\n"
+        # An empty tail leaves the body as it is.
+        same = await storage.write(entries=[_file("/d/log.txt", "")], append=True)
+        assert [(o.status, o.version) for o in same.observations] == [("unchanged", 2)]
+
+    @needs("write", "read", "stat")
+    async def test_an_append_keeps_the_rows_source_when_the_body_allows(self, storage: ConformanceBackend) -> None:
+        both = frozenset({"content", "data"})
+        cases: list[tuple[str | bytes, str | bytes, str, str | None, bytes | None]] = [
+            ("caf", "é".encode(), "text", "café", None),
+            ("old ", b"\xff\xfe", "bytes", None, b"old \xff\xfe"),
+            (b"\x00\x01", b"\x02", "bytes", None, b"\x00\x01\x02"),
+            (b"\x00\x01", "é", "bytes", None, b"\x00\x01\xc3\xa9"),
+        ]
+        for n, (stored, tail, source, content, data) in enumerate(cases):
+            path = f"/f{n}"
+            assert (await storage.write(entries=[_file(path, stored)])).success is True
+            assert (await storage.write(entries=[_file(path, tail)], append=True)).success is True
+            row = (await storage.read(path=Path(path), columns=both)).observations[0]
+            assert (row.content, row.data) == (content, data), (stored, tail)
+            stat = (await storage.stat(path=Path(path))).observations[0]
+            assert (stat.source, stat.version) == (source, 2), (stored, tail)
+            body = stored if isinstance(stored, bytes) else stored.encode()
+            body += tail if isinstance(tail, bytes) else tail.encode()
+            assert (stat.content_hash, stat.size_bytes) == (measure_bytes(body).content_hash, len(body))
+
+    @needs("write", "stat")
+    async def test_an_append_keeps_the_rows_declared_type(self, storage: ConformanceBackend) -> None:
+        typed = Entry(path=Path("/log.txt"), content="one\n", mime_type="text/x-log")
+        assert (await storage.write(entries=[typed])).success is True
+        tail = Entry(path=Path("/log.txt"), content="two\n", mime_type="text/plain")
+        assert (await storage.write(entries=[tail], append=True)).success is True
+        stat = (await storage.stat(path=Path("/log.txt"))).observations[0]
+        assert (stat.mime_type, stat.version) == ("text/x-log", 2)
+
+    @needs("write", "mkdir", "delete", "read")
+    async def test_an_append_judges_its_target_as_a_write_does(self, storage: ConformanceBackend) -> None:
+        await storage.mkdir(path=Path("/d"))
+        onto_directory = await storage.write(entries=[_file("/d", "x")], append=True)
+        assert [(e.kind, e.path) for e in onto_directory.errors] == [(ErrorKind.wrong_kind, "/d")]
+        orphan = await storage.write(entries=[_file("/no/log.txt", "x")], append=True)
+        assert [(e.kind, e.path) for e in orphan.errors] == [(ErrorKind.not_found, "/no")]
+        # A deleted file is absent: the tail is the whole body of the row that comes back.
+        assert (await storage.write(entries=[_file("/gone.txt", "old ")])).success is True
+        assert (await storage.delete(path=Path("/gone.txt"))).success is True
+        back = await storage.write(entries=[_file("/gone.txt", "new")], append=True)
+        assert back.success is True and back.observations[0].status == "updated"
+        assert (await storage.read(path=Path("/gone.txt"))).observations[0].content == "new"
+
+    @needs("write", "read")
+    async def test_an_append_with_an_expected_version_lands_at_most_once(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/log.txt", "one\n")])).success is True
+        expecting_one = {Path("/log.txt"): 1}
+        first = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
+        assert first.success is True, first.errors
+        # The reply was lost and the call is sent again: the version moved on, and nothing is added twice.
+        again = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
+        assert [(e.kind, e.data) for e in again.errors] == [(ErrorKind.conflict, {"version": 2})]
+        assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "one\ntwo\n"
+        absent = await storage.write(entries=[_file("/none.txt", "x")], append=True, if_versions={Path("/none.txt"): 1})
+        assert [e.kind for e in absent.errors] == [ErrorKind.not_found]
+
+    @needs("write", "stat")
+    async def test_an_append_takes_one_file(self, storage: ConformanceBackend) -> None:
+        two = [_file("/a.txt", "x"), _file("/b.txt", "x")]
+        for entries in (two, [], [Entry(path=Path("/d"), kind="directory")]):
+            refused = await storage.write(entries=entries, append=True)
+            assert [e.kind for e in refused.errors] == [ErrorKind.invalid], entries
+        assert (await storage.stat(path=Path("/a.txt"))).success is False
+        assert (await storage.stat(path=Path("/d"))).success is False
+
+    # ------------------------------------------------------------------
     # Batch observations reflect committed state, never a mid-batch one
     # ------------------------------------------------------------------
     # A version value is never observable before the state it stamps: a
@@ -2940,7 +3241,7 @@ class StorageContract:
         pair = [Entry(path=Path("/a.txt"), content="alpha"), Entry(path=Path("/b.txt"), content="bravo")]
         await storage.write(entries=pair)
         assert (await rebuilder.rebuild()).success is True
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")], overwrite=True)
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")])
         result = await rebuilder.rebuild()
         assert result.success is True
         assert (result.embedding["embedded"], result.embedding["unembedded"]) == (1, 0)  # ty: ignore[unresolved-attribute]

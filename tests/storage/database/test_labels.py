@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import event, select, text, update
-from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
-from sqlalchemy.dialects.mysql import mariadb
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import DBAPIError
 
 from tests.support.commit_worlds import ANONYMOUS, BOB, CAROL, attempts, clearing, label_world, row_at, stamp
+from tests.support.database_helpers import begin_as_writer
 from tests.support.oracles.grants import GrantWorld, everyone_rank
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.authority import EVERYONE_NAME, Authority
@@ -28,7 +28,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import authorized as authorized_module
-from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE, StaleSnapshot
+from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL, SQLITE, StaleSnapshot
 from vfs.storage.backends.database.labels import (
     POSTURE_MOVED,
     Mark,
@@ -70,13 +70,6 @@ OPENS = (("/a/", "/a0"), ("/b/", "/b0"))
 SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
     (SQLITE, sqlite.dialect(), ("UPDATE vfs_entries SET everyone_level", "FROM json_each(", "json_extract(")),
     (POSTGRESQL, postgresql.dialect(), ("UPDATE vfs_entries SET everyone_level", "FROM unnest(", 'COLLATE "C"')),
-    (MSSQL, mssql.dialect(), ("UPDATE e SET everyone_level", "OPENJSON(", "INNER LOOP JOIN vfs_entries AS e")),
-    (
-        MARIADB,
-        mariadb.MariaDBDialect(),
-        ("UPDATE vfs_entries AS e JOIN JSON_TABLE(", "AS BINARY", "SET e.everyone_level"),
-    ),
-    (ORACLE, oracle.dialect(), ("UPDATE /*+ USE_CONCAT */ vfs_entries", "vfs_entries.path > ", " OR ")),
     (GENERIC, sqlite.dialect(), ("UPDATE vfs_entries SET everyone_level", " OR ", "vfs_entries.path < ")),
 ]
 
@@ -84,7 +77,7 @@ SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
 @pytest.fixture
 async def storage() -> AsyncIterator[InMemoryStorage]:
     storage = InMemoryStorage()
-    assert (await storage.posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
     yield storage
     await storage.close()
 
@@ -93,21 +86,18 @@ async def storage() -> AsyncIterator[InMemoryStorage]:
 def test_the_relabel_renders_each_dialects_measured_form(
     profile: DialectProfile, dialect: Dialect, fragments: tuple[str, ...]
 ) -> None:
-    stmt, params = _relabel_opens(ENTRY, profile, 1, OPENS)
-    sql = str(stmt.compile(dialect=dialect))
+    sql = str(_relabel_opens(ENTRY, profile, 1, OPENS).compile(dialect=dialect))
     for fragment in fragments:
         assert fragment in sql, sql
     assert "LIKE" not in sql
-    # The text spellings carry the ranges as one bound value; the rest bind through Core.
-    assert set(params) == ({"rank", "pairs"} if profile.name in ("mssql", "mariadb") else set())
     # One form: a deleted row is relabelled where it sits.
     assert "origin_path" not in sql and "deleted_at" not in sql
 
 
 async def test_a_batch_takes_its_labels_from_the_deepest_covering_posture(storage: InMemoryStorage) -> None:
     await storage.mkdir(path=Path("/a/b"), parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/a"), posture="none", authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/a/b"), posture="read_write", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/a"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/a/b"), posture="read_write", authority=SYSTEM)).success is True
     host = storage._host
     async with host.session_factory() as session:
         labels = await labels_for(
@@ -123,8 +113,8 @@ async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStor
     entries = [Entry(path=Path(f"/d/{n}.md"), content="x") for n in range(5)]
     entries.append(Entry(path=Path("/d/sub/k.md"), content="x"))
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/d/sub"), posture="none", authority=SYSTEM)).success is True
-    result = await storage.posture(path=Path("/d"), posture="read_write", authority=SYSTEM)
+    assert (await storage.set_posture(path=Path("/d/sub"), posture="none", authority=SYSTEM)).success is True
+    result = await storage.set_posture(path=Path("/d"), posture="read_write", authority=SYSTEM)
     assert result.success is True
     # /d itself, its five files, and nothing under the deeper posture: one
     # point, one range, one chunk after the transaction that wrote the row.
@@ -132,6 +122,7 @@ async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStor
     host = storage._host
     relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
     async with host.session_factory() as session:
+        await begin_as_writer(session)
         assert await relabeller.step(session) is None
 
 
@@ -140,10 +131,11 @@ async def test_the_rebuild_repairs_every_label_from_the_posture_rows(storage: In
     assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)).success
     postures: list[tuple[str, Posture]] = [("/a", "none"), ("/a/b", "read_write"), ("/c", "none")]
     for path, posture in postures:
-        assert (await storage.posture(path=Path(path), posture=posture, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path(path), posture=posture, authority=SYSTEM)).success is True
     host = storage._host
     entry = host.tables.entry
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(update(entry).values(everyone_level=LEVEL_RANK["read_write"]))
         done = await rebuild_labels(session, host.tables, host.profile, host.membership_budget)
     assert done.rows >= len(paths) and done.statements >= 3
@@ -164,6 +156,7 @@ async def test_a_relabel_walks_a_large_subtree_in_bounded_chunks(storage: InMemo
     host = storage._host
     profile = replace(host.profile, relabel_rows=7)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         await session.execute(
             host.tables.grants.update()
@@ -175,6 +168,7 @@ async def test_a_relabel_walks_a_large_subtree_in_bounded_chunks(storage: InMemo
     steps: list[Relabel] = []
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             done = await relabeller.step(session)
         if done is None:
             break
@@ -198,6 +192,7 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
     host = storage._host
     profile = replace(host.profile, relabel_rows=7)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         await session.execute(
             host.tables.grants.update()
@@ -207,6 +202,7 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
         await mark_relabel(session, host.tables, "/", revision)
     dying = Relabeller(host.tables, profile, host.membership_budget)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         assert await dying.step(session) is not None
     entry = host.tables.entry
     async with host.session_factory() as session:
@@ -224,6 +220,7 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
     resumed = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await resumed.step(session) is None:
                 break
     world = GrantWorld([GrantRow("*", "/", "none")])
@@ -236,14 +233,15 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
 
 async def test_the_marks_and_the_pending_postures_follow_the_table(storage: InMemoryStorage) -> None:
     await storage.mkdir(path=Path("/a/b"), parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/a"), posture="read", authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/a/b"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/a"), posture="read", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/a/b"), posture="none", authority=SYSTEM)).success is True
     host = storage._host
     async with host.session_factory() as session:
         none = await inflight_marks(session, host.tables)
         empty = await inflight_postures(session, host.tables, host.profile, host.membership_budget, none)
     assert none == () and empty == {}
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await mark_relabel(session, host.tables, "/a", 7)
         # A second mark on the same path resets the cursor and restamps, never doubles the row.
         await session.execute(host.tables.relabels.update().values(cursor="/a/x"))
@@ -282,10 +280,11 @@ async def test_the_generic_floor_relabels_with_literal_ranges_and_counts_one_at_
     # carves the region into points and open ranges, so both legs run.
     paths = [f"/d/{n}.md" for n in range(4)] + ["/d/sub/k.md", "/e.md"]
     assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)).success
-    assert (await storage.posture(path=Path("/d/sub"), posture="read_write", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/d/sub"), posture="read_write", authority=SYSTEM)).success is True
     host = storage._host
     profile = replace(host.profile, range_source=None)
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         await session.execute(
             host.tables.grants.update()
@@ -296,6 +295,7 @@ async def test_the_generic_floor_relabels_with_literal_ranges_and_counts_one_at_
     relabeller = Relabeller(host.tables, profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await relabeller.step(session) is None:
                 break
     world = GrantWorld([GrantRow("*", "/", "none"), GrantRow("*", "/d/sub", "read_write")])
@@ -309,6 +309,7 @@ async def test_hold_revision_locks_without_advancing(storage: InMemoryStorage) -
     await storage.first_touch()
     host = storage._host
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         before = await read_revision(session, host.tables)
         held = await hold_revision(session, host.tables)
         bumped = await bump_revision(session, host.tables)
@@ -320,6 +321,7 @@ async def test_a_mount_with_no_root_posture_rebuilds_to_none(storage: InMemorySt
     host = storage._host
     grants, entry = host.tables.grants, host.tables.entry
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(grants.delete())
         await rebuild_labels(session, host.tables, host.profile, host.membership_budget)
     async with host.session_factory() as session:
@@ -332,11 +334,7 @@ async def test_a_mount_with_no_root_posture_rebuilds_to_none(storage: InMemorySt
 # ---------------------------------------------------------------------------
 
 # What a mint that arrives behind a waiting posture write sets before its hold, so the engine refuses it at once.
-_NO_WAIT = {
-    "postgresql": "SET LOCAL lock_timeout = '300ms'",
-    "mariadb": "SET SESSION innodb_lock_wait_timeout = 1",
-    "mssql": "SET LOCK_TIMEOUT 300",
-}
+_NO_WAIT = {"postgresql": "SET LOCAL lock_timeout = '300ms'"}
 
 
 def _statements(storage: InMemoryStorage) -> list[str]:
@@ -475,6 +473,7 @@ class TestProof:
         """
         host = storage._host
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             await session.execute(host.tables.principal_revisions.delete())
         result = await storage.write(entries=[Entry(path=Path("/new.txt"), content="x")], authority=SYSTEM)
         assert [(error.kind, error.retryable) for error in result.errors] == [(ErrorKind.conflict, True)]
@@ -523,12 +522,8 @@ class TestProof:
                     for _ in range(200):
                         async with factory() as fourth:
                             try:
-                                if profile.name == "oracle":
-                                    name = fourth.get_bind().dialect.identifier_preparer.format_table(revisions)
-                                    await fourth.execute(text(f"LOCK TABLE {name} IN SHARE MODE NOWAIT"))
-                                else:
-                                    await fourth.execute(text(_NO_WAIT[profile.name]))
-                                    await hold(fourth)
+                                await fourth.execute(text(_NO_WAIT[profile.name]))
+                                await hold(fourth)
                             except DBAPIError:
                                 refused = True
                                 break
@@ -536,8 +531,7 @@ class TestProof:
                     assert refused, f"{profile.name}: a later hold was granted 200 times beside a waiting posture write"
                     assert not posture_write.done()
                     # The posture write has committed nothing, so a plain read still returns the standing stamp.
-                    if profile.name != "mssql":
-                        assert (await fifth.execute(stamp_of_everyone)).scalar_one() == standing
+                    assert (await fifth.execute(stamp_of_everyone)).scalar_one() == standing
                     await first.commit()
                     await posture_write
                     await third.commit()

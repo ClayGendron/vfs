@@ -1,0 +1,74 @@
+PARITY
+SAME ('/mm/tests',) 'i_count' {} :: today:0r/19s/allow=971/U=28 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) '-EINVAL' {} :: today:0r/19s/allow=971/U=158 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=17427 inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) 'MODULE_LICENSE' {} :: today:1r/20s/allow=971/U=90 d1:1r/19s/allow=6/U=None range:1r/17s/allow=None/U=17330 inhand:1r/5s/allow=None/U=None
+SAME ('/mm/tests',) '^static int' {} :: today:0r/19s/allow=971/U=456 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) 'kmalloc|kfree' {} :: today:0r/19s/allow=971/U=127 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=11761 inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) 'todo' {'case_mode': 'insensitive'} :: today:0r/19s/allow=971/U=39 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=3540 inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) 'xyzzy_no_such_symbol_42' {} :: today:0r/18s/allow=971/U=0 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) 'return 0;' {} :: today:0r/19s/allow=971/U=391 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:0r/5s/allow=None/U=None
+SAME ('/mm/tests',) '\\bd_inode\\b' {} :: today:0r/19s/allow=971/U=31 d1:0r/19s/allow=6/U=None range:0r/16s/allow=None/U=2739 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/atm',) 'i_count' {} :: today:0r/20s/allow=40262/U=4336 d1:0r/19s/allow=39/U=None range:0r/17s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/atm',) '-EINVAL' {} :: today:12r/20s/allow=40262/U=12050 d1:12r/19s/allow=39/U=None range:12r/17s/allow=None/U=17427 inhand:12r/5s/allow=None/U=None
+SAME ('/drivers/atm',) 'MODULE_LICENSE' {} :: today:12r/20s/allow=40262/U=12563 d1:12r/19s/allow=39/U=None range:12r/17s/allow=None/U=17330 inhand:12r/5s/allow=None/U=None
+SAME ('/drivers/atm',) '^static int' {} :: today:12r/20s/allow=40262/U=21471 d1:12r/19s/allow=39/U=None range:12r/17s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:12r/5s/allow=None/U=None
+SAME ('/drivers/atm',) 'kmalloc|kfree' {} :: today:12r/20s/allow=40262/U=8013 d1:12r/19s/allow=39/U=None range:12r/17s/allow=None/U=11761 inhand:12r/5s/allow=None/U=None
+SAME ('/drivers/atm',) 'todo' {'case_mode': 'insensitive'} :: today:4r/20s/allow=40262/U=2308 d1:4r/20s/allow=39/U=5 range:4r/17s/allow=None/U=3540 inhand:4r/5s/allow=None/U=None
+SAME ('/drivers/atm',) 'xyzzy_no_such_symbol_42' {} :: today:0r/18s/allow=40262/U=0 d1:0r/18s/allow=39/U=0 range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/atm',) 'return 0;' {} :: today:12r/20s/allow=40262/U=18177 d1:12r/19s/allow=39/U=None range:12r/17s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:12r/5s/allow=None/U=None
+SAME ('/drivers/atm',) '\\bd_inode\\b' {} :: today:0r/20s/allow=40262/U=1294 d1:0r/19s/allow=39/U=None range:0r/17s/allow=None/U=2739 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/md',) 'i_count' {} :: today:0r/20s/allow=40262/U=4336 d1:0r/20s/allow=302/U=3 range:0r/17s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/md',) '-EINVAL' {} :: today:94r/20s/allow=40262/U=12050 d1:94r/20s/allow=302/U=102 range:94r/17s/allow=None/U=17427 inhand:94r/5s/allow=None/U=None
+SAME ('/drivers/md',) 'MODULE_LICENSE' {} :: today:44r/20s/allow=40262/U=12563 d1:44r/20s/allow=302/U=66 range:44r/17s/allow=None/U=17330 inhand:44r/5s/allow=None/U=None
+SAME ('/drivers/md',) '^static int' {} :: today:126r/20s/allow=40262/U=21471 d1:126r/20s/allow=302/U=198 range:126r/17s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:126r/5s/allow=None/U=None
+SAME ('/drivers/md',) 'kmalloc|kfree' {} :: today:87r/20s/allow=40262/U=8013 d1:87r/20s/allow=302/U=88 range:87r/17s/allow=None/U=11761 inhand:87r/5s/allow=None/U=None
+SAME ('/drivers/md',) 'todo' {'case_mode': 'insensitive'} :: today:15r/20s/allow=40262/U=2308 d1:15r/20s/allow=302/U=15 range:15r/17s/allow=None/U=3540 inhand:15r/5s/allow=None/U=None
+SAME ('/drivers/md',) 'xyzzy_no_such_symbol_42' {} :: today:0r/18s/allow=40262/U=0 d1:0r/18s/allow=302/U=0 range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/md',) 'return 0;' {} :: today:120r/20s/allow=40262/U=18177 d1:120r/20s/allow=302/U=120 range:120r/17s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:120r/5s/allow=None/U=None
+SAME ('/drivers/md',) '\\bd_inode\\b' {} :: today:0r/20s/allow=40262/U=1294 d1:0r/20s/allow=302/U=16 range:0r/17s/allow=None/U=2739 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) 'i_count' {} :: today:0r/20s/allow=1442/U=38 d1:0r/20s/allow=1296/U=29 range:0r/17s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) '-EINVAL' {} :: today:0r/19s/allow=1442/U=10 d1:0r/18s/allow=1296/U=0 range:0r/16s/allow=None/U=17427 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) 'MODULE_LICENSE' {} :: today:0r/20s/allow=1442/U=27 d1:0r/20s/allow=1296/U=21 range:0r/17s/allow=None/U=17330 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) '^static int' {} :: today:69r/20s/allow=1442/U=204 d1:69r/20s/allow=1296/U=166 range:69r/17s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:69r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) 'kmalloc|kfree' {} :: today:75r/20s/allow=1442/U=109 d1:75r/20s/allow=1296/U=99 range:75r/17s/allow=None/U=11761 inhand:75r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) 'todo' {'case_mode': 'insensitive'} :: today:222r/20s/allow=1442/U=247 d1:222r/20s/allow=1296/U=222 range:222r/17s/allow=None/U=3540 inhand:222r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) 'xyzzy_no_such_symbol_42' {} :: today:0r/18s/allow=1442/U=0 d1:0r/18s/allow=1296/U=0 range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) 'return 0;' {} :: today:60r/20s/allow=1442/U=95 d1:60r/20s/allow=1296/U=78 range:60r/17s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:60r/5s/allow=None/U=None
+SAME ('/drivers/gpu/drm/amd/display/dc',) '\\bd_inode\\b' {} :: today:0r/20s/allow=1442/U=4 d1:0r/20s/allow=1296/U=2 range:0r/17s/allow=None/U=2739 inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) 'i_count' {} :: today:0r/18s/allow=3958/U=163 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) '-EINVAL' {} :: today:0r/18s/allow=3958/U=199 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=17427 inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) 'MODULE_LICENSE' {} :: today:0r/18s/allow=3958/U=178 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=17330 inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) '^static int' {} :: today:0r/19s/allow=3958/U=1477 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) 'kmalloc|kfree' {} :: today:0r/18s/allow=3958/U=117 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=11761 inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) 'todo' {'case_mode': 'insensitive'} :: today:1r/19s/allow=3958/U=39 d1:1r/18s/allow=1/U=None range:1r/17s/allow=None/U=3540 inhand:1r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) 'xyzzy_no_such_symbol_42' {} :: today:0r/17s/allow=3958/U=0 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) 'return 0;' {} :: today:0r/18s/allow=3958/U=471 d1:0r/18s/allow=1/U=None range:0r/16s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:0r/5s/allow=None/U=None
+SAME ('/include/linux/dcache.h',) '\\bd_inode\\b' {} :: today:1r/19s/allow=3958/U=110 d1:1r/18s/allow=1/U=None range:1r/17s/allow=None/U=2739 inhand:1r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') 'i_count' {} :: today:0r/19s/allow=2462/U=290 d1:0r/19s/allow=2/U=None range:0r/16s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') '-EINVAL' {} :: today:2r/20s/allow=2462/U=838 d1:2r/19s/allow=2/U=None range:2r/17s/allow=None/U=17427 inhand:2r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') 'MODULE_LICENSE' {} :: today:0r/20s/allow=2462/U=371 d1:0r/19s/allow=2/U=None range:0r/17s/allow=None/U=17330 inhand:0r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') '^static int' {} :: today:2r/20s/allow=2462/U=1598 d1:2r/19s/allow=2/U=None range:2r/17s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:2r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') 'kmalloc|kfree' {} :: today:1r/20s/allow=2462/U=796 d1:1r/19s/allow=2/U=None range:1r/17s/allow=None/U=11761 inhand:1r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') 'todo' {'case_mode': 'insensitive'} :: today:0r/19s/allow=2462/U=117 d1:0r/19s/allow=2/U=None range:0r/16s/allow=None/U=3540 inhand:0r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') 'xyzzy_no_such_symbol_42' {} :: today:0r/18s/allow=2462/U=0 d1:0r/19s/allow=2/U=None range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') 'return 0;' {} :: today:2r/20s/allow=2462/U=1301 d1:2r/19s/allow=2/U=None range:2r/17s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:2r/5s/allow=None/U=None
+SAME ('/fs/open.c', '/fs/read_write.c') '\\bd_inode\\b' {} :: today:1r/20s/allow=2462/U=841 d1:1r/19s/allow=2/U=None range:1r/17s/allow=None/U=2739 inhand:1r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') 'i_count' {} :: today:0r/24s/allow=44129/U=4534 d1:0r/23s/allow=56/U=None range:0r/17s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') '-EINVAL' {} :: today:14r/24s/allow=44129/U=12862 d1:14r/23s/allow=56/U=None range:14r/17s/allow=None/U=17427 inhand:14r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') 'MODULE_LICENSE' {} :: today:14r/24s/allow=44129/U=12958 d1:14r/23s/allow=56/U=None range:14r/17s/allow=None/U=17330 inhand:14r/5s/allow=None/U=None
+DIFF ('/drivers/atm', '/mm/tests', '/kernel/kcsan') '^static int' {} :: today:16r/24s/allow=44129/U=23366 d1:16r/23s/allow=56/U=None range:12r/17s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:16r/5s/allow=None/U=None
+     range: missing=['/kernel/kcsan/debugfs.c', '/kernel/kcsan/kcsan_test.c', '/kernel/kcsan/report.c', '/kernel/kcsan/selftest.c'] extra=[]
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') 'kmalloc|kfree' {} :: today:14r/24s/allow=44129/U=8518 d1:14r/23s/allow=56/U=None range:14r/17s/allow=None/U=11761 inhand:14r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') 'todo' {'case_mode': 'insensitive'} :: today:4r/24s/allow=44129/U=2447 d1:4r/24s/allow=56/U=5 range:4r/17s/allow=None/U=3540 inhand:4r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') 'xyzzy_no_such_symbol_42' {} :: today:0r/22s/allow=44129/U=0 d1:0r/22s/allow=56/U=0 range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') 'return 0;' {} :: today:16r/24s/allow=44129/U=19871 d1:16r/23s/allow=56/U=None range:16r/17s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:16r/5s/allow=None/U=None
+SAME ('/drivers/atm', '/mm/tests', '/kernel/kcsan') '\\bd_inode\\b' {} :: today:0r/24s/allow=44129/U=1424 d1:0r/23s/allow=56/U=None range:0r/17s/allow=None/U=2739 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') 'i_count' {} :: today:0r/22s/allow=40262/U=4336 d1:0r/22s/allow=302/U=3 range:0r/17s/allow=None/U=6096 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') '-EINVAL' {} :: today:94r/22s/allow=40262/U=12050 d1:94r/22s/allow=302/U=102 range:94r/17s/allow=None/U=17427 inhand:94r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') 'MODULE_LICENSE' {} :: today:44r/22s/allow=40262/U=12563 d1:44r/22s/allow=302/U=66 range:44r/17s/allow=None/U=17330 inhand:44r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') '^static int' {} :: today:126r/22s/allow=40262/U=21471 d1:126r/22s/allow=302/U=198 range:126r/17s/allow=None/U=37102/ERR['Truncated: at the candidate budget; narr'] inhand:126r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') 'kmalloc|kfree' {} :: today:87r/22s/allow=40262/U=8013 d1:87r/22s/allow=302/U=88 range:87r/17s/allow=None/U=11761 inhand:87r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') 'todo' {'case_mode': 'insensitive'} :: today:15r/22s/allow=40262/U=2308 d1:15r/22s/allow=302/U=15 range:15r/17s/allow=None/U=3540 inhand:15r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') 'xyzzy_no_such_symbol_42' {} :: today:0r/20s/allow=40262/U=0 d1:0r/20s/allow=302/U=0 range:0r/16s/allow=None/U=3 inhand:0r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') 'return 0;' {} :: today:120r/22s/allow=40262/U=18177 d1:120r/22s/allow=302/U=120 range:120r/17s/allow=None/U=29561/ERR['Truncated: at the candidate budget; narr'] inhand:120r/5s/allow=None/U=None
+SAME ('/drivers/md', '/drivers/md/bcache') '\\bd_inode\\b' {} :: today:0r/22s/allow=40262/U=1294 d1:0r/22s/allow=302/U=16 range:0r/17s/allow=None/U=2739 inhand:0r/5s/allow=None/U=None

@@ -6,7 +6,7 @@ funnel with ``authority=`` filled in, so a session-mediated call and the
 direct call with the same authority return the same result — there is no
 second dispatch path. The session is sugar; the funnel is the gate.
 
-    async with vfs.session(Authority.of(Principal("alice"))) as s:
+    async with vfs.open_session(Authority.of(Principal("alice"))) as s:
         result = await s.read("/reports/q2.md")      # no identity argument
 
 Closed is final: a verb on a closed session refuses with a structured
@@ -19,15 +19,16 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
+from vfs.shell import LineResult, refused_line
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from types import TracebackType
 
     from vfs.authority import Authority
     from vfs.base import AsyncVirtualFileSystem
     from vfs.models import Edge, Entry, Observation
-    from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
+    from vfs.ops import CaseMode, GrepOutputMode, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
@@ -42,7 +43,7 @@ CLOSED_SESSION_DETAIL: Final = "the session is closed and cannot reopen; open a 
 """The one sentence of the closed fact: the refusal's detail and the reopen error's message, in either shape."""
 
 
-def closed_refusal(op: Op) -> Result:
+def closed_refusal(op: str) -> Result:
     """The one refusal a closed session answers every verb with, in either shape."""
     fact = classified(ErrorKind.invalid, detail=CLOSED_SESSION_DETAIL)
     return Result(ops=(op,), errors=[fact])
@@ -120,22 +121,30 @@ class AsyncSession:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("ls")) is not None:
             return refusal
-        return await self._fs.ls(path, observations, columns=columns, authority=self._authority)
+        return await self._fs.ls(
+            path, observations, after=after, limit=limit, columns=columns, authority=self._authority
+        )
 
     async def tree(
         self,
         path: str,
         max_depth: int | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("tree")) is not None:
             return refusal
-        return await self._fs.tree(path, max_depth, columns=columns, authority=self._authority)
+        return await self._fs.tree(
+            path, max_depth, after=after, limit=limit, columns=columns, authority=self._authority
+        )
 
     # -------------------------------------------------------------------
     # mutations
@@ -148,7 +157,10 @@ class AsyncSession:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        overwrite: bool = True,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
     ) -> Result:
         if (refusal := self._refuse_closed("write")) is not None:
@@ -158,7 +170,10 @@ class AsyncSession:
             path=path,
             content=content,
             data=data,
-            overwrite=overwrite,
+            if_version=if_version,
+            if_versions=if_versions,
+            if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=self._authority,
         )
@@ -275,6 +290,8 @@ class AsyncSession:
         globs_not: tuple[str, ...] = (),
         kind: ObjectKind | None = None,
         max_count: int | None = None,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("glob")) is not None:
@@ -288,6 +305,8 @@ class AsyncSession:
             globs_not=globs_not,
             kind=kind,
             max_count=max_count,
+            after=after,
+            limit=limit,
             columns=columns,
             authority=self._authority,
         )
@@ -392,6 +411,11 @@ class AsyncSession:
             authority=self._authority,
         )
 
+    async def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"") -> LineResult:
+        if (refusal := self._refuse_closed("cli")) is not None:
+            return refused_line(refusal.errors[0])
+        return await self._fs.cli(line, cwd=cwd, stdin=stdin, authority=self._authority)
+
     async def run(self, path: str, *, arguments: dict[str, Any] | None = None) -> Result:
         if (refusal := self._refuse_closed("run")) is not None:
             return refusal
@@ -416,10 +440,10 @@ class AsyncSession:
             return refusal
         return await self._fs.grants(path, authority=self._authority)
 
-    async def posture(self, path: str, posture: Posture) -> Result:
-        if (refusal := self._refuse_closed("posture")) is not None:
+    async def set_posture(self, path: str, posture: Posture) -> Result:
+        if (refusal := self._refuse_closed("set_posture")) is not None:
             return refusal
-        return await self._fs.posture(path, posture, authority=self._authority)
+        return await self._fs.set_posture(path, posture, authority=self._authority)
 
     async def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
         if (refusal := self._refuse_closed("add_member")) is not None:
@@ -439,6 +463,6 @@ class AsyncSession:
         """The one line of closing, synchronous so the sync twin can close without a loop."""
         self._closed = True
 
-    def _refuse_closed(self, op: Op) -> Result | None:
+    def _refuse_closed(self, op: str) -> Result | None:
         """The structured refusal a closed session answers every verb with."""
         return None if not self._closed else closed_refusal(op)

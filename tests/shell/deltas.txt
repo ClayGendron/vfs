@@ -1,0 +1,38 @@
+# A deliberate difference from bash: the case keeps bash's record and its <name>.shell.json is the shell's own answer.
+# One case to a line: the case, then the reason.
+arrays/mapfile-from-a-file-descriptor refused construct: exec, so the shell refuses the line before anything runs
+builtin-mapfile/u-reads-from-file-descriptor refused construct: exec, so the shell refuses the line before anything runs
+builtin-printf/q-output-round-trips-through-eval refused construct: eval, so the shell refuses the line before anything runs
+builtin-read/read-from-file-descriptor refused construct: exec, so the shell refuses the line before anything runs
+groups/exec-redirection-in-brace-group-persists refused construct: exec, so the shell refuses the line before anything runs
+groups/exec-redirection-in-subshell-does-not-leak refused construct: exec, so the shell refuses the line before anything runs
+here-documents/heredoc-in-eval refused construct: eval, so the shell refuses the line before anything runs
+parameter-expansion/quote-transform-round-trips-through-eval refused construct: eval, so the shell refuses the line before anything runs
+parameters/temporary-assignment-before-special-builtin refused construct: eval, so the shell refuses the line before anything runs
+process-substitution/exec-redirect-from-process-substitution refused construct: exec, so the shell refuses the line before anything runs
+process-substitution/source-from-process-substitution refused construct: source, so the shell refuses the line before anything runs
+quoting/eval-reparses-quotes refused construct: eval, so the shell refuses the line before anything runs
+quoting/printf-q-round-trips-through-eval refused construct: eval, so the shell refuses the line before anything runs
+redirections/eval-with-a-redirect refused construct: eval, so the shell refuses the line before anything runs
+refusals/alias-is-not-expanded-by-default refused construct: the shell refuses it before anything runs
+refusals/alias-with-expand-aliases refused construct: the shell refuses it before anything runs
+refusals/bg-without-job-control refused construct: the shell refuses it before anything runs
+refusals/coproc-round-trip refused construct: the shell refuses it before anything runs
+refusals/disown-a-background-job refused construct: the shell refuses it before anything runs
+refusals/dot-a-file refused construct: the shell refuses it before anything runs
+refusals/eval-assigns-a-dynamic-name refused construct: the shell refuses it before anything runs
+refusals/eval-builds-an-array refused construct: the shell refuses it before anything runs
+refusals/eval-of-a-syntax-error refused construct: the shell refuses it before anything runs
+refusals/eval-runs-a-built-command refused construct: the shell refuses it before anything runs
+refusals/exec-merges-stderr-into-stdout refused construct: the shell refuses it before anything runs
+refusals/exec-opens-a-file-descriptor-for-reading refused construct: the shell refuses it before anything runs
+refusals/exec-redirects-shell-output-to-a-file refused construct: the shell refuses it before anything runs
+refusals/fg-without-job-control refused construct: the shell refuses it before anything runs
+refusals/jobs-lists-a-running-job refused construct: the shell refuses it before anything runs
+refusals/source-a-file-of-definitions refused construct: the shell refuses it before anything runs
+refusals/source-with-arguments-and-return refused construct: the shell refuses it before anything runs
+refusals/trap-err-reports-a-failure refused construct: the shell refuses it before anything runs
+refusals/trap-exit-runs-at-the-end refused construct: the shell refuses it before anything runs
+refusals/trap-p-shows-one-trap refused construct: the shell refuses it before anything runs
+word-splitting/temporary-ifs-on-a-builtin-does-not-affect-its-arguments refused construct: eval, so the shell refuses the line before anything runs
+found/here-document-in-a-substitution-in-a-here-document refused construct: a here-document inside a here-document body, which the parser does not read

@@ -30,9 +30,8 @@ from typing import Any, ClassVar, NamedTuple
 
 import pytest
 from sqlalchemy import event as sqlalchemy_event
-from sqlalchemy import func, insert, select, text, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
 from tests.support.commit_worlds import (
@@ -52,7 +51,7 @@ from tests.support.commit_worlds import (
     row_at,
     version_count,
 )
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from vfs.authority import Authority, Principal
@@ -72,14 +71,6 @@ from vfs.storage.replace import EditOperation
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
 _RACE_KINDS = frozenset({ErrorKind.not_found, ErrorKind.conflict, ErrorKind.exists, ErrorKind.invalid})
-
-# On the engines that lock index keys: a session's own id, and whether that session now waits on a row lock.
-_SESSION_ID = {"mariadb": "SELECT CONNECTION_ID()", "mssql": "SELECT @@SPID"}
-_LOCK_WAIT = {
-    "mariadb": "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = :id"
-    " AND trx_state = 'LOCK WAIT'",
-    "mssql": "SELECT COUNT(*) FROM sys.dm_exec_requests WHERE session_id = :id AND wait_type LIKE 'LCK_M_%'",
-}
 
 
 async def _audit(storage: DatabaseStorage) -> None:
@@ -158,7 +149,7 @@ class TestForwardOrdering:
             handler, rival_results = _self_clearing("write:before-apply", lambda: storage.delete(path=Path("/d")))
             with seams.installed("write:before-apply", handler):
                 if verb == "write":
-                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")], overwrite=True)
+                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")])
                 else:
                     victim = await storage.edit(edits=[EditOperation(old="old", new="mine")], path=Path("/d/f.txt"))
             assert rival_results and rival_results[0].success is True
@@ -213,7 +204,7 @@ class TestMkedgeEndpointLocks:
                 created = await storage.mkedge(edges=[edge])
             assert created.success is True
             assert created.observations[0].status == "created"
-            deleted = await asyncio.wait_for(pending["delete"], timeout=60)
+            deleted = await pending["delete"]
             assert deleted.success is True
             # Converged: the cascade swept the edge the lock let land first,
             # proven by absence through the public verb.
@@ -410,6 +401,92 @@ class TestAncestorMintConvergence:
 
 
 # ---------------------------------------------------------------------------
+# An expected version against a rival that commits inside the window
+# ---------------------------------------------------------------------------
+
+
+class TestExpectedVersionRivals:
+    """A rival commits between the snapshot and the update, and the answer is the same on every engine.
+
+    An engine that probes a missed guard answers from the probe. An
+    engine that runs the call again answers from the new snapshot.
+    """
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_with_another_body_is_a_conflict_that_names_its_version(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="rival")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.write(entries=[Entry(path=target, content="mine")], if_versions={target: 1})
+            assert rivals and rivals[0].success is True
+            assert [(e.kind, e.path, e.data, e.retryable) for e in victim.errors] == [
+                (ErrorKind.conflict, "/a.txt", {"version": 2}, False)
+            ]
+            assert (await storage.read(path=target)).observations[0].content == "rival"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_with_the_same_body_leaves_the_write_unchanged(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            handler, rivals = _self_clearing(
+                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="same")])
+            )
+            with seams.installed("write:before-apply", handler):
+                victim = await storage.write(entries=[Entry(path=target, content="same")], if_versions={target: 1})
+            assert rivals and rivals[0].success is True
+            assert victim.success is True, victim.errors
+            assert [(o.status, o.version) for o in victim.observations] == [("unchanged", 2)]
+            await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
+# The row lock an append holds
+# ---------------------------------------------------------------------------
+
+
+class TestAppendLock:
+    """An append locks the one row it adds to: no reader waits on it, and no writer of another file does."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_reads_and_other_writes_return_while_an_append_holds_its_lock(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            seeded = [Entry(path=Path("/log.txt"), content="needle one\n"), Entry(path=Path("/other.txt"), content="x")]
+            assert (await storage.write(entries=seeded)).success
+            beside = sibling(env_var, storage)
+            try:
+                assert (await beside.first_touch()).success is True
+                returned: list[bool] = []
+
+                async def while_locked() -> None:
+                    # The append has locked its row and read its body, and has not committed; a call
+                    # that waits on that lock never returns, and the run's deadline ends the test.
+                    calls = (
+                        beside.read(path=Path("/log.txt")),
+                        beside.stat(path=Path("/log.txt")),
+                        beside.grep(pattern="needle"),
+                        beside.edit(path=Path("/other.txt"), edits=[EditOperation(old="x", new="y")]),
+                    )
+                    results = await asyncio.gather(*calls)
+                    returned.extend(result.success for result in results)
+
+                handler, _ = _self_clearing("write:before-apply", while_locked)
+                with seams.installed("write:before-apply", handler):
+                    grown = await storage.write(entries=[Entry(path=Path("/log.txt"), content="two\n")], append=True)
+                assert grown.success is True, grown.errors
+                assert returned == [True, True, True, True]
+                assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "needle one\ntwo\n"
+            finally:
+                await beside.close()
+            await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
 # Observation honesty — edit/overwrite under ancestor relocation
 # ---------------------------------------------------------------------------
 
@@ -420,12 +497,7 @@ class TestObservationHonesty:
     # Per-engine pins for the same staged race: the reprobe engines
     # classify the definite conflict; the redrive engines re-execute
     # against fresh state and report what a fresh attempt finds.
-    _EXPECTED: ClassVar[dict[str, ErrorKind]] = {
-        "VFS_TEST_POSTGRES_URL": ErrorKind.not_found,
-        "VFS_TEST_MARIADB_URL": ErrorKind.not_found,
-        "VFS_TEST_MSSQL_URL": ErrorKind.conflict,
-        "VFS_TEST_ORACLE_URL": ErrorKind.conflict,
-    }
+    _EXPECTED: ClassVar[dict[str, ErrorKind]] = {"VFS_TEST_POSTGRES_URL": ErrorKind.not_found}
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_edit_never_reports_success_at_a_moved_address(self, env_var: str) -> None:
@@ -464,7 +536,7 @@ class TestGhostRefusal:
             now = datetime.now(UTC)
             ghost_id = str(ULID())
             async with host.session_factory() as session:
-                conn = await session.connection(execution_options={"vfs_writer": True})
+                conn = await begin_as_writer(session)
                 d_id = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
                 await conn.execute(
                     insert(entry).values(
@@ -482,7 +554,7 @@ class TestGhostRefusal:
                     )
                 )
                 await session.commit()
-            victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")], overwrite=True)
+            victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")])
             assert victim.success is False
             assert all(e.kind == ErrorKind.conflict and e.retryable for e in victim.errors)
             async with host.session_factory() as session:
@@ -598,10 +670,9 @@ class TestNaturalTimingStorm:
         async with server_storage(env_var) as writer:
             rival = sibling(env_var, writer)
             try:
-                # Warm both instances before the storm: a cold MSSQL first
-                # touch blocks unboundedly behind an in-flight rival
-                # transaction — a filed open question this family does not
-                # own, and the documented deployment posture is warm pools.
+                # Warm both instances before the storm: a cold first touch can
+                # block behind an in-flight rival transaction, and the
+                # documented deployment posture is warm pools.
                 assert (await rival.first_touch()).success is True
                 for round_no in range(rounds):
                     base = f"/storm{round_no}"
@@ -693,12 +764,14 @@ class TestExhaustionClassification:
             try:
                 for instance in instances:
                     assert (await instance.first_touch()).success is True
+                    # Two attempts, not four: a write that loses twice has exhausted, so every storm has conflicts.
+                    instance._host._retry_attempts = 2
 
                 async def hammer(instance: DatabaseStorage, tag: int) -> list[Result]:
                     outcomes = []
                     for n in range(per_writer):
                         entries = [Entry(path=Path("/hot.txt"), content=f"{tag}-{n}")]
-                        outcomes.append(await instance.write(entries=entries, overwrite=True))
+                        outcomes.append(await instance.write(entries=entries))
                     return outcomes
 
                 rounds = await asyncio.gather(*(hammer(instance, k) for k, instance in enumerate(instances)))
@@ -755,7 +828,7 @@ class TestGrepEpochConsistency:
 
             async def demote() -> Result:
                 entries = [Entry(path=Path("/b.txt"), content="needle beta v2")]
-                return await storage.write(entries=entries, overwrite=True)
+                return await storage.write(entries=entries)
 
             handler, rival_results = _self_clearing("grep:after-pointer-read", demote)
             with seams.installed("grep:after-pointer-read", handler):
@@ -816,7 +889,7 @@ class TestSearchChunkConsistency:
                 if rival == "sweep":
                     return await storage.sweep(path=Path("/notes.txt"))
                 rewritten = [Entry(path=Path("/notes.txt"), content="A stream of tokens, rewritten.\n")]
-                written = await storage.write(entries=rewritten, overwrite=True)
+                written = await storage.write(entries=rewritten)
                 return written if not written.success else await storage.rebuild()
 
             real = search_module._chunk_texts
@@ -895,7 +968,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -933,8 +1006,8 @@ class TestBuildAgreement:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_write_between_the_two_reads_never_splits_an_entry(self, env_var: str, monkeypatch) -> None:
-        # No snapshot spans the build on SQL Server and Oracle: a write committed between the posting
-        # scan and the lexical pages changes what a second read of the entry flags would choose.
+        # Where no snapshot spans the build, a write committed between the posting scan
+        # and the lexical pages changes what a second read of the entry flags would choose.
         async with server_storage(env_var) as storage:
             words = {"/d/x.txt": "xylophone", "/a.txt": "alpha", "/b.txt": "bravo"}
             entries = [Entry(path=Path(path), content=f"{word} body") for path, word in words.items()]
@@ -947,7 +1020,7 @@ class TestBuildAgreement:
                 seams.clear("rebuild:before-lexical")
                 outcomes.append((await rival.delete(path=Path("/d"))).success)
                 same = Entry(path=Path("/a.txt"), content="alpha body")
-                outcomes.append((await rival.write(entries=[same], overwrite=True)).success)
+                outcomes.append((await rival.write(entries=[same])).success)
                 outcomes.append((await rival.restore(path=Path("/b.txt"))).success)
 
             received: dict[str, int] = {}
@@ -1132,19 +1205,15 @@ class TestLeaseFence:
             relabels: list[int] = []
             holding = asyncio.Event()
             started: list[asyncio.Task[Result]] = []
-            engine, sessions = storage._host.profile.name, []
-            watcher = sibling(env_var, storage)
 
             async def relabel(session: Any) -> Result:
                 relabels.append(len(relabels))
                 tables = writer._host.tables
                 await hold_revision(session, tables)
-                if engine in _SESSION_ID:
-                    sessions.append((await session.execute(text(_SESSION_ID[engine]))).scalar_one())
                 holding.set()
                 stmt = update(tables.entry).where(tables.entry.c.entry_id == target).values(everyone_level=level)
                 await session.execute(stmt)
-                return Result(ops=("posture",))
+                return Result(ops=("set_posture",))
 
             real_flip = indexing._flip_flags
 
@@ -1152,10 +1221,8 @@ class TestLeaseFence:
                 await real_flip(session, *args, assignments=assignments, **stamp)
                 ours = _eligible(assignments) if phase == "chunk" else assignments == {"encoded": True}
                 if ours and not started:
-                    started.append(asyncio.create_task(writer._execute_topology("posture", relabel)))
+                    started.append(asyncio.create_task(writer._execute_topology("set_posture", relabel)))
                     await _arrived(holding, started[0])
-                    if sessions:  # the relabel parked on the slice's row, holding whatever key it sought
-                        await asyncio.wait_for(_lock_waiting(watcher, engine, sessions[0]), 30)
 
             monkeypatch.setattr(indexing, "_flip_flags", crossed)
             try:
@@ -1163,7 +1230,6 @@ class TestLeaseFence:
                 written = await started[0]
             finally:
                 await writer.close()
-                await watcher.close()
             assert result.success is True, result.errors
             assert written.success is True, written.errors
             assert (len(attempts), len(relabels)) == (1, 1)
@@ -1248,52 +1314,11 @@ class TestLeaseFence:
                 existing = dict((await conn.execute(select(*columns))).mappings().one())
             for row, unique in ((existing, True), ({**existing, "entry_id": None}, False)):
                 async with storage._host.session_factory() as session:
-                    await session.connection(execution_options={"vfs_writer": True})
+                    await begin_as_writer(session)
                     with pytest.raises(IntegrityError) as raised:
                         await dialects.bulk_insert(session, chunks, [row])
                     assert dialects.is_unique_violation(raised.value) is unique, raised.value
                     await session.rollback()
-
-
-@pytest.mark.mariadb
-class TestGenerationRedirtyLockScope:
-    """The probe-guarded re-dirty: a settled store's chunk pass locks nothing.
-
-    REPEATABLE READ scan-locks every row an unindexed UPDATE reads, so an
-    unguarded generation re-dirty — matching zero rows on every rebuild
-    after the first — parks every rival entry write on next-key locks
-    until the rebuild transaction commits (measured: a single-row rival
-    UPDATE blocked 3 s to lock-wait timeout at 20k rows). The probe skips
-    the UPDATE in the steady state, so the rival commits immediately.
-    """
-
-    async def test_a_rival_row_update_passes_during_the_chunk_pass(self) -> None:
-        async with server_storage("VFS_TEST_MARIADB_URL") as storage:
-            settled = [Entry(path=Path(f"/f{i:03}.txt"), content=f"settled body {i:03}") for i in range(50)]
-            assert (await storage.write(entries=settled)).success is True
-            assert (await storage.rebuild()).success is True
-            # One fresh body keeps the chunk pass busy enough to reach the
-            # seam with its transaction open; every settled row stays clean.
-            assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="fresh body")])).success
-
-            entry = storage._host.tables.entry
-            rival_engine = create_async_engine(os.environ["VFS_TEST_MARIADB_URL"])
-            served: list[bool] = []
-
-            async def rival() -> None:
-                seams.clear("rebuild:before-chunk-flip")
-                async with rival_engine.begin() as conn:
-                    await conn.execute(text("SET SESSION innodb_lock_wait_timeout = 3"))
-                    await conn.execute(update(entry).where(entry.c.path == "/f000.txt").values(name=entry.c.name))
-                served.append(True)
-
-            try:
-                with seams.installed("rebuild:before-chunk-flip", rival):
-                    assert (await storage.rebuild()).success is True
-            finally:
-                await rival_engine.dispose()
-            assert served == [True]
-            await _audit(storage)
 
 
 # ---------------------------------------------------------------------------
@@ -1402,7 +1427,9 @@ class TestGenerationConsistency:
         for verb, path in (("refresh", "/p.txt"), ("rebuild", "/q.txt")):
             entries = [Entry(path=Path(path), content=f"{path} body words")]
             assert (await storage.write(entries=entries)).success
-            with seams.installed(f"{verb}:before-publish", _written_once(storage, f"{verb}:before-publish", entries)):
+            away = [Entry(path=Path(path), content="other words")]
+            rewrite = _written_once(storage, f"{verb}:before-publish", away, entries)
+            with seams.installed(f"{verb}:before-publish", rewrite):
                 assert (await getattr(storage, verb)()).success is True
             row = await _row(storage, path)
             assert row.encoded is False and row.indexed_epoch == max(await _live_epochs(storage))
@@ -1616,14 +1643,6 @@ async def _noop() -> None:
     return None
 
 
-async def _lock_waiting(watcher: DatabaseStorage, engine: str, session_id: int) -> None:
-    """Return once the server reports *session_id* waiting on a row lock, read on *watcher*'s own connection."""
-    query = text(_LOCK_WAIT[engine])
-    async with watcher._host.engine.connect() as conn:
-        while not (await conn.execute(query, {"id": session_id})).scalar_one():
-            await conn.rollback()  # each poll reads the server's live lock table, never a held snapshot
-
-
 async def _arrived(event: asyncio.Event, *running: asyncio.Task[Any]) -> None:
     """Wait for *event*; fail at once, never hang, when a task in *running* ends before it is set."""
     waiter = asyncio.ensure_future(event.wait())
@@ -1646,12 +1665,13 @@ def _refreshing_once(rival: DatabaseStorage) -> tuple[list[int], Any]:
     return seen, refreshed_once
 
 
-def _written_once(storage: DatabaseStorage, name: str, entries: list[Entry]) -> Any:
-    """A seam handler that uninstalls itself and writes *entries* through *storage*."""
+def _written_once(storage: DatabaseStorage, name: str, *batches: list[Entry]) -> Any:
+    """A seam handler that uninstalls itself and writes each of *batches* through *storage*, in order."""
 
     async def written() -> None:
         seams.clear(name)
-        assert (await storage.write(entries=entries)).success
+        for entries in batches:
+            assert (await storage.write(entries=entries)).success
 
     return written
 
@@ -1898,7 +1918,7 @@ class TestRightsAtCommit:
                 rules.append(("/dst/c/d0", "none"))
                 rules += [(f"/dst/c/x{n:03}", "none") for n in range(99)]
                 for path, level in rules:
-                    assert (await storage.posture(path=Path(path), posture=level)).success is True
+                    assert (await storage.set_posture(path=Path(path), posture=level)).success is True
                 recorded: list[str] = []
                 counts: list[int] = []
                 listen = storage._host.engine.sync_engine
@@ -1929,7 +1949,7 @@ class TestRightsAtCommit:
                 return
             await dest_world(storage)
             if shape == "open-copy":
-                assert (await storage.posture(path=Path("/dst/c/sub"), posture="add")).success is True
+                assert (await storage.set_posture(path=Path("/dst/c/sub"), posture="add")).success is True
             before = await _liveness(storage)
             if shape == "move":
                 result = await storage.move(operations=pair, authority=EVE)
@@ -1979,14 +1999,14 @@ class TestRightsAtCommit:
         The same refusal on every engine, for two reasons. Where each
         statement reads the latest commit, the fence finds everyone stamped
         and the call redrives. Where a write's commit point is its snapshot
-        (Postgres, MariaDB), the relabel rewrote the row of ``/p`` the write
+        (Postgres), the relabel rewrote the row of ``/p`` the write
         bumps, so the engine refuses the bump and the write redrives too.
         """
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
             before = await _liveness(storage)
             seam_name = "write:before-apply" if verb == "write" else _TOPOLOGY_SEAMS[verb]
-            handler, rivals = _self_clearing(seam_name, lambda: storage.posture(path=Path("/p"), posture="read"))
+            handler, rivals = _self_clearing(seam_name, lambda: storage.set_posture(path=Path("/p"), posture="read"))
             with seams.installed(seam_name, handler):
                 if verb == "write":
                     result = await storage.write(entries=[Entry(path=Path("/p/new.txt"), content="n")], authority=EVE)
@@ -2023,7 +2043,9 @@ class TestRightsAtCommit:
             assert (await storage.add_member(group="group:eng", member="dave", authority=SYSTEM)).success is True
             change = _CHANGES[shape]
             second = sibling(env_var, storage)
-            handler, rivals = _self_clearing(seam, lambda: second.posture(path=Path(change.posture), posture="none"))
+            handler, rivals = _self_clearing(
+                seam, lambda: second.set_posture(path=Path(change.posture), posture="none")
+            )
             written = [Entry(path=Path(change.target), content="minted probe\n")]
             try:
                 with seams.installed(seam, handler):
@@ -2053,11 +2075,11 @@ class TestRightsAtCommit:
         """
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
-            assert (await storage.posture(path=Path("/p"), posture="none")).success is True
+            assert (await storage.set_posture(path=Path("/p"), posture="none")).success is True
             assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
             change = _CHANGES[shape]
             second = sibling(env_var, storage)
-            rival = partial(second.posture, path=Path(change.posture), posture="read_write")
+            rival = partial(second.set_posture, path=Path(change.posture), posture="read_write")
             handler, rivals = _self_clearing(seam, rival)
             written = [Entry(path=Path(change.target), content="minted probe\n")]
             try:
@@ -2088,11 +2110,11 @@ class TestRightsAtCommit:
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
             assert (await storage.mkdir(path=Path("/p/q"), authority=SYSTEM)).success is True
-            assert (await storage.posture(path=Path("/p/q"), posture=before)).success is True
+            assert (await storage.set_posture(path=Path("/p/q"), posture=before)).success is True
             assert (await storage.grant(path=Path("/p"), principal="bob", level="read_write")).success is True
             assert (await storage.add_member(group="group:eng", member="dave", authority=SYSTEM)).success is True
             second = sibling(env_var, storage)
-            rival = partial(second.posture, path=Path("/p/q"), posture=after)
+            rival = partial(second.set_posture, path=Path("/p/q"), posture=after)
             handler, rivals = _self_clearing("transfer:after-postures", rival)
             pair = ResolvedPair(src=Path("/p/d"), dest=Path("/p/q/d"))
             try:
@@ -2116,13 +2138,13 @@ class TestRightsAtCommit:
         async with server_storage(env_var, posture="none") as storage:
             await label_world(storage)
             assert (await storage.delete(path=Path("/p/d/f.txt"), authority=SYSTEM)).success is True
-            assert (await storage.posture(path=Path("/p/d"), posture="none")).success is True
+            assert (await storage.set_posture(path=Path("/p/d"), posture="none")).success is True
             restored = await storage.restore(path=Path("/p/d/f.txt"), authority=SYSTEM)
             none = LEVEL_RANK["none"]
             assert await _minted_under_the_standing_posture(storage, restored, ("/p/d/f.txt",), "/p/d/f.txt", none)
             await _audit(storage)
 
-    @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id in ("postgres", "mariadb", "oracle")])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_only_a_create_waits_while_a_posture_write_is_open(self, env_var: str) -> None:
         """While a posture write stands open, calls that create a row wait for it and nothing else waits for it.
 
@@ -2161,12 +2183,12 @@ class TestRightsAtCommit:
                 creates.append(asyncio.ensure_future(callers.delete(path=sibling_file, authority=BOB)))
                 returned.extend([await callers.read(path=existing, authority=r) for r in (None, BOB, CAROL, ANONYMOUS)])
                 still_waiting.append(not creates[-1].done())
-                return Result(ops=("posture",))
+                return Result(ops=("set_posture",))
 
             handler, _ = _self_clearing("posture:after-stamp", beside_the_open_posture_write)
             try:
                 with seams.installed("posture:after-stamp", handler):
-                    changed = await admin.posture(path=other.parent_dir, posture="read")
+                    changed = await admin.set_posture(path=other.parent_dir, posture="read")
                 *minted, deleted = await asyncio.gather(*creates)
             finally:
                 await admin.close()
@@ -2216,7 +2238,7 @@ class TestRightsAtCommit:
             async def admin() -> None:
                 for level in ("none", "read_write", "none"):
                     await asyncio.sleep(0)
-                    tally(await handles[writers].posture(path=Path("/p"), posture=level))
+                    tally(await handles[writers].set_posture(path=Path("/p"), posture=level))
 
             async def sweeper() -> None:
                 tally(await handles[writers + 1].sweep(path=Path("/.vfs/trash")))
@@ -2230,7 +2252,7 @@ class TestRightsAtCommit:
                     await handle.close()
             assert outcomes <= {(ErrorKind.conflict, True)}, outcomes
             # A posture call that lost a chunk leaves its mark for the next call; run what that call would.
-            assert (await storage._settled(Result(ops=("posture",)))).success is True
+            assert (await storage._settled(Result(ops=("set_posture",)))).success is True
             assert await _relabel_marks(storage) == 0
             entry = storage._host.tables.entry
             async with storage._host.session_factory() as session:
@@ -2245,14 +2267,6 @@ class TestRightsAtCommit:
             assert len([path for path in stored if path.endswith(".txt")]) == succeeded
             await _audit(storage)
 
-    @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id == "mariadb"])
-    async def test_the_mariadb_leg_runs_with_snapshot_isolation(self, env_var: str) -> None:
-        """The MariaDB leg's server runs with ``innodb_snapshot_isolation`` on, which a write's commit point needs."""
-        async with server_storage(env_var) as storage:
-            assert (await storage.first_touch()).success is True
-            async with storage._host.engine.connect() as conn:
-                assert (await conn.execute(text("SELECT @@innodb_snapshot_isolation"))).scalar_one() == 1
-
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_grant_landed_before_an_in_place_refusal_redrives_into_success(
         self, env_var: str, monkeypatch
@@ -2265,8 +2279,8 @@ class TestRightsAtCommit:
         async with server_storage(env_var, posture="none") as storage:
             await dest_world(storage)
             assert (await storage.write(entries=[Entry(path=Path("/tmp/x"), kind="directory")], parents=True)).success
-            assert (await storage.posture(path=Path("/tmp"), posture="add")).success is True
-            assert (await storage.posture(path=Path("/dst/c/in/sub"), posture="none")).success is True
+            assert (await storage.set_posture(path=Path("/tmp"), posture="add")).success is True
+            assert (await storage.set_posture(path=Path("/dst/c/in/sub"), posture="none")).success is True
             second = sibling(env_var, storage)
             sessions = attempts(monkeypatch, storage)
             fired: list[int] = []

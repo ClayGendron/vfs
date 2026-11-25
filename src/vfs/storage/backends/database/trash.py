@@ -151,7 +151,7 @@ async def delete_rows(
     """
     del authority
     entry = tables.entry
-    await serialize(session, profile, tables.lock)
+    await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("delete",), errors=refused)
     snapshot = await fetch_snapshot(session, entry, profile, membership_budget, targets)
@@ -300,7 +300,7 @@ async def restore_rows(
     """
     del authority
     entry = tables.entry
-    await serialize(session, profile, tables.lock)
+    await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("restore",), errors=refused)
     columns = snapshot_columns(entry, _TOMBSTONE_COLUMNS)
@@ -374,7 +374,7 @@ async def sweep_rows(
     if path == ROOT:
         fact = classified(ErrorKind.invalid, path, detail="the root directory cannot be swept")
         return Result(ops=("sweep",), errors=[fact])
-    await serialize(session, profile, tables.lock)
+    await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("sweep",), errors=refused)
     if path != TRASH_ROOT:
@@ -502,8 +502,8 @@ async def _tombstone_descendants(
 def _encoded_once_deleted(entry: Table) -> ColumnElement[bool]:
     """The ``encoded`` value a delete stamps: a directory keeps true, a content row is demoted.
 
-    A ``CASE`` rather than the predicate itself, because SQL Server has
-    no boolean expression in a value position.
+    A ``CASE`` rather than the predicate itself, which an engine without
+    a boolean expression in a value position can also carry.
     """
     return case((entry.c.kind == "directory", true()), else_=false())
 

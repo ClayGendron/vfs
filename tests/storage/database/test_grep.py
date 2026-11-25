@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import func, select, update
-from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.partial_callers import BOB, SYSTEM, RecordingSession, partial_store
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import WALL_TIME_CAUSE, Deadline
@@ -36,7 +36,7 @@ from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import scope as scope_module
-from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE, arm_budget
+from vfs.storage.backends.database.dialects import GENERIC, PROFILES, SQLITE, arm_budget
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.reads import ARM_FIXED_BINDS, AdmittedScope, ext_membership, kind_membership
@@ -339,7 +339,7 @@ class TestOverlayPartition:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.rebuild()).success is True
         posting = storage._host.tables.posting_list
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(posting).values(postings=blob))
         result = await storage.grep(pattern="needle")
         assert result.success is False
@@ -1168,6 +1168,7 @@ class TestOverlayGate:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         host = storage._host
         async with host.session_factory() as session:
+            await begin_as_writer(session)
             await session.execute(host.tables.index_state.delete())
             missing = indexing_module.IndexSnapshot(None, 0, False)
             assert await grep_module.pointer_with_overlay(session, host.tables) == missing
@@ -1181,7 +1182,7 @@ class TestOverlayGate:
 
         async def rival() -> None:
             entries = [Entry(path=Path("/a.txt"), content="needle changed")]
-            assert (await storage.write(entries=entries, overwrite=True)).success is True
+            assert (await storage.write(entries=entries)).success is True
 
         with installed("grep:after-pointer-read", rival):
             result = await storage.grep(pattern="needle")
@@ -1438,10 +1439,9 @@ class TestChannelFacts:
         assert "'Makefile'" in sql and "'py'" in sql
         assert " OR " in sql
 
-    @pytest.mark.parametrize("profile", [SQLITE, MSSQL], ids=["sqlite", "mssql"])
+    @pytest.mark.parametrize("profile", [SQLITE, GENERIC], ids=["sqlite", "generic"])
     def test_a_stem_prefix_arm_escapes_like_metacharacters(self, profile: Any) -> None:
-        # The literal underscore must match only itself on every dialect,
-        # bracket-class engines included.
+        # The literal underscore must match only itself on every dialect, the floor included.
         sql = self._sql(("test_*.py",), profile)
         assert "LIKE 'test\\_%'" in sql
         assert "ESCAPE" in sql
@@ -1536,7 +1536,7 @@ class TestPushdownBindAccounting:
         # the kind membership binds one per member — the base charge exactly.
         entry = build_vfs_tables().entry
         base = [entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS))]
-        for compiler in [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]:
+        for compiler in [postgresql.dialect(), sqlite.dialect()]:
             executed = sum(
                 len(term.compile(dialect=compiler, compile_kwargs={"render_postcompile": True}).params) for term in base
             )
@@ -1546,7 +1546,7 @@ class TestPushdownBindAccounting:
         # The chunk arithmetic counts static predicates on the default
         # compiler; every bundled dialect must execute the same count.
         entry = build_vfs_tables().entry
-        compilers = [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]
+        compilers = [postgresql.dialect(), sqlite.dialect()]
         for profile in (*PROFILES.values(), GENERIC):
             liveness = scope_module.liveness_filters(entry, profile, include_meta=False)
             charged = scope_module.static_binds(liveness)
@@ -1646,7 +1646,7 @@ class TestPushdownBindAccounting:
         folders = [f"/f{n:02}" for n in range(30)]
         docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
         assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
@@ -1700,17 +1700,17 @@ class TestPushdownBindAccounting:
         assert len(statements) == len(groups) * reserved
         await storage.close()
 
-    async def test_a_wide_ext_filter_beside_the_widest_group_stays_inside_sql_servers_budget(
+    async def test_a_wide_ext_filter_beside_the_widest_group_stays_inside_a_tight_budget(
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Guards: the ext membership riding a scan-tier statement at its full width beside a wide packed group, so
-        the statement binds past SQL Server's 2,099 parameters; the mutant sizes the ride on the whole membership
+        the statement binds past a 2,099-parameter budget; the mutant sizes the ride on the whole membership
         budget, not on what the widest group leaves."""
         storage = DatabaseStorage(url=_url(tmp_path))
         folders = [f"/f{n:03}" for n in range(400)]
         docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
         assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
@@ -1742,7 +1742,7 @@ class TestPushdownBindAccounting:
         folders = [f"/f{n:04}" for n in range(1_000)]
         docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
         assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors

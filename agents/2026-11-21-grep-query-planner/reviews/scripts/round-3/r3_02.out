@@ -1,0 +1,18 @@
+rebuild success True []
+encoded rows [('/u/garay_upper.txt', 1), ('/u/lambda_upper.txt', 1), ('/u/plain.txt', 1), ('/u/rams_lower.txt', 1), ('/u/rams_upper.txt', 1)]
+'ɤabc' case=smart
+   ladder  ['/u/rams_lower.txt'] errors=[]
+   in hand ['/u/rams_lower.txt', '/u/rams_upper.txt'] errors=[]
+   LOST BY THE LADDER: ['/u/rams_upper.txt']
+'ƛqrs' case=smart
+   ladder  [] errors=[]
+   in hand ['/u/lambda_upper.txt'] errors=[]
+   LOST BY THE LADDER: ['/u/lambda_upper.txt']
+'\U00010d70\U00010d71\U00010d72' case=insensitive
+   ladder  [] errors=[]
+   in hand ['/u/garay_upper.txt'] errors=[]
+   LOST BY THE LADDER: ['/u/garay_upper.txt']
+'\ua7cbabc' case=insensitive
+   ladder  ['/u/rams_upper.txt'] errors=[]
+   in hand ['/u/rams_lower.txt', '/u/rams_upper.txt'] errors=[]
+   LOST BY THE LADDER: ['/u/rams_lower.txt']

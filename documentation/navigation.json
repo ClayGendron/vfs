@@ -30,7 +30,17 @@
     },
     {
       "title": "How-to Guides",
-      "groups": [{ "title": null, "pages": ["/how-to/load-a-folder-of-files"] }]
+      "groups": [
+        {
+          "title": null,
+          "pages": [
+            "/how-to/load-a-folder-of-files",
+            "/how-to/keep-a-session-for-each-conversation",
+            "/how-to/rewind-a-conversation-and-put-its-files-back",
+            "/how-to/interrupt-a-job-and-ask-a-person"
+          ]
+        }
+      ]
     },
     {
       "title": "Reference",
@@ -44,25 +54,40 @@
             "/reference/python-api/entry",
             "/reference/python-api/path",
             "/reference/python-api/sessions",
+            "/reference/python-api/operations",
             "/reference/python-api/results",
             "/reference/python-api/authority",
             "/reference/python-api/permissions",
             "/reference/python-api/mounts",
             "/reference/python-api/storage",
+            "/reference/python-api/ranking",
+            "/reference/python-api/embedding",
+            "/reference/python-api/rendering",
             "/reference/python-api/errors"
           ]
         },
+        {
+          "title": "Planned API",
+          "pages": [
+            "/reference/planned-api",
+            "/reference/planned-api/vids-and-preconditions",
+            "/reference/planned-api/sessions-and-turns",
+            "/reference/planned-api/policies-and-steps",
+            "/reference/planned-api/jobs-and-interrupts"
+          ]
+        },
         { "title": null, "pages": ["/reference/access-levels"] },
+        { "title": null, "pages": ["/reference/shell"] },
         { "title": null, "pages": ["/reference/glossary"] }
       ]
     },
     {
       "title": "Explanation",
-      "groups": [{ "title": null, "pages": ["/explanation/why-vfs-stores-files-in-a-database"] }]
+      "groups": [{ "title": null, "pages": ["/explanation/why-vfs-stores-files-in-a-database", "/explanation/how-jobs-sessions-and-turns-fit-together"] }]
     },
     {
       "title": "Maintainers",
-      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work"] }]
+      "groups": [{ "title": null, "pages": ["/maintainers/how-we-work", "/maintainers/how-we-name", "/maintainers/how-we-document", "/maintainers/how-we-write-docstrings", "/maintainers/how-we-run-codex", "/maintainers/mounts", "/maintainers/cancellation"] }]
     }
   ]
 }

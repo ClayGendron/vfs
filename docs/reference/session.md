@@ -6,7 +6,7 @@ or explain. Structure MIRRORS the code. Accuracy is the whole job.
 
 # `AsyncSession`
 
-Module `vfs.session`, re-exported from `vfs`. Instances come from `AsyncVirtualFileSystem.session(authority)`. `Session` is its synchronous twin, from `VirtualFileSystem.session(authority)`; see [the synchronous face](sync.md#session).
+Module `vfs.session`, re-exported from `vfs`. Instances come from `AsyncVirtualFileSystem.open_session(authority)`. `Session` is its synchronous twin, from `VirtualFileSystem.open_session(authority)`; see [the synchronous face](sync.md#session).
 
 ```python
 from vfs import AsyncSession
@@ -14,7 +14,7 @@ from vfs import AsyncSession
 
 ## Construction
 
-`AsyncVirtualFileSystem.session(authority: Authority) -> AsyncSession`. The session holds the filesystem and the authority and nothing else. The filesystem needs no `default_authority` for a session to work.
+`AsyncVirtualFileSystem.open_session(authority: Authority) -> AsyncSession`. The session holds the filesystem and the authority and nothing else. The filesystem needs no `default_authority` for a session to work.
 
 ## Attributes
 
@@ -27,7 +27,7 @@ from vfs import AsyncSession
 
 | Call | Behavior |
 |---|---|
-| `async with fs.session(a) as s` | enters; `close()` runs on exit |
+| `async with fs.open_session(a) as s` | enters; `close()` runs on exit |
 | `await s.close()` | marks the session closed; idempotent |
 | `async with s` after close | raises `ValueError("the session is closed and cannot reopen; open a new one")` |
 

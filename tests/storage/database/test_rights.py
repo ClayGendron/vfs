@@ -24,13 +24,14 @@ import pytest_asyncio
 from sqlalchemy import and_, delete, event, insert, select, update
 from sqlalchemy.exc import OperationalError
 
+from tests.support.database_helpers import begin_as_writer
 from tests.support.grant_worlds import DIRECTORIES, LAYOUTS, PATHS, SUBJECT_SETS, Layout, random_world
 from tests.support.oracles.grants import GrantWorld, everyone_rank, set_rank
 from tests.support.shared_builds import build_once, shared_directory
 from tests.support.statements import is_statistics_statement
 from vfs import deadline as deadline_module
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, Authority, Principal
-from vfs.deadline import Deadline
+from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.ops import VERB_RUNGS
@@ -43,6 +44,7 @@ from vfs.storage.backends.database import addressing as addressing_module
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import rights as rights_module
+from vfs.storage.backends.database import scoped_gate as scoped_gate_module
 from vfs.storage.backends.database.addressing import addressed_by
 from vfs.storage.backends.database.dialects import SQLITE
 from vfs.storage.backends.database.engine import EngineHost
@@ -104,7 +106,7 @@ async def _replay(world: GrantWorld) -> InMemoryStorage:
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
     for row in world.grants:
         if row.principal_id == EVERYONE_NAME:
-            result = await storage.posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
+            result = await storage.set_posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
         else:
             result = await storage.grant(
                 path=Path(row.path_prefix), principal=row.principal_id, level=row.level, authority=SYSTEM
@@ -273,7 +275,7 @@ async def test_without_a_range_source_the_arms_answer_as_the_join_did(
         entries = [Entry(path=Path(f"{folder}/doc.md"), content=f"lantern {folder}") for folder in folders]
         entries += [Entry(path=Path(f"/hidden/{n}.md"), content="lantern lantern") for n in range(5)]
         assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             assert (await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
@@ -292,21 +294,17 @@ async def test_without_a_range_source_the_arms_answer_as_the_join_did(
         await storage.close()
 
 
-async def test_a_partial_read_issues_the_profiles_range_settings_and_derived_hint(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The settings run once per partial read, in its transaction; the hint
-    # rides the visible-corpus count. Both spelled so SQLite accepts them.
+async def test_a_partial_read_issues_the_profiles_range_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The settings run once per partial read, in its transaction, spelled so SQLite accepts them.
     storage = InMemoryStorage()
     try:
         entries = [Entry(path=Path(f"/d/{n}.md"), content="lantern") for n in range(3)]
         assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
         assert (await storage.rebuild()).success is True
         host = storage._host
-        hints = host.profile.range_hints._replace(derived="/* {visible} {table} {index} */")
-        pinned = replace(host.profile, range_settings=("PRAGMA query_only = 0",), range_hints=hints)
+        pinned = replace(host.profile, range_settings=("PRAGMA query_only = 0",))
         monkeypatch.setattr(EngineHost, "profile", property(lambda _self: pinned))
         bob = Authority.of(Principal("bob"))
         searched = await storage.search(query="lantern", authority=bob)
@@ -343,7 +341,7 @@ async def test_every_row_carries_the_oracles_everyone_level_after_every_mutation
             for _change in range(3):
                 target = rng.choice(("/", "/c1", "/m1", "/c1/deep", *layout.paths))
                 level = rng.choice(_POSTURES)
-                changed = await storage.posture(path=Path(target), posture=level, authority=SYSTEM)
+                changed = await storage.set_posture(path=Path(target), posture=level, authority=SYSTEM)
                 assert changed.success is True, changed.errors
                 assert set((changed.model_extra or {})["relabel"]) == {"rows", "statements", "transactions"}
                 _set_posture(world, target, level)
@@ -353,7 +351,7 @@ async def test_every_row_carries_the_oracles_everyone_level_after_every_mutation
             # A posture change while /m1 is deleted reaches its rows where they sit.
             target = rng.choice(("/", "/m1", *layout.paths))
             level = rng.choice(_POSTURES)
-            assert (await storage.posture(path=Path(target), posture=level, authority=SYSTEM)).success
+            assert (await storage.set_posture(path=Path(target), posture=level, authority=SYSTEM)).success
             _set_posture(world, target, level)
             await _assert_labels(storage, world)
             assert (await storage.restore(path=Path("/m1"), authority=SYSTEM)).success is True
@@ -454,7 +452,7 @@ async def test_a_failed_relabel_chunk_returns_the_posture_with_its_grant(tmp_pat
             raise OperationalError("relabel", {}, Exception("disk full"))
 
         monkeypatch.setattr(backend_module.Relabeller, "step", boom)
-        result = await storage.posture(path=Path("/d"), posture="none", authority=SYSTEM)
+        result = await storage.set_posture(path=Path("/d"), posture="none", authority=SYSTEM)
         assert result.success is False
         assert _granted(result)[0]["path_prefix"] == "/d"
         host = storage._host
@@ -465,8 +463,8 @@ async def test_a_failed_relabel_chunk_returns_the_posture_with_its_grant(tmp_pat
         await storage.close()
 
 
-@pytest.mark.parametrize("op", ["grant", "posture"])
-async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: Literal["grant", "posture"]) -> None:
+@pytest.mark.parametrize("op", ["grant", "set_posture"])
+async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: Literal["grant", "set_posture"]) -> None:
     # The lock-before-decide pin. A rival revoke of ann's right lands in
     # the gap before the admin write takes the lock — staged on the
     # verb's own writer session, the repo's SQLite race idiom, since a
@@ -496,7 +494,7 @@ async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: Lite
 async def test_a_grant_write_invalidates_its_grantees_cached_resolution(storage: InMemoryStorage) -> None:
     ann = Authority.of(Principal("ann"))
     await storage.write(entries=[Entry(path=Path("/d/f.md"), content="x")], parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     assert (await storage.read(path=Path("/d/f.md"), authority=ann)).success is False
     assert (await storage.grant(path=Path("/d"), principal="ann", level="read", authority=SYSTEM)).success is True
     assert (await storage.read(path=Path("/d/f.md"), authority=ann)).success is True
@@ -561,7 +559,7 @@ async def test_a_posture_change_retires_no_compile_but_its_window_and_its_settli
     callers = await _three_cached_callers(storage)
     # A posture change that has settled by the time anyone reads: the
     # labels decide, and every compile made before it serves again.
-    assert (await storage.posture(path=Path("/d"), posture="read", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/d"), posture="read", authority=SYSTEM)).success is True
     for who in callers:
         assert (await storage.read(path=Path("/d/f.md"), authority=who)).success is True
     assert compiled[3:] == []
@@ -590,7 +588,7 @@ async def test_a_posture_change_retires_the_anonymous_compile(
     assert (await storage.read(path=Path("/d/f.md"), authority=anon)).success is True
     assert (await storage.read(path=Path("/d/f.md"), authority=anon)).success is True
     assert compiled == [(ANONYMOUS_NAME,)]
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     refused = await storage.read(path=Path("/d/f.md"), authority=anon)
     assert _kind(refused) == ErrorKind.unauthenticated
     assert compiled == [(ANONYMOUS_NAME,), (ANONYMOUS_NAME,)]
@@ -698,6 +696,7 @@ async def test_nesting_past_the_cap_on_read_is_an_authority_budget_refusal(stora
     host = storage._host
     chain = ["ann", *(f"group:g{n}" for n in range(12))]
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(
             host.tables.memberships.insert(),
             [
@@ -758,6 +757,7 @@ async def _hold_posture(storage: InMemoryStorage, path: str, level: GrantLevel) 
     host = storage._host
     grants = host.tables.grants
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         revision = await bump_revision(session, host.tables)
         key = and_(grants.c.principal_id == EVERYONE_NAME, grants.c.path_prefix == path)
         updated = cast(
@@ -783,12 +783,13 @@ async def _finish_relabels(storage: InMemoryStorage) -> None:
     relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
         async with host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             if await relabeller.step(session) is None:
                 return
 
 
 async def _locked_admin_write(
-    host: EngineHost, op: Literal["grant", "posture"], authority: Authority, *, revoke_in_gap: object
+    host: EngineHost, op: Literal["grant", "set_posture"], authority: Authority, *, revoke_in_gap: object
 ) -> Result:
     """One admin write in the backend's order, a revoke of ann staged in the gap before the lock.
 
@@ -800,7 +801,7 @@ async def _locked_admin_write(
     grants = cast("Any", revoke_in_gap)
     tables, profile, budget = host.tables, host.profile, host.membership_budget
     async with host.session_factory() as session:
-        await session.connection(execution_options={"vfs_writer": True})
+        await begin_as_writer(session)
         await session.execute(delete(grants).where(grants.c.principal_id == "ann", grants.c.path_prefix == "/x"))
         revision = await bump_revision(session, tables)
         resolution = await resolve_authority(session, tables, profile, budget, authority, None)
@@ -881,7 +882,7 @@ def _recompiles(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
 async def _three_cached_callers(storage: InMemoryStorage) -> tuple[Authority, Authority, Authority]:
     """ann, bob and carol, each cached by one read of a private mount's ``/d/f.md``."""
     await storage.write(entries=[Entry(path=Path("/d/f.md"), content="x")], parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     callers = (Authority.of(Principal("ann")), Authority.of(Principal("bob")), Authority.of(Principal("carol")))
     for who in callers:
         await storage.read(path=Path("/d/f.md"), authority=who)
@@ -958,7 +959,7 @@ async def _fill_leak_worlds(directory: pathlib.Path) -> None:
         try:
             assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
             for row in _leak_world(order).grants:
-                posted = await storage.posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
+                posted = await storage.set_posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
                 assert posted.success is True
         finally:
             await storage.close()
@@ -1010,10 +1011,10 @@ class TestPostureGate:
         """Guards: a scoped anonymous call judged at the bare roots, at the root
         for an empty entry-wide channel, or judged inline on the loop; and the
         judged order drifting from entry-wide first, then root order by arm order."""
-        chain = _Spied(backend_module.posture_chain)
-        refusals = _Spied(backend_module.posture_refusals)
-        monkeypatch.setattr(backend_module, "posture_chain", chain)
-        monkeypatch.setattr(backend_module, "posture_refusals", refusals)
+        chain = _Spied(scoped_gate_module.posture_chain)
+        refusals = _Spied(scoped_gate_module.posture_refusals)
+        monkeypatch.setattr(scoped_gate_module, "posture_chain", chain)
+        monkeypatch.setattr(scoped_gate_module, "posture_refusals", refusals)
         anon = Authority.anonymous()
         arms = ("src/**", "*.py")
         patterns = ("/z/*.md",)
@@ -1036,9 +1037,9 @@ class TestPostureGate:
     ) -> None:
         """Guards: the scope's judged paths built for every caller, as the
         entry-wide addressed paths are, though a named caller is never judged."""
-        judged = _Spied(backend_module.scope_judged)
+        judged = _Spied(scoped_gate_module.scope_judged)
         addressed = _Spied(backend_module.addressed_by)
-        monkeypatch.setattr(backend_module, "scope_judged", judged)
+        monkeypatch.setattr(scoped_gate_module, "scope_judged", judged)
         monkeypatch.setattr(backend_module, "addressed_by", addressed)
         ann = Authority.of(Principal("ann"))
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**", "*.py"))
@@ -1046,11 +1047,10 @@ class TestPostureGate:
         assert judged.calls == []
         assert addressed.calls == [(("/z/*.md",),)]
 
-    async def test_a_gate_past_its_wall_refuses_the_call(
-        self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_gate_past_its_wall_refuses_the_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: the gate's deadline read dropped, or a gate that reached its
         wall serving part of the call instead of refusing it whole."""
+        storage = InMemoryStorage(glob_wall_seconds=WALL_TIME_BUDGET)
         read_body = _Spied(backend_module.glob_rows)
         monkeypatch.setattr(backend_module, "glob_rows", read_body)
         read: list[str] = []
@@ -1072,6 +1072,7 @@ class TestPostureGate:
         assert read_body.calls == []
         assert 1 <= len(read) <= 200
         assert read == [str(root) for root in _SCOPE_ROOTS[: len(read)]]
+        await storage.close()
 
     @pytest.mark.slow
     @pytest.mark.asyncio(loop_scope="module")
@@ -1120,7 +1121,7 @@ class TestPostureGate:
         wall and serving the call anyway."""
         read_body = _Spied(backend_module.glob_rows)
         monkeypatch.setattr(backend_module, "glob_rows", read_body)
-        real = getattr(backend_module, stage)
+        real = getattr(scoped_gate_module, stage)
 
         def expired(*args: Any, **kwargs: Any) -> Any:
             return real(*args, **{**kwargs, "deadline": Deadline(at=-1.0)})
@@ -1128,7 +1129,7 @@ class TestPostureGate:
         async def expired_read(*args: Any, **kwargs: Any) -> Any:
             return await real(*args, **{**kwargs, "deadline": Deadline(at=-1.0)})
 
-        monkeypatch.setattr(backend_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
+        monkeypatch.setattr(scoped_gate_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
         for verb in ("glob", "grep", "search"):
             if verb == "glob":

@@ -1,6 +1,6 @@
 # How we work
 
-This page says how a person and a coding agent work together on vfs. It is a first draft, written on 2026-11-15, and it is revised at the end of every session.
+This page says how a person and a coding agent work together on VFS. It is a first draft, written on 2026-11-15, and it is revised at the end of every session.
 
 ## Before any work starts
 
@@ -32,7 +32,7 @@ How the agent behaves in a guided session:
 - It writes no document for the person. The session is chat, code and documentation.
 - It commits to save work. A guided commit has no gate.
 
-A session ends with a handoff note in the work directory, written for the autonomous pass, and a short retro.
+A session ends with a short retro. Work it found and did not do is written as a new spec. No handoff note is written, and there is no list of outstanding work. A decision and its reason go where they will be read: the spec, a page in this section, or a docstring.
 
 ## Autonomous mode
 
@@ -41,11 +41,17 @@ Autonomous mode is the agent working alone, before or after a guided session. Be
 - More research.
 - Code, security and structural reviews of the code and of the feature. It may question whether the feature is the right thing to build.
 - End-to-end tests and deeper spikes.
+- A check of the documentation: whether the change needs a docstring, a page for users, a Maintainers page or a glossary term. The answer and its reason go in the review record and in the pull request, also when the answer is no.
 - The full gate: `scripts/ci.sh`, `scripts/docs.sh check` and the database engine legs.
 
 What it may do alone: fix anything that keeps the behaviour of the feature and the project. What it reports instead of doing: a big finding, and any fix that would change behaviour significantly.
 
 Autonomous mode uses subagents freely and can take its time.
+
+- **It states its scope before it starts,** and it works to that scope.
+- **A reviewer is given the diff and the spec, never the author's summary.** A second model can review beside the first. [How we run Codex](how-we-run-codex.md) says how.
+- **It may use a git worktree.** A worktree lets one agent write on a branch while others read the main checkout. It is made outside the checkout, nothing is left uncommitted in it, and it is removed when its work is committed.
+- **It ends with every finding it did not act on written as a new spec.** A finding is never left in a review record or a pull request alone.
 
 ## Branches
 
@@ -66,7 +72,7 @@ Squashing is the common practice for short-lived branches: `dev` reads as one li
 | `agents/` | agents | agents, and people now and then | never |
 | `documentation/` | people, and agents under a person's guidance | people | yes, to docs.vfs.dev |
 
-`agents/` holds `templates/`, the guides for writing an intent, a research memo, a spec and a review, and one work directory per piece of work, named `YYYY-MM-DD-short-descriptive-title`.
+`agents/` holds `templates/`, the guides for writing an intent, a research memo, a spec and a review, and one work directory per piece of work, named `YYYY-MM-DD-short-descriptive-title`. Work that is not yet done is a spec in a work directory of its own. There is no separate list of tasks.
 
 - A work directory holds whatever the work needs: intents, research, specs, reviews, spike code. It may hold several of each.
 - Everything in `agents/` is written in an objective, impersonal voice. It names no person and no agent, and it has no "I", "we" or "you". It says what was found, what was decided and why, and what was done, never who did it. "Decided: the stamp is read twice, because a posture can move between the reads", not "Clay ruled" or "the reviewer found".
@@ -75,7 +81,7 @@ Squashing is the common practice for short-lived branches: `dev` reads as one li
 
 `documentation/` holds everything durable. If something in a work directory must outlive the work, it is promoted to documentation, or it is lost.
 
-- It has six sections: Home, Tutorials, How-to Guides, Reference, Explanation and Maintainers. The first five are for people who use vfs. Maintainers is for people who change it: this page, the constitution, the standards and the roadmap. All six are published.
+- It has six sections: Home, Tutorials, How-to Guides, Reference, Explanation and Maintainers. The first five are for people who use VFS. Maintainers is for people who change it: this page, the constitution, the standards and the roadmap. All six are published.
 - Reference pages are generated from the code. Every other page is written by a person or under a person's guidance, and the person reviews each change as it is made. A page carries no record of who wrote it.
 - No directory under `documentation/` holds more than 16 children. A section that outgrows 16 is split.
 

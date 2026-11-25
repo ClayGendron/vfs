@@ -22,8 +22,31 @@ on:
       - ".github/workflows/**"
 
 jobs:
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install the WebAssembly target
+        run: rustup target add wasm32-unknown-unknown && rustup component add clippy rustfmt
+
+      - name: Lint the shell crate
+        run: cargo clippy -p vfs-shell -p vfs-shell-wasm --all-targets -- -D warnings && cargo fmt -p vfs-shell -p vfs-shell-wasm --check
+
+      - name: Test the shell crate
+        run: cargo test --release -p vfs-shell -p vfs-shell-wasm
+
+      - name: Build the machine for WebAssembly
+        run: cargo build --release -p vfs-shell -p vfs-shell-wasm --target wasm32-unknown-unknown
+
+      - name: Print the corpus score
+        run: scripts/shell_score.sh
+
   test:
     runs-on: ubuntu-latest
+    # A backstop for a hang outside any test: a run takes about 15 minutes.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +57,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: The shell module's target, which the extension's build compiles for
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install dependencies
         run: uv sync --all-extras --group dev --group docs
@@ -52,6 +78,15 @@ jobs:
         run: >-
           uv run pytest --tb=short
           ${{ matrix.python-version == '3.13' && '--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100' || '' }}
+
+      # A test past its deadline leaves every thread's stack there, since xdist drops a worker's stderr.
+      - name: Upload the stacks of a hung test
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-hangs-py${{ matrix.python-version }}
+          path: test-hangs/
+          if-no-files-found: ignore
 
       - name: Doc examples
         if: matrix.python-version == '3.13'

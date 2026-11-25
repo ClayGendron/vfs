@@ -1,0 +1,12 @@
+| pattern | candidates fetched | raw 4-gram (R5) | folded 4-gram | raw literal | folded literal |
+| `TODO` | 3540 | 3144 | 3515 | 3144 | 3515 |
+| `struct page \*` | 8736 | 1877 | 1983 | 1448 | 1448 |
+| `^struct inode \{` | 3007 | 94 | 95 | 1 | 1 |
+| `alloc_page` | 3720 | 866 | 944 | 756 | 759 |
+| `pr_debug` | 4802 | 2326 | 2356 | 2306 | 2308 |
+| `copy_from_user` | 1716 | 1272 | 1274 | 1251 | 1251 |
+| `dentry_lru_isolate` | 85 | 2 | 2 | 1 | 1 |
+| `EXPORT_SYMBOL_GPL` | 4297 | 3602 | 3602 | 3599 | 3599 |
+| `MODULE_LICENSE` | 17330 | 12637 | 12644 | 12634 | 12635 |
+| total | 47233 | 25820 | 26415 | 25140 | 25517 |
+cut vs candidates: raw 4-gram 45.3%, folded 4-gram 44.1%

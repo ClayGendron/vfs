@@ -50,8 +50,8 @@ def test_the_grant_choices_derive_from_the_ladder() -> None:
     assert POSTURES == frozenset(get_args(Posture)) == frozenset(RUNGS)
     assert GRANTABLE == frozenset(GRANTABLE_LEVELS) == POSTURES - {"none"}
     assert {"open", "shared", "private"}.isdisjoint(POSTURES)
-    assert param_violation("posture", {"path": "/", "posture": "private"}) is not None
-    assert param_violation("posture", {"path": "/", "posture": "list"}) is None
+    assert param_violation("set_posture", {"path": "/", "posture": "private"}) is not None
+    assert param_violation("set_posture", {"path": "/", "posture": "list"}) is None
     assert param_violation("grant", {"path": "/", "principal": "bob", "level": "none"}) is not None
     assert param_violation("grant", {"path": "/", "principal": "bob", "level": "contribute"}) is None
 
@@ -70,7 +70,7 @@ def test_every_int_channel_enforces_the_shared_ceiling() -> None:
             assert at_max is None or spec.name not in at_max, (op, spec.name, at_max)
             over = param_violation(op, {spec.name: INT_CEILING + 1})
             assert over is not None and spec.name in over and str(INT_CEILING) in over
-    assert swept == 8
+    assert swept == 12
 
 
 def test_violation_messages_name_the_parameter() -> None:
@@ -85,6 +85,36 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("run", {"path": "/t", "arguments": 5}) == "run arguments must be a dict, got int"
     assert param_violation("write", {"path": "/f", "data": "x"}) == "write data must be bytes, got str"
     assert param_violation("write", {"path": "/f", "data": b"x"}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "if_version": 0}) == (
+        "write if_version must be an integer >= 1 and <= 2147483647, got 0"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": {"/f": 0}}) == (
+        "write if_versions values must be integers >= 1 and <= 2147483647, got 0"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": {7: 1}}) == (
+        "write if_versions keys must be strings, got int"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": ["/f"]}) == (
+        "write if_versions must be a mapping of paths to versions, got list"
+    )
+    assert param_violation("write", {"entries": [], "if_versions": {"/f": INT_CEILING}}) is None
+    assert param_violation("write", {"entries": [], "if_version": 1}) == (
+        "write takes if_version with path, and if_versions with entries"
+    )
+    absent = "write if_absent=True takes no if_version or if_versions: an absent file has no version"
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True, "if_version": 1}) == absent
+    assert param_violation("write", {"entries": [], "if_absent": True, "if_versions": {"/f": 1}}) == absent
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": False, "if_version": 1}) is None
+    assert param_violation("write", {"entries": [], "append": True}) == (
+        "write append=True takes one file: path with content or data"
+    )
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_absent": True}) == (
+        "write takes append or if_absent, not both: an append to an absent path already creates it"
+    )
+    # A flag that is left out is a flag that is off, as on a call that arrives without its defaults.
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_version": 3}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True}) is None
 
 
 # ----------------------------------------------------------------------
@@ -108,7 +138,21 @@ GARBAGE = [
     ("write-content-and-data", lambda fs: fs.write(path="/f.txt", content="x", data=b"y")),
     ("write-both-forms", lambda fs: fs.write(entries=[], path="/f.txt", content="x")),
     ("write-entries-and-data", lambda fs: fs.write(entries=[], data=b"y")),
-    ("write-truthy-overwrite", lambda fs: fs.write(path="/f.txt", content="x", overwrite="yes")),
+    ("write-zero-version", lambda fs: fs.write(path="/f.txt", content="x", if_version=0)),
+    ("write-bool-version", lambda fs: fs.write(path="/f.txt", content="x", if_version=True)),
+    ("write-str-version", lambda fs: fs.write(path="/f.txt", content="x", if_version="2")),
+    ("write-version-with-entries", lambda fs: fs.write(entries=[], if_version=1)),
+    ("write-versions-with-path", lambda fs: fs.write(path="/f.txt", content="x", if_versions={"/f.txt": 1})),
+    ("write-versions-not-a-mapping", lambda fs: fs.write(entries=[], if_versions=[("/f.txt", 1)])),
+    ("write-versions-non-str-key", lambda fs: fs.write(entries=[], if_versions={1: 1})),
+    ("write-versions-zero", lambda fs: fs.write(entries=[], if_versions={"/f.txt": 0})),
+    ("write-versions-bool", lambda fs: fs.write(entries=[], if_versions={"/f.txt": True})),
+    ("write-truthy-append", lambda fs: fs.write(path="/f.txt", content="x", append=1)),
+    ("write-append-with-entries", lambda fs: fs.write(entries=[], append=True)),
+    ("write-append-with-if-absent", lambda fs: fs.write(path="/f.txt", content="x", append=True, if_absent=True)),
+    ("write-truthy-if-absent", lambda fs: fs.write(path="/f.txt", content="x", if_absent="yes")),
+    ("write-absent-with-version", lambda fs: fs.write(path="/f.txt", content="x", if_absent=True, if_version=1)),
+    ("write-absent-with-versions", lambda fs: fs.write(entries=[], if_absent=True, if_versions={"/f.txt": 1})),
     ("write-truthy-parents", lambda fs: fs.write(path="/f.txt", content="x", parents=1)),
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
     ("edit-non-str-old", lambda fs: fs.edit("/f.txt", old=1, new="b")),

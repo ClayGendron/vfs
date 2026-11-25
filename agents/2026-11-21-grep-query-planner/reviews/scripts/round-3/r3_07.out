@@ -1,0 +1,4 @@
+top-level dirs   k=  24 L=   141: per-root LIMIT reads   2,564 rows; one outer LIMIT returns    141
+top-level dirs   k=  24 L= 25001: per-root LIMIT reads  85,084 rows; one outer LIMIT returns 25,001
+/drivers/* dirs  k= 145 L=   141: per-root LIMIT reads   9,933 rows; one outer LIMIT returns    141
+/drivers/* dirs  k= 145 L= 25001: per-root LIMIT reads  39,647 rows; one outer LIMIT returns 25,001

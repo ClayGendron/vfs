@@ -34,23 +34,29 @@ from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
-from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
+from vfs.shell import refused_line
+from vfs.sync_session import Session
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterable, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
     from concurrent.futures import Future
     from types import TracebackType
 
     from vfs.authority import Authority
-    from vfs.base import Binding, EdgeLocation, Location, MountInfo
     from vfs.models import Edge, Entry, Observation
+    from vfs.mounts import EdgeLocation, Location, Mount
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
     from vfs.permissions import Permission, PermissionMap
     from vfs.rerank import Reranker
+    from vfs.shell import LineResult
     from vfs.storage import StorageBackend
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
+
+# The modules of the synchronous face, whose frames a warning steps past to reach its caller.
+_FACADE_MODULES: Final = frozenset({__name__, Session.__module__})
+
 
 LOOP_THREAD_NAME: Final = "vfs-sync-loop"
 """The name of every facade's loop thread, so a leak shows in ``threading.enumerate()``."""
@@ -185,30 +191,6 @@ class VirtualFileSystem:
     # mount administration
     # -------------------------------------------------------------------
 
-    def bind(
-        self,
-        storage: StorageBackend,
-        path: str,
-        *,
-        permissions: Permission | PermissionMap | None = None,
-        deny_ops: Iterable[Op] = (),
-        no_overlay: bool = False,
-        owned: bool = True,
-    ) -> None:
-        return self._await(
-            "bind",
-            self._fs.bind,
-            storage,
-            path,
-            permissions=permissions,
-            deny_ops=deny_ops,
-            no_overlay=no_overlay,
-            owned=owned,
-        )
-
-    def unbind(self, path: str) -> Binding:
-        return self._await("unbind", self._fs.unbind, path)
-
     def add_mount(
         self,
         storage: StorageBackend,
@@ -216,9 +198,11 @@ class VirtualFileSystem:
         *,
         parents: bool = False,
         permissions: Permission | PermissionMap | None = None,
+        posture: Posture | None = None,
         deny_ops: Iterable[Op] = (),
         no_overlay: bool = False,
         owned: bool = True,
+        authority: Authority | None = None,
     ) -> None:
         return self._await(
             "add_mount",
@@ -227,15 +211,17 @@ class VirtualFileSystem:
             path,
             parents=parents,
             permissions=permissions,
+            posture=posture,
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             owned=owned,
+            authority=authority,
         )
 
-    def remove_mount(self, path: str) -> None:
-        return self._await("remove_mount", self._fs.remove_mount, path)
+    def remove_mount(self, path: str, *, authority: Authority | None = None) -> Mount:
+        return self._await("remove_mount", self._fs.remove_mount, path, authority=authority)
 
-    def remount(
+    def update_mount(
         self,
         path: str,
         *,
@@ -243,18 +229,20 @@ class VirtualFileSystem:
         deny_ops: Iterable[Op] | None = None,
         no_overlay: bool | None = None,
         refresh_caps: bool = False,
+        authority: Authority | None = None,
     ) -> None:
         return self._await(
-            "remount",
-            self._fs.remount,
+            "update_mount",
+            self._fs.update_mount,
             path,
             permissions=permissions,
             deny_ops=deny_ops,
             no_overlay=no_overlay,
             refresh_caps=refresh_caps,
+            authority=authority,
         )
 
-    def mounts(self) -> tuple[MountInfo, ...]:
+    def mounts(self) -> tuple[Mount, ...]:
         return self._fs.mounts()
 
     def locate(self, path: str, *, exists: bool = False, authority: Authority | None = None) -> Location:
@@ -265,8 +253,8 @@ class VirtualFileSystem:
     ) -> EdgeLocation:
         return self._await("locate_edge", self._fs.locate_edge, source, target, exists=exists, authority=authority)
 
-    def session(self, authority: Authority) -> Session:
-        """An authority-scoped twin of the router's session: the verbs without the identity argument."""
+    def open_session(self, authority: Authority) -> Session:
+        """Open an authority-scoped twin of the router's session: the verbs without the identity argument."""
         return Session(self, authority)
 
     def capabilities(self) -> frozenset[str]:
@@ -301,20 +289,28 @@ class VirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        return self._result("ls", self._fs.ls, path, observations, columns=columns, authority=authority)
+        return self._result(
+            "ls", self._fs.ls, path, observations, after=after, limit=limit, columns=columns, authority=authority
+        )
 
     def tree(
         self,
         path: str,
         max_depth: int | None = None,
         *,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        return self._result("tree", self._fs.tree, path, max_depth, columns=columns, authority=authority)
+        return self._result(
+            "tree", self._fs.tree, path, max_depth, after=after, limit=limit, columns=columns, authority=authority
+        )
 
     # -------------------------------------------------------------------
     # mutations
@@ -327,7 +323,10 @@ class VirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        overwrite: bool = True,
+        if_version: int | None = None,
+        if_versions: Mapping[str, int] | None = None,
+        if_absent: bool = False,
+        append: bool = False,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
@@ -338,7 +337,10 @@ class VirtualFileSystem:
             path=path,
             content=content,
             data=data,
-            overwrite=overwrite,
+            if_version=if_version,
+            if_versions=if_versions,
+            if_absent=if_absent,
+            append=append,
             parents=parents,
             authority=authority,
         )
@@ -377,12 +379,7 @@ class VirtualFileSystem:
     ) -> Result:
         return self._result("restore", self._fs.restore, path, observations, authority=authority)
 
-    def sweep(
-        self,
-        path: str = "/.vfs/trash",
-        *,
-        authority: Authority | None = None,
-    ) -> Result:
+    def sweep(self, path: str = "/.vfs/trash", *, authority: Authority | None = None) -> Result:
         return self._result("sweep", self._fs.sweep, path, authority=authority)
 
     def mkdir(
@@ -464,6 +461,8 @@ class VirtualFileSystem:
         globs_not: tuple[str, ...] = (),
         kind: ObjectKind | None = None,
         max_count: int | None = None,
+        after: str | None = None,
+        limit: int | None = None,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
@@ -478,6 +477,8 @@ class VirtualFileSystem:
             globs_not=globs_not,
             kind=kind,
             max_count=max_count,
+            after=after,
+            limit=limit,
             columns=columns,
             authority=authority,
         )
@@ -594,6 +595,9 @@ class VirtualFileSystem:
     ) -> Result:
         return self._result("run", self._fs.run, path, arguments=arguments, authority=authority)
 
+    def cli(self, line: str, *, cwd: str = "/", stdin: bytes = b"", authority: Authority | None = None) -> LineResult:
+        return self._line(self._fs.cli, line, cwd=cwd, stdin=stdin, authority=authority)
+
     # -------------------------------------------------------------------
     # grants
     # -------------------------------------------------------------------
@@ -614,8 +618,8 @@ class VirtualFileSystem:
     def grants(self, path: str, *, authority: Authority | None = None) -> Result:
         return self._result("grants", self._fs.grants, path, authority=authority)
 
-    def posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
-        return self._result("posture", self._fs.posture, path, posture, authority=authority)
+    def set_posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
+        return self._result("set_posture", self._fs.set_posture, path, posture, authority=authority)
 
     def add_member(
         self,
@@ -693,6 +697,15 @@ class VirtualFileSystem:
         self._warn_if_blocking_a_foreign_loop(op)
         return self._submit(call(*args, **kwargs))
 
+    def _line(self, call: Callable[..., Coroutine[Any, Any, LineResult]], *args: Any, **kwargs: Any) -> LineResult:
+        """The shell's hop: refuse as a classified line, as a verb refuses, else run it on the loop and wait."""
+        if self._closed:
+            return refused_line(classified(ErrorKind.backend_unavailable, detail=CLOSED_DETAIL))
+        if threading.get_ident() == self._thread.ident:
+            return refused_line(classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL))
+        self._warn_if_blocking_a_foreign_loop("cli")
+        return self._submit(call(*args, **kwargs))
+
     def _await(self, name: str, call: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
         """The management hop: refuse by raising, else run the coroutine on the loop and wait."""
         if self._closed:
@@ -727,358 +740,6 @@ class VirtualFileSystem:
 
 
 # ---------------------------------------------------------------------------
-# The session twin
-# ---------------------------------------------------------------------------
-
-
-class Session:
-    """One authority, one facade, one lifecycle: the session's verbs as plain calls.
-
-    Wraps a :class:`~vfs.session.AsyncSession` over the facade's kernel, so the
-    closed fact and everything a session comes to hold live in one place;
-    the twin forwards each verb through the facade's loop. Open it with
-    ``with`` or call :meth:`close`; closed is final.
-    """
-
-    __slots__ = ("_facade", "_session")
-
-    def __init__(self, fs: VirtualFileSystem, authority: Authority) -> None:
-        self._facade = fs
-        self._session = AsyncSession(fs._fs, authority)
-
-    @property
-    def authority(self) -> Authority:
-        return self._session.authority
-
-    @property
-    def closed(self) -> bool:
-        return self._session.closed
-
-    def close(self) -> None:
-        """Close the session — idempotent, and final; no hop, the flag is the wrapped session's."""
-        self._session._close_now()
-
-    def __enter__(self) -> Session:
-        if self._session.closed:
-            raise ValueError(CLOSED_SESSION_DETAIL)
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self.close()
-
-    # -------------------------------------------------------------------
-    # reads
-    # -------------------------------------------------------------------
-
-    def read(
-        self,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-        *,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result("read", self._session.read, path, observations, columns=columns)
-
-    def stat(
-        self,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-        *,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result("stat", self._session.stat, path, observations, columns=columns)
-
-    def ls(
-        self,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-        *,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result("ls", self._session.ls, path, observations, columns=columns)
-
-    def tree(
-        self,
-        path: str,
-        max_depth: int | None = None,
-        *,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result("tree", self._session.tree, path, max_depth, columns=columns)
-
-    # -------------------------------------------------------------------
-    # mutations
-    # -------------------------------------------------------------------
-
-    def write(
-        self,
-        entries: Iterable[Entry] | None = None,
-        *,
-        path: str | None = None,
-        content: str | None = None,
-        data: bytes | None = None,
-        overwrite: bool = True,
-        parents: bool = False,
-    ) -> Result:
-        return self._result(
-            "write",
-            self._session.write,
-            entries,
-            path=path,
-            content=content,
-            data=data,
-            overwrite=overwrite,
-            parents=parents,
-        )
-
-    def edit(
-        self,
-        path: str | None = None,
-        old: str | None = None,
-        new: str | None = None,
-        edits: list[EditOperation] | None = None,
-        observations: list[Observation] | None = None,
-        replace_all: bool = False,
-    ) -> Result:
-        return self._result("edit", self._session.edit, path, old, new, edits, observations, replace_all)
-
-    def delete(
-        self,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-        *,
-        cascade: bool = True,
-    ) -> Result:
-        return self._result("delete", self._session.delete, path, observations, cascade=cascade)
-
-    def restore(
-        self,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-    ) -> Result:
-        return self._result("restore", self._session.restore, path, observations)
-
-    def sweep(self, path: str = "/.vfs/trash") -> Result:
-        return self._result("sweep", self._session.sweep, path)
-
-    def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> Result:
-        return self._result("mkdir", self._session.mkdir, path, parents=parents, exist_ok=exist_ok)
-
-    def mkedge(
-        self,
-        edges: Sequence[Edge] | None = None,
-        *,
-        source: str | None = None,
-        target: str | None = None,
-        edge_type: str | None = None,
-        provenance: Literal["user", "agent", "system"] = "system",
-    ) -> Result:
-        return self._result(
-            "mkedge",
-            self._session.mkedge,
-            edges,
-            source=source,
-            target=target,
-            edge_type=edge_type,
-            provenance=provenance,
-        )
-
-    def rmedge(
-        self,
-        edges: Sequence[Edge] | None = None,
-        *,
-        source: str | None = None,
-        target: str | None = None,
-        edge_type: str | None = None,
-    ) -> Result:
-        return self._result("rmedge", self._session.rmedge, edges, source=source, target=target, edge_type=edge_type)
-
-    def move(
-        self,
-        src: str | None = None,
-        dest: str | None = None,
-        moves: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
-    ) -> Result:
-        return self._result("move", self._session.move, src, dest, moves)
-
-    def copy(
-        self,
-        src: str | None = None,
-        dest: str | None = None,
-        copies: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
-    ) -> Result:
-        return self._result("copy", self._session.copy, src, dest, copies)
-
-    # -------------------------------------------------------------------
-    # find, execution
-    # -------------------------------------------------------------------
-
-    def glob(
-        self,
-        pattern: str,
-        *,
-        paths: tuple[str, ...] = (),
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        ext_not: tuple[str, ...] = (),
-        globs_not: tuple[str, ...] = (),
-        kind: ObjectKind | None = None,
-        max_count: int | None = None,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result(
-            "glob",
-            self._session.glob,
-            pattern,
-            paths=paths,
-            observations=observations,
-            ext=ext,
-            ext_not=ext_not,
-            globs_not=globs_not,
-            kind=kind,
-            max_count=max_count,
-            columns=columns,
-        )
-
-    def grep(
-        self,
-        pattern: str,
-        *,
-        paths: tuple[str, ...] = (),
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        ext_not: tuple[str, ...] = (),
-        globs: tuple[str, ...] = (),
-        globs_not: tuple[str, ...] = (),
-        case_mode: CaseMode = "sensitive",
-        fixed_strings: bool = False,
-        word_regexp: bool = False,
-        invert_match: bool = False,
-        before_context: int = 0,
-        after_context: int = 0,
-        output_mode: GrepOutputMode = "lines",
-        max_count: int | None = None,
-        allow_scan: bool = False,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result(
-            "grep",
-            self._session.grep,
-            pattern,
-            paths=paths,
-            observations=observations,
-            ext=ext,
-            ext_not=ext_not,
-            globs=globs,
-            globs_not=globs_not,
-            case_mode=case_mode,
-            fixed_strings=fixed_strings,
-            word_regexp=word_regexp,
-            invert_match=invert_match,
-            before_context=before_context,
-            after_context=after_context,
-            output_mode=output_mode,
-            max_count=max_count,
-            allow_scan=allow_scan,
-            columns=columns,
-        )
-
-    def search(
-        self,
-        query: str,
-        *,
-        limit: int = 10,
-        paths: tuple[str, ...] = (),
-        observations: list[Observation] | None = None,
-        ext: tuple[str, ...] = (),
-        ext_not: tuple[str, ...] = (),
-        globs: tuple[str, ...] = (),
-        globs_not: tuple[str, ...] = (),
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result(
-            "search",
-            self._session.search,
-            query,
-            limit=limit,
-            paths=paths,
-            observations=observations,
-            ext=ext,
-            ext_not=ext_not,
-            globs=globs,
-            globs_not=globs_not,
-            columns=columns,
-        )
-
-    def traverse(
-        self,
-        method: str,
-        path: str | None = None,
-        observations: list[Observation] | None = None,
-        *,
-        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
-        edge_types: tuple[str, ...] = (),
-        edge_types_not: tuple[str, ...] = (),
-        minimal: bool = False,
-        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
-        columns: frozenset[str] | None = None,
-    ) -> Result:
-        return self._result(
-            "traverse",
-            self._session.traverse,
-            method,
-            path,
-            observations,
-            depth=depth,
-            edge_types=edge_types,
-            edge_types_not=edge_types_not,
-            minimal=minimal,
-            limit=limit,
-            columns=columns,
-        )
-
-    def run(self, path: str, *, arguments: dict[str, Any] | None = None) -> Result:
-        return self._result("run", self._session.run, path, arguments=arguments)
-
-    # -------------------------------------------------------------------
-    # grants
-    # -------------------------------------------------------------------
-
-    def grant(self, path: str, principal: str, level: GrantLevel) -> Result:
-        return self._result("grant", self._session.grant, path, principal, level)
-
-    def revoke(self, path: str, principal: str) -> Result:
-        return self._result("revoke", self._session.revoke, path, principal)
-
-    def grants(self, path: str) -> Result:
-        return self._result("grants", self._session.grants, path)
-
-    def posture(self, path: str, posture: Posture) -> Result:
-        return self._result("posture", self._session.posture, path, posture)
-
-    def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
-        return self._result("add_member", self._session.add_member, group, member, path=path)
-
-    def remove_member(self, group: str, member: str, *, path: str = "/") -> Result:
-        return self._result("remove_member", self._session.remove_member, group, member, path=path)
-
-    # -------------------------------------------------------------------
-    # Internal helpers
-    # -------------------------------------------------------------------
-
-    def _result(self, op: Op, call: Callable[..., Coroutine[Any, Any, Result]], *args: Any, **kwargs: Any) -> Result:
-        """The closed fact first, then the facade's own hop."""
-        if self._session.closed:
-            return closed_refusal(op)
-        return self._facade._result(op, call, *args, **kwargs)
-
-
-# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -1089,10 +750,10 @@ def _wait(future: Future[Any]) -> Any:
 
 
 def _caller_stacklevel() -> int:
-    """The ``stacklevel`` that names the first frame outside this module: the caller's own line."""
+    """The ``stacklevel`` that names the first frame outside the synchronous face: the caller's own line."""
     depth = 1
     frame = sys._getframe(1)
-    while frame is not None and frame.f_globals.get("__name__") == __name__:
+    while frame is not None and frame.f_globals.get("__name__") in _FACADE_MODULES:
         depth += 1
         frame = frame.f_back
     return depth

@@ -9,7 +9,7 @@ An access level says what a caller may do at a path and everything below it. The
 | `none` | Nothing. The path does not exist for the caller. |
 | `list` | See that files and folders exist: their names, kinds, and sizes. |
 | `read` | Read file contents, search them, and see who has access. |
-| `add` | Create new files and folders. |
+| `add` | Create new files and folders, and add to the end of a file. |
 | `contribute` | Change files that other people created. |
 | `read_write` | Delete, move, and restore files, and change who has access. |
 
@@ -29,12 +29,16 @@ The table shows each call on a file that someone else created. "Yes" means the c
 | `write` to a new path, `mkdir` | Permission denied | Permission denied | Permission denied | Yes | Yes | Yes |
 | `copy` to a new path | Not found | Permission denied | Permission denied | Yes | Yes | Yes |
 | `write` over the file | Permission denied | Permission denied | Permission denied | Permission denied | Yes | Yes |
+| `write` with `append=True` | Permission denied | Permission denied | Permission denied | Yes | Yes | Yes |
+| `write` with `if_absent=True` | Permission denied | Permission denied | Permission denied | Already exists | Already exists | Already exists |
 | `edit` | Not found | Permission denied | Permission denied | Permission denied | Yes | Yes |
 | `delete`, `move`, `restore` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
-| `grant`, `revoke`, `posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
+| `grant`, `revoke`, `set_posture` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 | `sweep` | Not found | Permission denied | Permission denied | Permission denied | Permission denied | Yes |
 
 `sweep` destroys a file for good, and `delete` moves it to the trash.
+
+An append at `add` keeps every byte the file held, and the file keeps its old body as a version. Bytes that are not text turn a text file into a bytes file, and a read of it then returns no text.
 
 ## Files the Caller Created
 
@@ -52,12 +56,13 @@ A level is given to a person, to a group, or to everyone.
 |---|---|---|
 | A person | `grant` | `fs.grant("/eng", "ada", "read")` |
 | A group | `grant` | `fs.grant("/eng", "group:eng", "read")` |
-| Everyone | `posture` | `fs.posture("/eng", "read")` |
+| Everyone | `set_posture` | `fs.set_posture("/eng", "read")` |
+| Everyone, at a new mount | `add_mount` | `fs.add_mount(storage, "/eng", posture="read")` |
 
 Each of these calls also takes `authority=`, which names the caller making the change. [Who May Change Access](#who-may-change-access) says which callers are allowed.
 
 - **A group's name starts with `group:`.** `fs.add_member("group:eng", "ada", authority=Authority.system())` puts a person in a group, and `fs.remove_member` takes them out. A group may hold other groups, up to eight deep.
-- **`grant` accepts every level except `none`.** `posture` accepts all six.
+- **`grant` accepts every level except `none`.** `set_posture` accepts all six.
 - **`fs.grants(path)` lists the rows that decide access at a path.** Everyone appears in those rows as `*`.
 
 ## How a Caller's Level Is Decided
@@ -71,16 +76,35 @@ Each of these calls also takes `authority=`, which names the caller making the c
 
 | Call | Who may call it |
 |---|---|
-| `grant`, `revoke`, `posture` | A caller who holds `read_write` at the path and everything below it |
+| `grant`, `revoke`, `set_posture` | A caller who holds `read_write` at the path and everything below it |
 | `add_member`, `remove_member` | The system only |
+| `add_mount`, `remove_mount`, `update_mount` | A caller who holds `read_write` at the path of the mount. A `posture` given to `add_mount` is set under the mounted storage's own rule for `set_posture` |
 
 A caller with `Authority.system()` passes every check on this page. It stands for your own application code.
+
+The right to change a mount is kept by the storage above the mount, on the directory the mount is attached at. Three things follow.
+
+- **To add a mount, a caller must also be able to make its directory.** `add_mount` makes the directory with the caller's own `mkdir`. If the directory is already there, `read_write` at it is enough for a named caller. A caller with no name is still refused when a directory above the mount point gives everyone `none`, because its `mkdir` must first find the directories above.
+- **Give the right before you add the mount, or on a directory above it.** Once a mount is at `/data`, `grant("/data", ...)` reaches the mounted storage. It no longer changes who may change the mount.
+- **Whoever may change a mount may remove it, and may change its policy in place.** `remove_mount` asks the gate for a `delete` at the mount point. `update_mount` asks for a `delete` and a `mkdir` there, and for nothing more.
+
+## Mounts
+
+A mount is a storage attached at a path, and **each storage keeps its own access**. Five things follow.
+
+- **A mount's path is not a secret.** `ls`, `tree` and `glob` show a mount to every caller who can list the directory it is in, and they show the directories that lead to it. A caller who holds nothing in the mount sees only its path and its kind.
+- **The mounted storage decides what a caller sees inside the mount.** That covers the rest of the mount's own row and everything below it.
+- **A grant at a mount's path is a grant in the mounted storage.** With a mount at `/data`, one call to `fs.grant("/data", "ada", "read")` shares the whole mount with ada.
+- **A level does not cross a mount.** Setting `/` to `none` does not close a mount at `/data`. A new storage gives everyone `read_write`, so a mount added with no posture is open to everyone, even under a closed root. To add it closed, name its posture: `fs.add_mount(storage, "/data", posture="none")`. The posture is in force before the mount can be reached.
+- **A mount whose storage cannot answer still shows.** Its row has only a path and a kind. When the storage fails, the result carries a warning that names the mount. A storage that does not answer `stat` at all is not asked, and its mount shows bare with no warning.
 
 ## Callers with No Name
 
 A call made with no authority holds only what everyone holds. When that level does not allow the call, the error is "Unauthenticated".
 
 The `default_authority` argument of `VirtualFileSystem` names the caller for every call that passes no authority.
+
+When that caller is the system actor, every call that passes no authority passes every check. So VFS logs one warning, on the `vfs.authority` logger, when such a file system is made. To silence it where you mean it, such as a bulk load, raise that logger's level with Python's `logging` module.
 
 ## Errors
 

@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 4: disown: refused: job control past the call is not supported\n"
+}

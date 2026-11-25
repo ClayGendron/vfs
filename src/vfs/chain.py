@@ -13,6 +13,7 @@ Each stage that matches rows runs on the process pool under a wall, and
 a stage that reaches it returns what it finished and one ``truncated``
 warning. :func:`judge_in_hand` is the judge-then-admit step both
 filters share; the router's root probe calls it for the rows it statted.
+``search`` calls it too, for the rows it is handed, before any storage ranks them.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ _CHAINED_REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters,
 
 # Chained glob's truncation advice: its one stage is the filter over the rows in hand.
 _CHAINED_GLOB_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions, or send fewer rows"
+# A search over rows in hand has no pattern of its own to narrow.
+_CHAINED_SEARCH_REFINE_GUIDANCE: Final = "send fewer rows, or fewer globs"
 
 
 class RowSource(Protocol):
@@ -176,6 +179,30 @@ async def grep_rows_in_hand(
     # An unfinished filter's record stands for the matching stage's identical one.
     errors.extend(truncation if filtered else [wall_truncation(_CHAINED_REFINE_GUIDANCE)])
     return Result(ops=("grep",), observations=matched, errors=errors)
+
+
+async def admit_rows_in_hand(
+    rows: list[Observation],
+    *,
+    globs: tuple[str, ...],
+    globs_not: tuple[str, ...],
+    ext: tuple[str, ...],
+    ext_not: tuple[str, ...],
+) -> tuple[list[Observation], list[ResultError]]:
+    """The rows in hand that pass the four file filters, and the record of a filter that ran out of time.
+
+    The patterns arrive already expanded. Each row is judged by the path it carries, and the rows
+    keep their order and their duplicates. With a pattern to judge, the filter runs within a time
+    budget. A row it has not judged when the budget runs out is dropped, and one ``truncated``
+    warning is returned with the rows it kept. With no pattern, no clock is read. With no filter at
+    all, the rows come back as given and nothing is read from them.
+    """
+    if not (globs or globs_not or ext or ext_not):
+        return rows, []
+    gates = compile_gates(globs, globs_not, ext=ext, ext_not=ext_not)
+    deadline = Deadline.after(WALL_TIME_BUDGET) if gates.has_patterns else Deadline.never()
+    kept, completed = await judge_in_hand(gates, rows, deadline)
+    return kept, [] if completed else [wall_truncation(_CHAINED_SEARCH_REFINE_GUIDANCE)]
 
 
 # ---------------------------------------------------------------------------

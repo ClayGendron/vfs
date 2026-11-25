@@ -145,7 +145,7 @@ async def transfer_rows(
     passed.
     """
     entry = tables.entry
-    await serialize(session, profile, tables.lock)
+    await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=(op,), errors=refused)
     move_srcs = Counter(pair.src for pair in operations) if op == "move" else Counter[Path]()

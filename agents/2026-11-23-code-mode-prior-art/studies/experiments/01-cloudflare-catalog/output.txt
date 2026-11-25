@@ -1,0 +1,13 @@
+{
+ "spec_chars": 26815139,
+ "spec_tokens_at_4_chars": 6703785,
+ "operations": 3776,
+ "distinct_tags": 725,
+ "full_listing_tokens_at_4_chars": 1758137,
+ "required_only_listing_tokens_at_4_chars": 202500,
+ "one_line_index_tokens_at_4_chars": 83870,
+ "input_schema_chars_p50": 523,
+ "input_schema_chars_p90": 3995,
+ "input_schema_chars_p99": 19952,
+ "input_schema_chars_max": 71147
+}

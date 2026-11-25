@@ -17,6 +17,7 @@ from vfs.paths import (
     MAX_PATH_LENGTH,
     MAX_SEGMENT_LENGTH,
     METADATA_ROOT,
+    LocalAfter,
     Path,
     RelativePath,
     ResolvedPath,
@@ -28,6 +29,7 @@ from vfs.paths import (
     extract_extension,
     is_meta_path,
     is_reserved_directory,
+    local_after,
     normalize_ext_channel,
     normalize_path,
     normalize_relative_path,
@@ -1275,3 +1277,59 @@ class TestRelativePath:
         assert isinstance(M(path="scripts/x.py").path, RelativePath)
         with pytest.raises(ValidationError):
             M(path="/absolute")
+
+
+# ---------------------------------------------------------------------------
+# local_after — a listing key in one mount's coordinates
+# ---------------------------------------------------------------------------
+
+
+class TestLocalAfter:
+    def test_no_key_starts_every_mount(self) -> None:
+        assert local_after(None, Path("/m")) == LocalAfter("start", None)
+
+    def test_the_root_mount_is_the_identity(self) -> None:
+        assert local_after(Path("/a/b"), Path("/")) == LocalAfter("key", Path("/a/b"))
+
+    @pytest.mark.parametrize(
+        ("after", "expected"),
+        [
+            ("/m", LocalAfter("start", None)),
+            ("/m-x", LocalAfter("start", None)),
+            ("/m.txt", LocalAfter("start", None)),
+            ("/a/z", LocalAfter("start", None)),
+            ("/m/x", LocalAfter("key", Path("/x"))),
+            ("/m/x/y", LocalAfter("key", Path("/x/y"))),
+            ("/m0", LocalAfter("past", None)),
+            ("/ma", LocalAfter("past", None)),
+            ("/n", LocalAfter("past", None)),
+        ],
+    )
+    def test_each_side_of_a_bind_path(self, after: str, expected: LocalAfter) -> None:
+        assert local_after(Path(after), Path("/m")) == expected
+
+    def test_against_a_brute_force_oracle(self) -> None:
+        segments = ("m", "m-x", "m.txt", "m0", "ma", "a", "z", "x")
+        paths = sorted({"/" + "/".join(parts) for parts in _products(segments, 3)})
+        for mount in ("/m", "/m/x", "/a"):
+            under = [path for path in paths if path.startswith(mount + "/")]
+            for after in paths:
+                found = local_after(Path(after), Path(mount))
+                beyond = [path for path in under if path > after]
+                if found.state == "past":
+                    assert beyond == []
+                elif found.state == "start":
+                    assert beyond == under
+                else:
+                    assert found.key is not None
+                    assert [p for p in under if Path(p).without_mount(mount) > found.key] == beyond
+
+
+def _products(segments: tuple[str, ...], depth: int) -> list[tuple[str, ...]]:
+    """Every tuple of one to ``depth`` of ``segments``."""
+    out: list[tuple[str, ...]] = [(segment,) for segment in segments]
+    frontier = list(out)
+    for _ in range(depth - 1):
+        frontier = [(*parts, segment) for parts in frontier for segment in segments]
+        out += frontier
+    return out

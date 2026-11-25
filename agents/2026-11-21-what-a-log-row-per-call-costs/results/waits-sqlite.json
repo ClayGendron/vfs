@@ -1,0 +1,1067 @@
+{
+  "script": "scripts/measure_waits.py",
+  "arguments": {
+    "engine": "sqlite",
+    "repeats": 3,
+    "deadline": 900.0
+  },
+  "environment": {
+    "commit": "8624926",
+    "src_dirty": false,
+    "date": "2026-11-21T20:09:08+00:00",
+    "python": "3.13.18",
+    "sqlite": "3.53.1",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "cores": 4,
+    "memory_gb": 15.7,
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39"
+  },
+  "readers": 8,
+  "seconds": 302.5,
+  "cells": [
+    {
+      "mode": "none",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 198,
+          "median_ms": 83.666,
+          "p95_ms": 101.753,
+          "max_ms": 153.406,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 11,
+          "median_ms": 191.351,
+          "p95_ms": 212.819,
+          "max_ms": 212.819,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 27.917,
+          "ok": true,
+          "error": null,
+          "storage_statements": 60,
+          "log_statements": 0
+        },
+        "reads": {
+          "n": 2471,
+          "median_ms": 72.316,
+          "p95_ms": 152.03,
+          "max_ms": 1128.238,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 6,
+          "median_ms": 636.55,
+          "p95_ms": 20486.157,
+          "max_ms": 20486.157,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "none",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 249,
+          "median_ms": 66.53,
+          "p95_ms": 73.797,
+          "max_ms": 78.069,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 15,
+          "median_ms": 153.896,
+          "p95_ms": 170.146,
+          "max_ms": 170.146,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 28.699,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 0
+        },
+        "reads": {
+          "n": 2587,
+          "median_ms": 72.131,
+          "p95_ms": 150.233,
+          "max_ms": 1006.167,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 5,
+          "median_ms": 845.634,
+          "p95_ms": 20644.809,
+          "max_ms": 20644.809,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "none",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 200,
+          "median_ms": 84.353,
+          "p95_ms": 99.072,
+          "max_ms": 109.528,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 11,
+          "median_ms": 195.497,
+          "p95_ms": 225.36,
+          "max_ms": 225.36,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 28.256,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 0
+        },
+        "reads": {
+          "n": 2482,
+          "median_ms": 74.409,
+          "p95_ms": 154.104,
+          "max_ms": 1186.204,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 4,
+          "median_ms": 3716.981,
+          "p95_ms": 20759.491,
+          "max_ms": 20759.491,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "sync",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 130,
+          "median_ms": 69.471,
+          "p95_ms": 645.167,
+          "max_ms": 1453.536,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 66,
+          "median_ms": 22.261,
+          "p95_ms": 71.505,
+          "max_ms": 107.345,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 6.014,
+          "ok": true,
+          "error": null,
+          "storage_statements": 60,
+          "log_statements": 1
+        },
+        "reads": {
+          "n": 28,
+          "median_ms": 856.315,
+          "p95_ms": 5158.078,
+          "max_ms": 5311.375,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 4,
+          "median_ms": 514.875,
+          "p95_ms": 5036.745,
+          "max_ms": 5036.745,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 1,
+          "by_phase": {
+            "row": 1
+          },
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.244
+        }
+      }
+    },
+    {
+      "mode": "sync",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 136,
+          "median_ms": 106.191,
+          "p95_ms": 294.425,
+          "max_ms": 617.463,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 19,
+          "median_ms": 122.441,
+          "p95_ms": 145.417,
+          "max_ms": 145.417,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 5.522,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 1
+        },
+        "reads": {
+          "n": 29,
+          "median_ms": 721.472,
+          "p95_ms": 4848.007,
+          "max_ms": 5515.319,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 2,
+          "median_ms": 2769.998,
+          "p95_ms": 4655.889,
+          "max_ms": 4655.889,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "sync",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 101,
+          "median_ms": 57.376,
+          "p95_ms": 786.68,
+          "max_ms": 2191.035,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 61,
+          "median_ms": 27.864,
+          "p95_ms": 70.605,
+          "max_ms": 79.509,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 5.743,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 1
+        },
+        "reads": {
+          "n": 21,
+          "median_ms": 890.332,
+          "p95_ms": 5108.846,
+          "max_ms": 5788.027,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 3,
+          "median_ms": 858.027,
+          "p95_ms": 4904.656,
+          "max_ms": 4904.656,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 0,
+        "log_failures": {
+          "count": 1,
+          "by_phase": {
+            "row": 1
+          },
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.014
+        }
+      }
+    },
+    {
+      "mode": "leaned",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 231,
+          "median_ms": 70.832,
+          "p95_ms": 85.03,
+          "max_ms": 131.308,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 12,
+          "median_ms": 189.439,
+          "p95_ms": 324.783,
+          "max_ms": 324.783,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 247,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 29.827,
+          "ok": true,
+          "error": null,
+          "storage_statements": 60,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 2528,
+          "median_ms": 76.068,
+          "p95_ms": 163.432,
+          "max_ms": 1050.931,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 9,
+          "median_ms": 5012.421,
+          "p95_ms": 5016.835,
+          "max_ms": 5016.835,
+          "failures": 5,
+          "failure_kinds": [
+            "log_unavailable"
+          ]
+        },
+        "flushes": {
+          "count": 8,
+          "failed": 4,
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.1139,
+          "seconds": [
+            0.0667,
+            5.0931,
+            5.0926,
+            5.0922,
+            5.1139,
+            4.3848,
+            0.0627,
+            0.0631
+          ],
+          "max_depth_seen_by_a_flush": 2285
+        },
+        "buffer_high_water": 2285,
+        "log_failures": {
+          "count": 5,
+          "by_phase": {
+            "claim": 5
+          },
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.017
+        }
+      }
+    },
+    {
+      "mode": "leaned",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 182,
+          "median_ms": 93.216,
+          "p95_ms": 109.974,
+          "max_ms": 123.271,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 10,
+          "median_ms": 237.485,
+          "p95_ms": 347.444,
+          "max_ms": 347.444,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 4,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.1191,
+          "seconds": [
+            0.0526,
+            0.0368,
+            0.036,
+            0.1191
+          ],
+          "max_depth_seen_by_a_flush": 1015
+        },
+        "buffer_high_water": 759,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 25.774,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 2162,
+          "median_ms": 75.824,
+          "p95_ms": 222.955,
+          "max_ms": 1258.281,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 6,
+          "median_ms": 5011.297,
+          "p95_ms": 5359.57,
+          "max_ms": 5359.57,
+          "failures": 3,
+          "failure_kinds": [
+            "log_unavailable"
+          ]
+        },
+        "flushes": {
+          "count": 6,
+          "failed": 4,
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.3345,
+          "seconds": [
+            5.3345,
+            5.094,
+            5.0925,
+            5.0907,
+            2.4343,
+            0.0785
+          ],
+          "max_depth_seen_by_a_flush": 2133
+        },
+        "buffer_high_water": 2133,
+        "log_failures": {
+          "count": 4,
+          "by_phase": {
+            "claim": 3,
+            "complete": 1
+          },
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.032
+        }
+      }
+    },
+    {
+      "mode": "leaned",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 210,
+          "median_ms": 79.109,
+          "p95_ms": 95.144,
+          "max_ms": 117.804,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 11,
+          "median_ms": 203.512,
+          "p95_ms": 315.25,
+          "max_ms": 315.25,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 4,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.1706,
+          "seconds": [
+            0.0676,
+            0.0381,
+            0.0413,
+            0.1706
+          ],
+          "max_depth_seen_by_a_flush": 835
+        },
+        "buffer_high_water": 579,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 28.812,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 2558,
+          "median_ms": 73.54,
+          "p95_ms": 199.807,
+          "max_ms": 1008.239,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 6,
+          "median_ms": 575.098,
+          "p95_ms": 25672.46,
+          "max_ms": 25672.46,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 5,
+          "failed": 4,
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.0999,
+          "seconds": [
+            5.0949,
+            5.0999,
+            5.0909,
+            5.0921,
+            4.0902
+          ],
+          "max_depth_seen_by_a_flush": 2162
+        },
+        "buffer_high_water": 2360,
+        "log_failures": {
+          "count": 1,
+          "by_phase": {
+            "complete": 1
+          },
+          "errors": [
+            "OperationalError: (sqlite3.OperationalError) database is locked"
+          ],
+          "max_seconds": 5.013
+        }
+      }
+    },
+    {
+      "mode": "leaned+own-log-file",
+      "repeat": 0,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 207,
+          "median_ms": 80.793,
+          "p95_ms": 96.546,
+          "max_ms": 127.787,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 10,
+          "median_ms": 213.814,
+          "p95_ms": 250.18,
+          "max_ms": 250.18,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 0,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0,
+          "seconds": [],
+          "max_depth_seen_by_a_flush": 0
+        },
+        "buffer_high_water": 226,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 26.695,
+          "ok": true,
+          "error": null,
+          "storage_statements": 60,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 2116,
+          "median_ms": 82.165,
+          "p95_ms": 231.406,
+          "max_ms": 1113.914,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 4,
+          "median_ms": 3017.852,
+          "p95_ms": 20549.678,
+          "max_ms": 20549.678,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 9,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.5791,
+          "seconds": [
+            0.5791,
+            0.0337,
+            0.0386,
+            0.0435,
+            0.0392,
+            0.0353,
+            0.0443,
+            0.0384,
+            0.1699
+          ],
+          "max_depth_seen_by_a_flush": 256
+        },
+        "buffer_high_water": 256,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "leaned+own-log-file",
+      "repeat": 1,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 192,
+          "median_ms": 82.932,
+          "p95_ms": 111.665,
+          "max_ms": 122.125,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 10,
+          "median_ms": 221.684,
+          "p95_ms": 268.591,
+          "max_ms": 268.591,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 1,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0406,
+          "seconds": [
+            0.0406
+          ],
+          "max_depth_seen_by_a_flush": 256
+        },
+        "buffer_high_water": 256,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 26.606,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 2179,
+          "median_ms": 75.558,
+          "p95_ms": 214.595,
+          "max_ms": 1265.767,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 4,
+          "median_ms": 2819.143,
+          "p95_ms": 20822.634,
+          "max_ms": 20822.634,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 8,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0517,
+          "seconds": [
+            0.0496,
+            0.0421,
+            0.0393,
+            0.0379,
+            0.0354,
+            0.0427,
+            0.0354,
+            0.0517
+          ],
+          "max_depth_seen_by_a_flush": 256
+        },
+        "buffer_high_water": 256,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    },
+    {
+      "mode": "leaned+own-log-file",
+      "repeat": 2,
+      "baseline": {
+        "batch": {},
+        "reads": {
+          "n": 215,
+          "median_ms": 76.964,
+          "p95_ms": 91.199,
+          "max_ms": 138.524,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 11,
+          "median_ms": 199.761,
+          "p95_ms": 262.03,
+          "max_ms": 262.03,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "flushes": {
+          "count": 1,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0536,
+          "seconds": [
+            0.0536
+          ],
+          "max_depth_seen_by_a_flush": 256
+        },
+        "buffer_high_water": 256,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      },
+      "during_batch": {
+        "batch": {
+          "seconds": 22.319,
+          "ok": true,
+          "error": null,
+          "storage_statements": 53,
+          "log_statements": 2
+        },
+        "reads": {
+          "n": 1673,
+          "median_ms": 84.043,
+          "p95_ms": 267.352,
+          "max_ms": 1194.982,
+          "failures": 0,
+          "failure_kinds": []
+        },
+        "writes": {
+          "n": 4,
+          "median_ms": 802.822,
+          "p95_ms": 20708.053,
+          "max_ms": 20708.053,
+          "failures": 1,
+          "failure_kinds": [
+            "vfs.conflict"
+          ]
+        },
+        "flushes": {
+          "count": 7,
+          "failed": 0,
+          "errors": [],
+          "max_seconds": 0.0591,
+          "seconds": [
+            0.0398,
+            0.0362,
+            0.046,
+            0.0591,
+            0.0401,
+            0.0533,
+            0.0531
+          ],
+          "max_depth_seen_by_a_flush": 257
+        },
+        "buffer_high_water": 257,
+        "log_failures": {
+          "count": 0,
+          "by_phase": {},
+          "errors": [],
+          "max_seconds": 0.0
+        }
+      }
+    }
+  ]
+}

@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Final, Literal, get_args
 
 Source = Literal["text", "bytes"]
+"""What the body of an :term:`entry` was written as, text or bytes."""
+
 SOURCES: Final[frozenset[str]] = frozenset(get_args(Source))
 
 RenderStatus = Literal[
@@ -30,6 +32,18 @@ RenderStatus = Literal[
     "corrupt",
     "failed",
 ]
+"""How the rendering of a binary body into text ended.
+
+- ``pending`` means the body is written and not yet rendered.
+- ``ok`` means it was rendered in full.
+- ``truncated`` means it was rendered up to the character budget.
+- ``partial`` means a time limit or an embedded limit cut it short, and the text so far is valid.
+- ``empty`` means the body was parsed and holds no text.
+- ``unsupported`` means no renderer exists for the type.
+- ``unavailable`` means a renderer exists and its extra is not installed.
+- ``encrypted``, ``corrupt`` and ``failed`` mean the body could not be read.
+"""
+
 RENDER_STATUSES: Final[frozenset[str]] = frozenset(get_args(RenderStatus))
 
 # Statuses that leave a content row behind: the text the verbs may serve.

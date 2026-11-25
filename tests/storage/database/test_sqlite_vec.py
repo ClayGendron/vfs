@@ -3,6 +3,7 @@ that withholds ranked search from a dialect with no distance function."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import Any, Final
 
@@ -17,6 +18,7 @@ from tests.support.server_schemas import server_storage
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import drivers as drivers_module
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import (
     GENERIC,
@@ -57,7 +59,7 @@ class TestSqliteVec:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.first_touch()).success is True
         async with storage._host.session_factory() as session:
-            version = (await session.execute(text(engine_module.SQLITE_VEC_PROBE))).scalar_one()
+            version = (await session.execute(text(SQLITE_VEC_PROBE))).scalar_one()
             assert version.startswith("v")
             packed = (await session.execute(text("SELECT vec_f32('[1.0, 0.0]')"))).scalar_one()
             distance = (
@@ -70,7 +72,7 @@ class TestSqliteVec:
         storage = InMemoryStorage()
         assert (await storage.first_touch()).success is True
         async with storage._host.session_factory() as session:
-            assert (await session.execute(text(engine_module.SQLITE_VEC_PROBE))).scalar_one().startswith("v")
+            assert (await session.execute(text(SQLITE_VEC_PROBE))).scalar_one().startswith("v")
         await storage.close()
 
     async def test_an_interpreter_without_extension_loading_refuses_at_first_touch(
@@ -78,7 +80,7 @@ class TestSqliteVec:
     ) -> None:
         # The URL helper provisions this worker's template on first use; take it before the patch.
         url = _url(tmp_path)
-        monkeypatch.setattr(engine_module, "_EXTENSIONS_LOADABLE", False)
+        monkeypatch.setattr(drivers_module, "_EXTENSIONS_LOADABLE", False)
         storage = DatabaseStorage(url=url)
         result = await storage.first_touch()
         assert result.success is False
@@ -88,7 +90,7 @@ class TestSqliteVec:
         await storage.close()
 
     def test_the_loader_ignores_a_connection_it_does_not_recognise(self) -> None:
-        engine_module._load_sqlite_vec(object())  # no aiosqlite inner connection: nothing to load
+        drivers_module.load_sqlite_vec(object())  # no aiosqlite inner connection: nothing to load
 
 
 class TestVectorProbe:
@@ -123,6 +125,26 @@ class TestInstallExtensions:
         assert result.success is True and result.observations == []
         assert storage._host.vector_version is not None
         assert (await storage.first_touch()).success is True
+        await storage.close()
+
+    async def test_off_sqlite_the_verb_runs_in_its_callers_task(self, tmp_path: Any, monkeypatch) -> None:
+        """Guards every other engine: the verb is run out of its caller's reach on SQLite alone."""
+        # The generic floor, declaring a function to prove. Nothing loads it off SQLite, so it is missing.
+        url = _url(tmp_path)
+        declared = replace(GENERIC, vector_function=VectorFunction(SQLITE_VEC_PROBE, "ask a DBA"))
+        monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
+        storage = DatabaseStorage(url=url)
+        ran: list[asyncio.Task[Any] | None] = []
+        probe = storage._host._probe_vector_function
+
+        async def probed(function: VectorFunction) -> Any:
+            ran.append(asyncio.current_task())
+            return await probe(function)
+
+        monkeypatch.setattr(storage._host, "_probe_vector_function", probed)
+        [refusal] = (await storage.install_extensions()).errors
+        assert (refusal.kind, "ask a DBA" in refusal.message) == (ErrorKind.unavailable, True)
+        assert ran == [asyncio.current_task()]
         await storage.close()
 
     async def test_an_install_the_engine_refuses_classifies_and_never_raises(self, tmp_path: Any, monkeypatch) -> None:

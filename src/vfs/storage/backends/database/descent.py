@@ -234,15 +234,13 @@ def liveness_filters(
 def escape_like(text: str, profile: DialectProfile) -> str:
     """Escape LIKE metacharacters so *text* matches only itself as a prefix.
 
-    The metachar set is the dialect's: ``[`` opens a class only where
-    the profile declares it (T-SQL), and escaping it elsewhere is
-    itself an error (ORA-01424) — so the bracket escape is conditional.
+    The escape character, ``%`` and ``_`` are the metacharacters on both
+    supported engines. *profile* is the slot for the subtree predicate's
+    own form on an engine, which the callers of this chain pass through.
     """
-    escaped = (
+    del profile
+    return (
         text.replace(LIKE_ESCAPE, LIKE_ESCAPE + LIKE_ESCAPE)
         .replace("%", LIKE_ESCAPE + "%")
         .replace("_", LIKE_ESCAPE + "_")
     )
-    if profile.like_bracket_class:
-        escaped = escaped.replace("[", LIKE_ESCAPE + "[")
-    return escaped

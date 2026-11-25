@@ -1,0 +1,115 @@
+cloned wasi-virt
+cloned busybox
+cloned oils
+cloned mvdan-sh
+remote: Repository not found.
+fatal: repository 'https://github.com/bminor/bash/' not found
+CLONE FAILED bash
+cloned codex
+cloned brush
+cloned quickjs-ng
+cloned pyodide
+cloned uutils-coreutils
+cloned RustPython
+warning: the following paths have collided (e.g. case-sensitive paths
+on a case-insensitive filesystem) and only one from the same
+colliding group is in the working tree:
+
+  'rc/bin/Kill'
+  'rc/bin/kill'
+  'sys/lib/postscript/troff/HX'
+  'sys/lib/postscript/troff/Hx'
+  'sys/lib/troff/font/devutf/charlib/LH'
+  'sys/lib/troff/font/devutf/charlib/lH'
+  'sys/lib/troff/font/devutf/charlib/lh'
+  'sys/lib/troff/font/devutf/charlib/RC'
+  'sys/lib/troff/font/devutf/charlib/rc'
+  'sys/lib/troff/font/devutf/charlib/rH'
+  'sys/lib/troff/font/devutf/charlib/rh'
+  'sys/lib/troff/font/devutf/HB'
+  'sys/lib/troff/font/devutf/Hb'
+  'sys/lib/troff/font/devutf/HI'
+  'sys/lib/troff/font/devutf/Hi'
+  'sys/lib/troff/font/devutf/HX'
+  'sys/lib/troff/font/devutf/Hx'
+  'sys/src/cmd/awk/test/T.fmt.broken'
+  'sys/src/cmd/awk/test/t.fmt.broken'
+  'sys/src/cmd/postscript/devpost.add/C1'
+  'sys/src/cmd/postscript/devpost.add/c1'
+  'sys/src/cmd/postscript/devpost.add/C2'
+  'sys/src/cmd/postscript/devpost.add/c2'
+  'sys/src/cmd/postscript/devpost.add/C3'
+  'sys/src/cmd/postscript/devpost.add/c3'
+cloned 9front
+cloned cpython
+cloned toybox
+cloned componentize-py
+cloned sbase
+plan9: DIRTY, not refreshed, at ed1a9c21e
+plan9port: b6564bd9 2026-08-26 (origin/master)
+nushell: 818d4ac06 2026-10-15 (origin/main)
+elvish: 26a8bd5 2025-07-14 (origin/main)
+PowerShell: db1d0a5 2026-10-14 (origin/master)
+TermKit: 2d368b8 2011-12-15 (origin/master)
+monty: 2bb9f08a 2026-10-15 (origin/main)
+wasmtime-py: 280ce73 2026-09-24 (origin/main)
+WASI: 463701e 2026-10-13 (origin/main)
+browser_wasi_shim: b068ec2 2026-02-03 (origin/main)
+gemini-cli: DIRTY, not refreshed, at d42e3f1e7
+opencode: 13263f30ed 2026-10-16 (origin/dev)
+deepagents: 0bf167654 2026-10-15 (origin/main)
+eve: 5666d2f0d 2026-10-15 (origin/main)
+claude-agent-sdk-python: aada024 2026-10-15 (origin/main)
+fastmcp: e2fcc41 2026-10-08 (origin/main)
+modelcontextprotocol: 86f6e0c6 2026-10-14 (origin/main)
+python-sdk: 754254c0 2026-10-13 (origin/main)
+ripgrep: 3fce3b5 2026-08-04 (origin/master)
+mcpfs: 640511e 2026-03-06 (origin/main)
+agentfs: 0a014eb 2026-06-03 (origin/main)
+wasi-virt: 448f6df 2026-07-31 (origin/main)
+busybox: 371fe9f 2024-07-14 (origin/master)
+oils: bdc8364 2026-10-14 (origin/master)
+mvdan-sh: 0e8ea6f 2026-10-12 (origin/master)
+bash: missing
+codex: 16e578d 2026-10-15 (origin/main)
+brush: c495882 2026-10-15 (origin/main)
+quickjs-ng: 9b06171 2026-10-11 (origin/master)
+pyodide: adc5b63 2026-10-15 (origin/main)
+uutils-coreutils: 4945ecf 2026-10-16 (origin/main)
+RustPython: 88f5189 2026-10-15 (origin/main)
+9front: DIRTY, not refreshed, at a0806493
+cpython: fdec4df 2026-10-15 (origin/main)
+toybox: 6a0c0ef 2026-10-05 (origin/master)
+componentize-py: 9ff99da 2026-09-21 (origin/main)
+sbase: b30fb56 2024-03-22 (origin/master)
+DONE
+--- second wave 2026-10-15 ---
+cloned just-bash
+just-bash: 9ab0e0d 2026-10-15 (origin/main)
+cloned deepagentsjs
+deepagentsjs: 9f3bfd5 2026-10-13 (origin/main)
+cloned agentvfs
+agentvfs: 82663b4 2026-08-25 (origin/main)
+cloned lifo
+lifo: 5a35d05 2026-10-09 (origin/main)
+cloned just-bash-py
+just-bash-py: 48d111c 2026-06-04 (origin/main)
+cloned sandbox-sdk
+sandbox-sdk: a080a65 2026-10-13 (origin/main)
+cloned sandbox-runtime
+sandbox-runtime: 9a277e5 2026-10-13 (origin/main)
+cloned quickjs-rs
+quickjs-rs: 278cf32 2026-07-24 (origin/main)
+cloned bashkit
+bashkit: b7904a4 2026-10-15 (origin/main)
+cloned llm-wasm-sandbox
+llm-wasm-sandbox: 680c927 2025-11-27 (origin/master)
+cloned amla-sandbox
+amla-sandbox: 169384f 2026-05-15 (origin/main)
+DONE2
+# S10 wave (2026-10-15), shallow clones (--depth 1), read-only
+cpython-wasi-build: 7ce0aaf 2026-10-09 (origin/main) — Brett Cannon's prebuilt CPython WASI binaries (release assets used: v3.14.7)
+langchain-sandbox: fac037c 2026-01-14 (origin/main) — archived upstream ("no longer maintained")
+microsandbox: 0feec23 2026-10-15 (origin/main)
+wasi-wheels (dicej): b28844f 2025-10-20 cloned, read, then DELETED — no licence file and no licence in the GitHub API; cited from the README text read before deletion and from release metadata
+# S11 wave (2026-10-15): no new reference clones. Packages executed from PyPI (never added to vfs): pythonmonkey 1.3.2, mini-racer 0.14.1, wasmtime 49.0.0; nodejs-wheel looked up on PyPI only. The s10 Pyodide 0.28.3 npm copy was duplicated into experiments/s11/untrusted/pyodide-pm/ (git-ignored) with one guarded line (the shared-memory probe), see 12-python-anywhere.md.

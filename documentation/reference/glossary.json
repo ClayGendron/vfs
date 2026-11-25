@@ -1,0 +1,67 @@
+[
+  {
+    "term": "Arm",
+    "summary": "One plain file pattern, with no {a,b} choices in it.",
+    "types": []
+  },
+  {
+    "term": "Entry",
+    "summary": "One file or directory in the file tree.",
+    "types": ["Entry"]
+  },
+  {
+    "term": "Interrupt",
+    "summary": "A question a stopped job needs a person to answer, with a message, the form of the answer, and a preview of the change.",
+    "types": []
+  },
+  {
+    "term": "Job",
+    "summary": "One piece of work a caller asks of VFS, saved only when it stops to ask a person and carried on with the answer.",
+    "types": []
+  },
+  {
+    "term": "Kernel",
+    "summary": "The object that holds the file tree, checks every call and sends it to the storage that holds the path.",
+    "types": ["AsyncVirtualFileSystem"]
+  },
+  {
+    "term": "Mount",
+    "summary": "Storage attached at a path in the file tree.",
+    "types": ["Mount"]
+  },
+  {
+    "term": "Policy",
+    "summary": "A rule the application writes as a function, which sees each step before it runs and allows it, denies it, or asks a person.",
+    "types": []
+  },
+  {
+    "term": "Session",
+    "summary": "The record VFS keeps of one conversation with an agent, which remembers the files the agent has seen and where its shell is.",
+    "types": ["AsyncSession"]
+  },
+  {
+    "term": "Stamp",
+    "summary": "A note a session keeps that the agent has seen one path, and what was there when it did.",
+    "types": []
+  },
+  {
+    "term": "Step",
+    "summary": "One action VFS is about to take, described before it happens so a policy can decide whether it may run.",
+    "types": []
+  },
+  {
+    "term": "Storage",
+    "summary": "An object that keeps entries and answers the calls on them, attached to the file tree as a mount.",
+    "types": ["StorageBackend"]
+  },
+  {
+    "term": "Turn",
+    "summary": "One message from the user and everything the agent does to answer it, as one part of a session.",
+    "types": []
+  },
+  {
+    "term": "Vid",
+    "summary": "A short code, named for version and id, that stands for one file at one version, so a change can require it.",
+    "types": []
+  }
+]

@@ -112,8 +112,8 @@ class Everything(PatternSearcher):
     async def grants(self, **kwargs: Any) -> Result:
         return _ok("grants")
 
-    async def posture(self, **kwargs: Any) -> Result:
-        return _ok("posture")
+    async def set_posture(self, **kwargs: Any) -> Result:
+        return _ok("set_posture")
 
     async def add_member(self, **kwargs: Any) -> Result:
         return _ok("add_member")

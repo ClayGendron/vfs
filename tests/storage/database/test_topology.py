@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import event, select
-from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine.default import DefaultDialect
 
 from tests.support.commit_worlds import (
@@ -41,8 +41,6 @@ from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
     GENERIC,
-    MARIADB,
-    MSSQL,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -99,18 +97,17 @@ class TestTopologyOptions:
 
     def test_topology_options_carry_the_writer_marker_only_on_unpinned_engines(self) -> None:
         assert topology_execution_options(SQLITE) == {"vfs_writer": True}
-        assert topology_execution_options(MSSQL) == {"vfs_writer": True}
         assert topology_execution_options(GENERIC) == {"vfs_writer": True}
 
     def test_topology_options_pin_read_committed_where_declared(self) -> None:
-        for profile in (POSTGRESQL, MARIADB, PROFILES["mariadb"]):
+        for profile in (POSTGRESQL, PROFILES["postgresql"]):
             options = topology_execution_options(profile)
             assert options == {"vfs_writer": True, "isolation_level": "READ COMMITTED"}
 
     def test_topology_pin_never_borrows_the_op_pin(self) -> None:
-        # MySQL ops run REPEATABLE READ; its topology pin must differ.
-        assert op_execution_options(MARIADB, writer=True)["isolation_level"] == "REPEATABLE READ"
-        assert topology_execution_options(MARIADB)["isolation_level"] == "READ COMMITTED"
+        # Postgres ops run REPEATABLE READ; its topology pin must differ.
+        assert op_execution_options(POSTGRESQL, writer=True)["isolation_level"] == "REPEATABLE READ"
+        assert topology_execution_options(POSTGRESQL)["isolation_level"] == "READ COMMITTED"
 
 
 class TestAdvisoryKey:
@@ -143,9 +140,6 @@ class _StatementCapture:
 _SPELLINGS = [
     pytest.param(SQLITE, sqlite.dialect(), None, id="sqlite"),
     pytest.param(POSTGRESQL, postgresql.dialect(), "FOR UPDATE", id="postgresql"),
-    pytest.param(MARIADB, mysql.dialect(), "FOR UPDATE", id="mariadb"),
-    pytest.param(MSSQL, mssql.dialect(), "WITH (UPDLOCK, FORCESEEK)", id="mssql"),
-    pytest.param(PROFILES["oracle"], oracle.dialect(), "FOR UPDATE", id="oracle"),
     pytest.param(GENERIC, DefaultDialect(), "FOR UPDATE", id="generic"),
 ]
 
@@ -156,7 +150,8 @@ class TestSerializationPoint:
     @pytest.mark.parametrize(("profile", "dialect", "spelling"), _SPELLINGS)
     async def test_one_locking_read_of_the_lock_row(self, profile, dialect, spelling) -> None:
         capture = _StatementCapture()
-        await serialize(cast("AsyncSession", capture), profile, build_vfs_tables().lock)
+        del profile
+        await serialize(cast("AsyncSession", capture), build_vfs_tables().lock)
         [stmt] = capture.statements
         sql = str(stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
         assert sql.lstrip().startswith("SELECT") and "vfs_lock" in sql and "vfs_meta" not in sql
@@ -267,7 +262,7 @@ def _pair(src: str, dest: str) -> list[ResolvedPair]:
 
 async def _postures(storage: DatabaseStorage, rows: list[tuple[str, Posture]]) -> None:
     for path, level in rows:
-        assert (await storage.posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
 
 
 async def _transfer(storage: DatabaseStorage, verb: str, pairs: list[ResolvedPair], who: Authority) -> Result:
@@ -389,7 +384,7 @@ class TestDestinationsAreJudged:
         for storage in stores:
             await dest_world(storage)
             if opening == "open":
-                assert (await storage.posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success
+                assert (await storage.set_posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success
             else:
                 granted = await storage.grant(path=Path("/dst/c/sub"), principal="eve", level="add", authority=SYSTEM)
                 assert granted.success is True
@@ -411,8 +406,8 @@ class TestDestinationsAreJudged:
         """
         storage = InMemoryStorage()
         await dest_world(storage)
-        assert (await storage.posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/dst/c/closed"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/dst/c/sub"), posture="add", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/dst/c/closed"), posture="none", authority=SYSTEM)).success is True
         sessions = attempts(monkeypatch, storage)
         seam_name = "transfer:post-snapshot" if verb == "copy" else "transfer:post-collect"
         act = clearing(seam_name, lambda: land(sessions[-1], storage._host.tables, "/src/closed", "eve", "read_write"))
@@ -426,8 +421,8 @@ class TestDestinationsAreJudged:
         storage = InMemoryStorage()
         await dest_world(storage)
         assert (await storage.write(entries=[Entry(path=Path("/tmp/x"), kind="directory")], parents=True)).success
-        assert (await storage.posture(path=Path("/tmp"), posture="add", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/dst/c/in/sub"), posture=sub, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/tmp"), posture="add", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/dst/c/in/sub"), posture=sub, authority=SYSTEM)).success is True
         return storage
 
     async def test_a_pair_whose_source_an_earlier_pair_grew_is_refused_in_place(self, monkeypatch) -> None:
@@ -454,7 +449,7 @@ class TestDestinationsAreJudged:
         it rewrote. Without them the second pair redrives into a conflict.
         """
         storage = await self._grown_world(sub="none")
-        assert (await storage.posture(path=Path("/tmp"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/tmp"), posture="read_write", authority=SYSTEM)).success is True
         sessions = attempts(monkeypatch, storage)
         result = await storage.move(operations=_GROWN, authority=EVE)
         assert len(sessions) == 1

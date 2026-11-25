@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": "sub i=1\nloop i=1\nsub i=2\nloop i=2\nsub i=3\nloop i=3\n",
+  "stderr": "bash: line 4: break: only meaningful in a `for', `while', or `until' loop\n"
+}

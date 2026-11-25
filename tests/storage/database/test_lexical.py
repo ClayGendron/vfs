@@ -10,13 +10,14 @@ from functools import partial
 from typing import Any
 
 from sqlalchemy import event, func, select, update
-from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.lexical import pure_score_blocks, pure_tokenize
 from tests.support.oracles.postings import decode_postings, decode_varints
+from tests.support.statements import is_statistics_statement
 from vfs.models import Entry
 from vfs.models import lexical as lexical_model
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, term_weight
@@ -59,7 +60,7 @@ async def _seeded(tmp_path) -> DatabaseStorage:
 
 async def _seed_lexical_rows(storage: DatabaseStorage, epoch: int) -> None:
     tables = storage._host.tables
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(
             tables.lex_stats.insert(), [{"epoch": epoch, "n_docs": 1, "avg_dl": 1.0, "k1": BM25_K1, "b": BM25_B}]
         )
@@ -245,7 +246,7 @@ class TestBuild:
         posting scan already read."""
         assert "profile" not in inspect.signature(lexical_store.lexical_scan_page).parameters
         page = lexical_store.lexical_scan_page(build_vfs_tables(), after=1_000)
-        for dialect in (sqlite.dialect(), postgresql.dialect(), mssql.dialect(), oracle.dialect()):
+        for dialect in (sqlite.dialect(), postgresql.dialect()):
             sql = str(page.compile(dialect=dialect))
             assert "vfs_chunks" in sql and "vfs_entries" not in sql, (dialect.name, sql)
 
@@ -332,7 +333,7 @@ class TestReclaim:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -345,7 +346,10 @@ class TestReclaim:
     async def test_reclaim_built_epoch_never_touches_the_published_rows(self, tmp_path) -> None:
         storage = await _seeded(tmp_path)
         await _seed_lexical_rows(storage, 7)
+        # Begun as a verb's writer is: a plain transaction that then writes is refused if the rebuild's statistics
+        # pass commits in between.
         async with storage._host.session_factory() as session, session.begin():
+            await begin_as_writer(session)
             assert (await indexing.reclaim_built_epoch(session, storage._host.tables, 7)).success is True
         for table in _lexical_tables(storage):
             assert await _count(storage, table, epoch=7) == 0
@@ -395,7 +399,8 @@ class TestTermStatistics:
 
         @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            if "lex_df" in statement:
+            # A statistics pass's ANALYZE of the table can land in the window; it is not the probe's.
+            if "lex_df" in statement and not is_statistics_statement(statement):
                 probes.append(statement)
 
         terms = [f"t{i}" for i in range(7)] + ["rows"]
@@ -442,7 +447,7 @@ class TestBatchBudgets:
 
     async def test_the_scan_reads_keyset_pages_never_an_open_cursor(self, tmp_path, monkeypatch) -> None:
         """A write between batches on a connection with an open cursor is
-        refused by drivers without MARS (SQL Server over ODBC); the scan
+        refused by drivers without multiple active result sets; the scan
         must fetch each page whole before the build writes."""
         monkeypatch.setattr(lexical_store, "_SCAN_PAGE_ROWS", 1)
         storage = DatabaseStorage(url=_url(tmp_path))

@@ -118,7 +118,7 @@ From day one, VFS was designed to run for AI agents in the cloud, and two archit
 
 ![The VFS architecture. An AI agent and the VFS kernel run in one application process, and the kernel is the one layer that talks to the database and to the host machine. Access to the host is off by default, and each kind of access is an explicit grant.](images/architecture.svg)
 
-These choices let the same kernel run anywhere a database can be reached. For a web application, the database is a server in the cloud. For a coding agent on a laptop, it is a SQLite file. VFS supports Postgres, SQL Server, and Oracle so that most developers and most cloud deployments can adopt it with the database they already run.
+These choices let the same kernel run anywhere a database can be reached. For a web application, the database is a server in the cloud. For a coding agent on a laptop, it is a SQLite file. VFS supports two databases, SQLite and Postgres. SQLite serves demos and local applications, and Postgres serves production.
 
 ## How VFS Enforces Governance
 

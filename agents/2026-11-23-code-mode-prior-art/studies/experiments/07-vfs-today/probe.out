@@ -1,0 +1,24 @@
+capabilities has run: False
+P1 run on a stored path: success=False rows=[] errors=[(<ErrorKind.unsupported: 'vfs.unsupported'>, <Severity.error: 'error'>, '/', "Unsupported: operation 'run' is not declared by the storage mounted here")]
+P1b run with bad arguments: success=False rows=[] errors=[(<ErrorKind.invalid: 'vfs.invalid'>, <Severity.error: 'error'>, None, 'Invalid: run arguments must be a dict, got str')]
+P2 write /.agents TOOL.md: success=True rows=['/.agents/tools/deploy/TOOL.md'] errors=[]
+P2b write ordinary file: success=True rows=['/docs/release.md'] errors=[]
+P3 write /.vfs/tools manifest: success=True rows=['/.vfs/tools/deploy/TOOL.md'] errors=[]
+P3b write /.vfs/bin/jq.wasm: success=True rows=['/.vfs/bin/jq.wasm'] errors=[]
+P3c write /.vfs/run/1/stdout: success=True rows=['/.vfs/run/1/stdout'] errors=[]
+rebuild success: True
+P4 unscoped search 'deploy production release': success=True rows=['/.agents/tools/deploy/TOOL.md', '/docs/release.md'] errors=[]
+P4b search scoped to /.vfs/tools: success=True rows=['/.vfs/tools/deploy/TOOL.md'] errors=[]
+P4c unscoped grep 'destructiveHint': success=True rows=['/.agents/tools/deploy/TOOL.md'] errors=[]
+P4d grep scoped to /.vfs/tools: success=True rows=['/.vfs/tools/deploy/TOOL.md'] errors=[]
+P4e unscoped glob **/TOOL.md: success=True rows=['/.agents/tools/deploy/TOOL.md'] errors=[]
+P4f ls /.vfs: success=True rows=['/.vfs/bin', '/.vfs/run', '/.vfs/tools', '/.vfs/trash'] errors=[]
+P5 posture /.agents/tools none: success=True rows=[] errors=[]
+P5b grant alice read /.agents/tools/deploy: success=True rows=[] errors=[]
+P5c search as alice: success=True rows=['/.agents/tools/deploy/TOOL.md', '/docs/release.md'] errors=[]
+P5d search as bob: success=True rows=['/docs/release.md'] errors=[]
+P5e read manifest as bob: success=False rows=[] errors=[(<ErrorKind.not_found: 'vfs.not_found'>, <Severity.error: 'error'>, '/.agents/tools', 'Not found')]
+P5f run as bob: success=False rows=[] errors=[(<ErrorKind.unsupported: 'vfs.unsupported'>, <Severity.error: 'error'>, '/', "Unsupported: operation 'run' is not declared by the storage mounted here")]
+P6 payload keys: ['errors', 'observations', 'ops', 'success'] row keys: ['content', 'content_hash', 'created_at', 'kind', 'path', 'populated', 'size_bytes', 'source', 'updated_at', 'version']
+P6 payload chars: 817
+P6 to_str first line: ---

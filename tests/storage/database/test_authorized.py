@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -34,7 +35,7 @@ from tests.support.commit_worlds import (
     row_at,
     stamp,
 )
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, _waits_out_every_lock
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry
@@ -307,8 +308,8 @@ async def _agreement_world(storage: DatabaseStorage) -> None:
     await drop_world(storage)
     written = await storage.write(entries=[Entry(path=Path("/drop/h/pub/f.txt"), content="p")], parents=True)
     assert written.success is True
-    assert (await storage.posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
     assert (await storage.write(entries=[Entry(path=Path("/drop/a.txt"), content="a")], authority=ALICE)).success
     assert (await storage.delete(path=Path("/drop/a.txt"), authority=ALICE)).success is True
     road = Edge(source=Path("/drop/e/f.txt"), target=Path("/drop/h"), edge_type="in")
@@ -329,7 +330,7 @@ def _agreement_calls(storage: DatabaseStorage, case: str) -> tuple[list[Any], Ca
         "write-overwrite": ([], lambda: s.write(entries=[Entry(path=f, content="e2")], authority=EVE)),
         "write-new-no-overwrite": (
             [],
-            lambda: s.write(entries=[Entry(path=Path("/drop/e/n.txt"), content="n")], overwrite=False, authority=EVE),
+            lambda: s.write(entries=[Entry(path=Path("/drop/e/n.txt"), content="n")], if_absent=True, authority=EVE),
         ),
         "write-parents": (
             [],
@@ -613,7 +614,7 @@ async def _gate_world(size: int, *, url: str | None = None) -> DatabaseStorage:
 
 async def _postures(storage: DatabaseStorage, rows: list[tuple[str, Any]]) -> None:
     for path, level in rows:
-        assert (await storage.posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
 
 
 async def _probes(storage: DatabaseStorage) -> dict[str, tuple[str, tuple[Any, ...]]]:
@@ -637,12 +638,12 @@ async def _probes(storage: DatabaseStorage) -> dict[str, tuple[str, tuple[Any, .
 
 def _on_file(database: str, sql: str) -> None:
     """Run one statement on the store's file beside the backend, waiting out the backend's own writer."""
-    with sqlite3.connect(database, timeout=30) as connection:
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         connection.execute(sql)
 
 
 def _plan(database: str, sql: str, parameters: tuple[Any, ...]) -> list[str]:
-    with sqlite3.connect(database, timeout=30) as connection:
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         return [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters)]
 
 
@@ -654,7 +655,7 @@ def _steps(database: str, sql: str, parameters: tuple[Any, ...]) -> int:
         ticks[0] += 1
         return 0
 
-    with sqlite3.connect(database, timeout=30) as connection:
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         connection.set_progress_handler(tick, 100)
         connection.execute(sql, parameters).fetchall()
     return ticks[0]
@@ -677,6 +678,10 @@ class TestClosedWindows:
         url = _url(tmp_path)
         storage = InMemoryStorage() if backend == "memory" else DatabaseStorage(url=url)
         second = storage if backend == "memory" else DatabaseStorage(url=url)
+        if second is not storage:
+            # The rival waits on the verb's commit, never on the busy budget.
+            _waits_out_every_lock(storage)
+            _waits_out_every_lock(second)
         world = {"landing": drop_world, "late-row": drop_world, "revoke": grant_world}[window]
         await world(storage)
         sessions = attempts(monkeypatch, storage)

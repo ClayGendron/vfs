@@ -27,10 +27,10 @@ A `VirtualFileSystem` node routes a namespace. Give it a storage backend and it 
 Synchronous, for scripts and notebooks:
 
 ```python
-from vfs import DatabaseStorage, VirtualFileSystem
+from vfs import SQLiteStorage, VirtualFileSystem
 
 with VirtualFileSystem() as root:
-    root.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge")
+    root.add_mount(SQLiteStorage(path="knowledge.db"), "/knowledge")
     written = root.write(path="/knowledge/policies/mfa.md", content="All logins require MFA.", parents=True)
     found = root.grep("MFA", paths=("/knowledge",))
 assert written.success and found.success
@@ -39,17 +39,17 @@ assert written.success and found.success
 Asynchronous, for servers and agents:
 
 ```python
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from vfs import AsyncVirtualFileSystem
 
-# Your application's engine and session factory — any SQLAlchemy URL works.
-engine = create_async_engine("sqlite+aiosqlite:///enterprise.db")
-sessions = async_sessionmaker(engine, expire_on_commit=False)
+# PostgresStorage(url=...) takes the same arguments. Engine arguments size the pool the storage builds.
+enterprise = SQLiteStorage(
+    path="enterprise.db",
+    engine_arguments={"pool_size": 5, "pool_pre_ping": True},
+)
 
 kernel = AsyncVirtualFileSystem()
-await kernel.add_mount(DatabaseStorage(session_factory=sessions), "/enterprise")
-await kernel.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge", permissions="read")
+await kernel.add_mount(enterprise, "/enterprise")
+await kernel.add_mount(SQLiteStorage(path="knowledge.db"), "/knowledge", permissions="read")
 
 written = await kernel.write(path="/enterprise/policies/mfa.md", content="All logins require MFA.", parents=True)
 result = await kernel.grep("MFA", paths=("/enterprise",))
@@ -57,7 +57,7 @@ ranked = await kernel.search("do logins need a second factor?", limit=10)
 assert written.success and result.success and ranked.success
 ```
 
-A `VirtualFileSystem()` built with no `storage` gets an `InMemoryStorage` at `/`: a `DatabaseStorage` over a private in-process SQLite database. Writes outside every mount land there and live as long as the process; pass `storage=` to put something durable at the root.
+A `VirtualFileSystem()` built with no `storage` gets an `InMemoryStorage` at `/`: an `SQLiteStorage` over a private in-process database. Writes outside every mount land there and live as long as the process; pass `storage=` to put something durable at the root.
 
 Mounts can be bound at any depth, and every path an agent sees stays in its own coordinates: results are rebased on the way back up, so `/enterprise/policies/mfa.md` is the same name no matter which store answered it.
 
@@ -117,12 +117,12 @@ A node *holds* its storage rather than *being* it. Backends implement small prot
 ```python
 from vfs import InMemoryStorage, VirtualFileSystem
 
-node = VirtualFileSystem(storage=InMemoryStorage())  # a DatabaseStorage on a private in-process SQLite
+node = VirtualFileSystem(storage=InMemoryStorage())  # an SQLiteStorage over a private in-process database
 assert {"read", "glob", "grep", "search", "write"} <= node.capabilities()
 node.close()
 ```
 
-Database backends come in exactly two constructions: give one a URL and it builds and owns its engine, or hand it your application's session factory and it borrows yours — ownership follows construction, never a flag.
+A database backend builds its engine from a URL, owns it, and disposes it at `close()`. Pass `engine_arguments=` for what a URL cannot carry (the pool's size and class, `pool_pre_ping`, `connect_args`, `async_creator`). The engine is at `storage.engine` for listeners alone: put a `do_connect` hook or tracing on `storage.engine.sync_engine`, and open no connection or session on it, which beside a call on an in-memory storage costs the database.
 
 Permissions compose the same way: each node carries a permission map (`"read"`, `"read_write"`, or a per-prefix map of those two), enforced at the routing chokepoint before anything dispatches. The map lives on the node, not on the data: two nodes over one schema do not see each other's maps.
 
@@ -135,14 +135,14 @@ The namespace is designed to be an agent's whole toolbox behind one MCP tool: ve
 What the tree does not do yet, and where each decision lives.
 
 - **Permissions are enforced at the node.** The mount-level and per-prefix map is checked before dispatch; row-level grants are landed ([spec 058](context/specifications/archive/058-row-level-permission-grants/spec.md)).
-- **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it. Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table.
+- **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it. `add_mount(storage, path, posture="none")` mounts a storage closed, with the posture in force before the mount can be reached. Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table.
 - **`copy` and `move` do not cross a mount boundary.** They come back `cross_mount`; copy a file across mounts with `read` and `write` ([spec 160](context/specifications/active/160-cross-mount-copy-as-read-plus-write/spec.md) lifts this for files).
 - **`edit` does not touch a binary body.** It refuses `wrong_kind`; replace the bytes with `write(data=...)` ([spec 154](context/specifications/archive/154-errors-are-facts/spec.md)).
 - **Neither face is a storage and neither can be mounted.** `add_mount` takes a storage backend ([spec 156](context/specifications/active/156-mount-admission/spec.md) makes the refusal explicit).
 
 ## Status
 
-- **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `search` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 4,564 tests at 100% coverage, green on SQLite, Postgres, MariaDB, SQL Server and Oracle.
+- **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `search` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 4,564 tests at 100% coverage, green on SQLite and Postgres.
 - **Under review:** row-level grants at scale (specs 058 and 150) and binary bodies (spec 152).
 - **Next:** the MCP surface (serve the namespace as one tool; mount MCP servers), the local file backend, the graph engine re-homed behind its protocol family, tools at paths, and a version row on every mutation.
 - **Released:** the newest alpha of this rebuild is on PyPI as `vfs-py`; the [releases](https://github.com/ClayGendron/vfs/releases) are the changelog. The `0.0.x` releases are yanked.

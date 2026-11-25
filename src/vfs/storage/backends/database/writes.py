@@ -73,28 +73,26 @@ from vfs.storage.backends.database.descent import (
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     StaleSnapshot,
-    ValueCap,
     bulk_insert,
     chunked,
     rows_per_statement,
     statement_budget,
     supports_values_update,
-    wire_bytes,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
-from vfs.storage.backends.database.staging import StagedEntry, WritePlan
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists, stale_version
 from vfs.storage.backends.database.versions import mint_versions
-from vfs.storage.editing import edited_entry
+from vfs.storage.editing import appended, edited_entry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import Column, ColumnElement, FromClause, Table, Update
+    from sqlalchemy import Column, ColumnElement, FromClause, Select, Table, Update
     from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
     from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
     from sqlalchemy.engine import CursorResult, RowMapping
@@ -102,6 +100,7 @@ if TYPE_CHECKING:
 
     from vfs.authority import Authority
     from vfs.models.rows import VFSTables
+    from vfs.ops import Rung
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.replace import EditOperation
@@ -162,11 +161,7 @@ async def measured_entries(entries: list[Entry], executor: Executor) -> tuple[li
     if refused:
         return [], refused
     bodies = [(index, body) for index, entry in enumerate(snapshots) if (body := _body(entry)) is not None]
-    total = sum(len(body) for _, body in bodies)
-    if total < MEASURE_OFFLOAD_BYTES:
-        metrics = [_measure(body) for _, body in bodies]
-    else:
-        metrics = await call_offloaded(executor, lambda: [_measure(body) for _, body in bodies])
+    metrics = await _measured([body for _, body in bodies], executor)
     measured = list(snapshots)
     for (index, _), found in zip(bodies, metrics, strict=True):
         measured[index] = snapshots[index].model_copy(update=found._asdict())
@@ -184,7 +179,7 @@ async def write_rows(
     overwrite: bool,
     parents: bool,
     authority: Authority | None,
-    value_cap: ValueCap | None = None,
+    if_versions: Mapping[Path, int] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
 
@@ -192,18 +187,27 @@ async def write_rows(
     ladder — key-byte budget, POSIX parent rule, site check — against
     committed-plus-staged state, so entries may rely on parents minted
     earlier in the same batch. Directories route through ``put_dir``
-    (an existing directory is "unchanged", a file at the site is
-    ``wrong_kind``); files route through ``put_file`` (a directory at
-    the site is ``wrong_kind``; an occupied site needs ``overwrite``).
-    Any error fails the whole batch before a statement runs. Its
+    (an existing directory is "unchanged", or ``exists`` when
+    ``overwrite`` is false; a file at the site is ``wrong_kind``);
+    files route through ``put_file`` (an occupied site is ``exists``
+    when ``overwrite`` is false, whatever its kind; otherwise a
+    directory at the site is ``wrong_kind``).
+    A file that already holds its entry's body is "unchanged" and is
+    not written. Any error fails the whole batch before a statement runs. Its
     entries are already measured by :func:`measured_entries`; it stores
     the metrics it is handed.
+
+    *if_versions* maps a file's path to the version its caller expects
+    to replace. A file at another version is ``conflict``, judged from
+    the snapshot at no statement, and a path with no key is replaced
+    whatever its version.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    expected = if_versions or {}
     for entry in entries:
         if entry.kind == "directory":
-            status = plan.put_dir(entry.path, parents=parents)
+            status = plan.put_dir(entry.path, parents=parents, exclusive=not overwrite)
         else:
             status = plan.put_file(
                 entry.path,
@@ -218,6 +222,7 @@ async def write_rows(
                 owner_id=entry.owner_id,
                 data=entry.data,
                 source=entry.source,
+                expected=expected.get(entry.path),
             )
         if status is not None:
             plan.pending.append((entry.path, status))
@@ -306,6 +311,98 @@ async def edit_rows(
     return await _finish(session, tables, profile, parameter_budget, membership_budget, plan, op="edit", overwrite=True)
 
 
+async def append_rows(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    *,
+    entry: Entry,
+    expected: int | None,
+    parents: bool,
+    authority: Authority | None,
+    executor: Executor,
+    primary: Rung,
+) -> Result:
+    """Add *entry*'s body to the end of the file at its path, in the caller's transaction.
+
+    The row is locked first, so a rival appender waits for this
+    transaction to end, and the body is read by a later statement,
+    which at the append's isolation sees what that rival committed.
+    One statement cannot do both: a locking read that waited checks the
+    locked row again, and never the body row joined to it.
+
+    No live file at the path leaves the tail as the whole body: an
+    absent path is created and a deleted file comes back, as a write
+    does. The rest is a write's plan and a write's statements, the
+    guard included, with *expected* judged as a write judges it.
+
+    A rival can still win where the lock cannot reach: two appends that
+    both create an absent path. The loser raises :class:`StaleSnapshot`,
+    so its call runs again and appends to the row the winner made. It
+    never answers ``exists``, and it never replaces the winner's row.
+    A staged update of another's row is judged at *primary*, the rung
+    the caller's gate was judged at.
+
+    The cost grows with the file, not the tail: each append reads the
+    whole stored body, writes the whole joined body, and the version
+    mint keeps the whole body it replaced. N appends to one file keep
+    N full copies in its history, which only the trash sweep removes.
+    The direction is a version that keeps only what an append added.
+    """
+    target, rows = entry.path, tables.entry
+    await session.execute(locked_lookup(rows.c.path, [str(target)], [rows.c.entry_id], profile))
+    committed = await _fetch_committed(session, tables, profile, membership_budget, {target}, with_data=True)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    body = _body(entry)
+    assert body is not None  # measured_entries refused a file with no body
+    kind, mime_type = entry.kind, entry.mime_type
+    metrics = BodyMetrics(entry.content_hash or "", entry.size_bytes, entry.lines)
+    row = committed.get(str(target))
+    if row is not None and row["deleted_at"] is None and row["kind"] in CONTENT_KINDS:
+        stored = (row["data"] or b"") if row["source"] == "bytes" else (row["content"] or "")
+        body = appended(stored, body)
+        kind, mime_type = row["kind"], row["mime_type"]
+        (metrics,) = await _measured([body], executor)
+    text = isinstance(body, str)
+    status = plan.put_file(
+        target,
+        kind=kind,
+        content=body if text else None,
+        content_hash=metrics.content_hash,
+        size_bytes=metrics.size_bytes,
+        lines=metrics.lines,
+        mime_type=mime_type,
+        overwrite=True,
+        parents=parents,
+        owner_id=entry.owner_id,
+        data=None if text else body,
+        source="text" if text else "bytes",
+        expected=expected,
+    )
+    if status is not None:
+        plan.pending.append((target, status))
+    # A create that loses its name never lands on the winner's row, and the row is judged at the rung of an append.
+    result = await _finish(
+        session,
+        tables,
+        profile,
+        parameter_budget,
+        membership_budget,
+        plan,
+        op="write",
+        overwrite=False,
+        primary=primary,
+    )
+    if any(
+        error.kind == ErrorKind.exists or (error.kind == ErrorKind.conflict and error.retryable)
+        for error in result.errors
+    ):
+        raise StaleSnapshot(f"a rival wrote {target} while it was appended to")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -319,8 +416,12 @@ async def _fetch_committed(
     targets: set[Path],
     *,
     with_content: bool = False,
+    with_data: bool = False,
 ) -> dict[str, RowMapping]:
-    """One bounded fetch seeds the plan: targets, ancestors, the root — tombstones included, for the plan to judge."""
+    """One bounded fetch seeds the plan: targets, ancestors, the root — tombstones included, for the plan to judge.
+
+    *with_content* joins each row's text, and *with_data* its bytes body beside the text.
+    """
     await seam("write:before-snapshot")
     entry = tables.entry
     columns: list[Column[object]] = [
@@ -334,10 +435,14 @@ async def _fetch_committed(
         entry.c.everyone_level,
         entry.c.source,
         entry.c.size_bytes,
+        entry.c.content_hash,
         entry.c.deleted_at,
     ]
     source: FromClause | None = None
-    if with_content:
+    if with_data:
+        columns += [tables.content.c.content, tables.blobs.c.data]
+        source = tables.bodies_joined(content=True, data=True)
+    elif with_content:
         columns.append(tables.content.c.content)
         source = tables.content_joined()
     paths = targets_with_ancestors(targets)
@@ -354,9 +459,16 @@ async def _finish(
     *,
     op: str,
     overwrite: bool,
+    primary: Rung | None = None,
 ) -> Result:
-    """Execute an error-free plan and assemble the batch's observations."""
-    admit_staged(session, op, plan)
+    """Execute an error-free plan and assemble the batch's observations.
+
+    *primary* is the rung a staged update is judged at, where it is not the verb's own.
+    """
+    admit_staged(session, op, plan, primary)
+    # After the rights check on purpose: "unchanged" tells a caller its body
+    # equals the stored one, so only a caller who may change the row hears it.
+    plan.settle()
     if plan.errors:
         return Result(ops=(op,), errors=plan.errors)
     # The guard's window: snapshot read and staging behind us, no
@@ -437,8 +549,6 @@ async def _apply(
     ]
     await mint_versions(session, tables, profile, membership_budget, replaced, authority=plan.authority, now=now)
     page = _BlobPage(BLOB_PAGE_BYTES, _blob_row_size)
-    if plan.value_cap is not None:
-        page = _BlobPage(min(BLOB_PAGE_BYTES, plan.value_cap.limit), _blob_wire_size)
     fresh_ids = frozenset(staged.entry_id for staged in fresh)
     await _replace_bodies(session, tables, profile, membership_budget, ordered, now, page, fresh_ids=fresh_ids)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
@@ -567,10 +677,7 @@ async def _classify_arbitration_loss(
     the mkdir-p forgiveness the sequential gates grant — and returns no
     error.
     """
-    occupant_query = select(entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version).where(
-        entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
-    )
-    occupant = (await session.execute(occupant_query)).one_or_none()
+    occupant = (await session.execute(_occupant_query(entry, row_values))).one_or_none()
     if occupant is None:
         raise StaleSnapshot(f"the rival that beat {staged.path} is not observable from this snapshot")
     if occupant.path != str(staged.path):
@@ -580,7 +687,13 @@ async def _classify_arbitration_loss(
         return None
     if clobber:
         return wrong_kind("directory", staged.path, target=staged.path)
-    return already_exists(staged.path, target=staged.path)
+    return occupant_exists(staged.path, occupant.version, occupant.content_hash)
+
+
+def _occupant_query(entry: Table, row_values: Mapping[str, object]) -> Select[Any]:
+    """The row that holds the name a create lost: its identity, its address and what an ``exists`` names."""
+    columns = (entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version, entry.c.content_hash)
+    return select(*columns).where(entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"])
 
 
 def _incoherent_row(path: Path) -> ResultError:
@@ -649,10 +762,7 @@ async def _resolve_rows(
             continue
         except IntegrityError:
             pass
-        occupant_query = select(entry.c.entry_id, entry.c.kind, entry.c.path, entry.c.version).where(
-            entry.c.parent_id == row_values["parent_id"], entry.c.name == row_values["name"]
-        )
-        occupant = (await session.execute(occupant_query)).one_or_none()
+        occupant = (await session.execute(_occupant_query(entry, row_values))).one_or_none()
         if occupant is None:
             raise StaleSnapshot(f"the rival that beat {staged.path} is not observable from this snapshot")
         if occupant.path != str(staged.path):
@@ -666,7 +776,7 @@ async def _resolve_rows(
         elif staged.kind != "directory" and overwrite:
             errors.append(wrong_kind("directory", staged.path, target=staged.path))
         else:
-            errors.append(already_exists(staged.path, target=staged.path))
+            errors.append(occupant_exists(staged.path, occupant.version, occupant.content_hash))
     return errors
 
 
@@ -947,22 +1057,29 @@ async def _classify_guard_misses(
     ``redrive``: the probe would lie about current state, so the whole
     method retries from a fresh snapshot. ``reprobe``: one chunked
     re-probe by id splits honest ``not_found`` (the row is gone) from
-    ``conflict`` (the row moved past the snapshot — version or address).
+    ``conflict`` (the row moved past the snapshot — version or address),
+    which names the version the row is at now. A row still at its path
+    that already holds the staged body retries too: the rival wrote
+    the same body, and the fresh plan answers ``unchanged``.
     """
     if not missed:
         return []
     if profile.guard_miss == "redrive":
         raise StaleSnapshot(f"{len(missed)} guarded update(s) missed their snapshot")
-    present: set[str] = set()
+    present: dict[str, Any] = {}
+    columns = (entry.c.entry_id, entry.c.path, entry.c.version, entry.c.content_hash)
     for chunk in chunked([s.entry_id for s in missed], membership_budget):
-        found = await session.execute(select(entry.c.entry_id).where(membership(entry.c.entry_id, chunk, profile)))
-        present.update(row.entry_id for row in found)
+        found = await session.execute(select(*columns).where(membership(entry.c.entry_id, chunk, profile)))
+        present.update((row.entry_id, row) for row in found)
     errors: list[ResultError] = []
     for staged in missed:
-        if staged.entry_id in present:
-            errors.append(_conflict(staged))
-        else:
+        current = present.get(staged.entry_id)
+        if current is None:
             errors.append(classified(ErrorKind.not_found, staged.path))
+        elif current.path == str(staged.path) and current.content_hash == staged.content_hash:
+            raise StaleSnapshot(f"a rival wrote the body staged for {staged.path}")
+        else:
+            errors.append(_conflict(staged, current.version))
     return errors
 
 
@@ -990,10 +1107,14 @@ def _guarded_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
     return _update_params(staged, now) | guard
 
 
-def _conflict(staged: StagedEntry) -> ResultError:
-    # Retryable by declaration: an identical immediate retry adjudicates
-    # against the rival's committed state and resolves honestly.
-    return classified(ErrorKind.conflict, staged.path, retryable=True, detail="concurrent modification")
+def _conflict(staged: StagedEntry, current: int) -> ResultError:
+    """The ``conflict`` of a row that lost its guard to a rival, naming the version the row is at now."""
+    if staged.expected_version is not None:
+        return stale_version(staged.path, current)
+    # Retryable where the caller expected no version: an identical retry
+    # is judged against the rival's committed state and resolves honestly.
+    detail = "concurrent modification"
+    return classified(ErrorKind.conflict, staged.path, retryable=True, detail=detail, data={"version": current})
 
 
 async def _replace_bodies(
@@ -1043,13 +1164,6 @@ def _blob_row_size(row: Mapping[str, object]) -> int:
     data = row["data"]
     assert isinstance(data, bytes)
     return len(data)
-
-
-def _blob_wire_size(row: Mapping[str, object]) -> int:
-    """A blob row as the MySQL family sends it: the packet cap's meter."""
-    data = row["data"]
-    assert isinstance(data, bytes)
-    return wire_bytes(data)
 
 
 def _binary_target(target: Path) -> ResultError:
@@ -1258,6 +1372,13 @@ def _body(entry: Entry) -> str | bytes | None:
 
 def _measure(body: str | bytes) -> BodyMetrics:
     return measure_text(body) if isinstance(body, str) else measure_bytes(body)
+
+
+async def _measured(bodies: list[str | bytes], executor: Executor) -> list[BodyMetrics]:
+    """Each of *bodies* measured: inline below ``MEASURE_OFFLOAD_BYTES`` in all, in one offloaded hop at it."""
+    if sum(len(body) for body in bodies) < MEASURE_OFFLOAD_BYTES:
+        return [_measure(body) for body in bodies]
+    return await call_offloaded(executor, lambda: [_measure(body) for body in bodies])
 
 
 def _stage_edits(

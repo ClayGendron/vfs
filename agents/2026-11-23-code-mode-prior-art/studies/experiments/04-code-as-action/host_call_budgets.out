@@ -1,0 +1,12 @@
+python 3.13.18
+monty, no ambient filesystem: MontyRuntimeError: PermissionError: Permission denied: '/'
+monty loop n=10: ok result=80 host_calls=10
+monty loop n=500: ok result=4890 host_calls=500
+monty loop n=999: ok result=9880 host_calls=999
+monty loop n=1000: ok result=9890 host_calls=1000
+monty loop n=1001: refused after host_calls=1000: MontyRuntimeError: RuntimeError: suspension limit 1000 exceeded
+monty loop n=2000: refused after host_calls=1000: MontyRuntimeError: RuntimeError: suspension limit 1000 exceeded
+monty loop n=10000: refused after host_calls=1000: MontyRuntimeError: RuntimeError: suspension limit 1000 exceeded
+smolagents local loop n=10: ok logs=80 host_calls=10
+smolagents local loop n=10000: ok logs=108890 host_calls=10000
+smolagents local loop n=200000: ok logs=2488890 host_calls=200000

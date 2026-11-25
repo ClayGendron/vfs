@@ -1,0 +1,7 @@
+{
+  "image": "debian@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b",
+  "bash": "5.3.15(1)-release",
+  "status": 0,
+  "stdout": ".:\ndata\ndocs\nempty.txt\nlogs\nsrc\nwith space.txt\n\n./data:\nnonl.txt\nnumbers.txt\npeople.csv\nwords.txt\n\n./docs:\na.md\nb.md\nnotes.txt\n\n./logs:\napp.log\n\n./src:\nlib\nmain.py\nutil.py\n\n./src/lib:\nhelpers.py\n",
+  "stderr": ""
+}

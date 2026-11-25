@@ -163,9 +163,43 @@ describe("the real pages", () => {
   test("a module's page shows its attributes, and the fields of a class no page pulls in by name", () => {
     const html = page(real, "reference/python-api/permissions").replace(/<!--.*?-->/g, "");
     expect(html).toContain('id="vfs.permissions.Permission"');
-    for (const field of ["permission_map", "rel", "mount_prefix"]) {
-      expect(html).toContain(`<h4 id="vfs.permissions.PermissionLayer.${field}"`);
+    // The module lists what it offers. A helper of the gate is not on its page.
+    expect(html).not.toContain("PermissionLayer");
+    const ranking = page(real, "reference/python-api/ranking").replace(/<!--.*?-->/g, "");
+    for (const field of ["source", "mount", "rank"]) {
+      expect(ranking).toContain(`<h4 id="vfs.rerank.Candidate.${field}"`);
     }
+  });
+
+  test("a glossary term shows its types, its code, its pages and its related terms", () => {
+    const html = page(real, "reference/glossary").replace(/<!--.*?-->/g, "");
+    const terms = html.split("<dl data-term").slice(1).map((rest) => rest.slice(0, rest.indexOf("</dl>")));
+    // One block per term, at the end of the term: the next thing after it is the next term's heading, or the page's end.
+    expect(terms.length).toBe((html.match(/<h2 id="/g) ?? []).length);
+    const article = html.slice(html.indexOf("<article"), html.indexOf("</article>"));
+    const after = article.split("</dl>").slice(1).map((rest) => rest.trimStart());
+    expect(after.slice(0, -1).every((rest) => rest.startsWith("<h2 "))).toBe(true);
+    expect(after[after.length - 1]).not.toContain("<h2 ");
+    // The summary is what a link to the term shows, and the page does not print it under the heading.
+    expect(html).not.toContain("<p>One file or directory in the file tree.</p>");
+    for (const term of terms) {
+      expect([...term.matchAll(/<dt[^>]*>([^<]+)<\/dt>/g)].map((label) => label[1])).toEqual([
+        "Types",
+        "Code",
+        "Documentation",
+        "Related terms",
+      ]);
+    }
+    const entry = terms.find((term) => term.includes('href="/reference/python-api/entry#vfs.Entry"'));
+    // A type links to its place on its API page, and a related term to its own heading on this page.
+    expect(entry).toContain('href="#mount"');
+    // A type or a row of code is its name alone, with no line under it saying where its page is.
+    for (const term of terms) {
+      expect(term.slice(0, term.indexOf(">Documentation</dt>"))).not.toContain("data-term-where");
+    }
+    // A term with no class of its own says so in its Types row.
+    const arm = terms[0];
+    expect(arm.slice(arm.indexOf(">Types</dt>"), arm.indexOf(">Code</dt>"))).toContain("None.");
   });
 
   test("a link that leaves the site opens in a new tab and says so", () => {
@@ -197,8 +231,8 @@ describe("the real pages", () => {
     for (const id of ids) expect(article).toContain(`class="docs-anchor" href="#${id}"`);
     // An API name and each of its members link to themselves too.
     const api = page(real, "reference/python-api/mounts").replace(/<!--.*?-->/g, "");
-    expect(api).toContain('class="docs-anchor" href="#vfs.MountInfo"');
-    expect(api).toContain('class="docs-anchor" href="#vfs.MountInfo.path"');
+    expect(api).toContain('class="docs-anchor" href="#vfs.Mount"');
+    expect(api).toContain('class="docs-anchor" href="#vfs.Mount.path"');
   });
 
   test("a local diagram is inline", () => {
@@ -333,4 +367,27 @@ test("an API block renders the name and its members", () => {
   // A heading inside a docstring is a bold line: it is no heading and has no id.
   expect(article).toMatch(/<strong>\s*Inside the Docstring\s*<\/strong>/);
   expect(article).not.toContain('id="inside-the-docstring"');
+});
+
+test("an exported type alias shows the type it stands for", () => {
+  const Size = {
+    kind: "attribute",
+    labels: [],
+    signature: null,
+    annotation: null,
+    value: "Literal['small', 'large']",
+    bases: [],
+    doc: "How big a thing is.",
+    members: [],
+  };
+  const built = build(pages({ "a.md": "# A\n\n::: vfs.Size\n" }), exported({ Size }));
+  expect(built.output).toContain("done");
+  expect(built.code).toBe(0);
+  const html = page(built, "a").replace(/<!--.*?-->/g, "");
+  const article = html.slice(html.indexOf("<article"), html.indexOf("</article>"));
+  expect(article).toMatch(/<h2 [^>]*>\s*<span data-api-symbol="attr"/);
+  // The declaration is drawn as code: the name, then the type it is assigned.
+  const text = article.replace(/<[^>]+>/g, "").replace(/&#39;|&apos;/g, "'");
+  expect(text).toContain("Size = Literal['small', 'large']");
+  expect(text).toContain("How big a thing is.");
 });

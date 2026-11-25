@@ -11,13 +11,17 @@ from __future__ import annotations
 import inspect
 from typing import get_args
 
+import pytest
+
 from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStorage
-from vfs import ops, permissions
+from vfs import mounts, ops, permissions
 from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import (
+    ADDITIVE_WRITE,
     ALL_OPS,
     DEVELOPER_OPS,
     EXEC_OPS,
+    FRONT_METHODS,
     GRANT_OPS,
     GRANT_WRITE_OPS,
     MANAGEMENT_METHODS,
@@ -93,7 +97,7 @@ def test_expected_vocabulary() -> None:
                 "grant",
                 "revoke",
                 "grants",
-                "posture",
+                "set_posture",
                 "add_member",
                 "remove_member",
             },
@@ -135,6 +139,13 @@ def test_a_mutation_never_sits_below_add() -> None:
         needs = VERB_RUNGS[op]
         assert LEVEL_RANK[needs.primary] >= LEVEL_RANK["add"], op
         assert needs.create is None or LEVEL_RANK[needs.create] >= LEVEL_RANK["add"], op
+
+
+def test_the_additive_write_sits_at_add_and_no_lower() -> None:
+    # A write that replaces nothing needs what a creation needs, on an occupied target too.
+    plain = VERB_RUNGS["write"]
+    assert (ADDITIVE_WRITE.primary, ADDITIVE_WRITE.create, ADDITIVE_WRITE.passing) == ("add", plain.create, None)
+    assert LEVEL_RANK[ADDITIVE_WRITE.primary] < LEVEL_RANK[plain.primary]
 
 
 def test_a_read_never_mints() -> None:
@@ -211,7 +222,7 @@ def test_pruned_vocabularies_are_gone() -> None:
 
 
 def test_sweep_and_mount_policy_are_developer_plane_ops() -> None:
-    assert {"sweep", "posture", "add_member", "remove_member"} == DEVELOPER_OPS
+    assert {"sweep", "set_posture", "add_member", "remove_member"} == DEVELOPER_OPS
     assert DEVELOPER_OPS <= WRITE_GATED_OPS
     assert not DEVELOPER_OPS & READ_OPS
 
@@ -271,4 +282,17 @@ def test_router_public_verbs_are_exactly_the_registered_ops() -> None:
         for name, _member in inspect.getmembers(AsyncVirtualFileSystem, inspect.iscoroutinefunction)
         if not name.startswith("_")
     }
-    assert verbs - MANAGEMENT_METHODS == ALL_OPS
+    assert verbs - MANAGEMENT_METHODS - FRONT_METHODS == ALL_OPS
+
+
+def test_the_shell_is_a_front_and_no_op() -> None:
+    """``cli`` spans every mount and no storage answers it, so it is in no op table and no mask."""
+    assert {"cli"} == FRONT_METHODS
+    assert not FRONT_METHODS & (ALL_OPS | MANAGEMENT_METHODS)
+    assert "cli" not in AsyncVirtualFileSystem().capabilities()
+    assert "cli" not in VERB_RUNGS
+
+
+def test_a_mount_cannot_mask_the_shell() -> None:
+    with pytest.raises(ValueError, match="cli"):
+        mounts.validate_deny_ops(frozenset({"cli"}))  # ty: ignore[invalid-argument-type]

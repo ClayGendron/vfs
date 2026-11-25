@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import re
+import tomllib
 from collections import Counter
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -34,9 +35,11 @@ SECURITY_SKILL_SHA256 = "ac796659de231c3ab76f6ee012836072bdc82928fb019199925c906
 
 
 # The database adapter, and the only modules outside it that may import from it:
-# the public export, the backends package's re-export, and the in-memory storage built on it.
+# the public export, the backends package's re-export, and the named storages built on it.
 ADAPTER = "vfs.storage.backends.database"
-ADAPTER_IMPORTERS = frozenset({"vfs", "vfs.storage.backends", "vfs.storage.backends.memory"})
+ADAPTER_IMPORTERS = frozenset(
+    {"vfs", "vfs.storage.backends", "vfs.storage.backends.sqlite", "vfs.storage.backends.postgres"}
+)
 
 # The layer ladder, bottom first: an import between two units points to a lower rung. A module
 # belongs to the unit that is its deepest named prefix, and units that share a rung stay apart.
@@ -57,8 +60,11 @@ LAYERS: Ladder = (
         "vfs.fanout",
         "vfs.chain",
     ),
+    ("vfs.mounts",),
+    ("vfs.listing", "vfs.cursor", "vfs.shell"),
     ("vfs.base",),
     ("vfs.session", "vfs.skills"),
+    ("vfs.sync_session",),
     ("vfs.sync",),
     ("vfs",),
 )
@@ -545,6 +551,35 @@ def test_the_clock_the_deadline_and_the_cadence_have_one_home() -> None:
     crate = {path.name: path.read_text() for path in sorted(CRATE.glob("*.rs"))}
     errors += _line_hits(crate, r"PER_CHECK|CLOCK_EVERY", "crates/vfs-core/src", "keeps a cadence of its own")
     assert not errors, "\n".join(errors)
+
+
+def test_vfs_prints_nothing_and_each_logger_is_its_modules_own() -> None:
+    """No module prints, every ``getLogger`` takes ``__name__``, and no record goes to the root logger."""
+    errors: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            where = f"src/vfs/{path.relative_to(SRC)}:{node.lineno}"
+            callee = ast.unparse(node.func)
+            if callee.rpartition(".")[2] == "print":
+                errors.append(f"{where} calls print")
+            if callee.rpartition(".")[2] == "getLogger" and (
+                [ast.unparse(arg) for arg in node.args] != ["__name__"] or node.keywords
+            ):
+                errors.append(f"{where} names a logger other than its module's")
+            if callee.partition(".")[0] == "logging" and callee != "logging.getLogger":
+                errors.append(f"{where} logs to the root logger")
+    assert not errors, "\n".join(errors)
+
+
+def test_get_started_names_the_postgres_extra_and_no_other() -> None:
+    """The install lines stay few: the base package, which serves SQLite, and the Postgres extra pyproject declares."""
+    page = (REPO / "documentation" / "get-started.md").read_text()
+    named = {name.strip() for group in re.findall(r"vfs-py\[([^\]]*)\]", page) for name in group.split(",")}
+    declared = set(tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"])
+    assert named == {"postgres"}
+    assert named <= declared, f"the page names extras pyproject.toml does not declare: {sorted(named - declared)}"
 
 
 # ---------------------------------------------------------------------------

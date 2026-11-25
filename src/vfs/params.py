@@ -4,8 +4,9 @@ One :class:`ParamSpec` row per public-verb parameter and one
 :class:`ShapeRule` set per op. Three consumers read the table: the router's
 ingress gate (``AsyncVirtualFileSystem._gate_params``), the signature drift test,
 and the wire dialect's schema projection. The module is a leaf — stdlib plus
-the ``vfs.ops``, ``vfs.authority``, and ``vfs.storage.grants`` value
-modules — so schema consumers never import the router.
+the ``vfs.ops``, ``vfs.authority``, ``vfs.paths`` and ``vfs.storage.grants``
+value modules, and the one refusal text ``vfs.results.paging`` shares with
+the storage — so schema consumers never import the router.
 
     param_violation("tree", {"max_depth": "2"})
     # → "tree max_depth must be an integer >= 1 and <= 2147483647, got '2'"
@@ -13,15 +14,17 @@ modules — so schema consumers never import the router.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
 from vfs.authority import Authority
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, TRAVERSE_METHODS, CaseMode, GrepOutputMode
 from vfs.paths import ObjectKind, validate_segment
+from vfs.results.paging import PAGE_BESIDE_MAX_COUNT
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
 
     from vfs.ops import Op
 
@@ -36,6 +39,7 @@ ParamKind = Literal[
     "int",
     "bool",
     "dict",
+    "versions",  # mapping of a path to the version expected there; each value in the spec's int domain
     "str_seq",  # tuple or list of str; str/bytes/iterables rejected
     "str_set",  # frozenset/set/tuple/list of str
     "observations",  # model kinds: declared for drift/schema, validated
@@ -102,6 +106,14 @@ class OnlyWith(NamedTuple):
     msg: str
 
 
+class NotBoth(NamedTuple):
+    """Two flags that may not both be on. A flag that is left out is off."""
+
+    left: str
+    right: str
+    msg: str
+
+
 class Disjoint(NamedTuple):
     """Two sequence parameters that may share no item."""
 
@@ -116,7 +128,7 @@ class Segments(NamedTuple):
     param: str
 
 
-ValueRule = OnlyWith | Disjoint | Segments
+ValueRule = OnlyWith | NotBoth | Disjoint | Segments
 
 
 _AUTHORITY: Final = ParamSpec("authority", "authority", doc="the verified authority behind the call; never on the wire")
@@ -128,6 +140,10 @@ _COLUMNS: Final = ParamSpec("columns", "str_set", doc="observation fields to fet
 _OBSERVATIONS: Final = ParamSpec("observations", "observations", doc="row-addressed targets")
 _SCOPE_PATHS: Final = ParamSpec(
     "paths", "str_seq", nullable=False, default=(), doc="scope paths; empty means every entry"
+)
+_AFTER: Final = ParamSpec("after", "path", doc="resume after this row's path: the previous page's next_after")
+_LIMIT: Final = ParamSpec(
+    "limit", "int", minimum=1, maximum=INT_CEILING, doc="most rows on one page; None lists every row"
 )
 _PRINCIPAL: Final = ParamSpec("principal", "str", required=True, doc="a user's sub or a group:<name> id")
 _GROUP: Final = ParamSpec("group", "str", required=True, doc="the group id, group:<name>")
@@ -152,12 +168,16 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "ls": (
         ParamSpec("path", "path", doc="the directory to list"),
         _OBSERVATIONS,
+        _AFTER,
+        _LIMIT,
         _COLUMNS,
         _AUTHORITY,
     ),
     "tree": (
         ParamSpec("path", "path", required=True, doc="the region root"),
         ParamSpec("max_depth", "int", minimum=1, maximum=INT_CEILING, doc="depth budget; None is unbounded"),
+        _AFTER,
+        _LIMIT,
         _COLUMNS,
         _AUTHORITY,
     ),
@@ -166,7 +186,18 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", doc="single form: the file to write"),
         ParamSpec("content", "str", doc="single form: the file's text body"),
         ParamSpec("data", "bytes", doc="single form: the file's bytes body; its text is a rendering"),
-        ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an existing file"),
+        ParamSpec(
+            "if_version", "int", minimum=1, maximum=INT_CEILING, doc="single form: the version the write replaces"
+        ),
+        ParamSpec(
+            "if_versions",
+            "versions",
+            minimum=1,
+            maximum=INT_CEILING,
+            doc="batch form: the version expected at each named file's path",
+        ),
+        ParamSpec("if_absent", "bool", nullable=False, default=False, doc="create only: refuse a path that is held"),
+        ParamSpec("append", "bool", nullable=False, default=False, doc="single form: add the body to the file's end"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
         _AUTHORITY,
     ),
@@ -251,6 +282,8 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("globs_not", "str_seq", nullable=False, default=(), doc="drop paths matching these globs"),
         ParamSpec("kind", "str", choices=OBJECT_KINDS, doc="keep only rows of this kind; None keeps both"),
         ParamSpec("max_count", "int", minimum=1, maximum=INT_CEILING, doc="bound per entry and on the merged result"),
+        _AFTER,
+        _LIMIT,
         _COLUMNS,
         _AUTHORITY,
     ),
@@ -374,7 +407,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", required=True, doc="list the grants on this path and its ancestors"),
         _AUTHORITY,
     ),
-    "posture": (
+    "set_posture": (
         ParamSpec("path", "path", required=True, doc="the prefix whose everyone row is set"),
         ParamSpec("posture", "str", required=True, choices=POSTURES, doc="what everyone holds there and below"),
         _AUTHORITY,
@@ -399,11 +432,19 @@ _ONE_TARGET: Final = ShapeRule(
     msg_both="Exactly one of path or observations must be provided",
     msg_missing="Exactly one of path or observations must be provided",
 )
+# A cursor pages one listing in path order: one directory, one subtree, or one search.
+_ONE_LISTING: Final = ShapeRule(
+    (("after", "limit"), ("observations",)),
+    exactly_one=False,
+    msg_both="after and limit page one listing; they take no observations",
+)
+# Each form of write has its own spelling of the expected version.
+_VERSION_FORMS: Final = "write takes if_version with path, and if_versions with entries"
 
 RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "read": (_ONE_TARGET,),
     "stat": (_ONE_TARGET,),
-    "ls": (_ONE_TARGET,),
+    "ls": (_ONE_TARGET, _ONE_LISTING),
     "delete": (_ONE_TARGET,),
     "restore": (_ONE_TARGET,),
     "traverse": (_ONE_TARGET,),
@@ -427,6 +468,8 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             exactly_one=False,
             msg_both="write takes content or data, not both",
         ),
+        ShapeRule((("if_version",), ("entries",)), exactly_one=False, msg_both=_VERSION_FORMS),
+        ShapeRule((("if_versions",), ("path", "content", "data")), exactly_one=False, msg_both=_VERSION_FORMS),
     ),
     "move": (
         ShapeRule(
@@ -449,6 +492,12 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             (("paths",), ("observations",)),
             exactly_one=False,
             msg_both="glob takes paths or observations, not both",
+        ),
+        _ONE_LISTING,
+        ShapeRule(
+            (("after", "limit"), ("max_count",)),
+            exactly_one=False,
+            msg_both=PAGE_BESIDE_MAX_COUNT,
         ),
     ),
     "grep": (
@@ -483,12 +532,25 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     ),
 }
 
+# A write that only creates expects no file, and a file that is not there has no version.
+_ABSENT_HAS_NO_VERSION: Final = "write if_absent=True takes no if_version or if_versions: an absent file has no version"
+
 VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
     "traverse": (
         OnlyWith("minimal", True, "method", "meet", "traverse minimal=True is lawful only with method='meet'"),
         Disjoint("edge_types", "edge_types_not", "traverse edge_types and edge_types_not must not share a type"),
         Segments("edge_types"),
         Segments("edge_types_not"),
+    ),
+    "write": (
+        OnlyWith("if_absent", True, "if_version", None, _ABSENT_HAS_NO_VERSION),
+        OnlyWith("if_absent", True, "if_versions", None, _ABSENT_HAS_NO_VERSION),
+        OnlyWith("append", True, "entries", None, "write append=True takes one file: path with content or data"),
+        NotBoth(
+            "append",
+            "if_absent",
+            "write takes append or if_absent, not both: an append to an absent path already creates it",
+        ),
     ),
 }
 """Cross-parameter value rules, checked after the shape rules on typed values."""
@@ -560,18 +622,8 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
             return f"{op} {spec.name} must be bytes, got {type(value).__name__}"
         return None
     if kind == "int":
-        in_range = (
-            not isinstance(value, bool)
-            and isinstance(value, int)
-            and (spec.minimum is None or value >= spec.minimum)
-            and (spec.maximum is None or value <= spec.maximum)
-        )
-        if not in_range:
-            bounds = [f">= {spec.minimum}"] if spec.minimum is not None else []
-            if spec.maximum is not None:
-                bounds.append(f"<= {spec.maximum}")
-            suffix = f" {' and '.join(bounds)}" if bounds else ""
-            return f"{op} {spec.name} must be an integer{suffix}, got {value!r}"
+        if not _in_int_domain(spec, value):
+            return f"{op} {spec.name} must be an integer{_int_bounds(spec)}, got {value!r}"
         return None
     if kind == "bool":
         if not isinstance(value, bool):
@@ -581,6 +633,8 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
         if not isinstance(value, dict):
             return f"{op} {spec.name} must be a dict, got {type(value).__name__}"
         return None
+    if kind == "versions":
+        return _check_versions(op, spec, value)
     if kind == "str_seq":
         if not isinstance(value, (tuple, list)):
             return f"{op} {spec.name} must be a tuple of strings, got {type(value).__name__}"
@@ -588,6 +642,36 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
     if not isinstance(value, (frozenset, set, tuple, list)):  # str_set
         return f"{op} {spec.name} must be a set of strings, got {type(value).__name__}"
     return _check_items(op, spec, value)
+
+
+def _check_versions(op: Op, spec: ParamSpec, value: object) -> str | None:
+    """A mapping whose keys are text and whose values are versions inside the spec's bounds."""
+    if not isinstance(value, Mapping):
+        return f"{op} {spec.name} must be a mapping of paths to versions, got {type(value).__name__}"
+    for key, version in value.items():
+        if not isinstance(key, str):
+            return f"{op} {spec.name} keys must be strings, got {type(key).__name__}"
+        if not _in_int_domain(spec, version):
+            return f"{op} {spec.name} values must be integers{_int_bounds(spec)}, got {version!r}"
+    return None
+
+
+def _in_int_domain(spec: ParamSpec, value: object) -> bool:
+    """Whether *value* is an integer, and no bool, inside the bounds *spec* declares."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int)
+        and (spec.minimum is None or value >= spec.minimum)
+        and (spec.maximum is None or value <= spec.maximum)
+    )
+
+
+def _int_bounds(spec: ParamSpec) -> str:
+    """The bounds *spec* declares as a refusal words them, with a leading space, or nothing."""
+    bounds = [f">= {spec.minimum}"] if spec.minimum is not None else []
+    if spec.maximum is not None:
+        bounds.append(f"<= {spec.maximum}")
+    return f" {' and '.join(bounds)}" if bounds else ""
 
 
 def _check_items(op: Op, spec: ParamSpec, value: Iterable[object]) -> str | None:
@@ -624,6 +708,8 @@ def _check_value_rule(op: Op, rule: ValueRule, params: Mapping[str, object]) -> 
         if params.get(rule.param) == rule.value and params.get(rule.other) != rule.allowed:
             return rule.msg
         return None
+    if isinstance(rule, NotBoth):
+        return rule.msg if params.get(rule.left) is True and params.get(rule.right) is True else None
     if isinstance(rule, Disjoint):
         left = params.get(rule.left) or ()
         right = params.get(rule.right) or ()

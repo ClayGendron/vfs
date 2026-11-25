@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING
 
 from vfs.deadline import CHECK_EVERY
-from vfs.rendering import Builder, RenderLimits, unit_marker
+from vfs.rendering import RENDER_SECONDS, Builder, RenderLimits, unit_marker
 from vfs.rendering.markdown import flatten, kept_length, table_cell, truncation_marker
 from vfs.rendering.seam import RENDER_RATIO_FLOOR
 
@@ -27,10 +27,17 @@ def _clock(monkeypatch: pytest.MonkeyPatch, *, readings: int) -> list[int]:
 
     def clock() -> float:
         reads[0] += 1
-        return 0.0 if reads[0] <= readings else RenderLimits().seconds + 1.0
+        return 0.0 if reads[0] <= readings else RENDER_SECONDS + 1.0
 
     monkeypatch.setattr("vfs.rendering.markdown.monotonic", clock)
     return reads
+
+
+def _hand_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The Builder's clock, moved only by the test: every read answers ``now[0]``."""
+    now = [0.0]
+    monkeypatch.setattr("vfs.rendering.markdown.monotonic", lambda: now[0])
+    return now
 
 
 class TestMarkers:
@@ -142,11 +149,12 @@ class TestVerdicts:
         assert builder.unit("page", 2) is False
         assert builder.build().status == "truncated"
 
-    def test_the_wall_clock_makes_the_text_so_far_partial(self) -> None:
+    def test_the_wall_clock_makes_the_text_so_far_partial(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = _hand_clock(monkeypatch)
         builder = _build(RenderLimits(seconds=0.01), total_units=2)
         assert builder.boundary(1)
         builder.paragraph("kept")
-        time.sleep(0.02)
+        now[0] = 0.02
         assert builder.boundary(2) is False
         rendering = builder.build()
         assert (rendering.status, rendering.text) == ("partial", "kept\n")
@@ -169,12 +177,13 @@ class TestVerdicts:
         assert (rendering.status, rendering.text) == ("failed", None)
         assert rendering.detail is not None and "exceed 1x the 10-byte input" in rendering.detail
 
-    def test_the_cut_wins_over_the_clock(self) -> None:
+    def test_the_cut_wins_over_the_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = _hand_clock(monkeypatch)
         builder = _build(RenderLimits(chars=24, seconds=0.01), total_units=2)
         assert builder.unit("page", 1)
         builder.paragraph("yes")
         builder.paragraph("more words")  # does not fit: cut inside unit 1
-        time.sleep(0.02)
+        now[0] = 0.02
         assert builder.unit("page", 2) is False
         assert builder.build().status == "truncated"
 
@@ -263,7 +272,7 @@ class TestMarkersAndClock:
         """The clock is read on every 64th step and the first stop is remembered, closing the open unit incomplete:
         a step that never reads the clock, or that counts the stopped unit complete, fails."""
         reads = _clock(monkeypatch, readings=2)
-        builder = Builder(RenderLimits(), input_bytes=10, total_units=1, started=0.0)
+        builder = Builder(RenderLimits(seconds=RENDER_SECONDS), input_bytes=10, total_units=1, started=0.0)
         assert builder.unit("sheet", 1, "S")
         builder.paragraph("kept")
         assert [builder.step() for _ in range(1_000)] == [True] * 127 + [False] * 873
@@ -282,7 +291,7 @@ class TestMarkersAndClock:
         """A clock stop after a marker keeps the marker as partial and one before any line is failed, while a cut
         before any text stays empty with the clock out: testing for text before the clock fails."""
         _clock(monkeypatch, readings=1)
-        two = Builder(RenderLimits(), input_bytes=10, total_units=2, started=0.0)
+        two = Builder(RenderLimits(seconds=RENDER_SECONDS), input_bytes=10, total_units=2, started=0.0)
         assert two.unit("sheet", 1, "S")
         assert two.unit("sheet", 2, "T") is False
         rendering = two.build()
@@ -290,7 +299,7 @@ class TestMarkersAndClock:
         assert (rendering.detail, len(rendering.units)) == ("1 of 2 units within 60 seconds", 1)
         # A structural heading is kept with the marker, the blank after it trimmed.
         _clock(monkeypatch, readings=1)
-        headed = Builder(RenderLimits(), input_bytes=10, total_units=1, started=0.0)
+        headed = Builder(RenderLimits(seconds=RENDER_SECONDS), input_bytes=10, total_units=1, started=0.0)
         assert headed.unit("sheet", 1, "S")
         headed.heading(2, "S", structural=True)
         assert [headed.step() for _ in range(CHECK_EVERY)][-1] is False
@@ -298,22 +307,23 @@ class TestMarkersAndClock:
         assert (rendering.status, rendering.text) == ("partial", "<!-- sheet 1: S -->\n\n## S\n")
         assert rendering.detail == "0 of 1 units within 60 seconds"
         _clock(monkeypatch, readings=0)
-        one = Builder(RenderLimits(), input_bytes=10, total_units=1, started=0.0)
+        one = Builder(RenderLimits(seconds=RENDER_SECONDS), input_bytes=10, total_units=1, started=0.0)
         assert one.boundary(1) is False
         rendering = one.build()
         assert (rendering.status, rendering.text, rendering.units) == ("failed", None, ())
         assert rendering.detail == "0 of 1 units within 60 seconds, before any line was written"
         _clock(monkeypatch, readings=1)
-        cut = Builder(RenderLimits(chars=5), input_bytes=10, total_units=1, started=0.0)
+        cut = Builder(RenderLimits(chars=5, seconds=RENDER_SECONDS), input_bytes=10, total_units=1, started=0.0)
         assert cut.unit("sheet", 1, "S") is False
         assert cut.out_of_time()
         rendering = cut.build()
         assert (rendering.status, rendering.detail) == ("empty", "no text in 1 units")
 
-    def test_a_table_is_cut_by_the_clock_between_rows(self) -> None:
+    def test_a_table_is_cut_by_the_clock_between_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = _hand_clock(monkeypatch)
         builder = _build(RenderLimits(seconds=0.01), total_units=1)
         assert builder.unit("sheet", 1, "S")
-        time.sleep(0.02)
+        now[0] = 0.02
         assert builder.table([["h"], ["r1"], ["r2"]]) is False
         rendering = builder.build()
         assert rendering.status == "partial"

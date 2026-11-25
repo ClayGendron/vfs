@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 import pytest
 from sqlalchemy import event, func, insert, select, update
-from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.documents import pdf_bytes
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.postings import decode_postings
@@ -35,7 +35,7 @@ from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import flags as flags_module
 from vfs.storage.backends.database import maintenance as maintenance_module
-from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE
+from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL, SQLITE
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.protocol import ResolvedPair
@@ -226,7 +226,7 @@ class TestRebuild:
 
         async def rival_claims() -> None:
             index_state = storage._host.tables.index_state
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(lease_heartbeat=0))
             await _claimed(storage, "RIVAL")
 
@@ -324,7 +324,7 @@ class TestRebuild:
         entry = storage._host.tables.entry
         predated = entry.c.path.in_(["/a", "/b", "/c"])
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(update(entry).where(predated).values(encoded=False))
             await session.commit()
 
@@ -356,7 +356,7 @@ class TestRebuild:
         entry = storage._host.tables.entry
         predated = entry.c.path.in_(["/a", "/b"])
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(update(entry).where(predated).values(encoded=False))
             await session.commit()
         collect = flags_module.collect_flag_drift
@@ -364,7 +364,7 @@ class TestRebuild:
         async def rekinded(session, tables, state) -> Result:
             result = await collect(session, tables, state)
             async with storage._host.session_factory() as rival:
-                conn = await rival.connection(execution_options={"vfs_writer": True})
+                conn = await begin_as_writer(rival)
                 await conn.execute(update(entry).where(entry.c.path == "/b").values(kind="file"))
                 await rival.commit()
             return result
@@ -386,7 +386,7 @@ class TestRebuild:
         assert (await storage.mkdir(path=Path("/a"))).success is True
         entry = storage._host.tables.entry
         async with storage._host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
+            conn = await begin_as_writer(session)
             await conn.execute(update(entry).where(entry.c.path == "/a").values(encoded=False))
             await session.commit()
         lost = asyncio.Event()
@@ -609,6 +609,8 @@ class TestRebuild:
         def register(dbapi_connection: Any, record: Any) -> None:
             dbapi_connection.create_function("length", 1, counting_length)
 
+        # A pass holding a connection through the dispose would check it back in to a pool nothing closes.
+        await storage._host.settle_statistics()
         await storage._host.engine.dispose()
         statements = _recorded(storage)
         monkeypatch.setattr(indexing, "CHUNK_SLICE_BYTES", 1)
@@ -770,7 +772,7 @@ class TestEligibilityGates:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="steady body")])
         assert (await storage.rebuild()).success is True
         tables = storage._host.tables
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(tables.gram_epochs.delete())
         assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
@@ -789,7 +791,7 @@ async def _seed_built_epoch(storage: DatabaseStorage, epoch: int, *, with_finger
         "doc_count": 1,
         "byte_size": len(blob),
     }
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(tables.posting_list.insert(), [row])
         if with_fingerprint:
             fingerprint = {
@@ -801,10 +803,10 @@ async def _seed_built_epoch(storage: DatabaseStorage, epoch: int, *, with_finger
 
 
 class TestStatementLegality:
-    async def test_pending_probe_is_row_presence_not_bare_exists_on_tsql(self, tmp_path) -> None:
+    async def test_pending_probe_is_row_presence_not_bare_exists(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         tables = storage._host.tables
-        sql = str(indexing._pending_probe(tables.entry).compile(dialect=mssql.dialect())).upper()
+        sql = str(indexing._pending_probe(tables.entry).compile(dialect=postgresql.dialect())).upper()
         assert not sql.startswith("SELECT EXISTS")
         assert "WHERE" in sql and "INDEXABLE" in sql
         await storage.close()
@@ -848,7 +850,7 @@ class TestPublishRace:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -924,7 +926,7 @@ class TestFlagAlgebra:
 
         async def rival() -> None:
             fresh = Entry(path=Path("/a.txt"), content="fresh needle")
-            assert (await storage.write(entries=[fresh], overwrite=True)).success is True
+            assert (await storage.write(entries=[fresh])).success is True
 
         with installed("rebuild:before-publish", rival):
             assert (await storage.rebuild()).success is True
@@ -1018,7 +1020,7 @@ class TestReclaim:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -1039,7 +1041,7 @@ class TestReclaim:
 
         async def rival() -> None:
             await _seed_built_epoch(storage, 2, with_fingerprint=True)
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=2))
 
         with installed("rebuild:before-reclaim", rival):
@@ -1179,9 +1181,7 @@ class TestSliceSizeRead:
         engines = (
             (SQLITE, sqlite.dialect(), "limit", "length("),
             (POSTGRESQL, postgresql.dialect(), "limit", "octet_length("),
-            (MARIADB, mysql.dialect(), "limit", "length("),
-            (MSSQL, mssql.dialect(), "top", "datalength("),
-            (ORACLE, oracle.dialect(), "fetch first", "length("),
+            (GENERIC, postgresql.dialect(), "limit", "length("),
         )
         for profile, dialect, limit, function in engines:
             read = indexing._size_read(tables, profile, terms, past=1_000, wanted=17)
@@ -1291,7 +1291,7 @@ class TestPostingBatches:
 
     async def test_flag_flips_are_set_based_not_per_row(self, tmp_path) -> None:
         # One statement flips many (entry, version) pairs: executemany
-        # degrades to a round trip per row on the MySQL family and MSSQL.
+        # degrades to a round trip per row on some drivers.
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
         assert (await storage.write(entries=entries)).success is True
@@ -1368,14 +1368,15 @@ class TestChunkProvenance:
             assert row.chunk_generation == chunk_generation()
         await storage.close()
 
-    async def test_same_body_overwrite_skips_the_resplit(self, tmp_path) -> None:
+    async def test_a_body_written_away_and_back_skips_the_resplit(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         assert (await storage.rebuild()).success is True
         statements: list[str] = []
         self._record_into(storage, statements)
-        # A same-body overwrite dirties the entry (content writes reset the
-        # flags) but leaves the hash equal: the pass must not touch chunks.
+        # Two writes dirty the entry (each resets the flags) and leave the
+        # hash where the chunks were built: the pass must not touch chunks.
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="other = 1\n")])).success is True
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         row = await self._entry_row(storage, "/a.py")
         assert row.chunked is False
@@ -1467,7 +1468,7 @@ class TestChunkProvenance:
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(entry).values(chunk_generation="stale:0"))
         statements: list[str] = []
         self._record_into(storage, statements)
@@ -1541,7 +1542,7 @@ class TestChunkProvenance:
 class TestIndexLease:
     async def _stamped(self, storage: DatabaseStorage, holder: str | None, heartbeat: int | None) -> None:
         index_state = storage._host.tables.index_state
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(index_state).values(lease_holder=holder, lease_heartbeat=heartbeat))
 
     async def _lease(self, storage: DatabaseStorage) -> tuple[str | None, int | None]:
@@ -1554,7 +1555,7 @@ class TestIndexLease:
         """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
         index_state = storage._host.tables.index_state
         stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
     async def test_a_live_lease_refuses_a_second_rebuild(self, tmp_path) -> None:
@@ -1590,7 +1591,7 @@ class TestIndexLease:
         index_state = storage._host.tables.index_state
 
         async def rival() -> None:
-            async with storage._host.engine.begin() as conn:
+            async with writer_engine(storage._host.engine).begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("rebuild:before-publish", rival):
@@ -1624,8 +1625,8 @@ class TestIndexLease:
         task = asyncio.create_task(
             maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
         )
-        await asyncio.wait_for(lost.wait(), timeout=5)
-        await asyncio.wait_for(task, timeout=5)
+        await lost.wait()
+        await task
         await storage.close()
 
     async def test_a_transport_conflict_is_not_a_taken_lease(self, tmp_path, monkeypatch) -> None:
@@ -1640,10 +1641,13 @@ class TestIndexLease:
             errors=[ResultError(kind=ErrorKind.conflict, message="rebuild kept losing", retryable=True)],
         )
         beats = 0
+        fifth = asyncio.Event()
 
         async def stalled_write(op: str, fn: Any) -> Result:
             nonlocal beats
             beats += 1
+            if beats == 5:
+                fifth.set()
             return stalled
 
         monkeypatch.setattr(storage, "_execute_maintenance", stalled_write)
@@ -1651,10 +1655,7 @@ class TestIndexLease:
         task = asyncio.create_task(
             maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
         )
-        for _ in range(50):
-            await asyncio.sleep(0.02)
-            if beats >= 5:
-                break
+        await fifth.wait()
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
@@ -1670,15 +1671,20 @@ class TestIndexLease:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         backdated = maintenance_module._now_ms() - 60_000
         await self._stamped(storage, "MINE", backdated)
+        beat = storage._execute_maintenance
+        landed = asyncio.Event()
+
+        async def landing(op: str, fn: Any) -> Result:
+            result = await beat(op, fn)
+            landed.set()
+            return result
+
+        monkeypatch.setattr(storage, "_execute_maintenance", landing)
         lost = asyncio.Event()
         task = asyncio.create_task(
             maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
         )
-        for _ in range(200):
-            await asyncio.sleep(0.02)
-            _, heartbeat = await self._lease(storage)
-            if heartbeat is not None and heartbeat > backdated:
-                break
+        await landed.wait()
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
@@ -1769,7 +1775,7 @@ class TestIndexLease:
             state = indexing.RebuildState(token="THE-TOKEN", previous_epoch=previous, epoch=4)
             await indexing.publish_epoch(cast("AsyncSession", session), tables, SQLITE, 2_000, 1_000, state)
             [(cas, _params)] = session.calls
-            for dialect in (sqlite.dialect(), postgresql.dialect(), mysql.dialect(), mssql.dialect(), oracle.dialect()):
+            for dialect in (sqlite.dialect(), postgresql.dialect()):
                 compiled = cas.compile(dialect=dialect)
                 assert "lease_holder IS NULL" not in str(compiled), (dialect.name, compiled)
                 assert "THE-TOKEN" in compiled.params.values(), (dialect.name, compiled.params)
@@ -2083,10 +2089,11 @@ class TestIndexedStamp:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success is True
 
-        async def overwrite() -> None:
-            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+        async def away_and_back() -> None:
+            for body in ("other body", "alpha body"):
+                assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content=body)])).success
 
-        with installed("rebuild:before-publish", overwrite):
+        with installed("rebuild:before-publish", away_and_back):
             assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/a.txt") == (False, False)
         assert await _stamp(storage, "/a.txt") == await _epoch(storage)
@@ -2170,9 +2177,7 @@ class TestRareTerm:
         for profile, dialect, expected in (
             (SQLITE, sqlite.dialect(), "unlikely(vfs_entries.encoded = 0) AND vfs_entries.indexable = 0"),
             (POSTGRESQL, postgresql.dialect(), "AND NOT vfs_entries.encoded AND NOT vfs_entries.indexable"),
-            (MSSQL, mssql.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
-            (MARIADB, mysql.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
-            (ORACLE, oracle.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
+            (GENERIC, postgresql.dialect(), "AND NOT vfs_entries.encoded AND NOT vfs_entries.indexable"),
         ):
             read = indexing._size_read(tables, profile, terms, past=0, wanted=4, seek=True)
             sql = " ".join(str(read.compile(dialect=dialect)).split())

@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import delete, insert, select
 from ulid import ULID
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, begin_as_writer
 from vfs.models import Entry, Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
@@ -291,7 +291,7 @@ class TestSegmentRebuild:
         tables = storage._host.tables
         entry = tables.entry
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             ghost_host = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b"))).scalar_one()
             # Three drift shapes: a missing posting, an excess posting,
@@ -314,6 +314,7 @@ class TestSegmentRebuild:
     async def test_a_second_rebuild_after_repair_is_quiet(self, storage: DatabaseStorage) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
         async with storage._host.session_factory() as session:
+            await begin_as_writer(session)
             await session.execute(delete(storage._host.tables.segments))
             await session.commit()
         assert (await storage.rebuild()).success is True
@@ -328,7 +329,7 @@ class TestSegmentRebuild:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             entry = tables.entry
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             state = SegmentRebuildState(
@@ -352,13 +353,13 @@ class TestSegmentRebuild:
         seen: list[list[str]] = []
         real = segments_module.locked_lookup
 
-        def spy(table, column, chunk, columns, profile):
+        def spy(column, chunk, columns, profile):
             seen.append(list(chunk))
-            return real(table, column, chunk, columns, profile)
+            return real(column, chunk, columns, profile)
 
         monkeypatch.setattr(segments_module, "locked_lookup", spy)
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             entry = tables.entry
             rows = (await session.execute(select(entry.c.entry_id, entry.c.path).where(entry.c.path.in_(paths)))).all()
             by_id = {row.entry_id: row.path for row in rows}
@@ -380,7 +381,7 @@ class TestSegmentRebuild:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             entry = tables.entry
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             await session.execute(
@@ -441,6 +442,7 @@ class TestSegmentPhaseBoundaries:
     async def test_a_failed_repair_returns_its_classification(self, storage: DatabaseStorage, monkeypatch) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")], parents=True)).success
         async with storage._host.session_factory() as session:
+            await begin_as_writer(session)
             await session.execute(insert(storage._host.tables.segments), [{"segment": "gone", "entry_id": str(ULID())}])
             await session.commit()
         failed = Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="repair broke")])

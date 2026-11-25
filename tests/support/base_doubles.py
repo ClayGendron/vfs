@@ -128,8 +128,11 @@ class RecorderStorage:
     async def grants(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("grants", kwargs, authority)
 
-    async def posture(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
-        return self._answer("posture", kwargs, authority)
+    async def set_posture(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("set_posture", kwargs, authority)
+
+    async def holds(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("holds", kwargs, authority)
 
     async def add_member(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("add_member", kwargs, authority)
@@ -200,7 +203,7 @@ class SuspendingProbeStorage(BindableStorage):
     The suspension is what opens the race window: ``bind``'s site probe
     yields to the loop mid-sequence, so a gathered read can land in the
     gap an unbind+bind pair leaves open — the contrast that proves
-    ``remount`` has no such gap.
+    ``update_mount`` has no such gap.
     """
 
     async def stat(self, **kwargs: Any) -> Result:
@@ -307,6 +310,20 @@ class GatedCloseStorage(SpyCloseStorage):
 
     async def close(self) -> None:
         await self._gate.wait()
+        await super().close()
+
+
+class MeetsAtCloseStorage(SpyCloseStorage):
+    """Backend whose close returns only once its partner's close has begun: two closed in turn never meet."""
+
+    def __init__(self, here: asyncio.Event, there: asyncio.Event, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._here = here
+        self._there = there
+
+    async def close(self) -> None:
+        self._here.set()
+        await self._there.wait()
         await super().close()
 
 

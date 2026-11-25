@@ -40,8 +40,6 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, NamedTuple
 from sqlalchemy import (
     BINARY,
     DDL,
-    TIMESTAMP,
-    VARBINARY,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -64,8 +62,6 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
-from sqlalchemy.dialects.oracle import RAW
 from ulid import ULID
 
 from vfs.models.lexical import MAX_TERM_BYTES
@@ -127,7 +123,7 @@ MODEL_FIELD_ONLY: Final[dict[str, frozenset[str]]] = {
 
 # Field-name → column-name divergences per model. ``Version.number`` keeps
 # the self-describing ``version_number`` column (bare-SQL clarity, and NUMBER
-# is an Oracle reserved word); unlisted fields share their column's name.
+# is a reserved word on some engines); unlisted fields share their column's name.
 MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
     "Version": {"number": "version_number"},
     "Chunk": {},
@@ -136,7 +132,11 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 27
+SCHEMA_FORMAT_VERSION: Final = 28
+
+# The partial indexes over the live rows alone that a listing page seeks: a directory's children, and a subtree.
+LIVE_CHILDREN_INDEX: Final = "ix_vfs_entries_live_children"
+LIVE_PATH_INDEX: Final = "ix_vfs_entries_live_path"
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -167,27 +167,6 @@ ENCODING_DELTA_VARINT: Final = 1
 ENCODING_ROARING: Final = 3
 
 
-# SQLAlchemy resolves type variants strictly by dialect name, and
-# MariaDB's is "mariadb" — every mysql-family branch must name both.
-_MYSQL_FAMILY: Final = ("mysql", "mariadb")
-
-# MSSQL's byte-wise UTF-8 collation (SQL Server 2019+ floor): VARCHAR n
-# counts bytes, and non-Latin1 survives the database codepage.
-MSSQL_UTF8_COLLATION: Final = "Latin1_General_100_BIN2_UTF8"
-
-
-def _string(length: int) -> String:
-    """A general string column that stores non-Latin1 losslessly everywhere.
-
-    A plain ``String`` on MSSQL compiles with the *database's* default
-    collation — commonly CP-1252 — which squeezes any non-Latin1 value
-    to ``?`` at conversion time; the UTF-8 collation variant closes that
-    on the column side (the bind side is the engine's
-    ``use_setinputsizes=False``).
-    """
-    return String(length).with_variant(String(length, collation=MSSQL_UTF8_COLLATION), "mssql")
-
-
 class BytewiseString(TypeDecorator[str]):
     """A bounded key string, bytewise-ordered and byte-budgeted where pinned.
 
@@ -195,21 +174,12 @@ class BytewiseString(TypeDecorator[str]):
     contract and every engine's index-key cap, so a lawful value always
     fits the column and the column's worst-case key never outgrows an
     engine. SQLite's default BINARY collation is already bytewise;
-    Postgres and MSSQL pin it in DDL, or pagination order and LIKE
-    sargability silently diverge per engine. MSSQL uses the UTF-8 binary
-    collation (SQL Server 2019+ floor), whose VARCHAR ``n`` counts bytes
-    — NVARCHAR ``_BIN2`` would sort by UTF-16 code unit and double the
-    byte budget past its 1,700-byte index-key cap. The mysql family gets
-    ``VARBINARY(n)`` outright: utf8mb4 VARCHAR keys cost 4 bytes per
-    declared char against InnoDB's 3,072-byte cap, while binary keys
-    cost their own bytes and compare bytewise natively — Python still
-    speaks ``str``; the conversion lives here alone.
+    Postgres pins ``COLLATE "C"`` in DDL, or pagination order and LIKE
+    sargability silently diverge between the two.
 
-    Oracle and unmeasured engines take the plain ``String`` fallback:
-    character-denominated (``VARCHAR2(n CHAR)`` on Oracle) with no
+    Any other engine takes the plain ``String`` fallback with no
     collation pin, so bytewise order and byte budgeting there rest on
-    engine defaults (Oracle's ``NLS_SORT=BINARY``) — an accepted
-    degradation, not a pinned contract.
+    engine defaults — an accepted degradation, not a pinned contract.
     """
 
     impl = String
@@ -220,18 +190,9 @@ class BytewiseString(TypeDecorator[str]):
         self.length = length
 
     def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
-        if dialect.name in _MYSQL_FAMILY:
-            return dialect.type_descriptor(VARBINARY(self.length))
         if dialect.name == "postgresql":
             return dialect.type_descriptor(String(self.length, collation="C"))
-        if dialect.name == "mssql":
-            return dialect.type_descriptor(String(self.length, collation=MSSQL_UTF8_COLLATION))
         return dialect.type_descriptor(String(self.length))
-
-    def process_bind_param(self, value: str | None, dialect: Dialect) -> Any:
-        if value is not None and dialect.name in _MYSQL_FAMILY:
-            return value.encode()
-        return value
 
     def process_result_value(self, value: Any, dialect: Dialect) -> str | None:
         if isinstance(value, (bytes, bytearray, memoryview)):
@@ -240,52 +201,36 @@ class BytewiseString(TypeDecorator[str]):
 
 
 def _body_text() -> Text:
-    """An unbounded text body that provisions on every engine.
-
-    Bare ``String()`` carries no length and MySQL's DDL compiler refuses
-    it outright; ``Text`` maps to each engine's unbounded form (CLOB on
-    Oracle, VARCHAR(max) on MSSQL), with the mysql family pinned to
-    LONGTEXT — its bare TEXT caps bodies at 64KB. MSSQL pins the UTF-8
-    collation: VARCHAR(max) under the database codepage mangles
-    non-Latin1 bodies to ``?`` server-side.
-    """
-    return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY).with_variant(Text(collation=MSSQL_UTF8_COLLATION), "mssql")
+    """An unbounded text body: ``Text`` is each engine's unbounded form, where a bare ``String()`` has no length."""
+    return Text()
 
 
 def _body_bytes() -> LargeBinary:
-    """An unbounded bytes body that provisions on every engine.
-
-    ``LargeBinary`` maps to BLOB on SQLite and Oracle and BYTEA on
-    Postgres. The mysql family's bare BLOB caps a body at 64KB, so it is
-    pinned to LONGBLOB exactly as the text body is pinned to LONGTEXT;
-    MSSQL is pinned to its unbounded VARBINARY (``max`` is what an
-    unlengthed VARBINARY renders there) because the unpinned type
-    renders the deprecated IMAGE on a dialect that has not probed its
-    server.
-    """
-    return LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY).with_variant(VARBINARY(), "mssql")
+    """An unbounded bytes body: BLOB on SQLite and BYTEA on Postgres."""
+    return LargeBinary()
 
 
 def _timestamp() -> DateTime:
-    """A zone-aware instant that keeps sub-second precision on every engine.
+    """A zone-aware instant that keeps sub-second precision on both engines."""
+    return DateTime(timezone=True)
 
-    ``DateTime(timezone=True)`` compiles to ``DATE`` on Oracle — whole
-    seconds, no zone — so a tombstone written and compared inside one
-    second never ages, and two versions minted in one second tie. Oracle
-    is pinned to ``TIMESTAMP WITH TIME ZONE``; the other engines already
-    compile to a zoned sub-second type. The variant is Oracle's alone:
-    on MSSQL ``TIMESTAMP`` is the rowversion type, not an instant.
+
+def _on_side(*, trashed: bool) -> dict[str, Any]:
+    """The predicate of an index that holds one side of the tombstone, on each engine that takes a partial index.
+
+    An engine outside the two builds the index whole, which serves the same reads with the other side in it.
     """
-    return DateTime(timezone=True).with_variant(TIMESTAMP(timezone=True), "oracle")
+    predicate = text("deleted_at IS NOT NULL" if trashed else "deleted_at IS NULL")
+    return {"sqlite_where": predicate, "postgresql_where": predicate}
 
 
 def _uuid_native(dialect: Dialect) -> bool:
     """True where the engine's own uuid type keeps ULID time-order.
 
     An allow-list, not ``dialect.supports_native_uuid``: that flag means
-    the driver binds uuid objects and says nothing about sort order —
-    MSSQL's ``UNIQUEIDENTIFIER`` and MariaDB's byte-swapped native uuid
-    both report support while forfeiting time-ordered index locality.
+    the driver binds uuid objects and says nothing about sort order, and
+    an engine can report support while forfeiting time-ordered index
+    locality.
     """
     return dialect.name == "postgresql"
 
@@ -300,9 +245,8 @@ class ULIDKey(TypeDecorator[str]):
     crosses here, so no other module translates identity. Storage is
     binary-16 on every engine, never text: the native ``uuid`` type where
     the dialect binds one and its sort preserves time-order (Postgres),
-    ``RAW(16)`` on Oracle, and fixed-width ``BINARY(16)`` everywhere
-    else — including engines whose only uuid-shaped alternative would be
-    the CHAR(32) hex fallback or a wrongly-sorted ``UNIQUEIDENTIFIER``.
+    and fixed-width ``BINARY(16)`` everywhere else — including engines
+    whose only uuid-shaped alternative would be the CHAR(32) hex fallback.
     """
 
     impl = Uuid
@@ -311,8 +255,6 @@ class ULIDKey(TypeDecorator[str]):
     def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         if _uuid_native(dialect):
             return dialect.type_descriptor(Uuid())
-        if dialect.name == "oracle":
-            return dialect.type_descriptor(RAW(16))
         return dialect.type_descriptor(BINARY(16))
 
     def process_bind_param(self, value: str | None, dialect: Dialect) -> Any:
@@ -423,19 +365,19 @@ def build_vfs_tables(
     entry = Table(
         "vfs_entries",
         metadata,
-        # Identity() is explicit for Oracle, whose dialect generates
-        # nothing for a bare autoincrement primary key.
+        # Identity() is explicit: some dialects generate nothing for a bare
+        # autoincrement primary key, and it is part of the Postgres DDL.
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("entry_id", ULIDKey(), nullable=False, unique=True, index=True),
         Column("parent_id", ULIDKey()),
-        Column("external_id", _string(1024)),
+        Column("external_id", String(1024)),
         Column("path", BytewiseString(MAX_PATH_LENGTH), nullable=False, unique=True, index=True),
         Column("name", BytewiseString(MAX_SEGMENT_LENGTH), nullable=False),
         Column("kind", String(32), nullable=False, index=True),
         Column("version", BigInteger),
         Column("content_hash", String(64)),
-        Column("mime_type", _string(MAX_SEGMENT_LENGTH)),
-        Column("ext", _string(32), index=True),
+        Column("mime_type", String(MAX_SEGMENT_LENGTH)),
+        Column("ext", String(32), index=True),
         # Lines of the text the verbs see — the rendering's for a bytes
         # row, zero until rendered — under the one law in ``line_count``.
         Column("lines", Integer, nullable=False, default=0),
@@ -452,27 +394,27 @@ def build_vfs_tables(
         # Chunk provenance: the body hash and engine/grammar generation the
         # stored chunk rows derive from — the fingerprint-skip law reads both.
         Column("chunk_source_hash", String(64)),
-        Column("chunk_generation", _string(32)),
+        Column("chunk_generation", String(32)),
         # Link provenance: the body hash and extractor generation the stored
         # extracted out-edges derive from — the same skip law, its own stamp.
         Column("link_source_hash", String(64)),
-        Column("link_generation", _string(32)),
+        Column("link_generation", String(32)),
         # Which body table holds this row's body: text in ``vfs_content``,
         # bytes in ``vfs_blobs``. A bytes row's text is its rendering.
         Column("source", String(8), nullable=False, default="text"),
         # Render provenance: the bytes hash and renderer generation the
         # stored rendering derives from — the same skip law, its own stamp.
         Column("render_source_hash", String(64)),
-        Column("render_generation", _string(MAX_RENDER_GENERATION_LENGTH)),
+        Column("render_generation", String(MAX_RENDER_GENERATION_LENGTH)),
         # Where the rendering stands; NULL on text rows. A failure is a
         # status with its reason in ``render_detail``, never a body.
         Column("render_status", String(16)),
-        Column("render_detail", _string(MAX_RENDER_DETAIL_LENGTH)),
+        Column("render_detail", String(MAX_RENDER_DETAIL_LENGTH)),
         # The rendering's unit table (pages, slides, sheets) as JSON text.
         Column("render_units", _body_text()),
         Column("media_width", Integer),
         Column("media_height", Integer),
-        Column("owner_id", _string(255), index=True),
+        Column("owner_id", String(255), index=True),
         # The everyone level at this path, the rank of the deepest covering
         # posture row's rung (0 none … 5 read_write), stamped with the row.
         # No default on purpose — a mint site that forgets it fails loudly.
@@ -494,9 +436,12 @@ def build_vfs_tables(
         # The everyone leg of a partial read: "rows under /p everyone may
         # see" is one seek here; the leading column alone serves the rest.
         Index("ix_vfs_entries_everyone_path", "everyone_level", "path"),
-        # The trash view and the retention sweep seek the tombstoned rows
-        # alone here; restore and sweep clear or purge a root's set by it.
-        Index("ix_vfs_entries_deleted_at", "deleted_at"),
+        # The trash view and the retention sweep seek the tombstoned rows here, and it holds them alone,
+        # so no live listing is planned onto its seek of the live rows on a table that is mostly tombstones.
+        Index("ix_vfs_entries_deleted_at", "deleted_at", **_on_side(trashed=True)),
+        # A listing page seeks the live rows alone, so a tombstone in its range costs no read.
+        Index(LIVE_CHILDREN_INDEX, "parent_id", "name", **_on_side(trashed=False)),
+        Index(LIVE_PATH_INDEX, "path", **_on_side(trashed=False)),
         Index("ix_vfs_entries_trash_root", "trash_root_id"),
         # The twin lookups: a body hash shared by many rows is found by index, never a scan.
         Index("ix_vfs_entries_content_hash", "content_hash"),
@@ -548,9 +493,9 @@ def build_vfs_tables(
         Column("content_hash", String(64), nullable=False),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        Column("actor", _string(255)),
+        Column("actor", String(255)),
         Column("provenance", String(16)),
-        Column("source_identity", _string(255)),
+        Column("source_identity", String(255)),
         # The grant revision in force when the version was written: which
         # grants allowed it, answerable without replaying history.
         Column("grant_revision", BigInteger),
@@ -570,7 +515,7 @@ def build_vfs_tables(
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
         Column("version_number", Integer, primary_key=True, autoincrement=False),
-        Column("principal_id", _string(255), primary_key=True),
+        Column("principal_id", String(255), primary_key=True),
         schema=schema,
     )
 
@@ -605,7 +550,7 @@ def build_vfs_tables(
         "vfs_embed_refusals",
         metadata,
         Column("content_hash", String(64), primary_key=True),
-        Column("model_id", _string(MAX_MODEL_ID_LENGTH), nullable=False),
+        Column("model_id", String(MAX_MODEL_ID_LENGTH), nullable=False),
         Column("max_input_tokens", Integer, nullable=False),
         Column("max_batch_tokens", Integer, nullable=False),
         schema=schema,
@@ -622,13 +567,13 @@ def build_vfs_tables(
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("source_id", ULIDKey(), nullable=False),
         Column("target_id", ULIDKey(), nullable=False),
-        Column("edge_type", _string(MAX_SEGMENT_LENGTH), nullable=False),
+        Column("edge_type", String(MAX_SEGMENT_LENGTH), nullable=False),
         Column("weight", Float),
         Column("distance", Float),
-        Column("provenance", _string(16), nullable=False),
+        Column("provenance", String(16), nullable=False),
         # The referring line an extracted edge was read from, folded; NULL
         # on every authored row.
-        Column("context", _string(MAX_LINK_CONTEXT_LENGTH)),
+        Column("context", String(MAX_LINK_CONTEXT_LENGTH)),
         UniqueConstraint("source_id", "target_id", "edge_type", name="uq_vfs_edges_src_tgt_type"),
         Index("ix_vfs_edges_fwd", "source_id", "edge_type"),
         Index("ix_vfs_edges_rev", "target_id", "edge_type"),
@@ -641,9 +586,8 @@ def build_vfs_tables(
             unique=True,
             sqlite_where=fs_where,
             postgresql_where=fs_where,
-            mssql_where=fs_where,
             # The stub narrows ``dialect`` to str; the runtime accepts a tuple.
-        ).ddl_if(dialect=("sqlite", "postgresql", "mssql")),  # ty: ignore[invalid-argument-type]
+        ).ddl_if(dialect=("sqlite", "postgresql")),  # ty: ignore[invalid-argument-type]
         schema=schema,
         sqlite_autoincrement=True,
     )
@@ -660,7 +604,7 @@ def build_vfs_tables(
         Column("mount_identity", String(ULID_LENGTH), nullable=False),
         # The mount's one embedding space — the provider- and dimension-
         # qualified model id and its width, stamped by the first embed.
-        Column("embedding_model", _string(MAX_MODEL_ID_LENGTH)),
+        Column("embedding_model", String(MAX_MODEL_ID_LENGTH)),
         Column("embedding_dimension", Integer),
         # The grant spine's revision: every grant, posture, or membership
         # write bumps it first, so the bump is also the admin writes' lock.
@@ -722,9 +666,7 @@ def build_vfs_tables(
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("gram_key", Integer, primary_key=True, autoincrement=False),
-        # Mysql's bare BLOB silently truncates at 64KB; a hot gram's
-        # doclist blob routinely exceeds it.
-        Column("postings", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
+        Column("postings", LargeBinary(), nullable=False),
         Column("encoding", SmallInteger, nullable=False, default=ENCODING_DELTA_VARINT),
         Column("doc_count", Integer, nullable=False),
         Column("byte_size", Integer, nullable=False),
@@ -773,9 +715,9 @@ def build_vfs_tables(
         Column("term", BytewiseString(MAX_TERM_BYTES), primary_key=True),
         Column("block_no", Integer, primary_key=True, autoincrement=False),
         Column("doc_count", Integer, nullable=False),
-        Column("doc_ids", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
-        Column("tfs", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
-        Column("dls", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
+        Column("doc_ids", LargeBinary(), nullable=False),
+        Column("tfs", LargeBinary(), nullable=False),
+        Column("dls", LargeBinary(), nullable=False),
         schema=schema,
         sqlite_with_rowid=False,
     )
@@ -787,7 +729,7 @@ def build_vfs_tables(
         Column("df", Integer, nullable=False),
         Column("idf", Double, nullable=False),
         Column("max_weight", Double, nullable=False),
-        Column("blocks", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
+        Column("blocks", LargeBinary(), nullable=False),
         schema=schema,
         sqlite_with_rowid=False,
     )
@@ -812,7 +754,7 @@ def build_vfs_tables(
         "vfs_signals",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
-        Column("signal", _string(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
+        Column("signal", String(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
         Column("generation", String(ULID_LENGTH), primary_key=True),
         Column("value", Float, nullable=False),
         schema=schema,
@@ -820,7 +762,7 @@ def build_vfs_tables(
     signal_epochs = Table(
         "vfs_signal_epochs",
         metadata,
-        Column("signal", _string(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
+        Column("signal", String(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
         Column("generation", String(ULID_LENGTH), nullable=False),
         Column("options_hash", String(64), nullable=False),
         Column("row_count", Integer, nullable=False),
@@ -832,15 +774,15 @@ def build_vfs_tables(
     # widens, nothing narrows except the everyone rows (principal ``*``)
     # that carry a mount's posture. Prefixes are mount-relative canonical
     # paths in the entries table's collation. A surrogate key keeps the
-    # wide pair in a secondary index, inside SQL Server's clustered cap.
+    # wide pair in a secondary index, inside the tightest clustered-key cap vfs has met.
     grants = Table(
         "vfs_grants",
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
-        Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
+        Column("principal_id", String(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
         Column("path_prefix", BytewiseString(MAX_PATH_LENGTH), nullable=False),
         Column("level", String(16), nullable=False),
-        Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
+        Column("granted_by", String(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
         Column("granted_at", _timestamp(), nullable=False),
         Column("revision", BigInteger, nullable=False),
         UniqueConstraint("principal_id", "path_prefix", name="uq_vfs_grants_key"),
@@ -854,9 +796,9 @@ def build_vfs_tables(
     memberships = Table(
         "vfs_memberships",
         metadata,
-        Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
-        Column("group_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
-        Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
+        Column("principal_id", String(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
+        Column("group_id", String(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
+        Column("granted_by", String(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
         Column("granted_at", _timestamp(), nullable=False),
         Index("ix_vfs_memberships_group", "group_id"),
         schema=schema,
@@ -878,7 +820,7 @@ def build_vfs_tables(
     principal_revisions = Table(
         "vfs_principal_revisions",
         metadata,
-        Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
+        Column("principal_id", String(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
         Column("revision", BigInteger, nullable=False),
         schema=schema,
     )

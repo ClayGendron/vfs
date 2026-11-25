@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event, select, update
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, writer_engine
 from tests.support.embedding_doubles import InputRefusedError, RateLimitedError, ResponseStatusError, ScriptedProvider
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.embedding import Embedded, HashEmbeddingProvider
@@ -30,7 +30,7 @@ from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
 CORPUS = {
     "/a.txt": "alpha bravo charlie\n",
@@ -47,23 +47,19 @@ def _long_body(tail: str) -> str:
 
 
 class _WaitsForBeats(ScriptedProvider):
-    """A provider whose batch returns once the rebuild heartbeat has fired *wanted* times.
+    """A provider whose batch returns once *beaten* is set, when the rebuild heartbeat has fired enough times.
 
     Proves the loop stayed free while the provider waited: a held loop
-    cannot beat, so the wait runs out its liveness bound and the beat
-    count stays short.
+    cannot beat, so the event is never set and the run's deadline ends
+    the test.
     """
 
-    def __init__(self, beats: Callable[[], int], *, wanted: int) -> None:
+    def __init__(self, beaten: asyncio.Event) -> None:
         super().__init__()
-        self._beats = beats
-        self._wanted = wanted
+        self._beaten = beaten
 
     async def embed_documents(self, texts: Sequence[str]) -> Embedded:
-        for _ in range(100_000):
-            if self._beats() >= self._wanted:
-                break
-            await asyncio.sleep(0)
+        await self._beaten.wait()
         return await super().embed_documents(texts)
 
 
@@ -104,7 +100,7 @@ async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
     stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
-    async with storage._host.engine.begin() as conn:
+    async with writer_engine(storage._host.engine).begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
 
@@ -353,7 +349,8 @@ class TestStep:
         monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.02)
         beats = 0
         paged = False
-        provider = _WaitsForBeats(lambda: beats, wanted=5)
+        beaten = asyncio.Event()
+        provider = _WaitsForBeats(beaten)
         storage = await _fresh(tmp_path, {"/a.txt": "slow body\n"}, embedder=provider)
 
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
@@ -363,6 +360,8 @@ class TestStep:
             beat = statement.startswith("UPDATE") and "lease_heartbeat" in statement
             if paged and beat and "lease_holder=" not in statement:
                 beats += 1
+                if beats == 5:
+                    beaten.set()
 
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
         result = await storage.rebuild()
@@ -375,7 +374,7 @@ class TestStep:
         storage = await _fresh(tmp_path, embedder=provider)
         assert (await storage.rebuild()).success is True
         chunks = storage._host.tables.chunks
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(update(chunks).values(embedding=None))
         assert (await storage.delete(path=Path("/a.txt"))).success is True
         result = await storage.rebuild()
@@ -617,7 +616,7 @@ class TestRefusals:
         edited = LONG_MD.replace("charlie delta", "echo foxtrot")
         copy = LONG_MD.replace("alpha bravo", "golf hotel")
         writes = [Entry(path=Path("/w/long.md"), content=edited), Entry(path=Path("/w/copy.md"), content=copy)]
-        assert (await storage.write(entries=writes, overwrite=True)).success is True
+        assert (await storage.write(entries=writes)).success is True
         second = await storage.rebuild()
         assert second.success is True
         assert refused_text not in _sent(provider)
@@ -733,8 +732,8 @@ class TestRefusals:
         provider = ScriptedProvider(token_of=len, real_batch_tokens=300, max_batch_tokens=300, max_batch_inputs=64)
         files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
         storage = await _fresh(tmp_path, files, embedder=provider, embed_concurrency=1)
-        # A hang guard only: a split that held its slot would wait on itself forever.
-        result = await asyncio.wait_for(storage.rebuild(), 60)
+        # A split that held its slot would wait on itself forever, until the run's deadline ends the test.
+        result = await storage.rebuild()
         assert result.errors == [] and _extra(result)["unembedded"] == 0
         await storage.close()
 

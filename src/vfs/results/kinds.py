@@ -52,7 +52,10 @@ class ErrorKind(StrEnum):
     **Per-kind ``data`` records** (absence means "not known", never a
     default): ``busy`` / ``unavailable.*`` / ``timeout`` may carry
     ``retry_after_ms``; ``conflict`` may carry ``version`` (the current
-    version to retry with). Envelope machinery writes only
+    version to retry with); ``exists`` from a create-only write may carry
+    the ``version`` and the ``content_hash`` of the file that is there.
+    A ``conflict`` is retryable only where the caller expected no
+    version, since only then is the same call judged afresh. Envelope machinery writes only
     ``vfs.``-prefixed keys into ``data`` (``vfs.overflow``, ``vfs.rollup``,
     ``vfs.quarantine``, ``vfs.claim``); producer keys are unprefixed.
 
@@ -82,7 +85,7 @@ class ErrorKind(StrEnum):
 
     # concurrency / preconditions
     conflict = "vfs.conflict"  # ESTALE: the precondition is stale; re-read and retry with the current version
-    busy = "vfs.busy"  # EBUSY: a live bind site the data plane may not mutate; unmount first
+    busy = "vfs.busy"  # EBUSY: a live mount point that a verb may not change; remove the mount first
     cross_mount = "vfs.cross_mount"  # EXDEV: the verb's endpoints resolve to different mounts
     budget_exhausted = "vfs.budget_exhausted"  # ELOOP: the hop or TTL budget is spent; not retryable
     truncated = "vfs.budget_exhausted.truncated"  # ELOOP: a runtime budget cut the result; refine, do not retry
@@ -202,7 +205,7 @@ KIND_CONTRACTS: dict[ErrorKind, KindContract] = {
         "Unsupported",
         RetryClass.never,
         "This mount does not support the verb; target a mount that does.",
-        "the entry's bind path (capability failures anchor to the mount)",
+        "the mount's path (capability failures anchor to the mount)",
     ),
     ErrorKind.unrecognized: KindContract(
         "Unrecognized verb",
@@ -237,8 +240,8 @@ KIND_CONTRACTS: dict[ErrorKind, KindContract] = {
     ErrorKind.busy: KindContract(
         "Busy",
         RetryClass.transient,
-        "Unmount the bind site first, then retry.",
-        "the live bind site the data plane may not mutate",
+        "Remove the mount first, then retry.",
+        "the live mount point that a verb may not change",
     ),
     ErrorKind.cross_mount: KindContract(
         "Crosses a mount boundary",
@@ -274,7 +277,7 @@ KIND_CONTRACTS: dict[ErrorKind, KindContract] = {
         "Backend unavailable",
         RetryClass.transient,
         "Check the mount's backend connection, then retry.",
-        "the entry's bind path — the mount whose transport is down",
+        "the path of the mount whose transport is down",
     ),
     ErrorKind.schema_mismatch: KindContract(
         "Schema mismatch",

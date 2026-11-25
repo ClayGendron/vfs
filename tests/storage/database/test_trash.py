@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from tests.support.commit_worlds import ALICE, EVE, attempts, clearing, drop_world, land, paths_under, row_at
-from tests.support.database_helpers import _ReturningSession, _url
+from tests.support.database_helpers import _ReturningSession, _url, begin_as_writer, writer_engine
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
@@ -398,8 +398,8 @@ class TestRevive:
         before = (await _rows(storage))["/f.md"]
         assert (await storage.delete(path=Path("/f.md"))).success is True
         parent = (await storage.stat(path=Path("/"))).observations[0].version
-        # overwrite=False admits the revive: no live row occupies the path.
-        result = await storage.write(entries=[Entry(path=Path("/f.md"), content="two")], overwrite=False, authority=ANN)
+        # A create-only write admits the revive: no live row occupies the path.
+        result = await storage.write(entries=[Entry(path=Path("/f.md"), content="two")], if_absent=True, authority=ANN)
         assert result.success is True
         [observed] = result.observations
         assert observed.status == "updated"
@@ -461,7 +461,7 @@ class TestRevive:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="one")])).success is True
         content = storage._host.tables.content
-        async with storage._host.engine.begin() as conn:
+        async with writer_engine(storage._host.engine).begin() as conn:
             await conn.execute(delete(content))
         assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="two")])).success is True
         assert await _count(storage, "versions") == 0
@@ -574,7 +574,7 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
     host = storage._host
     async with host.session_factory() as session:
         committed = await _fetch_committed(session, host.tables, host.profile, host.membership_budget, {entry.path})
-    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, value_cap=host.value_cap)
+    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
     staged = plan.put_file(
         entry.path,
         kind=entry.kind,
@@ -595,9 +595,15 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
 
 
 async def _apply_stale(storage: DatabaseStorage, plan: WritePlan) -> bool:
-    """Run *plan*'s statements against committed state; whether the guard refused (classified or redriven)."""
+    """Run *plan*'s statements against committed state; whether the guard refused (classified or redriven).
+
+    The session begins as a verb's writer does, holding the write lock from its first read: a plain read
+    transaction that then writes is refused at once if another connection, such as the host's statistics
+    pass, committed in between.
+    """
     host = storage._host
     async with host.session_factory() as session:
+        await begin_as_writer(session)
         try:
             errors = await _apply(
                 session, host.tables, host.profile, host.parameter_budget, host.membership_budget, plan, overwrite=True
@@ -955,7 +961,7 @@ class TestTrashView:
         # the first component he cannot see, never the synthesized head.
         storage = DatabaseStorage(url=_url(tmp_path))
         bob = Authority.of(Principal("bob"))
-        assert (await storage.posture(path=Path("/"), posture="none", authority=None)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=None)).success is True
         assert (await storage.mkdir(path=Path("/ann"), authority=None)).success is True
         assert (await storage.grant(path=Path("/ann"), principal="ann", level="read_write", authority=None)).success
         assert (await storage.write(entries=[Entry(path=Path("/ann/secret.md"), content="s")], authority=ANN)).success
@@ -985,7 +991,7 @@ class TestTrashView:
         # so a ghost beneath /d/sub is named at the ghost, not at /d.
         storage = DatabaseStorage(url=_url(tmp_path))
         bob = Authority.of(Principal("bob"))
-        assert (await storage.posture(path=Path("/"), posture="none", authority=None)).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="none", authority=None)).success is True
         assert (await storage.mkdir(path=Path("/d"), authority=None)).success is True
         assert (await storage.mkdir(path=Path("/d/sub"), authority=None)).success is True
         assert (await storage.grant(path=Path("/d/sub"), principal="bob", level="read_write", authority=None)).success
@@ -1172,7 +1178,7 @@ class TestScale:
         await _tree(storage)
         crowd = [Entry(path=Path(f"/crowd/f{i:04}.txt"), content="x") for i in range(500)]
         assert (await storage.write(entries=crowd, parents=True)).success is True
-        assert (await storage.posture(path=Path("/"), posture="read", authority=Authority.system())).success is True
+        assert (await storage.set_posture(path=Path("/"), posture="read", authority=Authority.system())).success is True
         assert (await storage.delete(path=Path("/d"))).success is True
         await storage._host.settle_statistics()
         statements: list[tuple[str, Any]] = []
@@ -1221,7 +1227,7 @@ class TestClaimRows:
 
     The default suite drives the aggregate arm on every delete and
     restore; the VALUES arm runs through the session double SQLite
-    cannot execute, and the postgres and mssql legs prove it live.
+    cannot execute, and the postgres leg proves it live.
     """
 
     @staticmethod
@@ -1381,7 +1387,7 @@ class TestPurgeHardening:
         tables = storage._host.tables
         entry = tables.entry
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             found = await session.execute(select(entry.c.entry_id).where(entry.c.path.like("/d/%")))
             ids = [row.entry_id for row in found]
             for eid in ids[:20]:

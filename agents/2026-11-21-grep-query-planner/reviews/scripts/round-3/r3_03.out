@@ -1,0 +1,9 @@
+pattern                    U  max df  blob bytes kernel ms  defers at n=296 / 1,033 / 3,023
+dentry_lru_isolate        85    5873      10,317      0.03  [False, False, False]  errors=[]
+i_count                 6096   41807     117,146      0.42  [False, False, False]  errors=[]
+kmalloc                 4144   54099     121,783      0.37  [False, False, False]  errors=[]
+-EINVAL                17427   28277      97,224      0.41  [False, False, False]  errors=[]
+MODULE_LICENSE         17330   32669     118,939      0.49  [False, False, False]  errors=[]
+return 0;              29561   49663     164,633      0.65  [False, False, False]  errors=['Truncated: at the candidate bu']
+static int             37102   64224     211,068      0.77  [False, False, False]  errors=['Truncated: at the candidate bu']
+struct                 57528   66833     246,022      0.71  [False, False, False]  errors=['Truncated: at the candidate bu']

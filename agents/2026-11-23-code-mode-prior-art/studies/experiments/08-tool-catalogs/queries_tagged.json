@@ -1,0 +1,1058 @@
+[
+ {
+  "id": "q01",
+  "query": "show me the open pull requests in this repo",
+  "target": "github/list_pull_requests",
+  "alternates": [
+   "github/search_pull_requests"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "pull",
+   "requests"
+  ],
+  "grep_words": [
+   "open",
+   "pull",
+   "requests",
+   "repo"
+  ]
+ },
+ {
+  "id": "q02",
+  "query": "what PRs are waiting for my review",
+  "target": "github/search_pull_requests",
+  "alternates": [
+   "github/list_pull_requests"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "prs",
+   "waiting",
+   "review"
+  ]
+ },
+ {
+  "id": "q03",
+  "query": "file a bug report about the login crash",
+  "target": "github/issue_write",
+  "alternates": [
+   "github/create_issue"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "file",
+   "bug",
+   "report",
+   "login",
+   "crash"
+  ]
+ },
+ {
+  "id": "q04",
+  "query": "why did CI fail on my last push, fetch the logs",
+  "target": "github/get_job_logs",
+  "alternates": [
+   "github/actions_get",
+   "github/actions_list"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "logs"
+  ],
+  "grep_words": [
+   "fail",
+   "push",
+   "fetch",
+   "logs"
+  ]
+ },
+ {
+  "id": "q05",
+  "query": "who changed this line of code last",
+  "target": "github/get_file_blame",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "changed",
+   "line",
+   "code"
+  ]
+ },
+ {
+  "id": "q06",
+  "query": "merge PR 42 with a squash",
+  "target": "github/merge_pull_request",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "merge"
+  ],
+  "grep_words": [
+   "merge",
+   "squash"
+  ]
+ },
+ {
+  "id": "q07",
+  "query": "approve the pull request",
+  "target": "github/pull_request_review_write",
+  "alternates": [
+   "github/create_pull_request_review"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "pull",
+   "request"
+  ],
+  "grep_words": [
+   "approve",
+   "pull",
+   "request"
+  ]
+ },
+ {
+  "id": "q08",
+  "query": "start a new feature branch from main on GitHub",
+  "target": "github/create_branch",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "branch"
+  ],
+  "grep_words": [
+   "start",
+   "feature",
+   "branch",
+   "main",
+   "github"
+  ]
+ },
+ {
+  "id": "q09",
+  "query": "read the README file from the repository",
+  "target": "github/get_file_contents",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "file"
+  ],
+  "grep_words": [
+   "read",
+   "readme",
+   "file",
+   "repository"
+  ]
+ },
+ {
+  "id": "q10",
+  "query": "find code that calls parseConfig across all repositories",
+  "target": "github/search_code",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "code"
+  ],
+  "grep_words": [
+   "find",
+   "code",
+   "calls",
+   "parseconfig",
+   "across",
+   "repositories"
+  ]
+ },
+ {
+  "id": "q11",
+  "query": "which of our dependencies have known vulnerabilities",
+  "target": "github/list_dependabot_alerts",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "dependencies",
+   "known",
+   "vulnerabilities"
+  ]
+ },
+ {
+  "id": "q12",
+  "query": "has anyone leaked an API key in this repo",
+  "target": "github/list_secret_scanning_alerts",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "leaked",
+   "api",
+   "key",
+   "repo"
+  ]
+ },
+ {
+  "id": "q13",
+  "query": "make my own copy of someone else's repo",
+  "target": "github/fork_repository",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "own",
+   "copy",
+   "repo"
+  ]
+ },
+ {
+  "id": "q14",
+  "query": "bookmark this project so I can find it later",
+  "target": "github/star_repository",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "bookmark",
+   "project",
+   "find",
+   "later"
+  ]
+ },
+ {
+  "id": "q15",
+  "query": "who am I authenticated as",
+  "target": "github/get_me",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "authenticated"
+  ]
+ },
+ {
+  "id": "q16",
+  "query": "mark every notification as read",
+  "target": "github/mark_all_notifications_read",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "mark",
+   "read"
+  ],
+  "grep_words": [
+   "mark",
+   "notification",
+   "read"
+  ]
+ },
+ {
+  "id": "q17",
+  "query": "what's new in my GitHub inbox",
+  "target": "github/list_notifications",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "github",
+   "inbox"
+  ]
+ },
+ {
+  "id": "q18",
+  "query": "close issue 17 as completed",
+  "target": "github/update_issue_state",
+  "alternates": [
+   "github/issue_write"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "issue"
+  ],
+  "grep_words": [
+   "close",
+   "issue",
+   "completed"
+  ]
+ },
+ {
+  "id": "q19",
+  "query": "assign this ticket to alice",
+  "target": "github/update_issue_assignees",
+  "alternates": [
+   "github/issue_write"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "assign",
+   "ticket",
+   "alice"
+  ]
+ },
+ {
+  "id": "q20",
+  "query": "add the bug label to issue 3",
+  "target": "github/update_issue_labels",
+  "alternates": [
+   "github/issue_write"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "issue"
+  ],
+  "grep_words": [
+   "add",
+   "bug",
+   "label",
+   "issue"
+  ]
+ },
+ {
+  "id": "q21",
+  "query": "rename the pull request title",
+  "target": "github/update_pull_request_title",
+  "alternates": [
+   "github/update_pull_request"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "pull",
+   "request",
+   "title"
+  ],
+  "grep_words": [
+   "rename",
+   "pull",
+   "request",
+   "title"
+  ]
+ },
+ {
+  "id": "q22",
+  "query": "convert my PR into a draft",
+  "target": "github/update_pull_request_draft_state",
+  "alternates": [
+   "github/update_pull_request"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "draft"
+  ],
+  "grep_words": [
+   "convert",
+   "draft"
+  ]
+ },
+ {
+  "id": "q23",
+  "query": "bring my PR up to date with the base branch",
+  "target": "github/update_pull_request_branch",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "branch"
+  ],
+  "grep_words": [
+   "bring",
+   "date",
+   "base",
+   "branch"
+  ]
+ },
+ {
+  "id": "q24",
+  "query": "ask a teammate to look at my changes",
+  "target": "github/request_pull_request_reviewers",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "ask",
+   "teammate",
+   "look",
+   "changes"
+  ]
+ },
+ {
+  "id": "q25",
+  "query": "get an AI review of my pull request",
+  "target": "github/request_copilot_review",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "request",
+   "review"
+  ],
+  "grep_words": [
+   "review",
+   "pull",
+   "request"
+  ]
+ },
+ {
+  "id": "q26",
+  "query": "list the releases of this project",
+  "target": "github/list_releases",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "list",
+   "releases"
+  ],
+  "grep_words": [
+   "list",
+   "releases",
+   "project"
+  ]
+ },
+ {
+  "id": "q27",
+  "query": "what is the newest version that shipped",
+  "target": "github/get_latest_release",
+  "alternates": [
+   "github/list_releases"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "newest",
+   "version",
+   "shipped"
+  ]
+ },
+ {
+  "id": "q28",
+  "query": "show the commit history of the main branch",
+  "target": "github/list_commits",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "commit",
+   "history",
+   "main",
+   "branch"
+  ]
+ },
+ {
+  "id": "q29",
+  "query": "what changed in commit 9fceb02",
+  "target": "github/get_commit",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "commit"
+  ],
+  "grep_words": [
+   "changed",
+   "commit",
+   "9fceb02"
+  ]
+ },
+ {
+  "id": "q30",
+  "query": "find repositories about vector databases written in Rust",
+  "target": "github/search_repositories",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "repositories"
+  ],
+  "grep_words": [
+   "find",
+   "repositories",
+   "vector",
+   "databases",
+   "written",
+   "rust"
+  ]
+ },
+ {
+  "id": "q31",
+  "query": "find a developer by their real name",
+  "target": "github/search_users",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "find",
+   "developer",
+   "real",
+   "name"
+  ]
+ },
+ {
+  "id": "q32",
+  "query": "post a comment on issue 12 saying it is fixed",
+  "target": "github/add_issue_comment",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "comment",
+   "issue"
+  ],
+  "grep_words": [
+   "post",
+   "comment",
+   "issue",
+   "saying",
+   "fixed"
+  ]
+ },
+ {
+  "id": "q33",
+  "query": "react with a thumbs up to the issue",
+  "target": "github/add_issue_reaction",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "issue"
+  ],
+  "grep_words": [
+   "react",
+   "thumbs",
+   "issue"
+  ]
+ },
+ {
+  "id": "q34",
+  "query": "resolve the conversation thread in the code review",
+  "target": "github/resolve_review_thread",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "resolve",
+   "review",
+   "thread"
+  ],
+  "grep_words": [
+   "resolve",
+   "conversation",
+   "thread",
+   "code",
+   "review"
+  ]
+ },
+ {
+  "id": "q35",
+  "query": "create a gist from this snippet",
+  "target": "github/create_gist",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "create",
+   "gist"
+  ],
+  "grep_words": [
+   "create",
+   "gist",
+   "snippet"
+  ]
+ },
+ {
+  "id": "q36",
+  "query": "trigger the deploy workflow manually",
+  "target": "github/actions_run_trigger",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "trigger"
+  ],
+  "grep_words": [
+   "trigger",
+   "deploy",
+   "workflow",
+   "manually"
+  ]
+ },
+ {
+  "id": "q37",
+  "query": "list the workflows configured in the repo",
+  "target": "github/actions_list",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "list"
+  ],
+  "grep_words": [
+   "list",
+   "workflows",
+   "configured",
+   "repo"
+  ]
+ },
+ {
+  "id": "q38",
+  "query": "show me the files and folders of the repo",
+  "target": "github/get_repository_tree",
+  "alternates": [
+   "github/get_file_contents"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "files",
+   "folders",
+   "repo"
+  ]
+ },
+ {
+  "id": "q39",
+  "query": "which teams do I belong to",
+  "target": "github/get_teams",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "teams"
+  ],
+  "grep_words": [
+   "teams",
+   "belong"
+  ]
+ },
+ {
+  "id": "q40",
+  "query": "who has write access to this repository",
+  "target": "github/list_repository_collaborators",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "repository"
+  ],
+  "grep_words": [
+   "write",
+   "access",
+   "repository"
+  ]
+ },
+ {
+  "id": "q41",
+  "query": "is this bug already reported somewhere",
+  "target": "github/find_duplicate",
+  "alternates": [
+   "github/search_issues"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "bug",
+   "already",
+   "reported",
+   "somewhere"
+  ]
+ },
+ {
+  "id": "q42",
+  "query": "what is blocking this issue from being worked on",
+  "target": "github/issue_dependency_read",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "issue"
+  ],
+  "grep_words": [
+   "blocking",
+   "issue",
+   "worked"
+  ]
+ },
+ {
+  "id": "q43",
+  "query": "push three files in a single commit",
+  "target": "github/push_files",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "files",
+   "push"
+  ],
+  "grep_words": [
+   "push",
+   "three",
+   "files",
+   "single",
+   "commit"
+  ]
+ },
+ {
+  "id": "q44",
+  "query": "delete a file from the GitHub repository",
+  "target": "github/delete_file",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "delete",
+   "file"
+  ],
+  "grep_words": [
+   "delete",
+   "file",
+   "github",
+   "repository"
+  ]
+ },
+ {
+  "id": "q45",
+  "query": "add this issue to our project board",
+  "target": "github/projects_write",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "add",
+   "issue",
+   "project",
+   "board"
+  ]
+ },
+ {
+  "id": "q46",
+  "query": "dismiss the CodeQL alert as a false positive",
+  "target": "github/update_code_scanning_alert",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "alert",
+   "code"
+  ],
+  "grep_words": [
+   "dismiss",
+   "codeql",
+   "alert",
+   "false",
+   "positive"
+  ]
+ },
+ {
+  "id": "q47",
+  "query": "scale the deployment to three replicas",
+  "target": "kubectl-mcp-server/scale_deployment",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "deployment",
+   "scale"
+  ],
+  "grep_words": [
+   "scale",
+   "deployment",
+   "three",
+   "replicas"
+  ]
+ },
+ {
+  "id": "q48",
+  "query": "show the logs of the crashing pod in kubernetes",
+  "target": "kubectl-mcp-server/get_logs",
+  "alternates": [
+   "kubectl-mcp-server/get_pod_events",
+   "kubectl-mcp-server/check_pod_health"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "logs"
+  ],
+  "grep_words": [
+   "logs",
+   "crashing",
+   "pod",
+   "kubernetes"
+  ]
+ },
+ {
+  "id": "q49",
+  "query": "refund the customer's last payment",
+  "target": "stripe-remote/create_refund",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "refund"
+  ],
+  "grep_words": [
+   "refund",
+   "customer",
+   "payment"
+  ]
+ },
+ {
+  "id": "q50",
+  "query": "cancel a customer's subscription in Stripe",
+  "target": "stripe-remote/cancel_subscription",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "cancel",
+   "subscription"
+  ],
+  "grep_words": [
+   "cancel",
+   "customer",
+   "subscription",
+   "stripe"
+  ]
+ },
+ {
+  "id": "q51",
+  "query": "deactivate a user account in Okta",
+  "target": "okta-mcp-server/deactivate_user",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "deactivate",
+   "user"
+  ],
+  "grep_words": [
+   "deactivate",
+   "user",
+   "account",
+   "okta"
+  ]
+ },
+ {
+  "id": "q52",
+  "query": "add someone to the engineering group in Okta",
+  "target": "okta-mcp-server/add_user_to_group",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "add",
+   "group",
+   "to"
+  ],
+  "grep_words": [
+   "add",
+   "engineering",
+   "group",
+   "okta"
+  ]
+ },
+ {
+  "id": "q53",
+  "query": "run a Cypher query against the graph database",
+  "target": "neo4j/read-cypher",
+  "alternates": [
+   "neo4j/write-cypher"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "cypher"
+  ],
+  "grep_words": [
+   "run",
+   "cypher",
+   "query",
+   "against",
+   "graph",
+   "database"
+  ]
+ },
+ {
+  "id": "q54",
+  "query": "trigger a new Buildkite build for the main branch",
+  "target": "buildkite/create_build",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "build"
+  ],
+  "grep_words": [
+   "trigger",
+   "buildkite",
+   "build",
+   "main",
+   "branch"
+  ]
+ },
+ {
+  "id": "q55",
+  "query": "show the output of the failed Buildkite job",
+  "target": "buildkite/get_job_logs",
+  "alternates": [
+   "buildkite/get_failed_executions"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "job"
+  ],
+  "grep_words": [
+   "output",
+   "failed",
+   "buildkite",
+   "job"
+  ]
+ },
+ {
+  "id": "q56",
+  "query": "is the quality gate passing for my SonarQube project",
+  "target": "sonarqube/get_project_quality_gate_status",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "gate",
+   "project",
+   "quality"
+  ],
+  "grep_words": [
+   "quality",
+   "gate",
+   "passing",
+   "sonarqube",
+   "project"
+  ]
+ },
+ {
+  "id": "q57",
+  "query": "place a buy order for 10 shares of INFY",
+  "target": "zerodha-kite/place_order",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "order",
+   "place"
+  ],
+  "grep_words": [
+   "place",
+   "buy",
+   "order",
+   "shares",
+   "infy"
+  ]
+ },
+ {
+  "id": "q58",
+  "query": "what stocks do I currently own in my brokerage account",
+  "target": "zerodha-kite/get_holdings",
+  "alternates": [
+   "zerodha-kite/get_positions"
+  ],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "stocks",
+   "currently",
+   "own",
+   "brokerage",
+   "account"
+  ]
+ },
+ {
+  "id": "q59",
+  "query": "list the tables in the sqlite database",
+  "target": "sqlite-mcp-server/list_tables",
+  "alternates": [
+   "database-server/list_tables"
+  ],
+  "category": "named",
+  "shared_with_name": [
+   "list",
+   "tables"
+  ],
+  "grep_words": [
+   "list",
+   "tables",
+   "sqlite",
+   "database"
+  ]
+ },
+ {
+  "id": "q60",
+  "query": "run a pipeline in Yunxiao Flow",
+  "target": "alibaba-devops/create_pipeline_run",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "pipeline",
+   "run"
+  ],
+  "grep_words": [
+   "run",
+   "pipeline",
+   "yunxiao",
+   "flow"
+  ]
+ },
+ {
+  "id": "q61",
+  "query": "list merge requests in a Codeup repository",
+  "target": "alibaba-devops/list_change_requests",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "list",
+   "requests"
+  ],
+  "grep_words": [
+   "list",
+   "merge",
+   "requests",
+   "codeup",
+   "repository"
+  ]
+ },
+ {
+  "id": "q62",
+  "query": "approve the manual checkpoint gate in the pipeline",
+  "target": "alibaba-devops/pass_pipeline_validate",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "pipeline"
+  ],
+  "grep_words": [
+   "approve",
+   "manual",
+   "checkpoint",
+   "gate",
+   "pipeline"
+  ]
+ },
+ {
+  "id": "q63",
+  "query": "email a summary to my manager",
+  "target": "gmail-mcp/sendMessage",
+  "alternates": [],
+  "category": "paraphrase",
+  "shared_with_name": [],
+  "grep_words": [
+   "email",
+   "summary",
+   "manager"
+  ]
+ },
+ {
+  "id": "q64",
+  "query": "publish the website changes live",
+  "target": "webflow-remote/sites_publish",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "publish"
+  ],
+  "grep_words": [
+   "publish",
+   "website",
+   "changes",
+   "live"
+  ]
+ },
+ {
+  "id": "q65",
+  "query": "search the Microsoft documentation for Azure Functions triggers",
+  "target": "microsoft-learn/microsoft_docs_search",
+  "alternates": [],
+  "category": "named",
+  "shared_with_name": [
+   "microsoft",
+   "search"
+  ],
+  "grep_words": [
+   "search",
+   "microsoft",
+   "documentation",
+   "azure",
+   "functions",
+   "triggers"
+  ]
+ }
+]

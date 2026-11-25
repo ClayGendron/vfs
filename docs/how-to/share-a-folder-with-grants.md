@@ -28,7 +28,7 @@ await fs.write(path="/pub/readme.md", content="hello", parents=True, authority=s
 A new mount's posture is `read_write`: everyone reads and writes. Set the root to `none` so a caller holds only what it is granted.
 
 ```python
-result = await fs.posture("/", "none", authority=system)
+result = await fs.set_posture("/", "none", authority=system)
 assert result.success
 ```
 

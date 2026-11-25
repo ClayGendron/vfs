@@ -318,7 +318,8 @@ class Result(BaseModel):
 
     - **Envelope:** ``ops`` records every op whose rows were merged in
       (ordered union under ``|``) — one vocabulary with the router's
-      ``vfs.ops``, kept open ``str`` because a peer may report ops this
+      ``vfs.ops``, where a front such as ``cli`` also names the call it
+      made, kept open ``str`` because a peer may report ops this
       client predates. The ``.op`` property yields the sole op, or
       ``None`` for a cross-op merge — renderers fall back to a generic
       arrangement on ``None``.
@@ -348,6 +349,12 @@ class Result(BaseModel):
     - Enrichment: ``.sort()``, ``.top()``, ``.filter()``, ``.kinds()``.
     - Routing: ``.with_mount()`` / ``.without_mount()`` rebase every row
       and error across a mount boundary and stamp error provenance.
+    - Paging: ``next_after`` is the path of the last row of a listing
+      page, passed back as ``after=`` for the next one, and ``None`` when
+      the listing is done. Enrichment and ``model_copy`` keep it, because
+      the listing's position is unchanged. Set algebra, ``merge`` and
+      ``merge_branches`` clear it, because two listings have no one
+      position. The rebase pair moves it like a row path.
     - Serialization: ``.to_payload()`` / ``.from_payload()`` (open,
       per-item-lenient wire dict), ``.to_json()``, ``.to_str()``.
     """
@@ -357,6 +364,7 @@ class Result(BaseModel):
     ops: tuple[str, ...] = ()
     observations: list[Observation] = []
     errors: list[ResultError] = []
+    next_after: Path | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -560,18 +568,23 @@ class Result(BaseModel):
         For scoped and grouped dispatch, where every branch answers for an
         entry the caller named: any fatal entry fails the merged envelope.
         *op* seeds the envelope's verb for an empty merge. Rows for the
-        same global path fuse left-wins by mask; at bind paths this
-        decorates the owner's row with the mounted root's fields (the two
-        rows are the same entry seen from both sides of the seam — their
-        counters are unrelated, so the decorated row's version reads
-        null) — bind paths are the one place branch row-sets are *not*
-        disjoint. Computed as one linear pass over a running path index,
+        same global path fuse left-wins by mask. The router's branches
+        are disjoint but in two places. A directory above a mount point
+        is added bare and its storage's own row then fills it in. A
+        named root of a ``glob`` is returned by its probe, and again by
+        a storage or as a mount point when it lies beneath another
+        named root. The router drops the stored directory at a mount
+        point before any merge, so that path carries the mounted root's
+        row alone.
+        Computed as one linear pass over a running path index,
         equivalent to the pairwise fold without its quadratic rescans.
         """
         merged_ops: tuple[str, ...] = (op,) if op else ()
         rows: list[Observation] = []
         at: dict[str, list[int]] = {}
         errors: list[ResultError] = []
+        # An error's data is a dict, so it cannot hash; equal errors share this key, and only they are compared.
+        alike: dict[tuple[ErrorKind | str, str | None, str], list[ResultError]] = {}
         for r in results:
             merged_ops += tuple(o for o in r.ops if o not in merged_ops)
             fresh = [o for o in r.observations if o.path not in at]
@@ -582,7 +595,9 @@ class Result(BaseModel):
                 at.setdefault(o.path, []).append(len(rows))
                 rows.append(o)
             for e in r.errors:
-                if e not in errors:
+                seen = alike.setdefault((e.kind, e.path, e.message), [])
+                if e not in seen:
+                    seen.append(e)
                     errors.append(e)
         return cls(ops=merged_ops, observations=rows, errors=errors)
 
@@ -607,7 +622,7 @@ class Result(BaseModel):
     def _demoted(self) -> Result:
         """Copy with every fatal entry demoted to warning severity."""
         errors = [e.model_copy(update={"severity": Severity.warning}) if e.is_fatal else e for e in self.errors]
-        return Result(ops=self.ops, observations=self.observations, errors=errors)
+        return Result(ops=self.ops, observations=self.observations, errors=errors, next_after=self.next_after)
 
     # -------------------------------------------------------------------
     # Enrichment chains (local, no backend call)
@@ -619,6 +634,7 @@ class Result(BaseModel):
             ops=self.ops,
             observations=observations,
             errors=self.errors,
+            next_after=self.next_after,
         )
 
     def sort(
@@ -672,7 +688,10 @@ class Result(BaseModel):
         ``vfs.unaddressable`` **warning** — the row exists but is not
         addressable through this mount; loss on record, envelope still
         successful. Its locus is ``source`` plus the append-once
-        ``data["vfs.overflow"]`` local path. Pure — the original is
+        ``data["vfs.overflow"]`` local path. A listing key rebases like a
+        row; one that would overflow ends the listing loudly: the key
+        becomes ``None`` and the warning for it carries
+        ``data["vfs.overflow"]["next_after"]``. Pure — the original is
         untouched.
         """
         if not mount:
@@ -681,25 +700,29 @@ class Result(BaseModel):
         errors = [e.with_mount(mount) for e in self.errors]
         extras = self.model_extra or {}
         if mount == "/":
-            return Result(ops=self.ops, observations=self.observations, errors=errors, **extras)
+            return Result(
+                ops=self.ops, observations=self.observations, errors=errors, next_after=self.next_after, **extras
+            )
         observations: list[Observation] = []
+        overflowed: dict[str, int] = {}
         for o in self.observations:
             if rebase_overflows(mount, o.path):
-                errors.append(
-                    ResultError(
-                        kind=ErrorKind.unaddressable,
-                        message=(
-                            f"Unaddressable: the path exceeds {MAX_PATH_LENGTH} bytes when rebased "
-                            "under this mount and cannot be addressed through it"
-                        ),
-                        severity=Severity.warning,
-                        source=mount,
-                        data={"vfs.overflow": {"local_path": str(o.path)}},
-                    )
-                )
+                overflowed[o.path] = len(errors)
+                errors.append(_unaddressable(mount, {"local_path": str(o.path)}))
                 continue
             observations.append(o.with_mount(mount))
-        return Result(ops=self.ops, observations=observations, errors=errors, **extras)
+        key = self.next_after
+        if key is not None and rebase_overflows(mount, key):
+            # The listing ends loudly: the row the key names was dropped above, or never shown.
+            index = overflowed.get(key)
+            if index is None:
+                errors.append(_unaddressable(mount, {"next_after": str(key)}))
+            else:
+                errors[index] = _unaddressable(mount, {"local_path": str(key), "next_after": str(key)})
+            key = None
+        elif key is not None:
+            key = key.with_mount(mount)
+        return Result(ops=self.ops, observations=observations, errors=errors, next_after=key, **extras)
 
     def without_mount(self, mount: str) -> Result:
         """New result with the *mount* prefix stripped from every row and error.
@@ -713,6 +736,7 @@ class Result(BaseModel):
             ops=self.ops,
             observations=[o.without_mount(mount) for o in self.observations],
             errors=[e.without_mount(mount) for e in self.errors],
+            next_after=None if self.next_after is None else self.next_after.without_mount(mount),
             **(self.model_extra or {}),
         )
 
@@ -740,11 +764,7 @@ class Result(BaseModel):
         """
         target = self
         if max_errors is not None and len(self.errors) > max_errors:
-            target = Result(
-                ops=self.ops,
-                observations=self.observations,
-                errors=self._rolled_errors(),
-            )
+            target = self.model_copy(update={"errors": self._rolled_errors()})
         payload = json.loads(target.model_dump_json(exclude_none=exclude_none))
         payload.pop("success", None)
         return {"success": self.success} | payload
@@ -880,6 +900,20 @@ class Result(BaseModel):
 # ---------------------------------------------------------------------------
 
 _QUARANTINE_CLIP = 512  # bound raw peer junk carried in quarantine records
+
+
+def _unaddressable(mount: Path, overflow: dict[str, str]) -> ResultError:
+    """The warning for a row or a listing key whose path is too long to rebase under ``mount``."""
+    return ResultError(
+        kind=ErrorKind.unaddressable,
+        message=(
+            f"Unaddressable: the path exceeds {MAX_PATH_LENGTH} bytes when rebased "
+            "under this mount and cannot be addressed through it"
+        ),
+        severity=Severity.warning,
+        source=mount,
+        data={"vfs.overflow": overflow},
+    )
 
 
 def _quarantine(item: Any, exc: Exception, severity: Severity, what: str) -> ResultError:

@@ -9,6 +9,9 @@ OLD_CLAUDE.md
 # JetBrains
 .idea/
 
+# The stacks a test past its deadline leaves (tests/conftest.py)
+test-hangs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -69,6 +72,8 @@ cover/
 
 # Django stuff:
 *.log
+# A research study keeps the output its notes link to.
+!context/research/studies/**/*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal

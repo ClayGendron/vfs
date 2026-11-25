@@ -1,0 +1,119 @@
+{
+ "combined/V1/search:mem-overlay": {
+  "search_top5_bytes_median": 1204,
+  "search_top5_bytes_max": 1707
+ },
+ "combined/V1/grep": {
+  "grep_output_bytes_median": 4059,
+  "grep_output_bytes_max": 19772
+ },
+ "combined/V1/ls /tools": 621,
+ "combined/V1/ls /tools/github": 5706,
+ "combined/V1/manifest_bytes": {
+  "median": 114,
+  "p90": 265,
+  "max": 3088
+ },
+ "combined/V1/search:lexical": {
+  "search_top5_bytes_median": 1379,
+  "search_top5_bytes_max": 1852
+ },
+ "combined/V1/search:hash-vector": {
+  "search_top5_bytes_median": 1187,
+  "search_top5_bytes_max": 2170
+ },
+ "combined/V1/search:mem-fused": {
+  "search_top5_bytes_median": 1260,
+  "search_top5_bytes_max": 1895
+ },
+ "combined/V2/search:mem-overlay": {
+  "search_top5_bytes_median": 1810,
+  "search_top5_bytes_max": 2400
+ },
+ "combined/V2/grep": {
+  "grep_output_bytes_median": 5377,
+  "grep_output_bytes_max": 25193
+ },
+ "combined/V2/ls /tools": 621,
+ "combined/V2/ls /tools/github": 5706,
+ "combined/V2/manifest_bytes": {
+  "median": 229,
+  "p90": 875,
+  "max": 4992
+ },
+ "combined/V2/search:lexical": {
+  "search_top5_bytes_median": 2062,
+  "search_top5_bytes_max": 3862
+ },
+ "combined/V2/search:hash-vector": {
+  "search_top5_bytes_median": 1561,
+  "search_top5_bytes_max": 3178
+ },
+ "combined/V2/search:mem-fused": {
+  "search_top5_bytes_median": 1937,
+  "search_top5_bytes_max": 4500
+ },
+ "github/V1/search:mem-overlay": {
+  "search_top5_bytes_median": 1289.0,
+  "search_top5_bytes_max": 1935
+ },
+ "github/V1/grep": {
+  "grep_output_bytes_median": 1174.5,
+  "grep_output_bytes_max": 9391
+ },
+ "github/V1/ls /tools": 13,
+ "github/V1/search:lexical": {
+  "search_top5_bytes_median": 1464.0,
+  "search_top5_bytes_max": 2110
+ },
+ "github/V1/search:hash-vector": {
+  "search_top5_bytes_median": 1052.0,
+  "search_top5_bytes_max": 1532
+ },
+ "github/V1/search:mem-fused": {
+  "search_top5_bytes_median": 1302.0,
+  "search_top5_bytes_max": 1795
+ },
+ "github/V2/search:mem-overlay": {
+  "search_top5_bytes_median": 2031.5,
+  "search_top5_bytes_max": 2502
+ },
+ "github/V2/grep": {
+  "grep_output_bytes_median": 1608.0,
+  "grep_output_bytes_max": 12104
+ },
+ "github/V2/ls /tools": 13,
+ "github/V2/search:lexical": {
+  "search_top5_bytes_median": 2296.0,
+  "search_top5_bytes_max": 3507
+ },
+ "github/V2/search:hash-vector": {
+  "search_top5_bytes_median": 2041.0,
+  "search_top5_bytes_max": 3415
+ },
+ "github/V2/search:mem-fused": {
+  "search_top5_bytes_median": 2204.5,
+  "search_top5_bytes_max": 3332
+ },
+ "github/V3/search:mem-overlay": {
+  "search_top5_bytes_median": 1768.5,
+  "search_top5_bytes_max": 2347
+ },
+ "github/V3/grep": {
+  "grep_output_bytes_median": 1969.0,
+  "grep_output_bytes_max": 13550
+ },
+ "github/V3/ls /tools": 13,
+ "github/V3/search:lexical": {
+  "search_top5_bytes_median": 1960.5,
+  "search_top5_bytes_max": 3247
+ },
+ "github/V3/search:hash-vector": {
+  "search_top5_bytes_median": 1882.5,
+  "search_top5_bytes_max": 2923
+ },
+ "github/V3/search:mem-fused": {
+  "search_top5_bytes_median": 1820.0,
+  "search_top5_bytes_max": 3461
+ }
+}

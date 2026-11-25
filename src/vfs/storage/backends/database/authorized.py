@@ -15,11 +15,9 @@ of all and for the system actor too: the everyone stamp, read again
 under a shared lock (:func:`~vfs.storage.backends.database.labels.hold_postures`).
 
 The commit point, per engine: where each statement reads the latest
-commit (every SQL Server and Oracle verb, and the topology verbs on
-Postgres and MariaDB), it is the fence; where vfs pins a repeatable
-snapshot for writes (Postgres and MariaDB, with MariaDB's
-``innodb_snapshot_isolation`` on), it is that snapshot, and the fence
-agrees by construction; on SQLite, whose writers take the write lock at
+commit (the topology verbs on Postgres), it is the fence; where vfs pins
+a repeatable snapshot for writes (Postgres), it is that snapshot, and
+the fence agrees by construction; on SQLite, whose writers take the write lock at
 their first statement, it is that statement. The same code runs on every
 engine with no branch.
 
@@ -312,19 +310,20 @@ def admit_targets(session: AsyncSession, op: str, live: Mapping[str, Any], targe
     admit(judging(session, VERB_RUNGS[cast("Op", op)].primary), rows)
 
 
-def admit_staged(session: AsyncSession, op: str, plan: WritePlan) -> None:
+def admit_staged(session: AsyncSession, op: str, plan: WritePlan, primary: Rung | None = None) -> None:
     """Judge every update or revive the plan staged, by the row its own read returned for it.
 
     A revive at restore's primary rung, every other update at the
     verb's, the owner floor riding: the rule the gate gives a tombstoned
     and an occupied target. The undisturbed plan judges the rows the
-    gate judged and passes.
+    gate judged and passes. *primary* names the rung of an update whose
+    gate judged it below the verb's own, as an append's did.
     """
     staged = [entry for entry in plan.staged.values() if entry.persistence == "update"]
     revived = [plan.committed[str(entry.path)] for entry in staged if entry.revive]
     changed = [plan.committed[str(entry.path)] for entry in staged if not entry.revive]
     admit(judging(session, VERB_RUNGS["restore"].primary), revived)
-    admit(judging(session, VERB_RUNGS[cast("Op", op)].primary), changed)
+    admit(judging(session, primary or VERB_RUNGS[cast("Op", op)].primary), changed)
 
 
 async def admit_landed(

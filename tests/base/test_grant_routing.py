@@ -48,7 +48,7 @@ async def fs() -> AsyncIterator[AsyncVirtualFileSystem]:
 async def test_a_grant_reaches_its_mount_with_the_storage_local_path() -> None:
     fs = RecorderFS(storage=BindableStorage())
     await fs.add_mount(RecorderStorage(name="child"), "/m")
-    child = fs._bindings[Path("/m")].storage
+    child = fs._mounts[Path("/m")].storage
     assert isinstance(child, RecorderStorage)
     await fs.grant("/m/eng", "bob", "read")
     assert child.calls[-1] == ("grant", {"path": "/eng", "principal": "bob", "level": "read"})
@@ -69,13 +69,13 @@ async def test_listed_grant_rows_come_back_in_router_coordinates(fs: AsyncVirtua
 
 
 async def test_a_grant_on_the_root_mount_needs_no_rebase(fs: AsyncVirtualFileSystem) -> None:
-    result = await fs.posture("/", "read")
+    result = await fs.set_posture("/", "read")
     assert result.success is True
     assert _granted(result)[0]["path_prefix"] == "/"
 
 
 async def test_the_grant_takes_effect_for_the_next_routed_read(fs: AsyncVirtualFileSystem) -> None:
-    assert (await fs.posture("/m", "none")).success is True
+    assert (await fs.set_posture("/m", "none")).success is True
     assert (await fs.read("/m/eng/spec.md", authority=ANN)).errors[0].kind == ErrorKind.not_found
     assert (await fs.grant("/m/eng", "ann", "read")).success is True
     assert (await fs.read("/m/eng/spec.md", authority=ANN)).success is True
@@ -87,11 +87,11 @@ async def test_the_grant_takes_effect_for_the_next_routed_read(fs: AsyncVirtualF
 
 
 async def test_a_read_only_mount_refuses_grant_writes_but_lists(fs: AsyncVirtualFileSystem) -> None:
-    await fs.remount("/m", permissions="read")
+    await fs.update_mount("/m", permissions="read")
     for refused in (
         await fs.grant("/m/eng", "ann", "read"),
         await fs.revoke("/m/eng", "ann"),
-        await fs.posture("/m", "none"),
+        await fs.set_posture("/m", "none"),
         await fs.add_member("group:eng", "ann", path="/m"),
         await fs.remove_member("group:eng", "ann", path="/m"),
     ):
@@ -126,7 +126,7 @@ async def test_an_invalid_grant_path_is_refused_before_dispatch() -> None:
         lambda fs: fs.grant("/d", "bob", "admin"),
         lambda fs: fs.grant("/d", 7, "read"),
         lambda fs: fs.grant(None, "bob", "read"),
-        lambda fs: fs.posture("/d", "public"),
+        lambda fs: fs.set_posture("/d", "public"),
         lambda fs: fs.add_member("group:eng", None),
         lambda fs: fs.remove_member(3, "bob"),
         lambda fs: fs.revoke("/d", 7),
@@ -167,7 +167,7 @@ def test_a_principal_may_not_take_a_grant_row_name(sub: str) -> None:
 
 async def test_writes_through_the_router_stamp_the_caller_as_owner(fs: AsyncVirtualFileSystem) -> None:
     # Under a private mount, ann's own file stays hers to read.
-    assert (await fs.posture("/m", "none")).success is True
+    assert (await fs.set_posture("/m", "none")).success is True
     assert (await fs.grant("/m/eng", "ann", "read_write")).success is True
     await fs.write([Entry(path=Path("/m/eng/mine.md"), content="x")], authority=ANN)
     assert (await fs.revoke("/m/eng", "ann")).success is True

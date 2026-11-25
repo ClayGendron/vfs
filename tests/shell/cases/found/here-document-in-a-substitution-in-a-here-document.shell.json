@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 8: a here-document inside a here-document: refused: a substitution in a here-document's body cannot hold a here-document of its own\n"
+}

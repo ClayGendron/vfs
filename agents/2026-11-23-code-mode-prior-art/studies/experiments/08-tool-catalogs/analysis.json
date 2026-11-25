@@ -1,0 +1,766 @@
+{
+ "overlap": {
+  "q01": [
+   "open",
+   "pull",
+   "requests"
+  ],
+  "q02": [
+   "prs"
+  ],
+  "q03": [
+   "bug",
+   "crash",
+   "file"
+  ],
+  "q04": [
+   "fail",
+   "logs"
+  ],
+  "q05": [
+   "line"
+  ],
+  "q06": [
+   "merge",
+   "squash"
+  ],
+  "q07": [
+   "approve",
+   "pull",
+   "request"
+  ],
+  "q08": [
+   "branch",
+   "feature",
+   "main",
+   "start"
+  ],
+  "q09": [
+   "read",
+   "readme"
+  ],
+  "q10": [
+   "across",
+   "find",
+   "parseconfig"
+  ],
+  "q11": [
+   "dependencies"
+  ],
+  "q12": [
+   "leaked",
+   "repo"
+  ],
+  "q13": [
+   "copy",
+   "own",
+   "repo"
+  ],
+  "q14": [
+   "bookmark",
+   "project"
+  ],
+  "q15": [],
+  "q16": [
+   "mark",
+   "read"
+  ],
+  "q17": [
+   "inbox"
+  ],
+  "q18": [
+   "close",
+   "issue"
+  ],
+  "q19": [
+   "assign",
+   "ticket"
+  ],
+  "q20": [
+   "bug",
+   "issue"
+  ],
+  "q21": [
+   "pull",
+   "rename",
+   "request"
+  ],
+  "q22": [
+   "convert",
+   "draft"
+  ],
+  "q23": [
+   "base",
+   "bring",
+   "date"
+  ],
+  "q24": [
+   "ask"
+  ],
+  "q25": [
+   "review"
+  ],
+  "q26": [
+   "project",
+   "releases"
+  ],
+  "q27": [
+   "newest",
+   "version"
+  ],
+  "q28": [
+   "branch",
+   "commit",
+   "history",
+   "main"
+  ],
+  "q29": [
+   "changed",
+   "commit"
+  ],
+  "q30": [
+   "databases",
+   "find",
+   "rust",
+   "vector"
+  ],
+  "q31": [
+   "find"
+  ],
+  "q32": [
+   "comment",
+   "fixed",
+   "issue",
+   "post",
+   "saying"
+  ],
+  "q33": [
+   "issue"
+  ],
+  "q34": [
+   "code",
+   "conversation",
+   "resolve",
+   "review",
+   "thread"
+  ],
+  "q35": [
+   "gist",
+   "snippet"
+  ],
+  "q36": [
+   "deploy",
+   "workflow"
+  ],
+  "q37": [
+   "repo",
+   "workflows"
+  ],
+  "q38": [
+   "repo"
+  ],
+  "q39": [
+   "teams"
+  ],
+  "q40": [
+   "access"
+  ],
+  "q41": [
+   "already",
+   "bug",
+   "reported"
+  ],
+  "q42": [
+   "blocking",
+   "issue"
+  ],
+  "q43": [
+   "commit",
+   "files",
+   "push",
+   "three"
+  ],
+  "q44": [],
+  "q45": [
+   "add",
+   "board",
+   "issue",
+   "project"
+  ],
+  "q46": [
+   "alert",
+   "codeql",
+   "dismiss",
+   "false",
+   "positive"
+  ]
+ },
+ "bucket_sizes": {
+  "echo": 33,
+  "fresh": 13
+ },
+ "leakage": {
+  "grep/V1/echo": {
+   "n": 33,
+   "hit@1": 0.273,
+   "hit@3": 0.545,
+   "hit@5": 0.697,
+   "mrr@10": 0.497
+  },
+  "grep/V1/fresh": {
+   "n": 13,
+   "hit@1": 0.154,
+   "hit@3": 0.462,
+   "hit@5": 0.462,
+   "mrr@10": 0.344
+  },
+  "grep/V2/echo": {
+   "n": 33,
+   "hit@1": 0.182,
+   "hit@3": 0.636,
+   "hit@5": 0.636,
+   "mrr@10": 0.458
+  },
+  "grep/V2/fresh": {
+   "n": 13,
+   "hit@1": 0.077,
+   "hit@3": 0.385,
+   "hit@5": 0.462,
+   "mrr@10": 0.24
+  },
+  "grep/V3/echo": {
+   "n": 33,
+   "hit@1": 0.515,
+   "hit@3": 0.939,
+   "hit@5": 0.97,
+   "mrr@10": 0.777
+  },
+  "grep/V3/fresh": {
+   "n": 13,
+   "hit@1": 0.077,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.313
+  },
+  "search:hash-vector/V1/echo": {
+   "n": 33,
+   "hit@1": 0.212,
+   "hit@3": 0.242,
+   "hit@5": 0.242,
+   "mrr@10": 0.235
+  },
+  "search:hash-vector/V1/fresh": {
+   "n": 13,
+   "hit@1": 0.154,
+   "hit@3": 0.154,
+   "hit@5": 0.231,
+   "mrr@10": 0.184
+  },
+  "search:hash-vector/V2/echo": {
+   "n": 33,
+   "hit@1": 0.121,
+   "hit@3": 0.242,
+   "hit@5": 0.273,
+   "mrr@10": 0.189
+  },
+  "search:hash-vector/V2/fresh": {
+   "n": 13,
+   "hit@1": 0.077,
+   "hit@3": 0.231,
+   "hit@5": 0.231,
+   "mrr@10": 0.141
+  },
+  "search:hash-vector/V3/echo": {
+   "n": 33,
+   "hit@1": 0.182,
+   "hit@3": 0.303,
+   "hit@5": 0.303,
+   "mrr@10": 0.245
+  },
+  "search:hash-vector/V3/fresh": {
+   "n": 13,
+   "hit@1": 0.154,
+   "hit@3": 0.308,
+   "hit@5": 0.308,
+   "mrr@10": 0.215
+  },
+  "search:lexical/V1/echo": {
+   "n": 33,
+   "hit@1": 0.485,
+   "hit@3": 0.545,
+   "hit@5": 0.667,
+   "mrr@10": 0.548
+  },
+  "search:lexical/V1/fresh": {
+   "n": 13,
+   "hit@1": 0.462,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.487
+  },
+  "search:lexical/V2/echo": {
+   "n": 33,
+   "hit@1": 0.515,
+   "hit@3": 0.758,
+   "hit@5": 0.788,
+   "mrr@10": 0.636
+  },
+  "search:lexical/V2/fresh": {
+   "n": 13,
+   "hit@1": 0.385,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.462
+  },
+  "search:lexical/V3/echo": {
+   "n": 33,
+   "hit@1": 0.848,
+   "hit@3": 0.939,
+   "hit@5": 0.939,
+   "mrr@10": 0.897
+  },
+  "search:lexical/V3/fresh": {
+   "n": 13,
+   "hit@1": 0.846,
+   "hit@3": 0.846,
+   "hit@5": 0.923,
+   "mrr@10": 0.862
+  },
+  "search:mem-fused/V1/echo": {
+   "n": 33,
+   "hit@1": 0.455,
+   "hit@3": 0.545,
+   "hit@5": 0.576,
+   "mrr@10": 0.506
+  },
+  "search:mem-fused/V1/fresh": {
+   "n": 13,
+   "hit@1": 0.462,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.5
+  },
+  "search:mem-fused/V2/echo": {
+   "n": 33,
+   "hit@1": 0.455,
+   "hit@3": 0.697,
+   "hit@5": 0.727,
+   "mrr@10": 0.583
+  },
+  "search:mem-fused/V2/fresh": {
+   "n": 13,
+   "hit@1": 0.385,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.462
+  },
+  "search:mem-fused/V3/echo": {
+   "n": 33,
+   "hit@1": 0.848,
+   "hit@3": 0.909,
+   "hit@5": 0.909,
+   "mrr@10": 0.891
+  },
+  "search:mem-fused/V3/fresh": {
+   "n": 13,
+   "hit@1": 0.846,
+   "hit@3": 0.846,
+   "hit@5": 0.923,
+   "mrr@10": 0.865
+  },
+  "search:mem-overlay/V1/echo": {
+   "n": 33,
+   "hit@1": 0.485,
+   "hit@3": 0.545,
+   "hit@5": 0.667,
+   "mrr@10": 0.548
+  },
+  "search:mem-overlay/V1/fresh": {
+   "n": 13,
+   "hit@1": 0.462,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.487
+  },
+  "search:mem-overlay/V2/echo": {
+   "n": 33,
+   "hit@1": 0.515,
+   "hit@3": 0.758,
+   "hit@5": 0.788,
+   "mrr@10": 0.636
+  },
+  "search:mem-overlay/V2/fresh": {
+   "n": 13,
+   "hit@1": 0.385,
+   "hit@3": 0.538,
+   "hit@5": 0.538,
+   "mrr@10": 0.462
+  },
+  "search:mem-overlay/V3/echo": {
+   "n": 33,
+   "hit@1": 0.848,
+   "hit@3": 0.939,
+   "hit@5": 0.939,
+   "mrr@10": 0.9
+  },
+  "search:mem-overlay/V3/fresh": {
+   "n": 13,
+   "hit@1": 0.846,
+   "hit@3": 0.846,
+   "hit@5": 0.923,
+   "mrr@10": 0.869
+  }
+ },
+ "by_category": {
+  "combined/V1/grep/named": {
+   "n": 46,
+   "hit@1": 0.435,
+   "hit@3": 0.696,
+   "hit@5": 0.783,
+   "mrr@10": 0.593
+  },
+  "combined/V1/grep/paraphrase": {
+   "n": 19,
+   "hit@1": 0.053,
+   "hit@3": 0.211,
+   "hit@5": 0.211,
+   "mrr@10": 0.157
+  },
+  "combined/V1/search:hash-vector/named": {
+   "n": 46,
+   "hit@1": 0.13,
+   "hit@3": 0.239,
+   "hit@5": 0.261,
+   "mrr@10": 0.199
+  },
+  "combined/V1/search:hash-vector/paraphrase": {
+   "n": 19,
+   "hit@1": 0.0,
+   "hit@3": 0.053,
+   "hit@5": 0.053,
+   "mrr@10": 0.023
+  },
+  "combined/V1/search:lexical/named": {
+   "n": 46,
+   "hit@1": 0.609,
+   "hit@3": 0.696,
+   "hit@5": 0.804,
+   "mrr@10": 0.675
+  },
+  "combined/V1/search:lexical/paraphrase": {
+   "n": 19,
+   "hit@1": 0.158,
+   "hit@3": 0.263,
+   "hit@5": 0.368,
+   "mrr@10": 0.237
+  },
+  "combined/V1/search:mem-fused/named": {
+   "n": 46,
+   "hit@1": 0.435,
+   "hit@3": 0.522,
+   "hit@5": 0.63,
+   "mrr@10": 0.503
+  },
+  "combined/V1/search:mem-fused/paraphrase": {
+   "n": 19,
+   "hit@1": 0.158,
+   "hit@3": 0.316,
+   "hit@5": 0.316,
+   "mrr@10": 0.242
+  },
+  "combined/V1/search:mem-overlay/named": {
+   "n": 46,
+   "hit@1": 0.609,
+   "hit@3": 0.696,
+   "hit@5": 0.804,
+   "mrr@10": 0.675
+  },
+  "combined/V1/search:mem-overlay/paraphrase": {
+   "n": 19,
+   "hit@1": 0.158,
+   "hit@3": 0.263,
+   "hit@5": 0.368,
+   "mrr@10": 0.237
+  },
+  "combined/V2/grep/named": {
+   "n": 46,
+   "hit@1": 0.304,
+   "hit@3": 0.696,
+   "hit@5": 0.826,
+   "mrr@10": 0.57
+  },
+  "combined/V2/grep/paraphrase": {
+   "n": 19,
+   "hit@1": 0.105,
+   "hit@3": 0.158,
+   "hit@5": 0.211,
+   "mrr@10": 0.136
+  },
+  "combined/V2/search:hash-vector/named": {
+   "n": 46,
+   "hit@1": 0.087,
+   "hit@3": 0.13,
+   "hit@5": 0.13,
+   "mrr@10": 0.107
+  },
+  "combined/V2/search:hash-vector/paraphrase": {
+   "n": 19,
+   "hit@1": 0.0,
+   "hit@3": 0.0,
+   "hit@5": 0.0,
+   "mrr@10": 0.0
+  },
+  "combined/V2/search:lexical/named": {
+   "n": 46,
+   "hit@1": 0.63,
+   "hit@3": 0.826,
+   "hit@5": 0.848,
+   "mrr@10": 0.729
+  },
+  "combined/V2/search:lexical/paraphrase": {
+   "n": 19,
+   "hit@1": 0.158,
+   "hit@3": 0.316,
+   "hit@5": 0.474,
+   "mrr@10": 0.256
+  },
+  "combined/V2/search:mem-fused/named": {
+   "n": 46,
+   "hit@1": 0.478,
+   "hit@3": 0.565,
+   "hit@5": 0.587,
+   "mrr@10": 0.542
+  },
+  "combined/V2/search:mem-fused/paraphrase": {
+   "n": 19,
+   "hit@1": 0.105,
+   "hit@3": 0.263,
+   "hit@5": 0.316,
+   "mrr@10": 0.191
+  },
+  "combined/V2/search:mem-overlay/named": {
+   "n": 46,
+   "hit@1": 0.63,
+   "hit@3": 0.826,
+   "hit@5": 0.848,
+   "mrr@10": 0.732
+  },
+  "combined/V2/search:mem-overlay/paraphrase": {
+   "n": 19,
+   "hit@1": 0.158,
+   "hit@3": 0.368,
+   "hit@5": 0.421,
+   "mrr@10": 0.259
+  },
+  "github/V1/grep/named": {
+   "n": 29,
+   "hit@1": 0.345,
+   "hit@3": 0.69,
+   "hit@5": 0.759,
+   "mrr@10": 0.587
+  },
+  "github/V1/grep/paraphrase": {
+   "n": 17,
+   "hit@1": 0.059,
+   "hit@3": 0.235,
+   "hit@5": 0.412,
+   "mrr@10": 0.225
+  },
+  "github/V1/search:hash-vector/named": {
+   "n": 29,
+   "hit@1": 0.276,
+   "hit@3": 0.31,
+   "hit@5": 0.31,
+   "mrr@10": 0.301
+  },
+  "github/V1/search:hash-vector/paraphrase": {
+   "n": 17,
+   "hit@1": 0.059,
+   "hit@3": 0.059,
+   "hit@5": 0.118,
+   "mrr@10": 0.082
+  },
+  "github/V1/search:lexical/named": {
+   "n": 29,
+   "hit@1": 0.621,
+   "hit@3": 0.69,
+   "hit@5": 0.759,
+   "mrr@10": 0.677
+  },
+  "github/V1/search:lexical/paraphrase": {
+   "n": 17,
+   "hit@1": 0.235,
+   "hit@3": 0.294,
+   "hit@5": 0.412,
+   "mrr@10": 0.281
+  },
+  "github/V1/search:mem-fused/named": {
+   "n": 29,
+   "hit@1": 0.586,
+   "hit@3": 0.69,
+   "hit@5": 0.69,
+   "mrr@10": 0.638
+  },
+  "github/V1/search:mem-fused/paraphrase": {
+   "n": 17,
+   "hit@1": 0.235,
+   "hit@3": 0.294,
+   "hit@5": 0.353,
+   "mrr@10": 0.276
+  },
+  "github/V1/search:mem-overlay/named": {
+   "n": 29,
+   "hit@1": 0.621,
+   "hit@3": 0.69,
+   "hit@5": 0.759,
+   "mrr@10": 0.677
+  },
+  "github/V1/search:mem-overlay/paraphrase": {
+   "n": 17,
+   "hit@1": 0.235,
+   "hit@3": 0.294,
+   "hit@5": 0.412,
+   "mrr@10": 0.281
+  },
+  "github/V2/grep/named": {
+   "n": 29,
+   "hit@1": 0.172,
+   "hit@3": 0.759,
+   "hit@5": 0.793,
+   "mrr@10": 0.518
+  },
+  "github/V2/grep/paraphrase": {
+   "n": 17,
+   "hit@1": 0.118,
+   "hit@3": 0.235,
+   "hit@5": 0.235,
+   "mrr@10": 0.188
+  },
+  "github/V2/search:hash-vector/named": {
+   "n": 29,
+   "hit@1": 0.138,
+   "hit@3": 0.276,
+   "hit@5": 0.31,
+   "mrr@10": 0.211
+  },
+  "github/V2/search:hash-vector/paraphrase": {
+   "n": 17,
+   "hit@1": 0.059,
+   "hit@3": 0.176,
+   "hit@5": 0.176,
+   "mrr@10": 0.114
+  },
+  "github/V2/search:lexical/named": {
+   "n": 29,
+   "hit@1": 0.621,
+   "hit@3": 0.862,
+   "hit@5": 0.862,
+   "mrr@10": 0.736
+  },
+  "github/V2/search:lexical/paraphrase": {
+   "n": 17,
+   "hit@1": 0.235,
+   "hit@3": 0.412,
+   "hit@5": 0.471,
+   "mrr@10": 0.333
+  },
+  "github/V2/search:mem-fused/named": {
+   "n": 29,
+   "hit@1": 0.552,
+   "hit@3": 0.793,
+   "hit@5": 0.793,
+   "mrr@10": 0.672
+  },
+  "github/V2/search:mem-fused/paraphrase": {
+   "n": 17,
+   "hit@1": 0.235,
+   "hit@3": 0.412,
+   "hit@5": 0.471,
+   "mrr@10": 0.338
+  },
+  "github/V2/search:mem-overlay/named": {
+   "n": 29,
+   "hit@1": 0.621,
+   "hit@3": 0.862,
+   "hit@5": 0.862,
+   "mrr@10": 0.736
+  },
+  "github/V2/search:mem-overlay/paraphrase": {
+   "n": 17,
+   "hit@1": 0.235,
+   "hit@3": 0.412,
+   "hit@5": 0.471,
+   "mrr@10": 0.333
+  },
+  "github/V3/grep/named": {
+   "n": 29,
+   "hit@1": 0.448,
+   "hit@3": 0.862,
+   "hit@5": 0.897,
+   "mrr@10": 0.708
+  },
+  "github/V3/grep/paraphrase": {
+   "n": 17,
+   "hit@1": 0.294,
+   "hit@3": 0.765,
+   "hit@5": 0.765,
+   "mrr@10": 0.54
+  },
+  "github/V3/search:hash-vector/named": {
+   "n": 29,
+   "hit@1": 0.207,
+   "hit@3": 0.345,
+   "hit@5": 0.345,
+   "mrr@10": 0.275
+  },
+  "github/V3/search:hash-vector/paraphrase": {
+   "n": 17,
+   "hit@1": 0.118,
+   "hit@3": 0.235,
+   "hit@5": 0.235,
+   "mrr@10": 0.17
+  },
+  "github/V3/search:lexical/named": {
+   "n": 29,
+   "hit@1": 0.828,
+   "hit@3": 0.931,
+   "hit@5": 0.931,
+   "mrr@10": 0.879
+  },
+  "github/V3/search:lexical/paraphrase": {
+   "n": 17,
+   "hit@1": 0.882,
+   "hit@3": 0.882,
+   "hit@5": 0.941,
+   "mrr@10": 0.9
+  },
+  "github/V3/search:mem-fused/named": {
+   "n": 29,
+   "hit@1": 0.862,
+   "hit@3": 0.931,
+   "hit@5": 0.931,
+   "mrr@10": 0.901
+  },
+  "github/V3/search:mem-fused/paraphrase": {
+   "n": 17,
+   "hit@1": 0.824,
+   "hit@3": 0.824,
+   "hit@5": 0.882,
+   "mrr@10": 0.854
+  },
+  "github/V3/search:mem-overlay/named": {
+   "n": 29,
+   "hit@1": 0.828,
+   "hit@3": 0.931,
+   "hit@5": 0.931,
+   "mrr@10": 0.886
+  },
+  "github/V3/search:mem-overlay/paraphrase": {
+   "n": 17,
+   "hit@1": 0.882,
+   "hit@3": 0.882,
+   "hit@5": 0.941,
+   "mrr@10": 0.9
+  }
+ }
+}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import "../app.css";
   import "#lib/docs/site.css";
+  import { onMount } from "svelte";
   import { page } from "$app/state";
   import * as Sidebar from "#lib/components/ui/sidebar";
   import { ThemeScript, ThemeToggle } from "#lib/components/ui/theme";
@@ -22,6 +23,11 @@
   // The current page's row has no coloured start edge. Its fill is the hovered row's too, so its name is
   // also set heavier: that weight is what tells the current row from a hovered one.
   const row = "aria-[current=page]:border-transparent aria-[current=page]:font-medium";
+
+  // Runs once the whole page has hydrated with every listener attached. The browser tests wait for `<html data-ready>`.
+  onMount(() => {
+    document.documentElement.dataset.ready = "";
+  });
 </script>
 
 <svelte:head>

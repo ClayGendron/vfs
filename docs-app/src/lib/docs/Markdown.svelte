@@ -2,6 +2,7 @@
   import * as CodeBlock from "#lib/components/ui/code-block";
   import * as Table from "#lib/components/ui/table";
   import ApiBlock from "./ApiBlock.svelte";
+  import GlossaryTerm from "./GlossaryTerm.svelte";
   import HeadingLink from "./HeadingLink.svelte";
   import Inline from "./Inline.svelte";
   import Markdown from "./Markdown.svelte";
@@ -58,5 +59,7 @@
     <hr />
   {:else if block.type === "api"}
     <ApiBlock object={block.object} />
+  {:else if block.type === "term"}
+    <GlossaryTerm term={block.term} />
   {/if}
 {/each}

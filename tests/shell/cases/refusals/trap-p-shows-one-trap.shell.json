@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 3: trap: refused: signals have no meaning inside one call\n"
+}

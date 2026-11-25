@@ -262,7 +262,7 @@ async def authored_edges(storage: DatabaseStorage) -> list[tuple[str, str]]:
 
 async def _postures(storage: DatabaseStorage, rows: list[tuple[str, GrantLevel]]) -> None:
     for path, level in rows:
-        assert (await storage.posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path(path), posture=level, authority=SYSTEM)).success is True
 
 
 async def _grants(storage: DatabaseStorage, rows: list[tuple[str, str, GrantLevel]]) -> None:

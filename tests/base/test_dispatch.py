@@ -25,17 +25,18 @@ from tests.support.base_doubles import (
     TransportFailStorage,
     _fan,
 )
-from vfs import base as base_module
+from vfs import offload as offload_module
 from vfs.authority import Authority
-from vfs.base import MEASURE_OFFLOAD_BYTES, AsyncVirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
-from vfs.models import Edge, Entry, Observation
+from vfs.models import MEASURE_OFFLOAD_BYTES, Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.pattern_matching import ScopeChannel
 from vfs.permissions import read_write
 from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.storage import ResolvedPair
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
 # ----------------------------------------------------------------------
@@ -49,14 +50,14 @@ async def test_write_localizes_path_and_passes_kwargs() -> None:
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    await root.write(path="/m/f.txt", content="x", overwrite=False)
+    await root.write(path="/m/f.txt", content="x", if_absent=True)
     op, kwargs = child.calls[0]
     assert op == "write"
     [entry] = kwargs["entries"]
     assert entry.path == "/f.txt"
     assert entry.content == "x"
     assert entry.kind == "file"
-    assert kwargs["overwrite"] is False
+    assert kwargs["if_absent"] is True
     assert kwargs["parents"] is False
 
 
@@ -65,13 +66,13 @@ async def test_a_large_body_is_measured_off_the_loop(monkeypatch) -> None:
     # the hash. A body at the threshold hops once, and the entry storage
     # receives carries the same metrics the validator would have measured.
     hops: list[str] = []
-    real_hop = base_module.call_offloaded
+    real_hop = offload_module.call_offloaded
 
     async def counted(executor: Any, work: Any) -> Any:
         hops.append(work.func.__name__)
         return await real_hop(executor, work)
 
-    monkeypatch.setattr(base_module, "call_offloaded", counted)
+    monkeypatch.setattr(offload_module, "call_offloaded", counted)
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
@@ -271,7 +272,7 @@ async def test_two_path_capability_gate_blocks() -> None:
 
 
 # ----------------------------------------------------------------------
-# the busy guard — bind sites are EBUSY to the data plane
+# the busy guard: a verb may not change a live mount point
 # ----------------------------------------------------------------------
 
 
@@ -311,7 +312,7 @@ async def test_sweep_addressing_a_bind_site_is_busy() -> None:
 
 async def test_sweep_region_containing_bind_site_is_busy() -> None:
     # The purge arm takes arbitrary addresses, so the subtree form of
-    # the guard matters: a bind site inside the target refuses busy.
+    # the guard matters: a mount point inside the target refuses busy.
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/data/a", parents=True)
@@ -382,7 +383,7 @@ async def test_move_region_containing_bind_site_is_busy() -> None:
 
 
 async def test_copy_from_bind_site_is_not_busy() -> None:
-    # Copy never disturbs its source, so copying *from* a bind path is fine;
+    # Copy never disturbs its source, so copying *from* a mount point is fine;
     # only the destination is guarded — move guards both endpoints.
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
@@ -589,7 +590,7 @@ async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None
     assert result.paths == ("/a/hit.md",)
     assert b.calls == []
     # search also skips the root entry (memory declares no search) — every
-    # skip is an info-severity unsupported record anchored at its bind path.
+    # skip is an info-severity unsupported record anchored at its mount's path.
     assert all(e.kind is ErrorKind.unsupported and e.severity is Severity.info for e in result.errors)
     skip = next(e for e in result.errors if e.path == "/b")
     assert skip.source == "/b"
@@ -1170,7 +1171,98 @@ async def test_write_entries_batch_groups_and_localizes() -> None:
     assert len(a.calls) == 1 and len(b.calls) == 1
     (a_entry,) = a.calls[0][1]["entries"]
     assert a_entry.path == "/f.txt"
-    assert a.calls[0][1]["overwrite"] is True
+    assert a.calls[0][1]["if_absent"] is False
+
+
+async def test_write_if_version_reaches_the_storage_keyed_by_its_own_path() -> None:
+    root = AsyncVirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    await root.write(path="/m/f.txt", content="x", if_version=3)
+    assert child.calls[0][1]["if_versions"] == {Path("/f.txt"): 3}
+    await root.write(path="/m/f.txt", content="x")
+    assert child.calls[1][1]["if_versions"] is None
+
+
+async def test_write_append_reaches_the_storage_with_the_tail_as_its_one_entry() -> None:
+    root = AsyncVirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    await root.write(path="/m/log.txt", content="line\n", append=True, if_version=4)
+    kwargs = child.calls[0][1]
+    assert [(entry.path, entry.content) for entry in kwargs["entries"]] == [("/log.txt", "line\n")]
+    assert (kwargs["append"], kwargs["if_absent"], kwargs["if_versions"]) == (True, False, {Path("/log.txt"): 4})
+    await root.write(path="/m/log.txt", content="line\n")
+    assert child.calls[1][1]["append"] is False
+
+
+async def test_write_if_versions_go_to_the_mount_of_each_key() -> None:
+    root = AsyncVirtualFileSystem()
+    a, b, c = RecorderStorage(), RecorderStorage(), RecorderStorage()
+    for storage, path in ((a, "/a"), (b, "/b"), (c, "/c")):
+        await root.add_mount(storage, path)
+    entries = [Entry(path=Path(f"/{mount}/{name}.txt"), content="x") for mount in "abc" for name in ("f", "g")]
+    expected = {"/a/f.txt": 2, "/a/g.txt": 5, "/b/g.txt": 7}
+    assert (await root.write(entries, if_versions=expected)).success is True
+    assert a.calls[0][1]["if_versions"] == {Path("/f.txt"): 2, Path("/g.txt"): 5}
+    assert b.calls[0][1]["if_versions"] == {Path("/g.txt"): 7}
+    assert c.calls[0][1]["if_versions"] is None
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["/a/other.txt", "/a/d", "/z/f.txt", "f.txt"],
+    ids=["no-entry", "a-directory-entry", "another-mount", "not-a-path"],
+)
+async def test_write_if_versions_key_that_names_no_file_of_the_call_is_invalid(key: str) -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    entries = [Entry(path=Path("/a/f.txt"), content="x"), Entry(path=Path("/a/d"), kind="directory")]
+    result = await root.write(entries, if_versions={"/a/f.txt": 1, key: 1})
+    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert "if_versions" in result.errors[0].message
+    assert a.calls == []
+
+
+async def test_write_if_versions_with_no_entries_is_invalid() -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    result = await root.write([], if_versions={"/a/f.txt": 1})
+    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert "if_versions" in result.errors[0].message
+    assert (await root.write([])).success is True
+    assert a.calls == []
+
+
+async def test_write_if_versions_that_names_one_path_twice_is_invalid() -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    entries = [Entry(path=Path("/a/f.txt"), content="x")]
+    result = await root.write(entries, if_versions={"/a/f.txt": 1, "/a//f.txt": 4})
+    assert [(error.kind, error.data) for error in result.errors] == [(ErrorKind.invalid, {"raw": "/a//f.txt"})]
+    assert "twice" in result.errors[0].message
+    assert a.calls == []
+
+
+async def test_write_a_stale_key_on_one_mount_refuses_that_mount_and_lands_the_other() -> None:
+    root = AsyncVirtualFileSystem()
+    await root.add_mount(InMemoryStorage(), "/a")
+    await root.add_mount(InMemoryStorage(), "/b")
+    seed = [Entry(path=Path(path), content="v1") for path in ("/a/f.txt", "/b/g.txt")]
+    assert (await root.write(seed)).success is True
+    assert (await root.write(path="/a/f.txt", content="v2")).success is True
+    both = [Entry(path=Path(path), content="new") for path in ("/a/f.txt", "/b/g.txt")]
+    result = await root.write(both, if_versions={"/a/f.txt": 1, "/b/g.txt": 1})
+    assert [(error.kind, error.path, error.data) for error in result.errors] == [
+        (ErrorKind.conflict, "/a/f.txt", {"version": 2})
+    ]
+    assert [(o.path, o.status, o.version) for o in result.observations] == [("/b/g.txt", "updated", 2)]
+    bodies = [(await root.read(path=path)).observations[0].content for path in ("/a/f.txt", "/b/g.txt")]
+    assert bodies == ["v2", "new"]
+    await root.close()
 
 
 async def test_write_entries_dispatch_is_depth_sorted_and_stable() -> None:
@@ -1367,8 +1459,8 @@ async def test_every_guarded_funnel_arm_backstops_a_missing_family(op: str) -> N
             return ALL_OPS
 
     fs = AsyncVirtualFileSystem(storage=OverclaimingStorage())
-    binding = fs._bindings[Path("/")]
-    result = await fs._call_storage(binding, op)  # ty: ignore[invalid-argument-type]
+    mount = fs._mounts[Path("/")]
+    result = await fs._call_storage(mount, op)  # ty: ignore[invalid-argument-type]
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.unsupported
     assert result.op == op
@@ -1385,9 +1477,9 @@ async def test_funnel_fails_loud_on_an_unknown_op() -> None:
     # A string outside the Op vocabulary is a router bug: assert_never
     # raises rather than guessing a dispatch.
     fs = AsyncVirtualFileSystem()
-    binding = fs._bindings[Path("/")]
+    mount = fs._mounts[Path("/")]
     with pytest.raises(AssertionError):
-        await fs._call_storage(binding, "bogus")  # ty: ignore[invalid-argument-type]
+        await fs._call_storage(mount, "bogus")  # ty: ignore[invalid-argument-type]
 
 
 async def test_route_single_requires_exactly_one_input() -> None:
@@ -1775,7 +1867,7 @@ async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/full")
     await root.add_mount(ReadFamilyStorage(), "/thin")
-    plan = root._classify_fanout_scopes("glob", ())
+    plan = root._classify_fanout_scopes("glob", (), root._listing)
     assert plan.refusal is None
     assert set(plan.unscoped) == {Path("/"), Path("/full")}
     assert plan.scoped == {}
@@ -1787,7 +1879,7 @@ async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
 async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/a/b", parents=True)
-    plan = root._classify_fanout_scopes("glob", ("/a",))
+    plan = root._classify_fanout_scopes("glob", ("/a",), root._listing)
     assert plan.refusal is None
     binding, rels = plan.scoped[Path("/")]
     assert binding.path == "/" and rels == [Path("/a")]
@@ -1797,7 +1889,7 @@ async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
 async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m")
-    plan = root._classify_fanout_scopes("glob", ("/m/sub",))
+    plan = root._classify_fanout_scopes("glob", ("/m/sub",), root._listing)
     assert plan.refusal is None
     binding, rels = plan.scoped[Path("/m")]
     assert binding.path == "/m" and rels == [Path("/sub")]
@@ -1806,7 +1898,7 @@ async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
 
 async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
     root = AsyncVirtualFileSystem()
-    plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),))
+    plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),), root._listing)
     assert plan.refusal is not None
     assert plan.refusal.errors[0].kind is ErrorKind.invalid
     assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
@@ -1815,7 +1907,7 @@ async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
 async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(ReadFamilyStorage(), "/thin")
-    plan = root._classify_fanout_scopes("glob", ("/thin/sub",))
+    plan = root._classify_fanout_scopes("glob", ("/thin/sub",), root._listing)
     assert plan.refusal is not None
     assert plan.refusal.errors[0].kind is ErrorKind.unsupported
     assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
@@ -1824,7 +1916,7 @@ async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
 async def test_classify_dedups_skips_across_region_paths() -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(ReadFamilyStorage(), "/a/thin", parents=True)
-    plan = root._classify_fanout_scopes("glob", ("/", "/a"))
+    plan = root._classify_fanout_scopes("glob", ("/", "/a"), root._listing)
     assert plan.refusal is None
     assert len(plan.skips) == 1
 

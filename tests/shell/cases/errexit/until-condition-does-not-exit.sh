@@ -1,0 +1,6 @@
+# tier: language
+# world: none
+set -e
+n=0
+until [ "$n" -ge 2 ]; do n=$((n + 1)); done
+echo "n=$n"

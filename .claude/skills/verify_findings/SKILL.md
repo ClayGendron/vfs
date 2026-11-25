@@ -1,6 +1,6 @@
 ---
 name: verify_findings
-description: Adversarially verify one code-review finding by trying to refute it — reproduce the claimed failure, check declared intent, and check reachability — before it is allowed to reach the user. Use when a review agent hands you a single finding to verify, when the user asks "is this a real bug", "verify this finding", or "check this claim", or as the per-finding quality gate in a multi-agent review.
+description: Adversarially verify one code-review finding by trying to refute it — reproduce the claimed failure, check declared intent, and check reachability — before it is allowed to reach the user. Use when a review agent hands you a single finding to verify, when the user asks "is this a real bug", "verify this finding", or "check this claim", or as the check a code review's one reviewer puts each of its own findings through before ranking it.
 ---
 
 # Verify findings — kill it or confirm it
@@ -94,8 +94,8 @@ Exactly one of:
 
 Hedged verdicts are banned. If you cannot decide within reasonable
 effort, that is itself information: downgrade to a question and name
-the specific unknown that blocked you (e.g. "requires a live Oracle
-instance to observe the cap"). "Probably a bug" reaching the reader is
+the specific unknown that blocked you (e.g. "requires a live Postgres
+server to observe the lock"). "Probably a bug" reaching the reader is
 the exact failure this gate exists to prevent.
 
 ### 4. Meet the evidence standard

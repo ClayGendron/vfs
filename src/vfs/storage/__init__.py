@@ -6,12 +6,14 @@ implementations live under ``backends``.
 """
 
 from vfs.storage.protocol import (
+    HOLDS,
     TRAIT_KEYS,
     TRAIT_VALUES,
     ResolvedPair,
     StorageBackend,
     SupportsClose,
     SupportsGrants,
+    SupportsHolds,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
@@ -27,12 +29,14 @@ from vfs.storage.protocol import (
 )
 
 __all__ = [
+    "HOLDS",
     "TRAIT_KEYS",
     "TRAIT_VALUES",
     "ResolvedPair",
     "StorageBackend",
     "SupportsClose",
     "SupportsGrants",
+    "SupportsHolds",
     "SupportsMutation",
     "SupportsPatternSearch",
     "SupportsRankedSearch",

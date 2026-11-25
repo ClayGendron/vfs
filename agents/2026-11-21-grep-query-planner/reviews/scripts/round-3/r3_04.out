@@ -1,0 +1,21 @@
+files 2116
+system write True []
+alice write True []
+meta write under /.vfs True []
+rights True []
+rights True []
+rights True []
+rights True []
+rights True []
+rebuild True
+delete /pub/kernel/sched True ['Unavailable: a background planner-statistics pass after an earlier write failed ']
+delete /team/lib/zlib_inflate True []
+delete /secret/security/selinux/ss True []
+delete /alice/mm/kasan True []
+post-rebuild writes True 53 20
+rows by state [('directory', 1, 0, 141), ('directory', 1, 1, 4), ('file', 0, 0, 73), ('file', 0, 1, 96), ('file', 1, 0, 2013)]
+rows under /.vfs (14,)
+oracle disagreements with read, sampled 1 in 7: {'system': 0, 'alice': 0, 'bob': 0, 'anon': 0}
+grep calls 1664; caller x scope x pattern cells 416, non-empty under today 221
+cells where plans disagree: 0
+bodies fetched that the caller may not read: 0

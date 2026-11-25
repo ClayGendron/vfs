@@ -1,0 +1,5 @@
+{
+  "status": 2,
+  "stdout": "",
+  "stderr": "bash: line 3: exec: refused: process replacement has no meaning inside one call\n"
+}

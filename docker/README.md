@@ -1,27 +1,49 @@
 # Real-engine test databases
 
-`compose.test.yml` starts the database servers the storage conformance
-suite runs against. The tests themselves are wired in
-`tests/test_storage_conformance.py`: each engine leg activates when its
-`VFS_TEST_<ENGINE>_URL` environment variable is set and skips otherwise,
-so a plain `uv run pytest` never needs Docker. CI
-(`.github/workflows/test-dialects.yml`) uses this same compose file.
+`compose.test.yml` starts the Postgres servers the storage conformance
+suite runs against, one service per supported version. vfs supports two
+engines, SQLite and Postgres, and SQLite needs no server. The Postgres
+leg activates when `VFS_TEST_POSTGRES_URL` is set and skips otherwise,
+so a plain `uv run pytest` never needs Docker.
 
-Engine legs are reentrant: vfs's table names are fixed, so each test
-creates a schema of its own (`vfs_t_<hex>`) and drops it at teardown,
-and concurrent runs against one engine never collide. On MariaDB a
-schema is a database and on Oracle it is a user, so the app user
-needs rights to create both: the init scripts under `initdb/` grant
-them when a container first starts. The Postgres init script installs
-pgvector the same way: vfs proves the extension at first touch and
-never creates it, because `CREATE EXTENSION` needs rights an
-application role does not have on a managed server. A crashed run's
-leftover `vfs_t_*` schemas are harmless residue — data is ephemeral,
-and `compose down` clears everything.
+vfs is tested on every Postgres major version the PostgreSQL project
+supports, each with pgvector 0.8: today 15, 16, 17, 18 and 19. The
+project supports a major version for five years, so each November the
+version that reaches its end of life leaves this file and the workflow,
+and the new major joins.
 
-## Quick start (macOS, Apple Silicon)
+**A laptop runs one version, the newest: Postgres 19.** It is the
+`postgres` service, on host port 54320, and starts by default. **CI runs
+every version**, one matrix row each in
+`.github/workflows/test-dialects.yml`, from this same file:
 
-Postgres — native arm64, up in seconds:
+| Service | Version | Host port | Who runs it |
+|---|---|---|---|
+| `postgres` | 19 | 54320 | a laptop, and CI |
+| `postgres18` | 18 | 54318 | CI |
+| `postgres17` | 17 | 54317 | CI |
+| `postgres16` | 16 | 54316 | CI |
+| `postgres15` | 15 | 54315 | CI |
+
+The older versions sit behind the `every-version` profile; naming one
+service starts it alone, so a failure CI reports on one version can be
+reproduced here. Each keeps its data on a tmpfs: 15, 16 and 17 at
+`/var/lib/postgresql/data`, and 18 and 19 at `/var/lib/postgresql`,
+since from 18 the image keeps its data under
+`/var/lib/postgresql/<version>/docker`. Host ports are offset from 5432
+so a container never collides with a Homebrew or Postgres.app install
+already holding the default port.
+
+The leg is reentrant: vfs's table names are fixed, so each test creates
+a schema of its own (`vfs_t_<hex>`) and drops it at teardown, and
+concurrent runs against one server never collide. The init script under
+`initdb/postgres` installs pgvector when a container first starts: vfs
+proves the extension at first touch and never creates it, because
+`CREATE EXTENSION` needs rights an application role does not have on a
+managed server. A crashed run's leftover `vfs_t_*` schemas are harmless
+residue — data is ephemeral, and `compose down` clears everything.
+
+## Quick start
 
 ```sh
 docker compose -f docker/compose.test.yml up -d --wait
@@ -30,81 +52,17 @@ VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
   uv run pytest -m postgres
 ```
 
-Host ports are offset from the engine defaults (54320, 33062, 14330,
-15210) so the containers never collide with a Homebrew or Postgres.app
-install already holding 5432 and friends.
-
-Naming a service activates its profile, so the heavier engines start on
-demand:
+To reproduce a failure CI found on an older version, start that service
+and point the URL at its port:
 
 ```sh
-docker compose -f docker/compose.test.yml up -d --wait mariadb oracle mssql
+docker compose -f docker/compose.test.yml up -d --wait postgres16
+VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54316/vfs" \
+  uv run pytest -m postgres
 ```
 
-Tear everything down (data is tmpfs/ephemeral — nothing persists).
-Plain `down` skips services behind profiles, so name the profiles:
+Tear down (data is tmpfs/ephemeral — nothing persists):
 
 ```sh
-docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down
+docker compose -f docker/compose.test.yml --profile every-version down -v
 ```
-
-## Per-engine notes
-
-| Engine | arm64 | Driver extra | URL |
-|---|---|---|---|
-| Postgres 17 + pgvector | native | `postgres` | `postgresql+asyncpg://vfs:vfs@localhost:54320/vfs` |
-| MariaDB 11.8 | native | `mariadb` | `mariadb+aiomysql://vfs:vfs@localhost:33062/vfs?charset=utf8mb4` |
-| SQL Server 2025 | Rosetta | `mssql` | `mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes` |
-| Oracle Free 23ai | native | `oracle` | `oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1` |
-
-**SQL Server** is the one engine with extra macOS setup:
-
-1. Its image is amd64-only. Enable Rosetta emulation — Docker Desktop:
-   Settings > General > *Use Rosetta for x86_64/amd64 emulation on Apple
-   Silicon* (needs the Virtualization framework backend). OrbStack has
-   it on by default.
-2. `aioodbc` needs Microsoft's ODBC driver on the host:
-
-   ```sh
-   brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
-   brew install msodbcsql18
-   ```
-
-3. Tests target the `master` database — fine for a disposable container,
-   and it avoids an init script.
-
-**Oracle** publishes native arm64 images for 23ai Free (`gvenzl/oracle-free`),
-so it runs *better* on Apple Silicon than SQL Server does. First start
-takes 30–60 s while the pluggable database opens; `--wait` covers it.
-The `oracledb` driver runs in thin mode — no Oracle client libraries to
-install.
-
-**MariaDB** is the MySQL family's supported member and carries the
-family's tuned profile (3,072-byte key budget, catch-retry arbitration,
-REPEATABLE READ pinned, deadlock/lock-wait errnos retryable) plus the
-native `VECTOR(n)` column and `VEC_DISTANCE_COSINE` the vector leg
-needs. Reach it with a `mariadb+aiomysql://` URL so the dialect resolves
-by its own name, and keep `?charset=utf8mb4` in the URL — the dialect
-does not default it, and unicode text bodies depend on it. This leg is
-the regression pin for the byte-denominated path limits and the
-`VARBINARY` key columns (ADR 024). MySQL community is not a supported
-dialect (no distance function, no extension vfs can install — ADR
-059): a `mysql://` URL is served the core verbs on the generic floor
-and withholds `search`. With MariaDB and Oracle both tuned, no real
-engine resolves to the GENERIC floor anymore — the floor is pinned
-synthetically in the dialect tests, and its budget numbers remain
-borrowed from Oracle's real caps (ORA-01795's 1,000-element `IN`-list).
-
-## Why these four
-
-- **Postgres** — the pinned REPEATABLE READ profile: native upsert
-  arbitration, and serialization-failure (40001) retry classification
-  for real.
-- **SQL Server** — READ COMMITTED natively, the ~2,100 bind-parameter
-  budget, `OUTPUT inserted.*` as the RETURNING arm.
-- **MariaDB** — the byte-typed key columns and byte-denominated path
-  limits under InnoDB's 3,072-byte index cap (ADR 024), and the
-  family's native vector distance.
-- **Oracle** — also READ COMMITTED by default, and the engine whose
-  1,000-element `IN`-list cap (ORA-01795) defines the GENERIC budget
-  floor; a wrong chunking budget turns into a hard error here.

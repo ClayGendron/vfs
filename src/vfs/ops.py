@@ -12,9 +12,11 @@ its own copy. A verb's class decides how it is routed and gated:
     GRANT_OPS       → routed to the mount holding the path; the writing
                       ones are write-gated, and none touches a row
 
-``cli`` is deliberately absent: it is a meta-verb that parses a command
-string into these ops and re-enters through their public methods, so every
-gate fires on the real verb. It is a front door, not an op.
+``cli`` is deliberately absent: it runs a line of bash whose every effect
+re-enters through these ops' public methods, so every gate fires on the
+real verb. It spans every mount and no storage answers it, so it is a
+front, in ``FRONT_METHODS``, and not an op: it is in no capability set and
+no mount can mask it. ``Result.ops`` still names it, as ``("cli",)``.
 
 The ``traverse`` op routes and reports as one verb: traversal only —
 ``outbound`` follows each edge from its source to its target, ``inbound``
@@ -56,10 +58,12 @@ Op = Literal[
     "grant",
     "revoke",
     "grants",
-    "posture",
+    "set_posture",
     "add_member",
     "remove_member",
 ]
+"""The name of one verb. A storage may declare a name that is not in this list, so a set of capabilities holds
+plain strings."""
 
 MUTATING_OPS: Final[frozenset[Op]] = frozenset(
     {"write", "edit", "delete", "restore", "sweep", "mkdir", "mkedge", "rmedge", "move", "copy"},
@@ -85,7 +89,7 @@ READ_OPS: Final[frozenset[Op]] = frozenset(
 EXEC_OPS: Final[frozenset[Op]] = frozenset({"run"})
 """Ops that execute a capability — not a namespace mutation, not a read."""
 
-GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "posture", "add_member", "remove_member"})
+GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "set_posture", "add_member", "remove_member"})
 """Ops over the grant and membership rows — who may see and write what."""
 
 GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
@@ -94,7 +98,7 @@ GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
 WRITE_GATED_OPS: Final[frozenset[Op]] = MUTATING_OPS | GRANT_WRITE_OPS
 """Every op a read-only mount refuses: the mutations and the grant writes."""
 
-DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "posture", "add_member", "remove_member"})
+DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "set_posture", "add_member", "remove_member"})
 """Developer-plane ops: never registered on any agent-facing tool surface
 (MCP serve, CLI) — Python-API only. Sweep destroys; agents only delete.
 Posture and group membership shape a whole mount's policy, so they stay
@@ -104,11 +108,15 @@ ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
 
 MANAGEMENT_METHODS: Final[frozenset[str]] = frozenset(
-    {"add_mount", "remove_mount", "bind", "unbind", "remount", "close", "locate", "locate_edge"}
+    {"add_mount", "remove_mount", "update_mount", "close", "locate", "locate_edge"}
 )
-"""The router's public coroutines that manage the mount tree rather than route an op.
-They are not ops; the router's public surface is exactly ``ALL_OPS | MANAGEMENT_METHODS``,
-and the sync facade mirrors both."""
+"""The router's public coroutines that manage the mount tree rather than route an op."""
+
+FRONT_METHODS: Final[frozenset[str]] = frozenset({"cli"})
+"""The router's public coroutines that run other ops on a caller's behalf, each through their
+public methods; no storage answers one. With the ops and the management methods they are the
+router's whole public surface, ``ALL_OPS | MANAGEMENT_METHODS | FRONT_METHODS``, and the sync
+facade mirrors all three."""
 
 # ---------------------------------------------------------------------------
 # The ladder — the rung each verb needs
@@ -117,8 +125,9 @@ and the sync facade mirrors both."""
 Rung = Literal["none", "list", "read", "add", "contribute", "read_write"]
 """A rung of the permission ladder. Each rung includes every one below it:
 ``list`` names a row (path and kind), ``read`` reads it, ``add`` creates
-beneath a prefix and alters only one's own rows, ``contribute`` also
-overwrites and edits anyone's, ``read_write`` trashes, moves and grants."""
+beneath a prefix, appends to any file and otherwise alters only one's own
+rows, ``contribute`` also overwrites and edits anyone's, ``read_write``
+trashes, moves and grants."""
 
 RUNGS: Final[tuple[Rung, ...]] = get_args(Rung)
 """The ladder in order, lowest first — the rank of a rung is its index here."""
@@ -159,7 +168,7 @@ VERB_RUNGS: Final[dict[Op, Needs]] = {
     "rmedge": Needs("contribute", passing="list"),
     "grant": Needs("read_write"),
     "revoke": Needs("read_write"),
-    "posture": Needs("read_write"),
+    "set_posture": Needs("read_write"),
     "grants": Needs("read"),
     "run": Needs("read"),
     "sweep": Needs("read_write"),
@@ -178,10 +187,23 @@ developer-plane verbs sit at ``read_write``; ``run`` waits for its own
 axis.
 """
 
+ADDITIVE_WRITE: Final[Needs] = Needs("add", create="add")
+"""The rungs of a write that replaces no stored byte: one that only creates, and one that only appends.
+
+Neither can widen what its caller may destroy, so an occupied target is
+judged at ``add``. A create-only write never lands on an occupant, and
+its caller hears ``exists``, the true answer, where ``contribute`` would
+have refused it with ``permission_denied``. An append adds after the
+last byte, and the body it found is kept as a version.
+"""
+
 # Grep option vocabularies — shared by the router, the storage protocols,
 # and the CLI grammar when it lands.
 CaseMode = Literal["sensitive", "insensitive", "smart"]
+"""How ``grep`` treats letter case. ``smart`` ignores case unless the pattern has an upper-case letter."""
+
 GrepOutputMode = Literal["lines", "files", "count"]
+"""What ``grep`` returns. The matching lines, the files that hold a match, or the number of matches in each file."""
 
 # The graph walk's defaults, carried by the verb's signature and by the
 # params table alike: the gate never substitutes a schema default.

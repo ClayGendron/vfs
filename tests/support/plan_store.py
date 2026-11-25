@@ -14,9 +14,8 @@ statistics step runs before any plan is read.
 Each pin builds a statement the way the backend does
 (:func:`~vfs.storage.backends.database.reads.scope_fan` over the first
 chunk of roots), spells it with literal values on the engine's own
-dialect, and reads the engine's plan: ``EXPLAIN QUERY PLAN`` on SQLite,
-``EXPLAIN`` on Postgres and MariaDB, the showplan XML on SQL Server and
-``DBMS_XPLAN`` on Oracle. A plan is judged by operator on the path
+dialect, and reads the engine's plan: ``EXPLAIN QUERY PLAN`` on SQLite
+and ``EXPLAIN`` on Postgres. A plan is judged by operator on the path
 index, never by time.
 
 The store also holds 200 long text files under ``/chunks``, rebuilt
@@ -52,7 +51,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import xml.etree.ElementTree as ElementTree
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 from unittest import mock
@@ -60,6 +58,7 @@ from unittest import mock
 from sqlalchemy import event, func, select, text
 from ulid import ULID
 
+from tests.support.database_helpers import begin_as_writer
 from tests.support.partial_callers import RecordingSession
 from tests.support.server_schemas import server_schema
 from vfs.authority import Authority, Principal
@@ -97,11 +96,13 @@ PLAN_EXTENSIONS: tuple[str, ...] = ("py", "ts", "md", "txt", "rs")
 PLAN_BODY = "plan body"
 """Every plan file's body: past the gram size, so the rebuild encodes the file and the overlay holds none of them."""
 
-# The path index's name as every engine reports it, case aside.
+# The path index's name as every engine reports it, case aside, and the partial one over the live rows alone.
 PATH_INDEX = "ix_vfs_entries_path"
+LIVE_PATH_INDEX = "ix_vfs_entries_live_path"
+PATH_INDEXES: Final = (PATH_INDEX, LIVE_PATH_INDEX)
 
 # The indexes it may seek on an equality alone: the caller's own rows (the owner floor) and paths.
-EQUALITY_INDEXES = frozenset({"ix_vfs_entries_owner_id", PATH_INDEX})
+EQUALITY_INDEXES = frozenset({"ix_vfs_entries_owner_id", *PATH_INDEXES})
 
 # Each entries index's leading column: a seek bounds it, or it walks the index.
 LEADING_COLUMNS: Final[dict[str, str]] = {
@@ -157,13 +158,11 @@ REFRESH_FILES = 1_000
 REFUSED_TEXTS = 2_000
 """Refusal rows per model the refresh readings' store holds: hundreds of times one pass's chunk rows."""
 
-# Either chunk index led by ``entry_id`` serves the embed step's read; MariaDB and SQL Server pick the unique one.
+# Either chunk index led by ``entry_id`` serves the embed step's read.
 _CHUNK_ENTRY_KEYS: Final = "(?:ix_vfs_chunks_entry_id|uq_vfs_chunks_entry_index)"
-# A primary key as each engine names it: SQLite's row id or its key index, then Postgres, MariaDB, SQL Server, Oracle.
-_CHUNK_KEY: Final = r"(?:INTEGER PRIMARY KEY|vfs_chunks_pkey|PRIMARY|PK__vfs_chun\w*|SYS_C\d+)"
-_REFUSAL_KEY: Final = (
-    r"(?:sqlite_autoindex_vfs_embed_refusals_1|vfs_embed_refusals_pkey|PRIMARY|PK__vfs_embe\w*|SYS_C\d+)"
-)
+# A primary key as each engine names it: SQLite's row id or its key index, then Postgres.
+_CHUNK_KEY: Final = r"(?:INTEGER PRIMARY KEY|vfs_chunks_pkey)"
+_REFUSAL_KEY: Final = r"(?:sqlite_autoindex_vfs_embed_refusals_1|vfs_embed_refusals_pkey)"
 REFRESH_INDEXES: Final[dict[str, tuple[str, str]]] = {
     "render": ("vfs_entries", "ix_vfs_entries_render_status"),
     "slice": ("vfs_entries", "ix_vfs_entries_index_pending"),
@@ -259,7 +258,7 @@ async def overlay_readings(storage: DatabaseStorage) -> OverlayPlans:
     so the scan tier runs for all three over exactly one row awaiting it.
     """
     system = Authority.system()
-    turned = await storage.posture(path=Path("/"), posture="none", authority=system)
+    turned = await storage.set_posture(path=Path("/"), posture="none", authority=system)
     assert turned.success is True, turned.errors
     readers = ((OVERLAY_READER, OVERLAY_ROOTS), (OVERLAY_HALF_READER, OVERLAY_HALF_ROOTS))
     for reader, roots in readers:
@@ -341,6 +340,7 @@ async def _refused_texts(storage: DatabaseStorage) -> None:
         for n in range(REFUSED_TEXTS)
     ]
     async with storage._host.session_factory() as session:
+        await begin_as_writer(session)
         for page in chunked(rows, 500):
             await session.execute(refusals.insert(), page)
         await session.commit()
@@ -382,8 +382,9 @@ def bounded_access(access: EntryAccess) -> bool:
     ``(encoded, kind)``, and the refresh's pending index), the rows awaiting
     the index, or an equality seek of the owner index or the path index,
     the caller's own rows or paths. A range over a path index is refused:
-    over a caller who reads half the store it visits half the table. A
-    MariaDB index merge names each index it merges, and each must qualify.
+    over a caller who reads half the store it visits half the table. An
+    access that names several indexes, comma-separated, qualifies only if
+    each does.
     """
     if not access.seeks or access.index is None:
         return False
@@ -610,20 +611,7 @@ def _table_statistics(storage: DatabaseStorage, table: Table) -> list[str]:
     """The engine's own command that gathers one table's planner statistics."""
     schema = table.schema
     qualified = table.name if schema is None else f"{schema}.{table.name}"
-    match storage._host.profile.name:
-        case "sqlite":
-            return []
-        case "postgresql":
-            return [f"ANALYZE {qualified}"]
-        case "mariadb":
-            return [f"ANALYZE TABLE {qualified}"]
-        case "mssql":
-            return [f"UPDATE STATISTICS {qualified} WITH FULLSCAN"]
-        case _:
-            # Unquoted USER is the session user, the owner of an unqualified table.
-            owner = "USER" if schema is None else f"'{schema.upper()}'"
-            name = table.name.upper()
-            return [f"BEGIN DBMS_STATS.GATHER_TABLE_STATS(ownname => {owner}, tabname => '{name}'); END;"]
+    return [] if storage._host.profile.name == "sqlite" else [f"ANALYZE {qualified}"]
 
 
 async def _median_chunk_id(storage: DatabaseStorage) -> int:
@@ -649,8 +637,7 @@ def _ulid_literal(_type: ULIDKey, dialect: Any) -> Callable[[str], str]:
         ulid = ULID.from_str(value)
         if dialect.name == "postgresql":
             return f"'{ulid.to_uuid()}'::uuid"
-        hexed = ulid.bytes.hex().upper()
-        return {"oracle": f"HEXTORAW('{hexed}')", "mssql": f"0x{hexed}"}.get(dialect.name, f"X'{hexed}'")
+        return f"X'{ulid.bytes.hex().upper()}'"
 
     return spelled
 
@@ -659,6 +646,11 @@ async def _plan_text(storage: DatabaseStorage, literal: str) -> str:
     """The engine's plan of *literal* as it printed it, read on a session of the store's own."""
     async with storage._host.session_factory() as session:
         return await _PLAN_TEXTS[storage._host.profile.name](session, literal)
+
+
+def _on_a_path_index(line: str) -> bool:
+    """Whether a plan line seeks one of the path indexes, by its whole name."""
+    return any(re.search(rf"\b{name}\b", line) for name in PATH_INDEXES)
 
 
 async def _sqlite_plan_text(session: AsyncSession, literal: str) -> str:
@@ -676,7 +668,7 @@ async def _sqlite_plan(session: AsyncSession, literal: str) -> PlanReading:
         any("MULTI-INDEX OR" in detail for detail in details)
         and not any(detail.startswith("SCAN") for detail in details)
         and bool(branches)
-        and all(PATH_INDEX in detail for detail in branches)
+        and all(_on_a_path_index(detail) for detail in branches)
     )
     return PlanReading(served, plan)
 
@@ -690,72 +682,9 @@ async def _postgres_plan(session: AsyncSession, literal: str) -> PlanReading:
     """``EXPLAIN``: a ``BitmapOr`` of ``Bitmap Index Scan`` nodes on the path index, and no sequential scan."""
     plan = await _postgres_plan_text(session, literal)
     scans = [line for line in plan.splitlines() if "Bitmap Index Scan" in line]
-    served = "BitmapOr" in plan and bool(scans) and all(PATH_INDEX in line for line in scans) and "Seq Scan" not in plan
-    return PlanReading(served, plan)
-
-
-async def _mariadb_rows(session: AsyncSession, literal: str) -> list[dict[str, Any]]:
-    """``EXPLAIN``'s rows, one a table access, as column-keyed mappings."""
-    result = await session.execute(text("EXPLAIN " + literal))
-    return [dict(row) for row in result.mappings().all()]
-
-
-async def _mariadb_plan_text(session: AsyncSession, literal: str) -> str:
-    """``EXPLAIN``'s rows, one line a table access."""
-    return "\n".join(str(row) for row in await _mariadb_rows(session, literal))
-
-
-async def _mariadb_plan(session: AsyncSession, literal: str) -> PlanReading:
-    """``EXPLAIN``: a ``range`` or ``index_merge`` access whose key is the path index."""
-    rows = await _mariadb_rows(session, literal)
-    served = bool(rows) and all(
-        row["type"] in ("range", "index_merge") and PATH_INDEX in str(row["key"]) for row in rows
-    )
-    return PlanReading(served, "\n".join(str(row) for row in rows))
-
-
-async def _mssql_plan_text(session: AsyncSession, literal: str) -> str:
-    """The showplan XML, read on the driver's own cursor with ``SHOWPLAN_XML`` on."""
-    connection = await session.connection()
-    raw = await connection.get_raw_connection()
-    driver = raw.driver_connection
-    assert driver is not None
-    cursor = await driver.cursor()
-    try:
-        await cursor.execute("SET SHOWPLAN_XML ON")
-        await cursor.execute(literal)
-        plan = "".join(str(row[0]) for row in await cursor.fetchall())
-        await cursor.execute("SET SHOWPLAN_XML OFF")
-    finally:
-        await cursor.close()
-    return plan
-
-
-async def _mssql_plan(session: AsyncSession, literal: str) -> PlanReading:
-    """The showplan XML: an ``Index Seek`` on the path index, and no scan of the entries table."""
-    plan = await _mssql_plan_text(session, literal)
-    operators = re.findall(r'PhysicalOp="([^"]+)"[^>]*>', plan)
-    seeks = re.findall(r'PhysicalOp="Index Seek".*?Index="\[([^\]]+)\]"', plan, flags=re.DOTALL)
     served = (
-        "Index Seek" in operators
-        and any(PATH_INDEX in seek for seek in seeks)
-        and not any(op in ("Clustered Index Scan", "Table Scan", "Index Scan") for op in operators)
+        "BitmapOr" in plan and bool(scans) and all(_on_a_path_index(line) for line in scans) and "Seq Scan" not in plan
     )
-    return PlanReading(served, plan)
-
-
-async def _oracle_plan_text(session: AsyncSession, literal: str) -> str:
-    """``DBMS_XPLAN.DISPLAY``'s lines for the statement just explained."""
-    await session.execute(text("EXPLAIN PLAN FOR " + literal))
-    rows = (await session.execute(text("SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY())"))).all()
-    return "\n".join(str(row[0]) for row in rows)
-
-
-async def _oracle_plan(session: AsyncSession, literal: str) -> PlanReading:
-    """``DBMS_XPLAN``: an ``INDEX RANGE SCAN`` of the path index, and no full scan of the entries table."""
-    plan = await _oracle_plan_text(session, literal)
-    upper = plan.upper()
-    served = "INDEX RANGE SCAN" in upper and PATH_INDEX.upper() in upper and "TABLE ACCESS FULL" not in upper
     return PlanReading(served, plan)
 
 
@@ -769,14 +698,6 @@ _SQLITE_STEP = re.compile(r"^(SEARCH|SCAN) vfs_entries(?: USING (?:COVERING )?IN
 _POSTGRES_NODE = re.compile(
     r"(Seq Scan|Index Only Scan|Index Scan|Bitmap Index Scan|Bitmap Heap Scan)(?: Backward)?(?: using (\S+))? on (\S+)"
 )
-
-_SHOWPLAN = "{http://schemas.microsoft.com/sqlserver/2004/07/showplan}"
-
-# The MariaDB access types that seek on the key they name; every other type is read as a scan.
-_MARIADB_SEEKS = frozenset({"const", "eq_ref", "ref", "range", "index_merge"})
-
-# The showplan operators that seek; a Table Scan, an Index Scan and a Clustered Index Scan read every row.
-_MSSQL_SEEKS = frozenset({"Index Seek", "Clustered Index Seek"})
 
 
 def _sqlite_access(plan: str) -> list[EntryAccess]:
@@ -847,127 +768,8 @@ def _postgres_condition(following: list[str]) -> str | None:
     return None
 
 
-def _mariadb_access(plan: str) -> list[EntryAccess]:
-    """Each ``EXPLAIN`` row on ``vfs_entries``: its access ``type`` and ``key``.
+_READERS = {"sqlite": _sqlite_plan, "postgresql": _postgres_plan}
 
-    ``const``, ``eq_ref`` and ``ref`` seek on equalities. A ``range``
-    seeks on bounds the tabular plan does not print, so it is never read
-    as an equality, even when every range is a single point. Any type not
-    named here, ``ALL`` and ``index`` among them, is read as a scan.
-    """
-    accesses: list[EntryAccess] = []
-    for line in plan.splitlines():
-        table = re.search(r"'table': '([^']*)'", line)
-        if table is None or table.group(1) != "vfs_entries":
-            continue
-        kind = re.search(r"'type': '([^']*)'", line)
-        key = re.search(r"'key': '([^']*)'", line)
-        operation = "" if kind is None else kind.group(1)
-        seeks = operation in _MARIADB_SEEKS
-        accesses.append(
-            EntryAccess(
-                operation, None if key is None else key.group(1), seeks, operation in ("const", "eq_ref", "ref")
-            )
-        )
-    return accesses
+_PLAN_TEXTS = {"sqlite": _sqlite_plan_text, "postgresql": _postgres_plan_text}
 
-
-def _mssql_access(plan: str) -> list[EntryAccess]:
-    """Each showplan operator reading ``vfs_entries``: its ``PhysicalOp``, its index, and its seek's scan types.
-
-    Only an ``Index Seek`` or a ``Clustered Index Seek`` with seek
-    predicates seeks. A key or row lookup fetches the rows a seek of
-    another index named and is none of its own.
-    """
-    accesses: list[EntryAccess] = []
-    for operator in ElementTree.fromstring(plan).iter(f"{_SHOWPLAN}RelOp"):
-        for read in operator:
-            if read.tag not in (f"{_SHOWPLAN}IndexScan", f"{_SHOWPLAN}TableScan") or read.get("Lookup") in (
-                "1",
-                "true",
-            ):
-                continue
-            target = read.find(f"{_SHOWPLAN}Object")
-            if target is None or (target.get("Table") or "").strip("[]") != "vfs_entries":
-                continue
-            seek = read.find(f"{_SHOWPLAN}SeekPredicates")
-            bounds = [] if seek is None else [node.get("ScanType") for node in seek.iter() if node.get("ScanType")]
-            index = (target.get("Index") or "").strip("[]") or None
-            equality = bool(bounds) and all(bound == "EQ" for bound in bounds)
-            operation = operator.get("PhysicalOp") or ""
-            seeks = operation in _MSSQL_SEEKS and seek is not None and _closes_leading(seek, index)
-            accesses.append(EntryAccess(operation, index, seeks, equality))
-    return accesses
-
-
-def _closes_leading(seek: ElementTree.Element, index: str | None) -> bool:
-    """Whether every range of a showplan seek bounds the index's leading column on both sides.
-
-    A prefix is an equality, which bounds it; a range with a start or an
-    end alone, or none on the leading column, spans the rest of the index.
-    A partitioned seek nests its ranges in ``SeekPredicateNew`` elements
-    too; a seek holding none in a form read here is read as a walk.
-    """
-    leading = LEADING_COLUMNS.get((index or "").lower())
-    predicates = list(seek.iter(f"{_SHOWPLAN}SeekPredicateNew"))
-    if not predicates:
-        return False
-    for predicate in predicates:
-        keys = predicate.find(f"{_SHOWPLAN}SeekKeys")
-        if keys is None:
-            return False
-        sides = {key.tag.split("}")[1]: key for key in keys}
-        closed = sides.get("Prefix") is not None or {"StartRange", "EndRange"} <= set(sides)
-        named = [column.get("Column") for key in sides.values() for column in key.iter(f"{_SHOWPLAN}ColumnReference")]
-        if not closed or (leading is not None and (not named or named[0] != leading)):
-            return False
-    return True
-
-
-def _oracle_access(plan: str) -> list[EntryAccess]:
-    """Each ``DBMS_XPLAN`` line on ``VFS_ENTRIES`` or one of its indexes: the operation with its options, the object.
-
-    A table access by the rowids an index scan returned is none of its own.
-    A table or index access on an object the plan does not name as one of
-    ours (a system-named primary key, say) is kept, so the bound refuses it.
-    """
-    accesses: list[EntryAccess] = []
-    for line in plan.splitlines():
-        cells = [cell.strip() for cell in line.split("|")]
-        if len(cells) < 4 or not cells[1].lstrip("*").strip().isdigit():
-            continue
-        operation, name = cells[2], cells[3].upper()
-        if "VFS_ENTRIES" not in name and name and operation.startswith(("INDEX", "TABLE ACCESS", "BITMAP")):
-            accesses.append(EntryAccess(operation, name, False, False))
-            continue
-        if "VFS_ENTRIES" not in name or operation.startswith("TABLE ACCESS BY"):
-            continue
-        on_index = operation.startswith("INDEX")
-        seeks = on_index and "FULL" not in operation and "SKIP" not in operation
-        accesses.append(EntryAccess(operation, name if on_index else None, seeks, operation == "INDEX UNIQUE SCAN"))
-    return accesses
-
-
-_READERS = {
-    "sqlite": _sqlite_plan,
-    "postgresql": _postgres_plan,
-    "mariadb": _mariadb_plan,
-    "mssql": _mssql_plan,
-    "oracle": _oracle_plan,
-}
-
-_PLAN_TEXTS = {
-    "sqlite": _sqlite_plan_text,
-    "postgresql": _postgres_plan_text,
-    "mariadb": _mariadb_plan_text,
-    "mssql": _mssql_plan_text,
-    "oracle": _oracle_plan_text,
-}
-
-_ACCESSES = {
-    "sqlite": _sqlite_access,
-    "postgresql": _postgres_access,
-    "mariadb": _mariadb_access,
-    "mssql": _mssql_access,
-    "oracle": _oracle_access,
-}
+_ACCESSES = {"sqlite": _sqlite_access, "postgresql": _postgres_access}

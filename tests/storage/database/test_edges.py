@@ -13,18 +13,20 @@ from __future__ import annotations
 
 import asyncio
 import random
+import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import delete, event, insert, select
-from sqlalchemy.dialects import mssql, postgresql
+from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from tests.support.commit_worlds import BOB, EVE, SYSTEM, attempts, authored_edges, clearing, drop_world, row_at
 from tests.support.commit_worlds import replace as replace_row
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _url, _waits_out_every_lock, begin_as_writer
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind, Severity
@@ -79,7 +81,7 @@ async def _seed_edge(storage: DatabaseStorage, source: str, target: str, *, edge
     tables = storage._host.tables
     entry = tables.entry
     async with storage._host.session_factory() as session:
-        await session.connection(execution_options={"vfs_writer": True})
+        await begin_as_writer(session)
         rows = (
             await session.execute(select(entry.c.path, entry.c.entry_id).where(entry.c.path.in_([source, target])))
         ).all()
@@ -278,7 +280,7 @@ class TestMkedgeArbitration:
         tables = storage._host.tables
         edge = Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="ref", weight=1.0)
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             entry = tables.entry
             rows = (
                 await session.execute(
@@ -370,7 +372,7 @@ class TestHubBoundedStatements:
             statements.append(statement)
 
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             result = await mkedge_rows(
                 session, tables, storage._host.profile, 64, 6, edges=edges, provenance="user", authority=None
             )
@@ -398,24 +400,35 @@ class TestHubBoundedStatements:
         assert sql.startswith("UPDATE") and "FROM (VALUES" in sql and sql.endswith("_edges.id = incoming.v_id")
         # Bare NULL payloads would type as text; every assignment casts.
         assert "SET weight=CAST(incoming.v_weight AS FLOAT)" in sql
-        assert "(VALUES" in str(statements[0].compile(dialect=mssql.dialect()))
 
 
 class TestEndpointLocks:
     """A rival delete serializes behind mkedge's endpoint resolve."""
 
     async def test_a_rival_delete_converges_after_the_window(self, storage: DatabaseStorage, tmp_path) -> None:
-        # The rival launches mid-window and must not commit inside it;
-        # after mkedge commits, the fresh edge waits with the deleted endpoint.
+        # The rival begins its writer transaction mid-window, while mkedge holds the file's write lock,
+        # so it cannot commit inside it; after mkedge commits, the fresh edge waits with the deleted endpoint.
         entries = [Entry(path=Path("/src.py"), content="x"), Entry(path=Path("/dst.py"), content="x")]
         assert (await storage.write(entries=entries)).success is True
         rival = DatabaseStorage(url=_url(tmp_path))
+        _waits_out_every_lock(rival)
+        assert (await rival.first_touch()).success is True
         pending: dict[str, asyncio.Task] = {}
+        reached = asyncio.Event()
+
+        # A writer's options are set on its connection just before its BEGIN IMMEDIATE waits on the lock.
+        @event.listens_for(rival._host.engine.sync_engine, "set_connection_execution_options")
+        def writer_reached(conn: Any, options: dict[str, Any]) -> None:
+            if options.get("vfs_writer"):
+                reached.set()
 
         async def handler() -> None:
             pending["delete"] = asyncio.ensure_future(rival.delete(path=Path("/dst.py")))
-            done, _ = await asyncio.wait([pending["delete"]], timeout=0.5)
-            assert not done, "the rival delete committed inside mkedge's window"
+            await reached.wait()
+            probe = closing(sqlite3.connect(tmp_path / "vfs.sqlite", timeout=0, isolation_level=None))
+            with probe as connection, pytest.raises(sqlite3.OperationalError, match="locked"):
+                connection.execute("BEGIN IMMEDIATE")
+            assert not pending["delete"].done(), "the rival delete committed inside mkedge's window"
 
         edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
         try:
@@ -423,7 +436,7 @@ class TestEndpointLocks:
                 created = await storage.mkedge(edges=[edge])
             assert created.success is True
             assert created.observations[0].status == "created"
-            deleted = await asyncio.wait_for(pending["delete"], timeout=30)
+            deleted = await pending["delete"]
             assert deleted.success is True
         finally:
             await rival.close()
@@ -478,7 +491,7 @@ class TestEdgeRebuild:
         tables = storage._host.tables
         entry, edges = tables.entry, tables.edges
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             root = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             top = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a"))).scalar_one()
@@ -513,7 +526,7 @@ class TestEdgeRebuild:
         tables = storage._host.tables
         entry, edges = tables.entry, tables.edges
         async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
+            await begin_as_writer(session)
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/f.txt"))).scalar_one()
             await session.execute(delete(edges).where(edges.c.target_id == victim, edges.c.edge_type == "fs"))
             await session.commit()
@@ -578,8 +591,8 @@ class TestEndpointsAreJudged:
         await drop_world(storage)
         written = await storage.write(entries=[Entry(path=Path("/drop/h/pub/f.txt"), content="p")], parents=True)
         assert written.success is True
-        assert (await storage.posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.set_posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
         if trashed:
             assert (await storage.delete(path=Path("/drop/h/pub"), authority=SYSTEM)).success is True
         sessions = attempts(monkeypatch, storage)

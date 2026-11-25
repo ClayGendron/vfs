@@ -13,7 +13,7 @@ Module `vfs.base`, re-exported from `vfs`. `AsyncVirtualFileSystem` is the kerne
 
 `AsyncVirtualFileSystem(..., default_authority: Authority | None = None)`. The authority used for any call that passes none. When it is `None`, such calls run as `Authority.anonymous()`.
 
-`AsyncVirtualFileSystem.session(authority: Authority) -> AsyncSession`. See [AsyncSession](session.md).
+`AsyncVirtualFileSystem.open_session(authority: Authority) -> AsyncSession`. See [AsyncSession](session.md).
 
 Every verb takes a keyword-only `authority: Authority | None = None`. An explicit value wins over the default. See [Authority and Principal](authority.md).
 

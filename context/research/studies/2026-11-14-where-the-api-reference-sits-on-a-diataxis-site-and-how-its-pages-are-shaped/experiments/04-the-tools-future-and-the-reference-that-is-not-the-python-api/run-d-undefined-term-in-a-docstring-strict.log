@@ -1,0 +1,53 @@
+Build started
+INFO -  [privacy] Downloading external file: https://unpkg.com/pyodide@314.0.2/pyodide.js
+INFO -  [privacy] Downloading external file: https://unpkg.com/ace-builds@1.44.0/src-noconflict/ace.js
+INFO -  [privacy] Downloading external file: https://unpkg.com/glightbox@3/dist/js/glightbox.min.js
+INFO -  [privacy] Downloading external file: https://unpkg.com/glightbox@3/dist/css/glightbox.min.css
+INFO -  [privacy] Downloading external file: https://unpkg.com/mermaid@12/dist/mermaid.min.js
+vfs.models.entry.Entry marks the term 'zzz-undefined', which the glossary does not define
+INFO -  [privacy] Downloading external file: https://cdn.plyr.io/3.6.12/plyr.css
+INFO -  [privacy] Downloading external file: https://cdn.plyr.io/3.6.12/plyr.js
+INFO -  [privacy] Downloading external file: https://player.vimeo.com/api/player.js
+INFO -  [privacy] Downloading external file: https://imasdk.googleapis.com/js/sdkloader/ima3.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/pagead/js/err_rep.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/live/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/control/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/canary/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://pagead2.googlesyndication.com/omsdk/releases/experimental/omweb-v1.js
+INFO -  [privacy] Downloading external file: https://s0.2mdn.net/instream/video/client.js
+INFO -  [privacy] Downloading external file: http://imasdk.googleapis.com/js/sdkloader/loader.js
+INFO -  [privacy] Downloading external file: https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=IBM+Plex+Sans:ital,wght@0,100..700;1,100..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Saira+Stencil:ital,wght@1,700&display=swap
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwRGFWfOw.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwYGFWfOw.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwTGFWfOw.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwSGFWfOw.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwcGFU.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYnYALZg.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYDYALZg.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYfYALZg.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYvYALZg.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYrYALZg.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYTYAA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxTKYbABA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxaKYbABA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxdKYbABA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxRKYbABA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxQKYbABA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxeKYY.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-Cw6nSHrV.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-CwenSHrV.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-CwCnSHrV.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-CwynSHrV.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-Cw2nSHrV.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-CwOnSA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD2OwG_TA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD_OwG_TA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD4OwG_TA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD0OwG_TA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD1OwG_TA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD7OwE.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/sairastencil/v2/8AtLGsqgM5eNT0-b9cD0X9C_mR3iDDrE6Qa8o6VEXBwqB55P1M3QgIdh93qnQ3pMgKyjgA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/sairastencil/v2/8AtLGsqgM5eNT0-b9cD0X9C_mR3iDDrE6Qa8o6VEXBwqB55P1M3QgIdh93qnQ3pNgKyjgA.woff2
+INFO -  [privacy] Downloading external file: https://fonts.gstatic.com/s/sairastencil/v2/8AtLGsqgM5eNT0-b9cD0X9C_mR3iDDrE6Qa8o6VEXBwqB55P1M3QgIdh93qnQ3pDgKw.woff2
+No issues found
+Build finished in 3.13s

@@ -5,6 +5,7 @@ plane runs as the system actor, and the session is sugar over the funnel."""
 from __future__ import annotations
 
 import inspect
+import logging
 import pathlib
 import re
 from typing import Any
@@ -15,10 +16,13 @@ import vfs.authority
 from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.authority import Authority, Principal
 from vfs.base import AsyncVirtualFileSystem
+from vfs.models import Entry
 from vfs.ops import ALL_OPS, Op
+from vfs.paths import Path
 from vfs.results import ErrorKind, Result
 from vfs.session import AsyncSession
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.sync import Session, VirtualFileSystem
 
 ALICE = Authority.of(Principal("alice"))
 SYSTEM = Authority.system()
@@ -48,7 +52,7 @@ CALLS: dict[Op, dict[str, Any]] = {
     "grant": {"path": "/d", "principal": "bob", "level": "read"},
     "revoke": {"path": "/d", "principal": "bob"},
     "grants": {"path": "/d"},
-    "posture": {"path": "/d", "posture": "read"},
+    "set_posture": {"path": "/d", "posture": "read"},
     "add_member": {"group": "group:eng", "member": "bob"},
     "remove_member": {"group": "group:eng", "member": "bob"},
 }
@@ -138,6 +142,51 @@ async def test_an_explicit_authority_beats_the_default() -> None:
     assert seen(storage) == [("read", ALICE)]
 
 
+def test_a_system_default_is_warned_of_once_when_the_file_system_is_made(caplog: pytest.LogCaptureFixture) -> None:
+    # The sync face builds one kernel, so it warns once too, never twice.
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        AsyncVirtualFileSystem(storage=RecorderStorage(), default_authority=SYSTEM)
+        with VirtualFileSystem(storage=InMemoryStorage(), default_authority=SYSTEM):
+            pass
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert [record.name for record in warnings] == ["vfs.authority", "vfs.authority"]
+
+
+def test_a_kernel_that_cannot_be_made_warns_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"), pytest.raises(ValueError):
+        AsyncVirtualFileSystem(storage=RecorderStorage(), default_authority=SYSTEM, deny_ops={"read"})
+    assert caplog.records == []
+
+
+async def test_locate_that_asks_no_storage_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    fs = RecorderFS(default_authority=SYSTEM)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        await fs.locate("/f.txt")
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("default", [None, ALICE, ANON], ids=["none", "alice", "anon"])
+def test_no_other_default_warns(default: Authority | None, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        AsyncVirtualFileSystem(storage=RecorderStorage(), default_authority=default)
+    assert caplog.records == []
+
+
+async def test_each_call_that_falls_back_to_the_default_logs_at_debug_and_no_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), default_authority=SYSTEM)
+    secret = "the body of a file, which no log record carries"
+    caplog.clear()  # the warning as the kernel is made is the test above's
+    with caplog.at_level(logging.DEBUG, logger="vfs"):
+        assert (await fs.write(path="/f.txt", content=secret)).success is True
+        assert (await fs.read("/f.txt", authority=ALICE)).success is True
+    [record] = caplog.records
+    assert record.levelno == logging.DEBUG and "write" in record.getMessage()
+    assert secret not in record.getMessage()
+
+
 async def test_the_authority_is_threaded_not_cached() -> None:
     # Two calls, two authorities: each dispatch carries its own value.
     storage = RecorderStorage()
@@ -148,16 +197,45 @@ async def test_the_authority_is_threaded_not_cached() -> None:
     assert seen(storage) == [("read", ALICE), ("read", bob)]
 
 
-async def test_the_control_plane_runs_as_the_system_actor() -> None:
-    # Mount administration is the router's own work: the bind-site
-    # probes and the mount-point mkdir and rmdir run as the system
-    # actor, whatever default or caller is configured.
+# ---------------------------------------------------------------------------
+# A declared owner
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("owner", ["*", "anon", "system", "group:eng", "", "   "])
+@pytest.mark.parametrize("authority", [SYSTEM, ALICE, None], ids=["system", "alice", "none"])
+async def test_a_reserved_owner_refuses_the_whole_write_before_any_storage(
+    owner: str, authority: Authority | None
+) -> None:
+    fs = RecorderFS()
+    entries = [
+        Entry(path=Path("/ok.txt"), content="a"),
+        Entry(path=Path("/f.txt"), content="a", owner_id=owner),
+    ]
+    result = await fs.write(entries=entries, authority=authority)
+    assert result.success is False
+    [error] = result.errors
+    assert (error.kind, error.path) == (ErrorKind.invalid, "/f.txt")
+    assert repr(owner) in error.message
+    assert fs.calls == []
+
+
+async def test_any_other_declared_owner_reaches_the_storage() -> None:
+    fs = RecorderFS()
+    entry = Entry(path=Path("/f.txt"), content="a", owner_id="carol")
+    assert (await fs.write(entries=[entry], authority=SYSTEM)).success is True
+    [(op, kwargs)] = fs.calls
+    assert op == "write" and [e.owner_id for e in kwargs["entries"]] == ["carol"]
+
+
+async def test_a_mount_change_makes_its_directory_as_the_caller_and_does_its_own_work_as_the_system_actor() -> None:
+    # The caller makes the mount-point directory, as their own mkdir would. The check of the mount
+    # point and the delete of its directory are the kernel's own work, whoever the caller is.
     storage = RecordingMemory()
     fs = AsyncVirtualFileSystem(storage=storage, default_authority=ALICE)
     await fs.add_mount(RecorderStorage(name="child"), "/m", parents=True)
     await fs.remove_mount("/m")
-    assert storage.seen and all(authority == SYSTEM for _op, authority in storage.seen)
-    assert {op for op, _ in storage.seen} == {"mkdir", "stat", "ls", "delete"}
+    assert set(storage.seen) == {("mkdir", ALICE), ("stat", SYSTEM), ("ls", SYSTEM), ("delete", SYSTEM)}
     await fs.close()
 
 
@@ -185,7 +263,7 @@ async def test_a_session_verb_is_the_direct_call_with_the_authority_filled_in(op
     direct = AsyncVirtualFileSystem(storage=direct_storage)
     routed = AsyncVirtualFileSystem(storage=session_storage)
     expected = await getattr(direct, op)(**CALLS[op], authority=ALICE)
-    async with routed.session(ALICE) as s:
+    async with routed.open_session(ALICE) as s:
         assert s.authority == ALICE and s.closed is False
         result = await getattr(s, op)(**CALLS[op])
     assert result == expected
@@ -210,7 +288,7 @@ def test_session_verbs_take_no_identity_argument(op: Op) -> None:
 async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
     storage = RecorderStorage()
     fs = AsyncVirtualFileSystem(storage=storage)
-    async with fs.session(ALICE) as s:
+    async with fs.open_session(ALICE) as s:
         pass
     assert s.closed is True
     result = await getattr(s, op)(**CALLS[op])
@@ -222,7 +300,7 @@ async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
 
 async def test_closed_is_final() -> None:
     fs = AsyncVirtualFileSystem(storage=RecorderStorage())
-    s = fs.session(ALICE)
+    s = fs.open_session(ALICE)
     await s.close()
     await s.close()  # idempotent
     with pytest.raises(ValueError, match="cannot reopen"):
@@ -230,10 +308,22 @@ async def test_closed_is_final() -> None:
             pass
 
 
+@pytest.mark.parametrize("face", [AsyncSession, Session])
+def test_a_session_cannot_reach_a_mount(face: type) -> None:
+    # A mount carries its storage, and reaching the storage would go around
+    # permissions: a session is the verbs, cli and its own lifecycle, nothing else.
+    public = {name for name in dir(face) if not name.startswith("_")}
+    assert public == ALL_OPS | {"authority", "closed", "close", "cli"}
+    for name in sorted(public):
+        member = inspect.getattr_static(face, name)
+        returns = inspect.signature(member.fget if isinstance(member, property) else member).return_annotation
+        assert returns in {"Result", "LineResult", "Authority", "bool", "None"}, name
+
+
 async def test_a_session_needs_no_default_on_the_filesystem() -> None:
     storage = RecorderStorage()
     fs = AsyncVirtualFileSystem(storage=storage)
-    async with fs.session(ALICE) as s:
+    async with fs.open_session(ALICE) as s:
         assert (await s.ls("/")).success is True
     assert seen(storage) == [("ls", ALICE)]
 

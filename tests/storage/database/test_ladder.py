@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.support.database_helpers import begin_as_writer
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.models.rows import build_vfs_tables
@@ -77,7 +78,7 @@ def _shown(result: Result) -> dict[str, frozenset[str]]:
 async def _seed(storage: InMemoryStorage, files: dict[str, str], root: GrantLevel = "none") -> None:
     entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/"), posture=root, authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/"), posture=root, authority=SYSTEM)).success is True
 
 
 async def _grant(storage: InMemoryStorage, path: str, principal: str, level: GrantLevel) -> None:
@@ -203,6 +204,49 @@ async def test_add_creates_and_alters_only_its_own_rows(storage: InMemoryStorage
 
 
 @pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
+async def test_add_hears_exists_from_a_create_only_write_over_anothers_row(
+    storage: InMemoryStorage, who: Authority
+) -> None:
+    await _inbox(storage, "add", "ann", "bob")
+    stored = (await storage.stat(path=Path("/inbox/carol.md"), authority=SYSTEM)).observations[0]
+    refused = await _write(storage, "/inbox/carol.md", who, if_absent=True)
+    # The true answer, and what is there: add reads the row, and a create-only write replaces nothing.
+    (error,) = refused.errors
+    assert (error.kind, error.data) == (ErrorKind.exists, {"version": 1, "content_hash": stored.content_hash})
+    assert _kind(await _write(storage, "/inbox/carol.md", who)) == ErrorKind.permission_denied
+    # Another's tombstone: a write at it is a restore, which add lacks, create-only or not.
+    assert (await storage.delete(path=Path("/inbox/carol.md"), authority=CAROL)).success is True
+    assert _kind(await _write(storage, "/inbox/carol.md", who, if_absent=True)) == ErrorKind.permission_denied
+
+
+@pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
+async def test_add_appends_to_anothers_row_and_replaces_none(storage: InMemoryStorage, who: Authority) -> None:
+    await _inbox(storage, "add", "ann", "bob")
+    grown = await _write(storage, "/inbox/carol.md", who, " and more", append=True)
+    assert grown.success is True, grown.errors
+    assert (await storage.read(path=Path("/inbox/carol.md"), authority=CAROL)).observations[0].content == "x and more"
+    # Adding to the end removes nothing. Replacing the body still needs contribute.
+    assert _kind(await _write(storage, "/inbox/carol.md", who)) == ErrorKind.permission_denied
+    # Another's tombstone: an append at it is a restore, which add lacks.
+    assert (await storage.delete(path=Path("/inbox/carol.md"), authority=CAROL)).success is True
+    assert _kind(await _write(storage, "/inbox/carol.md", who, append=True)) == ErrorKind.permission_denied
+
+
+async def test_a_list_holder_cannot_append(storage: InMemoryStorage) -> None:
+    await _inbox(storage, "list", "bob")
+    assert _kind(await _write(storage, "/inbox/carol.md", BOB, append=True)) == ErrorKind.permission_denied
+    assert (await storage.read(path=Path("/inbox/carol.md"), authority=CAROL)).observations[0].content == "x"
+
+
+async def test_a_create_only_write_over_a_row_tells_a_list_holder_nothing(storage: InMemoryStorage) -> None:
+    await _inbox(storage, "list", "bob")
+    refused = await _write(storage, "/inbox/carol.md", BOB, if_absent=True)
+    (error,) = refused.errors
+    assert error.kind == ErrorKind.permission_denied
+    assert not {"version", "content_hash"} & set(error.data or {})
+
+
+@pytest.mark.parametrize("who", [BOB, PAIR], ids=["user", "set"])
 async def test_contribute_edits_anyones_row_and_trashes_only_its_own(storage: InMemoryStorage, who: Authority) -> None:
     await _inbox(storage, "contribute", "ann", "bob")
     assert (await _write(storage, "/inbox/carol.md", who, "theirs, overwritten")).success is True
@@ -253,7 +297,7 @@ async def test_anonymous_creates_under_an_add_posture_and_alters_nothing(
     storage: InMemoryStorage, posture: GrantLevel
 ) -> None:
     await _seed(storage, {"/inbox/carol.md": "x"})
-    assert (await storage.posture(path=Path("/inbox"), posture=posture, authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/inbox"), posture=posture, authority=SYSTEM)).success is True
     assert (await _write(storage, "/inbox/anon.md", ANON)).success is True
     assert (await storage.read(path=Path("/inbox/anon.md"), authority=ANON)).success is True
     # Anonymous owns nothing, so it never alters or trashes its own creation.
@@ -288,7 +332,7 @@ async def test_mkdir_on_a_list_directory_is_denied_with_or_without_exist_ok(stor
     assert _kind(await storage.mkdir(path=Path("/team"), authority=BOB)) == ErrorKind.permission_denied
     assert _kind(await storage.mkdir(path=Path("/team"), exist_ok=True, authority=BOB)) == ErrorKind.permission_denied
     assert _kind(await storage.mkdir(path=Path("/team/new"), authority=BOB)) == ErrorKind.permission_denied
-    assert _kind(await _write(storage, "/team/plan.md", BOB, overwrite=False)) == ErrorKind.permission_denied
+    assert _kind(await _write(storage, "/team/plan.md", BOB, if_absent=True)) == ErrorKind.permission_denied
 
 
 async def test_mkedge_passes_a_list_target_and_a_road_directory(storage: InMemoryStorage) -> None:
@@ -412,7 +456,7 @@ async def test_rmedge_answers_a_hidden_target_exactly_as_an_absent_one(storage: 
 
 async def _scratch(storage: InMemoryStorage) -> None:
     await _seed(storage, {"/scratch/old.md": "lantern old", "/notes.txt": "lantern notes"})
-    assert (await storage.posture(path=Path("/scratch"), posture="read_write", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/scratch"), posture="read_write", authority=SYSTEM)).success is True
 
 
 async def test_anonymous_writes_and_reads_under_the_open_folder_and_nowhere_else(storage: InMemoryStorage) -> None:
@@ -477,7 +521,7 @@ async def test_mkdir_at_a_tombstone_answers_by_what_the_caller_may_read(storage:
     hinted = await storage.mkdir(path=Path("/team/gone.md"), authority=BOB)
     assert _kind(hinted) == ErrorKind.not_found and "vfs.deleted_at" in (hinted.errors[0].data or {})
     # A tombstone held only at list: the row stays judged, the hint never rides.
-    assert (await storage.posture(path=Path("/pub"), posture="list", authority=SYSTEM)).success is True
+    assert (await storage.set_posture(path=Path("/pub"), posture="list", authority=SYSTEM)).success is True
     await storage.revoke(path=Path("/pub"), principal="bob", authority=SYSTEM)
     plain = await storage.mkdir(path=Path("/pub/gone.md"), authority=BOB)
     assert _kind(plain) == ErrorKind.not_found and not plain.errors[0].data
@@ -500,6 +544,7 @@ GATED_CALLS = {
     ),
     "grants": lambda s, who: s.grants(path=Path("/d"), authority=who),
     "grant": lambda s, who: s.grant(path=Path("/d"), principal="bob", level="read", authority=who),
+    "holds": lambda s, who: s.holds(path=Path("/d"), level="read_write", authority=who),
     "stat": lambda s, who: s.stat(path=Path("/d/f.md"), authority=who),
 }
 
@@ -511,6 +556,7 @@ async def test_every_gated_verb_refuses_a_closure_past_the_nesting_bound(storage
     host = storage._host
     chain = ["ann", *(f"group:g{n}" for n in range(12))]
     async with host.session_factory() as session, session.begin():
+        await begin_as_writer(session)
         await session.execute(
             host.tables.memberships.insert(),
             [
