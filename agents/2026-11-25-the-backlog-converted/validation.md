@@ -28,3 +28,9 @@ For 171-1, MCP Python SDK 1.29.0 constructed and round-tripped a `CallToolResult
 ## Layer 4
 
 For 172-1, the published `wasi_python-0.1.0-py3-none-any.whl` downloaded successfully and its SHA-256 was `3bfb0dcc48ce1ce9f4741e142a3a73e865b2028b7468179588d52f418dabfafc`, matching decision 1. Its Python package imported and resolved the snapshot, plain module, standard library and manifest. A cold `run` of a three-element NumPy and pandas sum with no mounts or grants, two billion fuel and a 90-second guest deadline ended at host exit 137 without a guest result. Restricting the host to one CPU and one allocator arena produced the same outcome. The host exit does not establish a guest trap, a stage exit, a working provider adapter or the proposed 21-call budget.
+
+## Gate preflight
+
+The docs gate (`scripts/docs.sh check`) passed on the work checkout, including 20 Chromium layout tests with the repository-pinned Chrome for Testing 156.0.8078.4. An initial run lacked the browser executable. Installing the checksum-verified pinned headless shell resolved that setup failure.
+
+On the work branch the Python 3.13 CI preflight passed installation, lint, formatting and types. The coverage run lost pytest workers and produced no passing coverage summary. The 10,000-root test `tests/base/test_glob_namespace.py::test_a_wide_scoped_glob_builds_roots_plus_arms` passed by itself without coverage. It exited 137 by itself with the repository's coverage configuration on CPython 3.13.5 and 3.13.18. A separate checkout of unchanged `origin/dev` at `27f3d24d` reproduced exit 137 with the same node, CPython 3.13.18 and the identical native binary. The complete CI script on that control checkout stopped earlier, when the host killed a Rust compiler during installation. These are preflight observations; the final branch gate is still owed.
