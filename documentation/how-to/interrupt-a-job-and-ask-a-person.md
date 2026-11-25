@@ -27,7 +27,8 @@ from vfs import Decision, Mutation, policy, require_approval
 async def contracts_need_a_person(step: Mutation) -> Decision:
     """A change to a contract needs a person."""
     if step.touches("/contracts"):
-        return await require_approval("A change to a contract needs a person.")
+        question = "A change to a contract needs a person."
+        return await require_approval(question)
     return Decision.allow()
 ```
 
@@ -87,7 +88,9 @@ Ask for a session for Scout, and have Scout read the contract and change it. Sco
 scout = fs.session(Authority.of(Principal("scout")), "conv_123")
 scout.read("/contracts/acme.md")
 
-result = scout.edit("/contracts/acme.md", old="30 days", new="90 days")
+result = scout.edit(
+    "/contracts/acme.md", old="30 days", new="90 days"
+)
 result.success, result.interrupted
 ```
 
@@ -202,7 +205,10 @@ result = scout.delete("/contracts/acme.md")
 
 fs.resume(
     result.job.id,
-    Approval(approved=False, reason="This contract is still in force."),
+    Approval(
+        approved=False,
+        reason="This contract is still in force.",
+    ),
     authority=ada,
 )
 ```
@@ -224,9 +230,15 @@ A person can also stop the whole job rather than answer its interrupt. Resume th
 ```python
 from vfs import Cancel
 
-result = scout.edit("/contracts/acme.md", old="30 days", new="45 days")
+result = scout.edit(
+    "/contracts/acme.md", old="30 days", new="45 days"
+)
 
-fs.resume(result.job.id, Cancel(reason="We are renegotiating this contract."), authority=ada)
+fs.resume(
+    result.job.id,
+    Cancel(reason="We are renegotiating this contract."),
+    authority=ada,
+)
 ```
 
 ```text
@@ -258,20 +270,30 @@ class Ticket(BaseModel):
     number: str
 
 @policy
-async def contract_changes_need_a_ticket(step: Mutation) -> Decision:
-    """A change to a contract needs the ticket that authorises it."""
+async def contract_changes_need_a_ticket(
+    step: Mutation,
+) -> Decision:
+    """
+    A change to a contract needs the ticket that authorises it.
+    """
     if not step.touches("/contracts"):
         return Decision.allow()
-    ticket = await interrupt("Which ticket authorises this change?", Ticket)
+    ticket = await interrupt(
+        "Which ticket authorises this change?", Ticket
+    )
     if not ticket.number.startswith("LEGAL-"):
-        return Decision.deny(f"{ticket.number} is not a legal ticket.")
+        return Decision.deny(
+            f"{ticket.number} is not a legal ticket."
+        )
     return Decision.allow()
 ```
 
 The person's answer is a `Ticket`, or anything that validates as one, such as a dictionary with the same fields.
 
 ```python
-result = scout.edit("/contracts/acme.md", old="90 days", new="60 days")
+result = scout.edit(
+    "/contracts/acme.md", old="90 days", new="60 days"
+)
 fs.resume(result.job.id, {"number": "LEGAL-142"}, authority=ada)
 ```
 
@@ -314,7 +336,8 @@ The first command ran, so the note is written. The second was interrupted. The t
 
 ```python
 result = fs.resume(result.job.id, True, authority=ada)
-result.success, fs.read("/notes.md", authority=system).one().content
+note = fs.read("/notes.md", authority=system).one().content
+result.success, note
 ```
 
 ```text
@@ -352,7 +375,10 @@ async def translate(path: str, *, files: AsyncSession) -> str:
         Choice(["french", "german"]),
     )
     target = path.replace(".md", f".{language}.md")
-    await files.write(path=target, content=await translate_text(text, language))
+    await files.write(
+        path=target,
+        content=await translate_text(text, language),
+    )
     return target
 
 fs.add_tool(translate)
@@ -404,7 +430,9 @@ Some tools should not run at all until a person says yes. Mark them with `approv
 @tool(approval=True)
 async def publish(path: str, *, files: AsyncSession) -> str:
     """Publish a report to the company website."""
-    await post_to_website((await files.read(path)).one().content)
+    await post_to_website(
+        (await files.read(path)).one().content
+    )
     return f"published {path}"
 
 fs.add_tool(publish)
@@ -418,7 +446,9 @@ from vfs import RunStep
 @policy
 async def review_publishing(step: RunStep) -> Decision:
     if step.tool == "publish":
-        return await require_approval(f"Publish {step.arguments['path']}?")
+        return await require_approval(
+            f"Publish {step.arguments['path']}?"
+        )
     return Decision.allow()
 ```
 
@@ -434,7 +464,10 @@ VFS ships one policy ready to use. `policies.review` allows every read and requi
 from vfs import policies
 
 fs = VirtualFileSystem(
-    policies=[policies.review(paths=["/contracts", "/finance"]), review_publishing],
+    policies=[
+        policies.review(paths=["/contracts", "/finance"]),
+        review_publishing,
+    ],
 )
 ```
 
@@ -490,11 +523,21 @@ An application built on LangGraph has its own `interrupt()` and `Command(resume=
 from langgraph.types import interrupt as ask
 
 async def change_contract(state):
-    result = await scout.edit(state["path"], old=state["old"], new=state["new"])
+    result = await scout.edit(
+        state["path"], old=state["old"], new=state["new"]
+    )
     while result.interrupted:
         waiting = result.job.interrupt
-        answer = ask({"message": waiting.message, "schema": waiting.schema, "preview": str(waiting.preview)})
-        result = await fs.resume(result.job.id, answer, authority=ada)
+        answer = ask(
+            {
+                "message": waiting.message,
+                "schema": waiting.schema,
+                "preview": str(waiting.preview),
+            }
+        )
+        result = await fs.resume(
+            result.job.id, answer, authority=ada
+        )
     return {"outcome": str(result)}
 ```
 

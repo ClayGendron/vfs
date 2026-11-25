@@ -21,8 +21,17 @@ from vfs import Authority, Principal, VirtualFileSystem
 
 fs = VirtualFileSystem()
 system = Authority.system()
-fs.write(path="/notes/plan.md", content="Ship on Friday.\n", parents=True, authority=system)
-fs.write(path="/notes/old.md", content="Last year's plan.\n", authority=system)
+fs.write(
+    path="/notes/plan.md",
+    content="Ship on Friday.\n",
+    parents=True,
+    authority=system,
+)
+fs.write(
+    path="/notes/old.md",
+    content="Last year's plan.\n",
+    authority=system,
+)
 
 scout_is = Authority.of(Principal("scout"))
 scout = fs.session(scout_is, "conv_123")
@@ -96,10 +105,15 @@ Run Step 1 again on a new file system, so that turn `msg_2` is there once more. 
 
 ```python
 ada = Authority.of(Principal("ada", name="Ada Lovelace"))
-fs.edit("/notes/plan.md", old="Monday", new="Tuesday", authority=ada)
+fs.edit(
+    "/notes/plan.md", old="Monday", new="Tuesday", authority=ada
+)
 
 done = scout.rewind(before="msg_2", files=True)
-[(w.path, w.data["vfs.rewind"]["reason"]) for w in done.files.warnings]
+[
+    (w.path, w.data["vfs.rewind"]["reason"])
+    for w in done.files.warnings
+]
 ```
 
 ```text
@@ -132,7 +146,9 @@ from vfs import Decision, Mutation, policy, require_approval
 @policy
 async def contracts_need_a_person(step: Mutation) -> Decision:
     if step.touches("/contracts"):
-        return await require_approval("A change to a contract needs a person.")
+        return await require_approval(
+            "A change to a contract needs a person."
+        )
     return Decision.allow()
 ```
 

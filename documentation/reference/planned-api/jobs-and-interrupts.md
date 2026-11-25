@@ -123,7 +123,9 @@ A job that a session's own policies judged is resumed with `session.resume`, on 
 ## List Jobs
 
 ```python
-fs.jobs(state=None, authority=None, *, after=None, limit=None) -> JobPage
+fs.jobs(
+    state=None, authority=None, *, after=None, limit=None
+) -> JobPage
 session.jobs(state=None, *, after=None, limit=None) -> JobPage
 ```
 
