@@ -16,7 +16,7 @@ The check is the shell corpus: new cases under `tests/shell/cases/programs/diff/
 - The library programs' shared helpers, built: `Prog::file`, `Prog::stat`, `Prog::stdin_chunk` and `Prog::out` (`crates/vfs-shell/src/programs/mod.rs:114`, `:137`, `:152`, `:209`), and `read_operand` (`crates/vfs-shell/src/programs/text.rs:20`).
 - The recorder `scripts/shell_record.py`, built, which runs each case twice under bash 5.3 and GNU tools in `debian@sha256:07a3205e…` and refuses a case whose two runs differ (`scripts/shell_record.py:1-30`).
 - [Bounded work has one home](../../context/specifications/archive/2026-11-07-bounded-work-has-one-home.md), landed: a deadline is passed as an argument and never stored on a long-lived object (`src/vfs/deadline.py:14-15`).
-- No other unit of this conversion. Unit 168-1, which the source made this unit's base, is moot: the shell landed with its programs in Rust from the start (the reassessment, section 168-1).
+- No other unit of this conversion. The law below uses the read schedule and the helper of unit 168-2, decisions 1, 3 and 15; built first, it sets a field that binds nothing. Unit 168-1, which the source made this unit's base, is built on `dev`: the shell landed with its programs in Rust from the start (the reassessment, section 168-1).
 
 ## Terms
 
@@ -115,7 +115,7 @@ Written first, and seen failing, at the layer each behaviour lives. Every test c
 
 **The laws, on the native build** (`crates/vfs-shell/tests/laws.rs`).
 
-- `diff_and_cmp_print_the_same_whatever_the_chunk_boundaries`: a line of `diff`, `diff -u --label a --label b` and `cmp -l` over two files of `world()` prints the same at read chunks of 1, 2, 3, 5 and 64 bytes as whole, beside the existing `output_is_the_same_whatever_the_chunk_boundaries`.
+- `diff_and_cmp_print_the_same_whatever_the_chunk_boundaries`: a line of `diff`, `diff -u --label a --label b` and `cmp -l` over two files of `world()` prints the same as whole under `read_chunks` of `[1]`, `[2]`, `[3]` and `[5]`, each run through the helper `chunked` of unit 168-2's decision 15, which fails a run that asks no more reads than the whole run; a 64-byte size is added only with files longer than 64 bytes, beside the existing `output_is_the_same_whatever_the_chunk_boundaries`.
 - `a_diff_past_the_memory_budget_ends_the_line_at_its_count`: with `memory_bytes` of 1 MiB, a `diff` of two 600 KB files ends `Budget("memory", 1048576)`, and the same pair at 4 MiB exits 1.
 - `a_long_diff_hands_control_back_each_round_and_cancel_ends_it`: with `slice: 1`, a line that generates two pathological inputs with builtin loops into `<(…)` and runs `diff` over them returns `Running` with no request on more steps than the same line with `cmp` in its place, by at least the rounds the unit test below counts for that pair; a `cancel` during the search ends it `Cancelled, 130`.
 

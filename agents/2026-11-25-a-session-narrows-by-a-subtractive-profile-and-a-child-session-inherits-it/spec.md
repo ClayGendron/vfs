@@ -313,7 +313,7 @@ Each is written and seen failing before the code. Counts and states, never clock
 - `test_a_narrowed_call_issues_the_statements_an_unnarrowed_call_issues`: on SQLite, for `read`, `ls`, a `tree` page, `glob`, `grep`, `search` and a `write` of 10,000 entries (marked `slow`), the count under a narrowing of 64 caps and 64 within paths equals the count with none.
 - `test_the_largest_narrowing_fits_two_clauses_on_the_generic_floor`: through the floor dialect of `tests/support/floor_dialect.py`, no statement carries more than the floor's budget, and the clause count is at most 2.
 
-`tests/support/narrowing_contract.py`, a `NarrowingContract` mixed into `TestMemoryConformance`, `TestSqliteConformance` and `TestPostgresConformance` in `tests/storage/test_conformance.py`, so it runs on the Postgres leg:
+`tests/support/narrowing_contract.py`, a `NarrowingContract` mixed into `TestMemoryConformance`, `TestSqliteConformance` and `TestPostgresConformance` in `tests/storage/test_conformance.py`, so it runs on the Postgres leg; where unit 179-1 has landed first, the family is `NarrowingRows` in `tests/support/contract/narrowing.py`, composed into `StorageContract`, and no leg's class line is edited (its decision 17):
 
 - `test_ls_tree_and_glob_never_name_a_cut_row`.
 - `test_grep_and_search_never_match_inside_a_cut_row`, through the scan and through the index.

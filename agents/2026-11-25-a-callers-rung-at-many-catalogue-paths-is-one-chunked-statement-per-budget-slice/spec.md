@@ -33,7 +33,7 @@ For `N` input paths, `U` distinct paths, maximum component depth `D` and at most
 
 ## Tests
 
-Write the following nodes before implementation. Shared grants tests run through `tests/storage/test_conformance.py::TestMemoryConformance`, `TestSqliteConformance` and `TestPostgresConformance` (`:65`, `:102`, `:182`).
+Write the following nodes before implementation. Shared grants tests run through `tests/storage/test_conformance.py::TestMemoryConformance`, `TestSqliteConformance` and `TestPostgresConformance` (`:65`, `:102`, `:182`). Where unit 179-1 has landed first, each conformance row named here is a method of the mixin that unit's decision 18 names for it, under the same name and node id, no leg's class line is edited, and `tests/fixtures/conformance/rows.txt` is not edited (its decision 16).
 
 - `tests/support/grants_contract.py::GrantsContract::test_holds_all_reports_the_highest_qualifying_rung_in_input_order` gives distinct names all six rungs, repeats names out of order and checks the exact map at `none`, `list` and `read`. Check empty, all-hidden, system and trusted-default answers. Omit the option on a mixed input and assert the first refusal and absent extra. On a successful aggregate assert the extra is absent too.
 - `tests/storage/database/test_rights.py::test_per_path_holds_agrees_with_the_pointwise_oracle` replays seeded `random_world` cases for both layouts in `tests/support/grant_worlds.py:80`. Probe the root, stored and unstored names, and prefix lookalikes. Compare rungs and thresholded maps with `RUNGS[set_rank(world, subjects, p, owner_floor=False)]` for each subject set and with `RUNGS[everyone_rank(world, p)]` for anonymous (`tests/support/oracles/grants.py:69-93`). Keep the oracle independent of the production batch check.
