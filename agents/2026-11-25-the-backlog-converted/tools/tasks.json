@@ -1,0 +1,2049 @@
+{
+ "157-1": {
+  "key": "157-1",
+  "dir": "agents/2026-11-25-first-touch-creates-the-mounts-schema-and-names-a-privilege-refusal",
+  "title": "A mount with `schema=` on Postgres or SQL Server creates its schema at first touch when it is absent, and a role that may not create it is refused `unavailable` naming the schema and the privilege, never `internal`.",
+  "gate": "b",
+  "source": "157-postgres-provisioning-for-host-apps",
+  "study_group": "051-162",
+  "group": "engines",
+  "verdict": "still-needed",
+  "draft": "rewrite",
+  "remaining": "On Postgres only: has_schema test then CREATE SCHEMA IF NOT EXISTS at first touch, 42501 at first touch as vfs.unavailable non-retryable with schema and privilege, 3F000 named and non-retryable, zero schema statements counted on SQLite. Must also say how the kernel store's own first touch in the same schema (kernel-records branches) gets the schema, and settle the conflict with how-we-code.md:44 ('the request path never creates').",
+  "covered_by": "",
+  "new_deps": [
+   "landed: agents/2026-11-20-vfs-serves-sqlite-and-postgres-only",
+   "landed: storage owns its engine (commit cf70c5fc)",
+   "branch: origin/the-engine-core-is-split-from-the-mount (classify_failure moves to core.py)",
+   "branch: origin/the-kernel-writes-records-behind-and-sweeps-them (kernel store first touch in the mount's schema)",
+   "story D2, no spec (ordering only)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D3"
+  ],
+  "stories": [
+   "D3"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "157-2": {
+  "key": "157-2",
+  "dir": "agents/2026-11-25-the-bulk-insert-path-follows-the-driver-on-the-connection",
+  "title": "A bulk insert takes asyncpg's binary `COPY` only when the connection's driver is asyncpg; a psycopg 3 session factory runs the conformance contract and lands a 10,000-file write through Core in at least two counted pages.",
+  "gate": "b",
+  "source": "157-postgres-provisioning-for-host-apps",
+  "study_group": "051-162",
+  "group": "engines",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "All of it: bulk_insert_mode with copy only on the asyncpg driver, psycopg 3 in the postgres extra, a postgresql+psycopg:// leg in conftest, workflow and db_test skill, conformance and a 10,000-file write on that leg through a storage built from the URL. The kernel store's insert_rows (kernel-records branches) is a second caller.",
+  "covered_by": "",
+  "new_deps": [
+   "landed: agents/2026-11-20-vfs-serves-sqlite-and-postgres-only",
+   "landed: storage owns its engine (commit cf70c5fc)",
+   "branch: origin/the-kernel-writes-records-behind-and-sweeps-them (insert_rows calls bulk_insert; its copy spy)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "D3"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "157-3": {
+  "key": "157-3",
+  "dir": "agents/2026-11-25-a-borrowed-sql-server-factory-is-checked-and-the-facade-installs-extensions",
+  "title": "A borrowed `mssql+aioodbc` factory without `use_setinputsizes=False` is refused `invalid` at first touch naming the argument, and `install_extensions(path)` runs one mount's install from the facade.",
+  "gate": "b",
+  "source": "157-postgres-provisioning-for-host-apps",
+  "study_group": "051-162",
+  "group": "engines",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "install_extensions(path) on the router and the sync facade, resolving the mount by path and delegating to the storage, a success with nothing done where there is nothing to install, added to MANAGEMENT_METHODS. The unit title loses its SQL Server clause.",
+  "covered_by": "",
+  "new_deps": [
+   "landed: agents/2026-11-20-vfs-serves-sqlite-and-postgres-only",
+   "dated spec: 2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md (freeze rule for the added name)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D2"
+  ],
+  "stories": [
+   "D3"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-first-touch-creates-the-mounts-schema-and-names-a-privilege-refusal"
+  ],
+  "layer": 1
+ },
+ "167-2": {
+  "key": "167-2",
+  "dir": "agents/2026-11-25-a-bytes-row-renders-a-placeholder-and-leaves-the-payload-only-when-asked",
+  "title": "A bytes-sourced row prints one `[binary <path> <mime> <size>B v<version>]` line in every arrangement, and `to_payload()` carries no bytes unless `include_bytes=True`.",
+  "gate": "a",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit; the amend must re-cite lines at 27f3d24d, decide whether the shell's LineResult (host.py:145-167) prints the placeholder for cat img.png, and read the vid field name from origin/every-row-carries-a-vid.",
+  "covered_by": "",
+  "new_deps": [
+   "origin/every-row-carries-a-vid (field name only)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "F1"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "167-3": {
+  "key": "167-3",
+  "dir": "agents/2026-11-25-the-verb-renderer-is-bounded-never-silent-and-marks-kind-and-rank",
+  "title": "A rendered result stops at a declared character budget with one marker, says when it is empty, marks directories with a slash, prints identical fan-out errors once, and ranks search hits by position.",
+  "gate": "a",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "partly-covered",
+  "draft": "amend",
+  "remaining": "Budget with one marker, empty notice, directory slash, collapsed fan-out errors and rank column; the draft's claim that src/vfs/shell and cli are absent must go, and whether LineResult.to_str takes the budget must be decided.",
+  "covered_by": "agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md (more: after= line, render.py:51,:72-73)",
+  "new_deps": [
+   "agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md (built, replaces 176-1)",
+   "agents/2026-11-21-the-shell-speaks-bash/spec.md (built, replaces 167-5 link)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "F1"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "167-4": {
+  "key": "167-4",
+  "dir": "agents/2026-11-25-the-shell-parses-the-whole-bash-grammar-before-anything-runs",
+  "title": "Every bash construct parses to an AST in one pass under four counted budgets, malformed text is one `vfs.invalid.syntax` with a caret, and only the D47 and D48 words are refused as `vfs.unsupported.construct`.",
+  "gate": "a",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "partly-covered",
+  "draft": "discard",
+  "remaining": "Only the structured syntax error (offset, expected, incomplete, caret) and a construct field, whose want is open under the acts-as-bash ruling, and the Oils parse count, which belongs with 167-10.",
+  "covered_by": "agents/2026-11-21-the-shell-speaks-bash/spec.md; crates/vfs-shell/src/syntax/parser.rs; crates/vfs-shell/tests/measured_corpus.rs, laws.rs",
+  "new_deps": [
+   "agents/2026-11-22-the-shell-acts-as-bash-where-it-refused/spec.md (specified, unbuilt)",
+   "agents/2026-11-21-the-shell-closes-its-known-failures/spec.md (specified)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D47",
+   "D48"
+  ],
+  "stories": [
+   "F2"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "167-5": {
+  "key": "167-5",
+  "dir": "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+  "title": "`cli` on both kernel classes and both synchronous classes runs a parsed line as bounded stage tasks whose every verb re-enters the public router as the admitted caller, prints what bash prints, and returns one Result with the status list.",
+  "gate": "b",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "The host does not page listings (host.py:430 calls ls with no limit/after), so the counted 10-chunk/queue-depth pin and head -3 producer close are unmet and unspecified; sweep/posture facts; Session.cli cwd is specified in the sessions-turns spec; the determinism law is superseded by the interrupted-line spec / D60.",
+  "covered_by": "agents/2026-11-21-the-shell-speaks-bash/spec.md; src/vfs/base.py:1668, session.py:414, sync.py:598, sync_session.py:364, src/vfs/shell/host.py",
+  "new_deps": [
+   "agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md (built, replaces 174-2)",
+   "agents/2026-11-21-an-append-keeps-only-what-it-added/spec.md (built, replaces 174-4)",
+   "agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md (built, replaces 176-1)",
+   "agents/2026-11-22-a-session-works-in-turns-and-rewinds-or-forks-at-one/spec.md (specified)",
+   "167-2"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D33",
+   "D41"
+  ],
+  "stories": [
+   "F3"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-bytes-row-renders-a-placeholder-and-leaves-the-payload-only-when-asked",
+   "agents/2026-11-25-the-verb-renderer-is-bounded-never-silent-and-marks-kind-and-rank",
+   "agents/2026-11-25-the-shell-parses-the-whole-bash-grammar-before-anything-runs"
+  ],
+  "layer": 1
+ },
+ "167-6": {
+  "key": "167-6",
+  "dir": "agents/2026-11-25-glob-matches-case-insensitively-on-every-engine",
+  "title": "`glob(case_mode=\"insensitive\")` matches a case-folded filter in one statement per mount on SQLite and on each engine leg, with an index-served prefilter costed at the reference deployment.",
+  "gate": "b",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit; the draft must drop MariaDB, SQL Server and Oracle and the cast_lower profile spelling, cost against SQLite, Postgres and GENERIC only, and page on after/limit.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md (built)",
+   "agents/2026-11-21-postgres-reads-a-subtree-by-its-range/spec.md (on dev)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "F4"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "167-7": {
+  "key": "167-7",
+  "dir": "agents/2026-11-25-move-and-copy-take-replace-and-a-move-keeps-the-moved-file",
+  "title": "`move(src, dest, replace=True)` lands on an occupied file keeping the moved file's `entry_id` and leaves the replaced file undoable, `copy(replace=True)` keeps the destination's identity, and a directory over a directory is `vfs.exists`.",
+  "gate": "b",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit, now also stating the destination's vid requirement since the vid series gives move a source vid only.",
+  "covered_by": "",
+  "new_deps": [
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md (fit to build, unbuilt; replaces 'the deletes spec, not yet written')",
+   "origin/delete-move-and-restore-require-a-vid (move if_vid, unbuilt on dev)"
+  ],
+  "deps_other": [
+   "the deletes spec, not yet written (no roadmap story)",
+   "dated spec: 2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md"
+  ],
+  "decisions": [
+   "D7",
+   "D55"
+  ],
+  "stories": [
+   "F4"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-every-mutating-verb-sent-twice-answers-as-a-pinned-replay-table-says"
+  ],
+  "layer": 1
+ },
+ "167-8": {
+  "key": "167-8",
+  "dir": "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+  "title": "Every form of the program table, `set -e` with its POSIX exemptions, and every never-class name answer as GNU and bash do against committed fixtures, with `grant`, `revoke` and `grants` spelled in the shell and `trav` resolved to `traverse` at parse time.",
+  "gate": "b",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "trav resolved to traverse at parse time (unspecified anywhere, want open under acts-as-bash), hints for the never-class names that answer 127 plainly, sweep/posture facts, and the rm -rf / at a bind site busy test.",
+  "covered_by": "agents/2026-11-21-the-shell-speaks-bash/spec.md (set -e, 64 errexit cases, GNU fixtures for 18 programs); agents/2026-11-21-the-shell-serves-the-indexed-verbs/spec.md (grant/revoke/grants, programs.py:760-772); agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md (ls -l, specified)",
+  "new_deps": [
+   "agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md (specified)",
+   "167-7",
+   "178-2"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D22",
+   "D34",
+   "D56",
+   "D57"
+  ],
+  "stories": [
+   "F4"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-move-and-copy-take-replace-and-a-move-keeps-the-moved-file",
+   "agents/2026-11-25-read-takes-a-byte-range-and-the-row-says-which-slice-it-carries"
+  ],
+  "layer": 2
+ },
+ "167-9": {
+  "key": "167-9",
+  "dir": "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays",
+  "title": "`for`, `while`, `until`, `if`, `case`, functions, arithmetic, arrays and the parameter operators run with every verb gated, under declared loop and function-depth budgets, with bounded `&` and `wait` and the nondeterministic words recorded for resume.",
+  "gate": "b",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "Only the counted chunk/queue pin of while read over a pipe is unspecified; it shares 167-5's paging seam.",
+  "covered_by": "agents/2026-11-21-the-shell-speaks-bash/spec.md; crates/vfs-shell/src/machine/; src/vfs/shell/host.py:59-74 (loop_iterations, function_depth)",
+  "new_deps": [
+   "agents/2026-11-21-a-line-has-a-verb-budget-and-cli-tightens-it/spec.md (specified)",
+   "agents/2026-11-22-an-interrupted-line-replays-its-replies/spec.md (specified)",
+   "D60"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D47",
+   "D48",
+   "D54"
+  ],
+  "stories": [
+   "F7"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-shell-parses-the-whole-bash-grammar-before-anything-runs",
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do"
+  ],
+  "layer": 3
+ },
+ "167-10": {
+  "key": "167-10",
+  "dir": "agents/2026-11-25-a-replay-corpus-measures-shell-coverage-and-a-reference-page-lists-the-surface",
+  "title": "A synthesized replay corpus reports parse, resolve, flag and run rates with an in-scope run rate of at least 85%, the Oils rate is published beside it, and `documentation/reference/shell.md` lists the grammar, programs, exit codes, budgets and refusals.",
+  "gate": "f",
+  "source": "167-the-shell-pipeline-core",
+  "study_group": "165-181",
+  "group": "shell",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "Measure and publish the Oils rate, print both rates with denominators in the README, add exit rows 75, 123 and 134, and split parse/resolve/flag rates if still wanted.",
+  "covered_by": "documentation/reference/shell.md; scripts/shell_record.py; scripts/shell_score.sh; tests/shell/known_failures.txt, deltas.txt; crates/vfs-shell/tests/measured_corpus.rs:71",
+  "new_deps": [
+   "agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md (xargs, replaces 168-3 for exit 123)",
+   "story H5, no spec"
+  ],
+  "deps_other": [
+   "story H5, no spec"
+  ],
+  "decisions": [
+   "D12",
+   "D22"
+  ],
+  "stories": [
+   "F5"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays",
+   "agents/2026-11-25-xargs-and-find-exec-dispatch-through-the-runner-so-no-program-runs-another"
+  ],
+  "layer": 4
+ },
+ "148-2": {
+  "key": "148-2",
+  "dir": "agents/2026-11-25-a-session-narrows-by-a-subtractive-profile-and-a-child-session-inherits-it",
+  "title": "`session.narrow(profile)` returns a session that can do no more than before, hides paths before any lookup, and refuses a denied verb with a kind distinct from a grant refusal; a child session inherits the parent's narrowing, subjects and source identity and ends with its parent.",
+  "gate": "0.2",
+  "source": "148-sessions-narrowing-and-pending",
+  "study_group": "051-162",
+  "group": "kernels-sessions-and-deadline",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "At 0.2: narrowing with content on Authority (subtractive hide globs and per-prefix limits judged in the statement so a hidden path answers as absent), not a session.narrow method; the verb-deny half is dropped as carried by session policies.",
+  "covered_by": "agents/2026-11-22-a-policy-judges-each-step/spec.md decisions 14 and 17 (session policies only add; vfs.permission_denied.policy); agents/2026-11-22-a-session-works-in-turns-and-rewinds-or-forks-at-one/spec.md decisions 16-19 (fork)",
+  "new_deps": [
+   "agents/2026-11-22-a-session-is-stored-named-and-forked/spec.md (replaces landed 070)",
+   "agents/2026-11-22-a-policy-judges-each-step/spec.md",
+   "agents/2026-11-22-a-session-works-in-turns-and-rewinds-or-forks-at-one/spec.md",
+   "landed: 058-row-level-permission-grants"
+  ],
+  "deps_other": [
+   "landed: 070-principal-scoped-sessions",
+   "landed: 058-row-level-permission-grants"
+  ],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "168-2": {
+  "key": "168-2",
+  "dir": "agents/2026-11-25-sort-uniq-tr-and-tee-run-as-kernels-pinned-by-gnu-fixtures",
+  "title": "`sort`, `uniq`, `tr` and `tee` run as kernels pinned by recorded GNU fixtures and the split law, and `awk` and `jq` refuse with a hint.",
+  "gate": "f",
+  "source": "168-text-program-kernels",
+  "study_group": "165-181",
+  "group": "kernels-sessions-and-deadline",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "Extend the chunk law to sort, uniq, tr, tee; restate F6 criterion 3 as a counted pin in the machine's terms (chunks, Feed requests, bytes); add awk and jq to UNKNOWN_PROGRAMS with hints naming served forms and promising no arrival.",
+  "covered_by": "crates/vfs-shell/src/programs/text.rs:1048,1278,1539,1693; tests/shell/cases/programs/{sort,uniq,tr,tee}; agents/2026-11-21-the-shell-speaks-bash/spec.md",
+  "new_deps": [
+   "agents/2026-11-21-the-shell-speaks-bash/spec.md (built; replaces 168-1)",
+   "scripts/shell_record.py (the existing pinned-image recorder)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D22",
+   "D34"
+  ],
+  "stories": [
+   "F6"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "168-3": {
+  "key": "168-3",
+  "dir": "agents/2026-11-25-xargs-and-find-exec-dispatch-through-the-runner-so-no-program-runs-another",
+  "title": "`xargs` turns bytes into batched child dispatches through the union, and `find -exec` and `-delete` are planner rewrites, so no program ever runs another.",
+  "gate": "f",
+  "source": "168-text-program-kernels",
+  "study_group": "165-181",
+  "group": "kernels-sessions-and-deadline",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "find -exec ; / + and -delete with their exit statuses, and xargs starting host-served programs with statuses 123/124/126/127, as an amendment of the standing-table spec or as this unit; the 'union' and (stage, ordinal) wording is replaced by the machine's Start request and spec 8's line job.",
+  "covered_by": "agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md decision 1 (xargs, unbuilt draft)",
+  "new_deps": [
+   "agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md",
+   "agents/2026-11-21-the-shell-serves-the-indexed-verbs/spec.md (built)",
+   "agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md on branch a-deleted-row-gives-up-its-path (the deletes spec)",
+   "agents/2026-11-22-an-interrupted-line-replays-its-replies/spec.md"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D4",
+   "D34"
+  ],
+  "stories": [
+   "F6"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do"
+  ],
+  "layer": 3
+ },
+ "168-4": {
+  "key": "168-4",
+  "dir": "agents/2026-11-25-diff-and-cmp-run-as-kernels-that-answer-as-gnu-does",
+  "title": "`diff` prints a Myers unified diff under the line's deadline and `cmp` compares two inputs in step, as GNU does.",
+  "gate": "0.1.x",
+  "source": "168-text-program-kernels",
+  "study_group": "165-181",
+  "group": "kernels-sessions-and-deadline",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "diff (Myers unified) and cmp as library file programs of the shell crate, recorded against GNU by scripts/shell_record.py, bounded by the line's existing deadline and fuel.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-21-the-shell-speaks-bash/spec.md (built shell program module; replaces 168-1)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D34"
+  ],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "171-1": {
+  "key": "171-1",
+  "dir": "agents/2026-11-25-the-wire-adapter-projects-a-result-to-mcp-blocks-within-budget",
+  "title": "A `Result` becomes one capped text block, typed media blocks, resource links and a byte-free `structuredContent` holding exactly the rows the text showed, and an MCP tool result comes back to a `Result`.",
+  "gate": "b",
+  "source": "171-the-mcp-adapter-and-the-cli-tool",
+  "study_group": "165-181",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole adapter: budgets, row-to-block table, byte-free structuredContent, derived hints, the inverse; projection must also carry LineResult fields and a row's vid.",
+  "covered_by": "",
+  "new_deps": [
+   "174-4 built: agents/2026-11-20-write-takes-preconditions-and-an-append",
+   "176-1 built: agents/2026-11-21-a-listing-comes-back-a-page-at-a-time",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it (specified; in flight on every-row-carries-a-vid, write-requires-a-vid, edit-requires-a-vid, delete-move-and-restore-require-a-vid): if_vid replaces if_version on mutating tools",
+   "167-1 contested: origin/a-call-is-interrupted-and-the-host-asks keeps run as the tool verb"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D7",
+   "D11"
+  ],
+  "stories": [
+   "M1"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-bytes-row-renders-a-placeholder-and-leaves-the-payload-only-when-asked",
+   "agents/2026-11-25-the-verb-renderer-is-bounded-never-silent-and-marks-kind-and-rank",
+   "agents/2026-11-25-every-mutating-verb-sent-twice-answers-as-a-pinned-replay-table-says",
+   "agents/2026-11-25-request-key-is-an-argument-of-every-keyed-verb-at-the-router"
+  ],
+  "layer": 3
+ },
+ "171-2": {
+  "key": "171-2",
+  "dir": "agents/2026-11-25-serve-answers-each-request-under-its-own-authority-and-refuses-an-open-mount",
+  "title": "`serve(fs, transport=\u2026)` lists every verb of `AGENT_OPS` as a tool, runs every request under an authority derived for that request alone and never the system actor, refuses to start over an open mount, and reads `vfs:///` resources within a byte budget.",
+  "gate": "b",
+  "source": "171-the-mcp-adapter-and-the-cli-tool",
+  "study_group": "165-181",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "All of serve(): per-request authority, refusal of a system default and of an open mount, tools/list, resources/read; the wire guard is the client-carried precondition (D51 verification fails the stamp-table lean), now if_vid; D35 verification moves the library to PyJWT in vfs-py[mcp].",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it and its four branches",
+   "agents/2026-11-22-the-session-remembers-what-it-read (specified; in-process guard not carried over the wire)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D15",
+   "D51"
+  ],
+  "stories": [
+   "M1",
+   "I2"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-wire-adapter-projects-a-result-to-mcp-blocks-within-budget",
+   "agents/2026-11-25-a-verified-token-becomes-an-authority-at-the-edge-and-nowhere-else"
+  ],
+  "layer": 4
+ },
+ "171-3": {
+  "key": "171-3",
+  "dir": "agents/2026-11-25-the-cli-tool-runs-one-shell-line-per-call-at-the-wire",
+  "title": "The `cli` tool runs one line in a fresh shell at `workdir`, reports a program's non-zero exit as evidence and not as a tool error, and returns an image when the line ends by reading one.",
+  "gate": "b",
+  "source": "171-the-mcp-adapter-and-the-cli-tool",
+  "study_group": "165-181",
+  "group": "mcp-guests-and-identity",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "The MCP cli tool: schema (line, workdir, timeout_ms), fixed description, isError = not success, exit_code in structuredContent, an image block (LineResult.stdout is str only), budget tightening per the verb-budget spec, and a pin that destroy stays unreachable.",
+  "covered_by": "agents/2026-11-21-the-shell-speaks-bash (fs.cli at src/vfs/base.py:1668-1677, LineResult at src/vfs/shell/host.py:137-171)",
+  "new_deps": [
+   "167-5 and 167-9 built: agents/2026-11-21-the-shell-speaks-bash",
+   "167-8 replaced by agents/2026-11-21-the-shell-runs-the-standing-program-table and agents/2026-11-22-the-shell-acts-as-bash-where-it-refused (specified, unbuilt)",
+   "agents/2026-11-21-a-line-has-a-verb-budget-and-cli-tightens-it (specified, unbuilt)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D57"
+  ],
+  "stories": [
+   "M1"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-serve-answers-each-request-under-its-own-authority-and-refuses-an-open-mount",
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays"
+  ],
+  "layer": 5
+ },
+ "172-1": {
+  "key": "172-1",
+  "dir": "agents/2026-11-25-the-python-guest-runs-over-wasi-python-as-the-caller",
+  "title": "A Python script with numpy and pandas runs inside a WASI guest whose only file system and only verb door are the caller's vfs session, and every refusal reaches the stage classified.",
+  "gate": "b",
+  "source": "172-the-wasi-python-runtime",
+  "study_group": "165-181",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole adapter: the extra pinning wasi-python, a provider over an open_session session, the errno table, budgets, trap-to-exit mapping, the python program entry and the semantics page.",
+  "covered_by": "",
+  "new_deps": [
+   "167-5 built: agents/2026-11-21-the-shell-speaks-bash",
+   "174-2 and 174-3 built: agents/2026-11-20-write-takes-preconditions-and-an-append",
+   "167-8 replaced by agents/2026-11-21-the-shell-runs-the-standing-program-table (specified)",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it (close-time if_vid)",
+   "agents/2026-11-21-a-line-has-a-verb-budget-and-cli-tightens-it (specified)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D23",
+   "D55"
+  ],
+  "stories": [
+   "T5a"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-move-and-copy-take-replace-and-a-move-keeps-the-moved-file",
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index"
+  ],
+  "layer": 4
+ },
+ "172-2": {
+  "key": "172-2",
+  "dir": "agents/2026-11-25-a-spike-asks-whether-the-wasi-python-runner-can-host-quickjs",
+  "title": "A one-afternoon spike runs a QuickJS-NG `wasm32-wasip1` module under the wasi-python runner's mount and tool protocols and reports whether it can host it.",
+  "gate": "a",
+  "source": "172-the-wasi-python-runtime",
+  "study_group": "165-181",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "Run the spike and report. Amend the draft: fact 1 (vfs-core now links wasmtime 51, Cargo.toml:16,24); session(authority) is open_session at base.py:655; roadmap lines move (T5b :836-844, D49 :1260, a5 :1116); vfs.__all__ at __init__.py:35; record that the does-not-run fallback can build on vfs-core's existing wasmtime embedding (no preview1).",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [],
+  "decisions": [
+   "D49"
+  ],
+  "stories": [
+   "T5b"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "172-3": {
+  "key": "172-3",
+  "dir": "agents/2026-11-25-the-javascript-guest-runs-over-the-same-door-as-the-python-guest",
+  "title": "A JavaScript program runs in a QuickJS-NG guest under the same provider, door, errno table and exit codes as the Python guest, behind its own extra.",
+  "gate": "b",
+  "source": "172-the-wasi-python-runtime",
+  "study_group": "165-181",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole guest. On D49's does-not-run branch the 169-4 host half would start from vfs-core's wasmtime embedding; both guests register in the shell's program table.",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [],
+  "decisions": [
+   "D22",
+   "D49"
+  ],
+  "stories": [
+   "T5b"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-python-guest-runs-over-wasi-python-as-the-caller",
+   "agents/2026-11-25-a-spike-asks-whether-the-wasi-python-runner-can-host-quickjs"
+  ],
+  "layer": 5
+ },
+ "149-1": {
+  "key": "149-1",
+  "dir": "agents/2026-11-25-a-bare-authority-constructor-is-closed-by-a-door-token",
+  "title": "A bare `Authority(...)` built outside `vfs.authority` raises `TypeError` naming the doors, while `copy` and `pickle` round-trip.",
+  "gate": "b",
+  "source": "149-serve-auth-token-to-authority",
+  "study_group": "051-162",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "Build the unit. Amend the draft: Authority :118-131, cls( at :157/:173/:183/:189, bare constructions at tests/test_authority.py:134/:136, pin at tests/base/test_authority.py:335-349, version.py:110, rows.py:573, ShareLock door at dialects.py:112/:419, system authorities at mounts.py:39/base.py:154/backend.py:108, roadmap :420/:396. Replace the 'H4, no spec' scope line with agents/2026-11-22-a-job-is-interrupted-and-resumed, whose caller-column rebuild (:141,:165) needs a door and which adds Principal.name and Authority.system(name=) (:687).",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed (specified, unbuilt): its rebuild door must pass the token"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "I1"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "149-2": {
+  "key": "149-2",
+  "dir": "agents/2026-11-25-a-verified-token-becomes-an-authority-at-the-edge-and-nowhere-else",
+  "title": "`authority_from_token(claims)` turns verified claims into an `Authority` with `provenance=\"edge\"`, refuses reserved subjects as `vfs.invalid`, and the shipped `TokenVerifier` refuses a bad token as `vfs.unauthenticated`.",
+  "gate": "b",
+  "source": "149-serve-auth-token-to-authority",
+  "study_group": "051-162",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit. The D35 verification on this branch fails the joserfc lean and moves it to PyJWT in vfs-py[mcp] with no vfs-py[serve]; the roadmap on dev still says joserfc. The claim table may need to rule on Principal.name.",
+  "covered_by": "",
+  "new_deps": [
+   "decisions/c-identity-and-the-trust-edge.md D35 (PyJWT, vfs-py[mcp])",
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed (Principal.name), only if a claim maps to it"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D13",
+   "D35"
+  ],
+  "stories": [
+   "I1"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-bare-authority-constructor-is-closed-by-a-door-token"
+  ],
+  "layer": 1
+ },
+ "149-3": {
+  "key": "149-3",
+  "dir": "agents/2026-11-25-a-trusted-subsystem-names-the-members-of-a-room-and-the-authority-says-attested",
+  "title": "A verified `service` token whose declared scope allows it may name subject members as data, and the authority built from it carries `provenance=\"attested\"`, distinct from `edge`.",
+  "gate": "b",
+  "source": "149-serve-auth-token-to-authority",
+  "study_group": "051-162",
+  "group": "mcp-guests-and-identity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit, including the ruling on the member-list carrier; provenance now has two sinks, the version rows (built) and the jobs caller column (specified).",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed (specified): its stored-authority rebuild must accept attested"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D14"
+  ],
+  "stories": [
+   "I1"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-verified-token-becomes-an-authority-at-the-edge-and-nowhere-else",
+   "agents/2026-11-25-serve-answers-each-request-under-its-own-authority-and-refuses-an-open-mount"
+  ],
+  "layer": 5
+ },
+ "179-1": {
+  "key": "179-1",
+  "dir": "agents/2026-11-25-the-conformance-battery-is-split-by-kernel-operation-with-no-test-lost",
+  "title": "The storage and grants contracts become one package of mixins by kernel operation, and the collected node ids before and after the split are equal line for line.",
+  "gate": "b",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole split, with the rows recounted and the assignment table retaken at the base commit, a ruling on whether CursorContract and VidContract join the package, and decisions 9 and 10 resized from six legs and 352 ids to three legs and one variable.",
+  "covered_by": "",
+  "new_deps": [
+   "the vid and kernel-records stack (origin/every-row-carries-a-vid through origin/the-kernel-writes-records-behind-and-sweeps-them) merges first or the record is retaken at rebase"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D5"
+  ],
+  "stories": [
+   "K9"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "179-2": {
+  "key": "179-2",
+  "dir": "agents/2026-11-25-the-storage-protocols-are-regrouped-into-families-before-the-freeze",
+  "title": "The storage seam's protocol families follow the kernel's operation groups, the write family no longer carries the edges or the trash, and the old family names are gone before the surface freezes.",
+  "gate": "b",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole regroup, re-scoped to place SupportsRun (if run is kept), SupportsHolds and SupportsRecordPlace, to name the trash verb destroy, and to carry the if_vids signatures; needs the timing ruling first.",
+  "covered_by": "",
+  "new_deps": [
+   "roadmap D63 ruling replaces 167-1",
+   "181-1 (unchanged, unbuilt)",
+   "179-1",
+   "origin/write-requires-a-vid, origin/edit-requires-a-vid, origin/delete-move-and-restore-require-a-vid",
+   "origin/a-deleted-row-gives-up-its-path (deletes spec)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D2",
+   "D4",
+   "D5"
+  ],
+  "stories": [
+   "K9"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-conformance-battery-is-split-by-kernel-operation-with-no-test-lost",
+   "agents/2026-11-25-every-routed-op-sits-in-one-group-and-every-face-lists-the-verbs-in-that-order"
+  ],
+  "layer": 1
+ },
+ "179-3": {
+  "key": "179-3",
+  "dir": "agents/2026-11-25-the-seam-states-its-atomic-unit-and-its-two-atomicity-models",
+  "title": "Every backend declares its atomic unit as a trait, every mutating seam method names its model in one table, and the protocol module's docstring states the atomic unit, the fault model and the two halves of the gate once.",
+  "gate": "f",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit: the trait, the seventeen-row table keyed set_posture not posture, the drift and runner-count pins, and the docstring sections, rebased over the stack's traits() and backend.py changes.",
+  "covered_by": "",
+  "new_deps": [
+   "lands after or rebases over the vid and kernel-records stack (both rewrite traits() and the backend.py baseline)",
+   "read beside origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-the-trash-is-emptied-without-being-asked/spec.md for destroy's model"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D56"
+  ],
+  "stories": [
+   "K7"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "179-4": {
+  "key": "179-4",
+  "dir": "agents/2026-11-25-durability-is-read-from-the-live-connection",
+  "title": "A mount's durability trait comes from one probe of the engine's own setting at first touch, and an in-memory store declares none.",
+  "gate": "f",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "A first-touch probe of Postgres synchronous_commit (relaxed when off) and of SQLite, and no durability key on an in-memory store.",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "K7"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "179-5": {
+  "key": "179-5",
+  "dir": "agents/2026-11-25-a-failed-engine-call-carries-the-engines-own-code-as-a-field",
+  "title": "Every classified engine failure and every exhausted-retry conflict carries the driver's own error code in `data[\"vfs.engine_error\"]`, read from driver attributes and never from message text.",
+  "gate": "f",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole field, on two engines (SQLite code and name, Postgres SQLSTATE), on every classified failure and every exhausted-retry conflict.",
+  "covered_by": "",
+  "new_deps": [
+   "made in core.py if origin/the-engine-core-is-split-from-the-mount lands first"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "K7"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "179-6": {
+  "key": "179-6",
+  "dir": "agents/2026-11-25-a-batch-with-one-bad-row-writes-nothing-on-any-engine",
+  "title": "A mutation batch with one bad row returns only that row's error, commits nothing and leaves every table of the mount unchanged, at ten thousand rows and on every engine leg, while a batch across two mounts is atomic per mount only.",
+  "gate": "f",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "A bad row that fails inside the body, judged by an image of all 24 tables; the 10,000-row case on memory and Postgres and for the other mutation verbs; 10,000 good rows under one COMMIT; and the two-mount pin that a batch tears per mount, which no test covers.",
+  "covered_by": "agents/2026-11-20-write-takes-preconditions-and-an-append",
+  "new_deps": [
+   "179-1",
+   "origin/write-requires-a-vid (if_vids replaces if_versions for a precondition-shaped bad row)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D56"
+  ],
+  "stories": [
+   "K7"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-conformance-battery-is-split-by-kernel-operation-with-no-test-lost"
+  ],
+  "layer": 1
+ },
+ "179-7": {
+  "key": "179-7",
+  "dir": "agents/2026-11-25-a-crash-at-any-mutating-statement-or-seam-leaves-the-store-whole",
+  "title": "A fault at every mutating statement and a crash at every named seam of every whole-batch verb leaves the store equal to its before-image after a reopen, a retryable fault is redriven once and counted, and resumable passes converge on the next call.",
+  "gate": "f",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole fault and crash family on memory, SQLite and Postgres, with the retry counter and resumable convergence.",
+  "covered_by": "",
+  "new_deps": [
+   "179-5",
+   "179-6",
+   "agents/2026-11-21-concurrent-writes-on-postgres-outlive-their-retries/spec.md (unbuilt draft wanting the same retry count)",
+   "agents/2026-11-25-a-commit-whose-connection-drops-answers-in-doubt (adds two seams to cover)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "K7"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-failed-engine-call-carries-the-engines-own-code-as-a-field",
+   "agents/2026-11-25-a-batch-with-one-bad-row-writes-nothing-on-any-engine"
+  ],
+  "layer": 2
+ },
+ "179-8": {
+  "key": "179-8",
+  "dir": "agents/2026-11-25-each-kernel-verbs-access-path-is-a-reviewed-golden-table",
+  "title": "Every kernel verb's ordered statements, rows and payload bytes at the system actor, a named principal and anonymous are pinned per engine family, so a new statement appears only as a reviewed fixture diff.",
+  "gate": "unplaced",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit, per verb and per actor, for SQLite and Postgres.",
+  "covered_by": "",
+  "new_deps": [
+   "179-1"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [
+   "agents/2026-11-25-the-conformance-battery-is-split-by-kernel-operation-with-no-test-lost"
+  ],
+  "layer": 1
+ },
+ "179-9": {
+  "key": "179-9",
+  "dir": "agents/2026-11-25-a-named-caller-revalidates-its-rights-in-one-statement",
+  "title": "A named or anonymous caller's cached rights are revalidated by one statement instead of two, and the rights cache counts its hits, misses, stale entries and evictions.",
+  "gate": "unplaced",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The one-statement revalidation fold and the cache counters.",
+  "covered_by": "",
+  "new_deps": [
+   "179-8",
+   "dated spec: 2026-11-14-the-rights-compile-is-the-same-at-every-world-size.md (itself needs an amend for two engines)"
+  ],
+  "deps_other": [
+   "dated spec: 2026-11-14-the-rights-compile-is-the-same-at-every-world-size.md"
+  ],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [
+   "agents/2026-11-25-each-kernel-verbs-access-path-is-a-reviewed-golden-table"
+  ],
+  "layer": 2
+ },
+ "179-10": {
+  "key": "179-10",
+  "dir": "agents/2026-11-25-a-backend-that-lacks-a-derivable-verb-is-still-served-it",
+  "title": "A backend that declares only the file read and write families is served `tree`, `copy`, `glob`, `grep` and, once guarded writes exist, `edit` by the kernel, with the same rows as a native backend, and declares through `features()` which arguments it serves itself.",
+  "gate": "f",
+  "source": "179-the-storage-seam-as-the-kernel",
+  "study_group": "165-181",
+  "group": "seam",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "The kernel serving tree, copy, glob, grep and edit to a backend that lacks them (base.py:2852-2921 still refuses, and tree is still in the minimum); the range derive arm and the request_key refuse arm; and a ruling on whether features() is still wanted or K7 criterion 5 is read as traits.",
+  "covered_by": "agents/2026-11-21-a-listing-comes-back-a-page-at-a-time; origin/write-requires-a-vid:src/vfs/storage/protocol.py:535",
+  "new_deps": [
+   "179-2",
+   "174-3 built on dev (agents/2026-11-20-write-takes-preconditions-and-an-append); edit arm now on origin/edit-requires-a-vid",
+   "176-1 built on dev (src/vfs/cursor.py)",
+   "177-4 (unbuilt)",
+   "178-2 (unbuilt)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D6",
+   "D7"
+  ],
+  "stories": [
+   "K7"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-storage-protocols-are-regrouped-into-families-before-the-freeze",
+   "agents/2026-11-25-request-key-is-an-argument-of-every-keyed-verb-at-the-router",
+   "agents/2026-11-25-read-takes-a-byte-range-and-the-row-says-which-slice-it-carries"
+  ],
+  "layer": 3
+ },
+ "147-1": {
+  "key": "147-1",
+  "dir": "agents/2026-11-25-python-import-statements-are-read-by-an-engine-kernel",
+  "title": "The engine returns every Python import statement in a batch of bodies, with its module path, imported names, relative level and folded referring line, and nothing found inside strings or comments.",
+  "gate": "0.2",
+  "source": "147-import-edge-extractor",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit. Draft amend is light: tree-sitter-python now at Cargo.toml:74, lib.rs gained mod shell_binding, and the python feature now builds the shell's wasm module into the same wheel.",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [
+   "landed: 138-reference-edge-extractor"
+  ],
+  "decisions": [],
+  "stories": [
+   "E8"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "147-2": {
+  "key": "147-2",
+  "dir": "agents/2026-11-25-python-imports-become-imports-edges-in-the-index-pass",
+  "title": "`rebuild` and `refresh` mint one `imports` edge per resolved source-to-module pair, weight the statement count, replace only a re-extracted source's extracted `imports` rows, and report unresolved imports in an info record beside the links leg.",
+  "gate": "0.2",
+  "source": "147-import-edge-extractor",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit, with the stamp-pair ruling still open. Schema format is 28 not 27 (rows.py:135); a per-extractor stamp must sequence with the deletes spec's planned format 29 on origin/a-deleted-row-gives-up-its-path.",
+  "covered_by": "",
+  "new_deps": [
+   "147-1",
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md (format bump sequencing, only if a per-extractor stamp is ruled)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "E8"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-python-import-statements-are-read-by-an-engine-kernel"
+  ],
+  "layer": 1
+ },
+ "152-2": {
+  "key": "152-2",
+  "dir": "agents/2026-11-25-search-says-how-many-bytes-rows-it-could-not-read",
+  "title": "A search over a mount holding pending or unrendered bytes entries reports their count on its result, as the index pass does.",
+  "gate": "unplaced (fits gate b under domain E)",
+  "source": "152-binary-bodies-and-text-renderings",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit. Draft drops MariaDB/SQL Server/Oracle legs, moves backend.py:616/630/644 to :626/:642/:656, cites 152-1 as built, and should emit the record in search.py since backend.py is line-held (tests/lint/allowlist.py:28) and the vector-leg draft on the kernel-store branches moves search notes out of backend.py.",
+  "covered_by": "",
+  "new_deps": [
+   "origin/the-kernel-keeps-a-store-of-its-own:agents/2026-11-24-the-vector-leg-leaves-the-database-storage/spec.md (sequencing, same records)"
+  ],
+  "deps_other": [
+   "landed: 152-binary-bodies-and-text-renderings slices A and B (in the tree; archived by this map)"
+  ],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "152-3": {
+  "key": "152-3",
+  "dir": "agents/2026-11-25-an-image-written-as-bytes-renders-a-metadata-header",
+  "title": "An image written as bytes renders a header of format, dimensions and readable EXIF tags, stores its width and height, and a PDF's embedded images get the same placeholder line docx and pptx emit.",
+  "gate": "0.2",
+  "source": "152-binary-bodies-and-text-renderings",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit. Draft amends: five engines become SQLite and Postgres (criteria 31-32, gates), the all extra lost mssql/mariadb/oracle, 152-1 cited as built.",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [
+   "landed: 152-binary-bodies-and-text-renderings slices A and B (in the tree; archived by this map)"
+  ],
+  "decisions": [],
+  "stories": [
+   "E8"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "152-4": {
+  "key": "152-4",
+  "dir": "agents/2026-11-25-binary-bodies-are-documented-on-the-docs-site",
+  "title": "The docs site explains how to store and search documents, what a rendering and a render status are, and the unit-marker grammar, with glossary entries for source, rendering, unit marker and render status.",
+  "gate": "f",
+  "source": "152-binary-bodies-and-text-renderings",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "A how-to on storing and searching documents, an explanation of rendering and render status, and glossary entries for source, rendering, unit marker and render status.",
+  "covered_by": "documentation/ tree (how-to, explanation, reference, glossary.md/json) per roadmap X3/X4 states (roadmap.md:940, :953); documentation/reference/python-api/rendering.md exporting vfs.rendering incl. unit_marker (markdown.py:61), commit 2d679741, no work directory",
+  "new_deps": [
+   "documentation/maintainers/how-we-document.md and the glossary's six-part shape, in place of story X3 and X4",
+   "152-3 (only if the how-to is to name images)"
+  ],
+  "deps_other": [
+   "story X3, no spec",
+   "story X4, no spec"
+  ],
+  "decisions": [],
+  "stories": [
+   "X3",
+   "X4"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-an-image-written-as-bytes-renders-a-metadata-header"
+  ],
+  "layer": 1
+ },
+ "156-1": {
+  "key": "156-1",
+  "dir": "agents/2026-11-25-a-router-is-refused-as-a-mount-and-a-dot-dot-path-meets-the-siblings-gate",
+  "title": "Binding a `VirtualFileSystem` or `AsyncVirtualFileSystem` as storage raises a `TypeError` that says a router is not a storage, and a write through `..` into a read-only sibling mount is refused at the sibling's path.",
+  "gate": "unplaced (lean b, ahead of story R5's re-check)",
+  "source": "156-mount-admission",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The nominal refusal in require_storage (mounts.py:140-148, called at base.py:303, :400, :710) and the .. router pin. Draft decisions 4, 6-9 rewritten: bind is gone (commit f34c4ebf, no work directory), add_mount already checks before mkdir, and the RouterFace marker must live in mounts.py or a leaf module to avoid a cycle.",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "159-1": {
+  "key": "159-1",
+  "dir": "agents/2026-11-25-a-small-binary-write-renders-its-own-bytes-before-it-returns",
+  "title": "A write of at most sixteen binaries totalling one blob page renders them outside its transaction and returns them readable and greppable; a larger write stays pending for the next refresh or rebuild.",
+  "gate": "0.2",
+  "source": "159-render-at-write",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit. Draft drops decision 16 (MariaDB ValueCap, absent on dev) and the five-engine legs, cites the built write-preconditions work directory in place of units 174-1/174-2/152-1/identical-body/exclusive-create, states the hop against dev's cancellation contract, says the vid is kept, and lands outside the line-held backend.py.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-20-write-takes-preconditions-and-an-append (built)",
+   "agents/2026-11-21-a-cancelled-call-is-whole-on-every-path (built contract)",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it (spec on dev, code on origin/every-row-carries-a-vid)"
+  ],
+  "deps_other": [
+   "landed: 152-binary-bodies-and-text-renderings slices A and B (in the tree; archived by this map)",
+   "landed: 2026-10-31-refresh-the-incremental-index-verb.md"
+  ],
+  "decisions": [
+   "D21"
+  ],
+  "stories": [
+   "E8"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "160-1": {
+  "key": "160-1",
+  "dir": "agents/2026-11-25-a-cross-mount-file-copy-is-a-read-on-one-mount-and-a-write-on-the-other",
+  "title": "`copy` of a file across mounts reads the source with the caller's authority, writes it at the destination through that mount's own gate, and reports each pair as two operations.",
+  "gate": "unplaced (lean b)",
+  "source": "160-cross-mount-copy-as-read-plus-write",
+  "study_group": "051-162",
+  "group": "bodies-and-mounts",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit with the study's amendments. if_absent is built so the overwrite=False interim is moot; the tombstoned-destination ruling is settled by the deletes spec (a name holding only deleted rows is free, no revive); tree pages exist for recursive composition; the policy seam's single CopyStep and the vid spec's cross-mount row are addressed.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-20-write-takes-preconditions-and-an-append (built)",
+   "agents/2026-11-21-a-listing-comes-back-a-page-at-a-time (built)",
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md (in flight)",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it (spec on dev, code on branches)",
+   "agents/2026-11-22-a-policy-judges-each-step (spec on dev, unbuilt)",
+   "dated spec: 2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md (kept)"
+  ],
+  "deps_other": [
+   "dated spec: 2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md"
+  ],
+  "decisions": [
+   "D7"
+  ],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "180-1": {
+  "key": "180-1",
+  "dir": "agents/2026-11-25-a-files-replaced-versions-are-listed-newest-first-in-pages-with-who-wrote-each",
+  "title": "`versions(path)` lists a file's version rows newest first, a bounded page at a time, each row carrying its label, hash, size, source, time and attribution, under the read rung on the file's current path.",
+  "gate": "f",
+  "source": "180-history-pack-on-reindex-and-the-bounded-sweep",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit: versions(path) paged on a key of its own (next_after is a path), every attribution column at rung read, the batch form, the mint-on-create rule (D36 still a lean), registration as history.",
+  "covered_by": "",
+  "new_deps": [
+   "drop 176-1 (built on dev: agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/)",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md (branch origin/every-row-carries-a-vid): a version row carries a vid",
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md (decision 5 ends the revive)",
+   "agents/2026-11-22-a-rewind-puts-a-sessions-files-back/spec.md decision 5 (read_versions seam)"
+  ],
+  "deps_other": [
+   "dated spec: 2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md"
+  ],
+  "decisions": [
+   "D6",
+   "D36"
+  ],
+  "stories": [
+   "K8"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-every-routed-op-sits-in-one-group-and-every-face-lists-the-verbs-in-that-order"
+  ],
+  "layer": 1
+ },
+ "180-2": {
+  "key": "180-2",
+  "dir": "agents/2026-11-25-any-prior-version-of-a-file-is-read-back-whole-and-verified-by-its-hash",
+  "title": "`read(path, version=N)` returns body N, rebuilt from its chain and checked against its stored hash, and a mismatch is `vfs.unavailable.integrity`, never success.",
+  "gate": "f",
+  "source": "180-history-pack-on-reindex-and-the-bounded-sweep",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "The public form (read(path, version=N) against the constitution's __meta__/versions/N address), the vfs.unavailable.integrity kind reconciled with read_versions' vfs.internal answer, and reconstruction from diffs once pack stores them.",
+  "covered_by": "agents/2026-11-22-a-rewind-puts-a-sessions-files-back/spec.md (decision 5, read_versions; unbuilt)",
+  "new_deps": [
+   "175-1",
+   "180-1",
+   "rewind spec read_versions in place of a reader of its own"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D8"
+  ],
+  "stories": [
+   "K8"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-read-refuses-a-body-that-fails-its-recorded-hash",
+   "agents/2026-11-25-a-files-replaced-versions-are-listed-newest-first-in-pages-with-who-wrote-each"
+  ],
+  "layer": 2
+ },
+ "180-3": {
+  "key": "180-3",
+  "dir": "agents/2026-11-25-the-full-index-pass-packs-cold-history-into-snapshots-and-verified-forward-diffs",
+  "title": "`rebuild` runs a `pack` phase that rewrites cold version rows into one snapshot and at most nine forward diffs each, lands a diff only when it is smaller and has reconstructed the body by hash, and never deletes a row or changes its attribution.",
+  "gate": "0.2",
+  "source": "180-history-pack-on-reindex-and-the-bounded-sweep",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The pack phase on rebuild, as a vfs-core kernel with the Python law as its oracle, and teaching read_versions to walk a diff chain in the same landing.",
+  "covered_by": "",
+  "new_deps": [
+   "180-2",
+   "rewind spec read_versions (refuses non-snapshot rows today)",
+   "deletes spec on origin/a-deleted-row-gives-up-its-path (deleted rows keep their versions until destroy)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [
+   "agents/2026-11-25-any-prior-version-of-a-file-is-read-back-whole-and-verified-by-its-hash"
+  ],
+  "layer": 3
+ },
+ "180-4": {
+  "key": "180-4",
+  "dir": "agents/2026-11-25-the-trash-retention-pass-reclaims-in-short-slices-one-transaction-each",
+  "title": "The retention arm of the irreversible verb runs in slices of at most one membership budget, each its own transaction under the serialization point, and its orphan reclaim walks `vfs_content`, `vfs_blobs` and `vfs_versions` in `entry_id` windows instead of a whole-table anti-join.",
+  "gate": "0.2",
+  "source": "180-history-pack-on-reindex-and-the-bounded-sweep",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole slicing and windowed reclaim. Draft amend: name destroy and its two arms (deletes spec decisions 11-12), judge row by row (decision 13), reconcile the first-statement lock with the topology-lock draft, reconcile partial answers with the kernel store pass that runs only after retention succeeds, restate facts at 27f3d24d.",
+  "covered_by": "",
+  "new_deps": [
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md (replaces 'deletes spec, not yet written')",
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-the-trash-is-emptied-without-being-asked/spec.md (who calls the pass)",
+   "agents/2026-11-21-the-topology-lock-is-held-for-a-commit/spec.md",
+   "origin/the-kernel-writes-records-behind-and-sweeps-them (kernel store sweep after retention)"
+  ],
+  "deps_other": [
+   "the deletes spec, not yet written (no roadmap story)"
+  ],
+  "decisions": [
+   "D56",
+   "D57"
+  ],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "180-5": {
+  "key": "180-5",
+  "dir": "agents/2026-11-25-a-retention-pass-resumes-from-where-the-last-call-stopped",
+  "title": "The retention arm takes `limit=` and `after=`, processes at most `limit` units a call, and returns a resumption key that the next call continues from.",
+  "gate": "0.2",
+  "source": "180-history-pack-on-reindex-and-the-bounded-sweep",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "A resumable retention pass with its own key field, or an internal position only if the rebuild or a job becomes the caller.",
+  "covered_by": "",
+  "new_deps": [
+   "180-4",
+   "drop 176-1 (built on dev; its key is a path and cannot carry this one)",
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-the-trash-is-emptied-without-being-asked/spec.md",
+   "deletes spec on origin/a-deleted-row-gives-up-its-path"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D6"
+  ],
+  "stories": [],
+  "deps_dirs": [
+   "agents/2026-11-25-the-trash-retention-pass-reclaims-in-short-slices-one-transaction-each"
+  ],
+  "layer": 1
+ },
+ "180-6": {
+  "key": "180-6",
+  "dir": "agents/2026-11-25-a-gauge-reports-how-much-garbage-a-mount-holds",
+  "title": "A storage-level maintenance read beside `rebuild()` counts tombstones, expired tombstones, version rows, unjudged rows and logical and stored version bytes in exactly two statements.",
+  "gate": "0.2",
+  "source": "180-history-pack-on-reindex-and-the-bounded-sweep",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The two-statement gauge, stated against lint and against the branch draft's expired-row count and last-run fact.",
+  "covered_by": "",
+  "new_deps": [
+   "180-3",
+   "180-4",
+   "origin/a-deleted-row-gives-up-its-path:agents/2026-11-24-the-trash-is-emptied-without-being-asked/spec.md"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D53"
+  ],
+  "stories": [],
+  "deps_dirs": [
+   "agents/2026-11-25-the-full-index-pass-packs-cold-history-into-snapshots-and-verified-forward-diffs",
+   "agents/2026-11-25-the-trash-retention-pass-reclaims-in-short-slices-one-transaction-each"
+  ],
+  "layer": 4
+ },
+ "181-1": {
+  "key": "181-1",
+  "dir": "agents/2026-11-25-every-routed-op-sits-in-one-group-and-every-face-lists-the-verbs-in-that-order",
+  "title": "Every routed op sits in exactly one group in `ops.py`, and the op literal, the needs table, the parameter table and the four public faces list the verbs in that one order, held by drift tests.",
+  "gate": "b",
+  "source": "181-the-public-surface-regrouped-by-kernel-group",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The group table with run placed (not retired), cli outside the groups as a front, destroy in place of sweep, drift tests over the four face files.",
+  "covered_by": "",
+  "new_deps": [
+   "D63 (roadmap.md:1274) in place of 167-1",
+   "deletes spec on origin/a-deleted-row-gives-up-its-path (sweep renamed destroy)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D5"
+  ],
+  "stories": [
+   "K9"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "181-2": {
+  "key": "181-2",
+  "dir": "agents/2026-11-25-every-row-reports-the-entrys-permanent-id-and-its-owner",
+  "title": "Read rows and mutation rows carry `entry_id` and `owner_id` as projectable, read-only columns at the read rung, a bare row carries neither, and a write of an input naming `entry_id` is refused `vfs.invalid`.",
+  "gate": "b",
+  "source": "181-the-public-surface-regrouped-by-kernel-group",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "partly-covered",
+  "draft": "rewrite",
+  "remaining": "owner_id as a projectable read-rung column; refusal of an Entry naming entry_id (now silently dropped, entry.py:393); a ruling on whether entry_id is shown at all. Most of the draft's entry_id decisions fall under the vid rule, and the revive case falls to deletes spec decision 5.",
+  "covered_by": "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md; origin/every-row-carries-a-vid",
+  "new_deps": [
+   "vid spec / origin/every-row-carries-a-vid (same reads.py select lists, lands first)",
+   "deletes spec on origin/a-deleted-row-gives-up-its-path",
+   "ruling on K9 criterion 3 against vid spec decision 1",
+   "consumer: agents/2026-11-22-a-file-carries-its-executable-bit/spec.md decision 4"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D55"
+  ],
+  "stories": [
+   "K9"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "181-4": {
+  "key": "181-4",
+  "dir": "agents/2026-11-25-the-derived-verbs-are-pinned-to-their-definitions-by-oracles",
+  "title": "`tree` equals `ls` repeated and `edit` equals a read then a guarded write, row for row, at the system actor and at a principal with a partial view, and `delete(cascade=False)` on a non-empty directory is `not_empty`.",
+  "gate": "unplaced",
+  "source": "181-the-public-surface-regrouped-by-kernel-group",
+  "study_group": "165-181",
+  "group": "history-and-surface",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "The tree oracle over paged listings, and the edit oracle stated against if_vid (edit takes if_vid on origin/edit-requires-a-vid; if_version leaves under the vid spec). Unplaced and of modest value.",
+  "covered_by": "tests/support/storage_contract.py:863",
+  "new_deps": [
+   "origin/edit-requires-a-vid in place of 174-3 (174-3 built on dev as agents/2026-11-20-write-takes-preconditions-and-an-append/ and being replaced)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "169-1": {
+  "key": "169-1",
+  "dir": "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it",
+  "title": "`/.vfs` is a directory on every storage, nothing can be written beneath it, a wasm module is sniffed as `application/wasm`, and `/.agents` is gone.",
+  "gate": "b",
+  "source": "169-programs-the-index-and-the-vfs-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit. The draft needs these changes: SQLite and Postgres only; the listing code now lives in listings.py and pages, so the synthesized /.vfs must page; size baselines are now 3,090 and 1,164; the destroy exception widens to /.vfs/trash/<path> under the deletes spec.",
+  "covered_by": "",
+  "new_deps": [
+   "the deletes spec on origin/a-deleted-row-gives-up-its-path (destroy beneath /.vfs/trash), ordering only"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D38"
+  ],
+  "stories": [
+   "T1"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "169-2": {
+  "key": "169-2",
+  "dir": "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
+  "title": "`ls /.vfs/bin` and `/.vfs/skills` list every callable a caller may see, a name resolves in one batched `stat` per mount, and an install is a gated write.",
+  "gate": "b",
+  "source": "169-programs-the-index-and-the-vfs-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "Rewrite around PATH: a served /.vfs/bin, a /.vfs/skills view, a lookup request that searches PATH as the caller, slash words, type/command -v/hash/which printing the found path, and an install rule. First, rule the conflict between the bash-refusals spec, which keeps /usr/bin/<name>, and D64's PATH=/.vfs/bin. It may merge with 170-2.",
+  "covered_by": "",
+  "new_deps": [
+   "169-1",
+   "D64 ruled, with agents/2026-11-22-the-shell-acts-as-bash-where-it-refused/spec.md reconciled",
+   "agents/2026-11-22-a-file-carries-its-executable-bit/spec.md",
+   "170-1"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D34",
+   "D38"
+  ],
+  "stories": [
+   "T1"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it",
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice"
+  ],
+  "layer": 3
+ },
+ "169-3": {
+  "key": "169-3",
+  "dir": "agents/2026-11-25-every-shell-call-leaves-a-run-record-as-rows-in-the-root-bindings-storage",
+  "title": "After a `cli` call, `/.vfs/run/<id>/stdout` and `/status` are rows in the root binding's storage, readable from another process and by no other principal.",
+  "gate": "b",
+  "source": "169-programs-the-index-and-the-vfs-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "First rule whether a run record is a kernel record behind a /.vfs/run view (this amends kernel-records line 96) or an ordinary owner-only row. Then write the spec: what is persisted (every call, or only spills), retention, and a spill marker that names the path.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-22-the-kernel-keeps-records-of-its-own/spec.md (in flight on origin/the-kernel-keeps-a-store-of-its-own and origin/the-kernel-writes-records-behind-and-sweeps-them), whose claim-before form replaces 177-3",
+   "story H0, no spec; study agents/2026-11-21-what-a-log-row-per-call-costs/spec.md",
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md (D43 settled)",
+   "169-1"
+  ],
+  "deps_other": [
+   "story H0, no spec"
+  ],
+  "decisions": [
+   "D43",
+   "D52",
+   "D53"
+  ],
+  "stories": [
+   "T2"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-a-keyed-call-stores-its-answer-with-its-change-and-a-resend-gets-it-back",
+   "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it"
+  ],
+  "layer": 4
+ },
+ "169-4": {
+  "key": "169-4",
+  "dir": "agents/2026-11-25-a-generic-wasm-host-runs-stored-programs-with-the-callers-verbs",
+  "title": "A `.wasm` core module stored in an indexed directory runs by name under fuel, memory, verb and wall budgets, and every file it touches goes through the caller's gated verbs.",
+  "gate": "0.2",
+  "source": "169-programs-the-index-and-the-vfs-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "All of it, rewritten. 'Indexed directory' becomes lookup through PATH or a slash word. The executable-bit spec's x bit and its bad-interpreter 126 rule must say how a .wasm file is told apart from a script. Budgets count against the line's verb budget.",
+  "covered_by": "",
+  "new_deps": [
+   "172-1",
+   "169-2 as rewritten",
+   "agents/2026-11-22-a-file-carries-its-executable-bit/spec.md",
+   "agents/2026-11-21-a-line-has-a-verb-budget-and-cli-tightens-it/spec.md",
+   "D22",
+   "D49"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D22",
+   "D49"
+  ],
+  "stories": [
+   "T6"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
+   "agents/2026-11-25-the-python-guest-runs-over-wasi-python-as-the-caller"
+  ],
+  "layer": 5
+ },
+ "169-5": {
+  "key": "169-5",
+  "dir": "agents/2026-11-25-the-first-installed-programs-resolve-by-their-unix-names",
+  "title": "`vfs install` fetches a pinned, hash-checked uutils, jaq and awk into `/opt/bin`, and each resolves by its Unix name.",
+  "gate": "0.2",
+  "source": "169-programs-the-index-and-the-vfs-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "All of it. /opt/bin becomes a PATH entry. The multicall rule and the choice of a wasi awk still need rulings.",
+  "covered_by": "",
+  "new_deps": [
+   "169-4",
+   "story M2, no spec",
+   "169-2 as rewritten"
+  ],
+  "deps_other": [
+   "story M2, no spec"
+  ],
+  "decisions": [
+   "D22",
+   "D34"
+  ],
+  "stories": [
+   "T6"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-generic-wasm-host-runs-stored-programs-with-the-callers-verbs",
+   "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index"
+  ],
+  "layer": 6
+ },
+ "170-1": {
+  "key": "170-1",
+  "dir": "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice",
+  "title": "`SupportsGrants.rungs_at(paths, *, authority)` returns the caller's rung at each path from posture rows and spans on its chain, in `ceil(len(paths) / membership_budget)` statements on every engine leg, equal to a Python oracle.",
+  "gate": "b",
+  "source": "170-tools-and-mcp-servers-as-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "partly-covered",
+  "draft": "none",
+  "remaining": "A per-path answer: which of many paths a caller holds list or read at, written as an extension of holds_all rather than a new rungs_at on SupportsGrants. The count pin is stated against the membership owner's chunking, on the Postgres leg only.",
+  "covered_by": "src/vfs/storage/protocol.py:470-490 and backend.py:1093 (SupportsHolds.holds, built); agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md:486-499 (holds_all, specified on dev)",
+  "new_deps": [
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md decision 18 (holds_all)",
+   "agents/2026-11-21-a-key-list-is-one-array-bind/spec.md",
+   "drops 167-1 (D63 keeps run) and 181-1"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "I3a"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-every-routed-op-sits-in-one-group-and-every-face-lists-the-verbs-in-that-order"
+  ],
+  "layer": 1
+ },
+ "170-2": {
+  "key": "170-2",
+  "dir": "agents/2026-11-25-a-registered-host-function-is-a-file-under-the-tools-view-and-a-command-by-name",
+  "title": "A host function registered once appears at `/.vfs/tools/<name>` and in `/.vfs/bin`, reading it never runs it, and typing its name runs it through one gated door with flags mapped from its schema.",
+  "gate": "b",
+  "source": "170-tools-and-mcp-servers-as-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit, rewritten as the tools spec: /.vfs/bin/<name> instead of /.vfs/tools; the flag table with its trailing-list addition and the code-mode amendments; session injection; a name taken once; stdin= on run; reverse K9's run retirement for this verb; and a decision on ranked search over manifests.",
+  "covered_by": "",
+  "new_deps": [
+   "169-1",
+   "169-2 as rewritten",
+   "170-1 as rewritten on holds_all",
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md decisions 38 and 41",
+   "agents/2026-11-22-a-policy-judges-each-step/spec.md",
+   "D63, D64, D65 ruled",
+   "drops 167-1 and 167-5; 169-3 only for spills"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "T3"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
+   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
+   "agents/2026-11-25-every-shell-call-leaves-a-run-record-as-rows-in-the-root-bindings-storage",
+   "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice",
+   "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it"
+  ],
+  "layer": 5
+ },
+ "170-3": {
+  "key": "170-3",
+  "dir": "agents/2026-11-25-a-catalogue-posture-decides-who-may-see-and-who-may-call-a-tool",
+  "title": "`grant` and `posture` at a catalogue path are lawful, the mutating verbs there are `vfs.invalid`, and with posture `list` a caller sees every tool's name and calling one is exit 126 with zero invocations.",
+  "gate": "b",
+  "source": "170-tools-and-mcp-servers-as-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "All of it, on /.vfs/bin/<name> with the shipped-program exemption, plus a D15 ruling. INFERRED: small enough to fold into 170-2.",
+  "covered_by": "",
+  "new_deps": [
+   "169-1",
+   "170-1 as rewritten",
+   "170-2 as rewritten",
+   "D15 ruled for catalogue paths",
+   "D64 ruled"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D15"
+  ],
+  "stories": [
+   "I3b"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
+   "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice",
+   "agents/2026-11-25-a-registered-host-function-is-a-file-under-the-tools-view-and-a-command-by-name",
+   "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it"
+  ],
+  "layer": 6
+ },
+ "170-4": {
+  "key": "170-4",
+  "dir": "agents/2026-11-25-a-connected-mcp-server-is-a-directory-of-tools-resources-and-prompts",
+  "title": "A server connected with `add_mcp` appears under `/.vfs/mcp/<name>/`, its tool calls come back as rows by the inbound block table, each failure around a call maps to its kind and exit, and one supervisor task owns each connection.",
+  "gate": "b",
+  "source": "170-tools-and-mcp-servers-as-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "All of it. Elicitation becomes an interrupt if the job spec lands first. Whether server tools appear in /.vfs/bin depends on D64. Postgres leg only. Re-read the SDK facts against a refreshed python-sdk. The three study tasks come first.",
+  "covered_by": "",
+  "new_deps": [
+   "170-3",
+   "171-1",
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md in place of story H1",
+   "169-3 as ruled",
+   "D64"
+  ],
+  "deps_other": [
+   "story H1, no spec"
+  ],
+  "decisions": [
+   "D2",
+   "D9",
+   "D11",
+   "D16"
+  ],
+  "stories": [
+   "T4"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-catalogue-posture-decides-who-may-see-and-who-may-call-a-tool",
+   "agents/2026-11-25-the-wire-adapter-projects-a-result-to-mcp-blocks-within-budget",
+   "agents/2026-11-25-every-shell-call-leaves-a-run-record-as-rows-in-the-root-bindings-storage"
+  ],
+  "layer": 7
+ },
+ "170-5": {
+  "key": "170-5",
+  "dir": "agents/2026-11-25-a-mounted-server-is-called-with-the-credential-the-host-resolves-for-the-caller",
+  "title": "`add_mcp(..., credentials=)` takes a static credential or a `CredentialResolver`, opens one connection per distinct principal, and never lets the credential reach a row, a result, a log or a child's environment.",
+  "gate": "f",
+  "source": "170-tools-and-mcp-servers-as-views",
+  "study_group": "165-181",
+  "group": "views-and-tools",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "All of it, written fresh as I4's new spec, and keeping the credential out of kernel-store records and the action log.",
+  "covered_by": "",
+  "new_deps": [
+   "170-4",
+   "149-2",
+   "D16 ruled",
+   "agents/2026-11-22-the-kernel-keeps-records-of-its-own/spec.md (in flight) for the no-secret pin over records"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D16"
+  ],
+  "stories": [
+   "I4"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-connected-mcp-server-is-a-directory-of-tools-resources-and-prompts",
+   "agents/2026-11-25-a-verified-token-becomes-an-authority-at-the-edge-and-nowhere-else"
+  ],
+  "layer": 8
+ },
+ "178-1": {
+  "key": "178-1",
+  "dir": "agents/2026-11-25-the-engine-cuts-a-byte-slice-of-a-body-on-every-tuned-dialect",
+  "title": "Each tuned dialect returns the exact bytes of a body slice, for `data` raw and for `content` as UTF-8, in one statement.",
+  "gate": "b",
+  "source": "178-the-ranged-read",
+  "study_group": "165-181",
+  "group": "reads-and-integrity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "An engine slice of data and of content as UTF-8 bytes on SQLite (content_bytes) and Postgres (EXTERNAL storage substring); with two engines it may fold into 178-2.",
+  "covered_by": "",
+  "new_deps": [],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "K6"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "178-2": {
+  "key": "178-2",
+  "dir": "agents/2026-11-25-read-takes-a-byte-range-and-the-row-says-which-slice-it-carries",
+  "title": "`read(path, range=(offset, length))` serves the slice cut by the engine, snapped outward to whole characters on text, with `range_start` and `range_length` on the row, and a backend that cannot cut is served the range by the router.",
+  "gate": "b",
+  "source": "178-the-ranged-read",
+  "study_group": "165-181",
+  "group": "reads-and-integrity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The range argument on four faces, the protocol and the backend, range_start/range_length on the row, outward snap on text, and a router-served range for a backend without the trait, which can follow the landed Cursor derived-page precedent.",
+  "covered_by": "",
+  "new_deps": [
+   "178-1",
+   "consumer: agents/2026-11-22-shell-file-reads-and-metadata/spec.md",
+   "coordinate with the vid series branches and origin/a-deleted-row-gives-up-its-path, which change reads.py and the read row"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "K6"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-the-engine-cuts-a-byte-slice-of-a-body-on-every-tuned-dialect"
+  ],
+  "layer": 1
+ },
+ "178-3": {
+  "key": "178-3",
+  "dir": "agents/2026-11-25-a-ranged-read-meets-the-integrity-check",
+  "title": "A ranged read of a body whose stored row is missing or whose whole-body slice fails its hash is classified as a whole read is, and a partial slice is treated as the integrity ruling says.",
+  "gate": "b",
+  "source": "178-the-ranged-read",
+  "study_group": "165-181",
+  "group": "reads-and-integrity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit plus the ruling on a partial slice (served unverified with a note, whole body hashed in the engine, or per-page hashes).",
+  "covered_by": "",
+  "new_deps": [
+   "178-2",
+   "175-1"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D8",
+   "D59"
+  ],
+  "stories": [
+   "K6"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-read-takes-a-byte-range-and-the-row-says-which-slice-it-carries",
+   "agents/2026-11-25-a-read-refuses-a-body-that-fails-its-recorded-hash"
+  ],
+  "layer": 2
+ },
+ "175-1": {
+  "key": "175-1",
+  "dir": "agents/2026-11-25-a-read-refuses-a-body-that-fails-its-recorded-hash",
+  "title": "`read` checks every body it serves against its recorded hash and refuses a mismatched, missing or unhashed body with `vfs.unavailable.integrity`, unless the caller asks for the salvage read.",
+  "gate": "b",
+  "source": "175-integrity-verify-on-read-and-scrub",
+  "study_group": "165-181",
+  "group": "reads-and-integrity",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit, with the draft amended to two engines, to reuse or move _measured instead of adding measure_all, to current line numbers and size baselines, and rebased on the vid series and the deletes spec's trash-path rows.",
+  "covered_by": "",
+  "new_deps": [
+   "coordinate with origin/every-row-carries-a-vid and successors (reads.py, backend.py)",
+   "coordinate with origin/a-deleted-row-gives-up-its-path (trash view rows)"
+  ],
+  "deps_other": [
+   "dated spec: 2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md",
+   "landed: 2026-11-07-storage-measures-every-body-it-stores.md"
+  ],
+  "decisions": [
+   "D8",
+   "D59"
+  ],
+  "stories": [
+   "K3"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "175-2": {
+  "key": "175-2",
+  "dir": "agents/2026-11-25-every-written-row-reports-its-hash-and-no-verb-launders-a-damaged-body",
+  "title": "Every row `write`, `edit`, `copy` and `move` returns carries `content_hash`; `edit` refuses a damaged pre-image with `vfs.unavailable.integrity`; an overwrite of a damaged body succeeds with a warning and its version row keeps the recorded hash.",
+  "gate": "b",
+  "source": "175-integrity-verify-on-read-and-scrub",
+  "study_group": "165-181",
+  "group": "reads-and-integrity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit: hash on every written row, edit refusing a damaged pre-image, the overwrite warning and the version row's recorded hash.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-20-write-takes-preconditions-and-an-append (landed, in place of 174-1)",
+   "175-1",
+   "build after origin/edit-requires-a-vid, origin/write-requires-a-vid and origin/a-deleted-row-gives-up-its-path"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D8",
+   "D58"
+  ],
+  "stories": [
+   "K3"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-read-refuses-a-body-that-fails-its-recorded-hash"
+  ],
+  "layer": 1
+ },
+ "175-3": {
+  "key": "175-3",
+  "dir": "agents/2026-11-25-the-system-actor-accepts-a-damaged-body-as-found",
+  "title": "Only the system actor can accept a body that fails its hash as it stands, which writes a new version whose `content_hash` is the body's own, so history records the acceptance.",
+  "gate": "b",
+  "source": "175-integrity-verify-on-read-and-scrub",
+  "study_group": "165-181",
+  "group": "reads-and-integrity",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole unit and the spelling ruling; the deletes branch's destroy verb is the nearest precedent for a system-actor-gated act.",
+  "covered_by": "",
+  "new_deps": [
+   "175-1",
+   "175-2",
+   "the vid mint from the vid series once landed"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D58"
+  ],
+  "stories": [
+   "K3"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-read-refuses-a-body-that-fails-its-recorded-hash",
+   "agents/2026-11-25-every-written-row-reports-its-hash-and-no-verb-launders-a-damaged-body"
+  ],
+  "layer": 2
+ },
+ "177-1": {
+  "key": "177-1",
+  "dir": "agents/2026-11-25-every-mutating-verb-sent-twice-answers-as-a-pinned-replay-table-says",
+  "title": "Every write-gated verb sent twice answers as its row of a replay table in `ops.py` says, and a refused replay names what it found.",
+  "gate": "b",
+  "source": "177-replay-the-contract-and-the-request-key",
+  "study_group": "165-181",
+  "group": "writes-and-replay",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "A pinned replay table for every write-gated verb, plus occupant facts on the refused move, copy, mkdir and restore replays. The write and if_absent rows only need pinning.",
+  "covered_by": "",
+  "new_deps": [
+   "landed: agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md (replaces 174-1)",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md with the three vid branches",
+   "origin/a-deleted-row-gives-up-its-path: agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md (now written, fit to build)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D7",
+   "D55"
+  ],
+  "stories": [
+   "K5"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "177-2": {
+  "key": "177-2",
+  "dir": "agents/2026-11-25-a-commit-whose-connection-drops-answers-in-doubt",
+  "title": "A connection lost during `COMMIT` answers `vfs.unavailable.in_doubt`, retry class `refresh`, and is never redriven.",
+  "gate": "b",
+  "source": "177-replay-the-contract-and-the-request-key",
+  "study_group": "165-181",
+  "group": "writes-and-replay",
+  "verdict": "still-needed",
+  "draft": "amend",
+  "remaining": "The whole unit: a guarded commit, CommitInDoubt, the vfs.unavailable.in_doubt kind with retry class refresh, and the two seams, tested on SQLite and Postgres. The kind's name should also be reconciled with the in_doubt data key used by the jobs spec.",
+  "covered_by": "",
+  "new_deps": [
+   "agents/2026-11-21-a-cancelled-call-is-whole-on-every-path/spec.md (commit refusal of a cancelled attempt)",
+   "origin/the-engine-core-is-split-from-the-mount (EngineCore owns classify_failure; merge-order note)"
+  ],
+  "deps_other": [],
+  "decisions": [],
+  "stories": [
+   "K5"
+  ],
+  "deps_dirs": [],
+  "layer": 0
+ },
+ "177-3": {
+  "key": "177-3",
+  "dir": "agents/2026-11-25-a-keyed-call-stores-its-answer-with-its-change-and-a-resend-gets-it-back",
+  "title": "A mutation sent with a request key stores its whole `Result` in the same transaction as its change, and a resend with the same key gets that answer back with one `vfs.replayed` record and no mutation statement.",
+  "gate": "b",
+  "source": "177-replay-the-contract-and-the-request-key",
+  "study_group": "165-181",
+  "group": "writes-and-replay",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The whole keyed store and the replayed answer. First comes a ruling on where the stored answer lives: the mount's tables in the change's transaction, or the kernel store in claim-before form. Then the restatement of K5's 'why' without H3.",
+  "covered_by": "",
+  "new_deps": [
+   "177-2",
+   "agents/2026-11-22-the-kernel-keeps-records-of-its-own/spec.md with origin/the-engine-core-is-split-from-the-mount, origin/the-kernel-keeps-a-store-of-its-own, origin/a-storage-names-where-the-kernel-keeps-its-records, origin/the-kernel-writes-records-behind-and-sweeps-them",
+   "agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md",
+   "origin/a-deleted-row-gives-up-its-path (destroy in place of sweep)",
+   "landed: agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D11",
+   "D56"
+  ],
+  "stories": [
+   "K5"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-commit-whose-connection-drops-answers-in-doubt"
+  ],
+  "layer": 1
+ },
+ "177-4": {
+  "key": "177-4",
+  "dir": "agents/2026-11-25-request-key-is-an-argument-of-every-keyed-verb-at-the-router",
+  "title": "`request_key` is a keyword argument of the twelve keyed verbs on every face, and a keyed call to a mount without the `replay` trait is `vfs.unsupported`.",
+  "gate": "b",
+  "source": "177-replay-the-contract-and-the-request-key",
+  "study_group": "165-181",
+  "group": "writes-and-replay",
+  "verdict": "still-needed",
+  "draft": "none",
+  "remaining": "The argument on every face and in the parameter table, plus the trait refusal if the store stays per mount.",
+  "covered_by": "",
+  "new_deps": [
+   "177-3",
+   "agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md with origin/every-row-carries-a-vid (trait precedent)",
+   "origin/a-deleted-row-gives-up-its-path (verb list)"
+  ],
+  "deps_other": [],
+  "decisions": [
+   "D11"
+  ],
+  "stories": [
+   "K5"
+  ],
+  "deps_dirs": [
+   "agents/2026-11-25-a-keyed-call-stores-its-answer-with-its-change-and-a-resend-gets-it-back"
+  ],
+  "layer": 2
+ }
+}

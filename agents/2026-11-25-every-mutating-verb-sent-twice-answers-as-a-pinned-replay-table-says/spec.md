@@ -1,0 +1,332 @@
+# Every write-gated verb sent twice answers as its row of a replay table in `ops.py` says, and a refused replay names what it found
+
+A draft, written on 2026-11-25. It is not reviewed, and nothing is built. Every fact about the code was read on `dev` at `27f3d24d`, and every answer a decision rests on was run that day against a SQLite file store, from scratch scripts in the session scratchpad; those runs are cited as "the probe". It serves roadmap story K5 at gate b, its criteria 1 and 2 ([the roadmap](../../context/standards/roadmap.md), lines 179 and 180). It is unit 177-1 of [the unit map](../2026-11-25-the-backlog-converted/units.md), converted from [spec 177](../../context/specifications/archive/177-replay-the-contract-and-the-request-key/spec.md), sections 0 and 1, with tasks 1, 4 and 9 of [its tasks](../../context/specifications/archive/177-replay-the-contract-and-the-request-key/tasks.md), read with [the study of that spec](../2026-11-25-the-backlog-converted/studies/165-181/177-replay-the-contract-and-the-request-key.md) and [the reassessment against dev](../2026-11-25-the-backlog-converted/reassessment/writes-and-replay.md). It rests on the landed preconditions spec and on roadmap decisions D7, D11 and D55, and it waits for nothing.
+
+## The outcome wanted
+
+A client that lost the reply to a mutation sends the same call again. After this work, what that second call answers is written down, for each of the fifteen write-gated verbs and each form of them, as data in `src/vfs/ops.py`, and a conformance family sends every form twice on the memory, SQLite and Postgres legs and checks the answer and the state against its row.
+
+Every replay that is refused now says what it found. A replayed `move` is `not_found` at the source with `vfs.target` naming the destination and `data["dest"]` naming the file that stands there. A replayed `copy`, `restore` and strict `mkdir`, and the landed create-only `write`, are `exists` with one record of the row that stands at the path: its `entry_id`, `kind`, `version` and, for a file, `content_hash`. A replayed `edit` whose text is gone says whether its new text is there.
+
+```python
+first = await fs.move("/y.md", "/z.md")              # created, version 2
+again = await fs.move("/y.md", "/z.md")              # the reply to the first was lost
+(error,) = again.errors
+# error.kind == "vfs.not_found", error.path == "/y.md"
+# error.data["vfs.target"] == "/z.md"
+# error.data["dest"] == {"entry_id": "01K…", "kind": "file", "version": 2, "content_hash": "…"}
+```
+
+The caller compares the record with the row its first call would have left, here version 2 at `/z.md`, and knows the move landed without a second read. Nothing else changes: a call that is not a replay answers as it does today, and no verb issues a statement more on its success path.
+
+## Builds on
+
+- `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`, landed on `dev`. Its decision 5 makes an identical write `unchanged`, its decision 7 refuses a create-only write over a live row `exists` with the occupant's version and hash (`src/vfs/storage/backends/database/staging.py:531-541`), its decision 8 is the append, and its decisions 2 and 6 the expected version. The `write` rows of the table pin what it built, and the `exists` record it gave is the one this spec widens.
+- The kernel rulings, `context/specifications/active/2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md`, landed. Decided 2026-11-15 (D55, its decision 6): a move keeps the moved file's identity, so a replayed `move` finds at the destination the `entry_id` the source had. Decided 2026-11-15 (D7, its decision 7): `overwrite=` leaves `write`, so the create-only row is `write(if_absent=True)`. Decided 2026-11-15 (D11, its decision 10): a tool whose verb has any form that applies twice withholds `idempotentHint`, which is why a verb's shape here is set by its worst form.
+- `agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md`, specified on `dev` and not built, carried by the open branches `origin/every-row-carries-a-vid`, `origin/write-requires-a-vid`, `origin/edit-requires-a-vid` and `origin/delete-move-and-restore-require-a-vid`, whose reviews stand at lands. Its decision 16, landing 1, puts `vid` beside `version` in the data of `exists`, through `occupant_exists`, which on `origin/delete-move-and-restore-require-a-vid` reads `occupant_exists(path, version, content_hash, vid)`. Its decision 7 removes `if_version`, and its decision 12 answers a stale `if_vid` `conflict` with the version and vid at the path. Neither this spec nor that series needs the other. Whichever lands second rebases onto the other: if the vid series lands first, the four sites this spec routes through `occupant_exists` pass the vid it mints; if this lands first, the vid series adds `vid` to the one record, and every site here carries it with no edit of its own, and its second landing replaces the `if_version` form of the `write` row.
+- `agents/2026-11-24-a-deleted-row-gives-up-its-path/spec.md`, on the open branch `origin/a-deleted-row-gives-up-its-path` at `d8c1d55d`, reviewed fit to build, not built. Its decision 9, step 1, answers a `restore` over a live row `exists` "with the occupant's version and hash as `occupant_exists` gives them"; this spec builds that answer first, and the deletes spec finds it done. Its decisions 11 and 12 rename `sweep` to `destroy` and confine it to trash paths, and its decisions 4 and 5 make a write at a deleted path a new file. Its landing rewrites the `sweep` row as a `destroy` row and adds whatever forms it changes; the conformance family of decision 15 fails that landing until it does. Either order builds.
+- `agents/2026-11-25-every-row-reports-the-entrys-permanent-id-and-its-owner/spec.md`, unit 181-2 of this conversion, written and not built. Its decision 3 shows `entry_id` at the `read` rung; decision 7 here gives the occupant record only to a caller the gate admitted at `add` or above, which includes `read`, so the two rules agree. It is not needed first: until it lands a caller compares the record's `version` with the row its first call returned, and the tests read `entry_id` from the entries table.
+- The rights gate as it stands: a caller who reaches a ladder's `exists` or a move's source miss was admitted at the destination's create rung or the occupant's primary rung, every one of them `add` or above. Precedent: `test_add_hears_exists_from_a_create_only_write_over_anothers_row` and `test_a_create_only_write_over_a_row_tells_a_list_holder_nothing` (`tests/storage/database/test_ladder.py:207`, `:241`), and the probe, in which a caller holding nothing or `list` at a move's destination is refused by the gate at the destination before the ladder runs.
+
+## Terms
+
+- **Replay.** The same call, with the same arguments, sent again because the sender got no reply.
+- **Form.** One way of calling a verb whose replay answers differently from the others: `write` plain, with `if_version`, with `if_absent=True`, with `append=True`.
+- **Shape.** What a verb's replay is: `idempotent` (it succeeds and leaves the state the first call left), `recognisable` (it is refused, leaves that state, and its refusal's data names what it found), or `applies_twice` (some form changes the state again).
+- **Occupant.** The live row a verb found at a path it needed free, or, for a replayed `move`, the live row at the destination.
+- **Occupant record.** The flat mapping `{"entry_id", "kind", "version", "content_hash"}` that describes an occupant; `content_hash` is left out for a directory.
+- **Bare.** An `exists` that carries no occupant record, as `WritePlan.occupied` names a row the same batch staged (`staging.py:317-326`).
+
+## What the code does today
+
+| Fact | How it is known |
+|---|---|
+| `WRITE_GATED_OPS` is the ten mutations and the five grant writes, fifteen verbs (`src/vfs/ops.py:68-70`, `:92-98`). No replay table, shape or idempotent set exists under `src/vfs`. | Read; a search of `src/vfs` for `REPLAY`, `replay` and `IDEMPOTENT_OPS` finds none. |
+| Sent twice: `write` answers `unchanged`; `write(if_version=1)` answers `unchanged`; `write(if_absent=True)` is `exists` with `{version, content_hash}`; `write(append=True)` is `updated` and appends again; `edit("world" → "there")` is `invalid` with no data; `edit("foo" → "foo!")` is `updated` and leaves `foo!!`; strict `mkdir` is `exists` with no data; `mkdir(exist_ok=True)` is `unchanged`; `delete` is `not_found` with `vfs.trashed` and `vfs.deleted_at`; `restore` is `exists` with no data; `copy` is `exists` with only `vfs.target`; `move` is `not_found` with no data. | The probe. |
+| Sent twice: `mkedge` is `updated`; `rmedge` succeeds with a `not_found` warning carrying `edge_type` and `vfs.target`; `grant`, `set_posture` and `add_member` succeed; `revoke` succeeds with a `not_found` warning carrying `principal_id`; `remove_member` with one carrying `group_id` and `principal_id`; `sweep` of the trash view succeeds; `sweep` of a live path is `not_found` with no data. | The probe. |
+| Every replay that does not apply twice leaves the entries (path, entry id, kind, version, hash, deleted time, owner, label), the count of version rows, the edges, the grants, the memberships and the pending relabels as the first call left them. | The probe, comparing those tables after each call. |
+| A move reads its sources' committed rows once, after the serialization point (`src/vfs/storage/backends/database/topology.py:148`, `:154`), then reads each source again by `point_row` and classifies a miss by `classify_misses`, one call a missed pair (`:170-172`). An occupied destination is read by `point_row` and refused by `_occupied` (`:188-190`, `:276-281`). | Read. |
+| `point_row` selects `SNAPSHOT_COLUMNS`, which hold `entry_id`, `parent_id`, `path`, `name`, `kind`, `version`, `size_bytes` and `deleted_at`, and no `content_hash` (`src/vfs/storage/backends/database/serialized.py:72-81`, `:245-248`). | Read. |
+| `restore` fetches `_TOMBSTONE_COLUMNS`, the snapshot's columns plus `trash_root_id`, `owner_id` and `everyone_level`, and no `content_hash` (`src/vfs/storage/backends/database/trash.py:108`, `:306`); its ladder refuses a live row `already_exists(target)` (`:251`), and a row revived earlier in the batch reads live through `_RestoreLadder.row` (`:240-244`). | Read. |
+| Strict `mkdir` refuses a live occupant `already_exists(path)` (`src/vfs/storage/backends/database/writes.py:266`) with the occupant's committed row, `content_hash` and the rights columns included, in hand (`writes.py:427-440`). | Read. |
+| A transfer's `own` set holds the ids its earlier pairs moved or minted (`topology.py:160`, `:215`, `:446`, `:524`). | Read. |
+| `edited_entry` turns a failed `apply_edits` into `invalid` with no data (`src/vfs/storage/editing.py:41-43`); `apply_edits` returns the first failing `replace` result as it is (`src/vfs/storage/replace.py:288-301`), whose miss reads "old_string not found in file content." (`:282-285`). | Read. |
+| On SQLite, statements issued by a replayed call, transaction control and statistics left out, system actor then a named caller under a `read_write` posture: `copy` 4 and 13, strict `mkdir` 1 and 6, `restore` 2 and 5, `move` 4 and 8, `edit` 1 and 6, `delete` 2 and 7, `write(if_absent=True)` 1 and 6. A replayed batch of n moves issues 2n + 2 (102 at 50 pairs, 402 at 200, 2,002 at 1,000). A landed one-pair `move` issues 16 and 24, a landed one-pair `copy` 15 as the system actor. `membership_budget` is 32,668 on SQLite. | The probe. |
+| `writes.py` holds 1,415 lines and `base.py` 3,090, each at its exact entry in `MODULE_LINE_BASELINE` (`tests/lint/allowlist.py:26-33`), so neither may grow. | Read. |
+
+## The problem
+
+A client that lost a reply cannot tell, from a refused second call, whether its first call landed. A replayed `move` answers a bare `not_found`, which is also the answer for a path that never existed. A replayed `restore` and strict `mkdir` answer a bare `exists`, which is also the answer when a rival made the row. A replayed `edit` either refuses with no data or, when its new text contains its old, applies a second time. The constitution's Article 2 fails a pattern that "forces an agent to guess, retry blindly, or parse prose to learn state"; each of these does.
+
+Nothing pins what a replay answers. Five landings since 2026-11-20 changed a replay answer (the `unchanged` write, the create-only record, the append, and on open branches the vid and the deletes spec), and no test would have said so. The roadmap's MCP story derives `idempotentHint` from "K5's replay table" (roadmap line 874), which does not exist.
+
+At the reference deployment the agent population issues about 150,000 verb calls a day, about one in four a write or edit, and a lost reply is the ordinary failure of a long-lived connection. A replay that cannot be recognised costs the agent a read before every retry, or, for `edit` and an append, a duplicated change. The nightly batch moves and copies 10,000-file batches; a replayed batch must say, pair by pair, what stands at each destination, in a bounded number of statements.
+
+## Decisions
+
+### 1. The replay table is data in `src/vfs/ops.py`, one row for each write-gated verb, one answer for each form
+
+```python
+# ---------------------------------------------------------------------------
+# The replay table — what each write-gated verb answers when it is sent twice
+# ---------------------------------------------------------------------------
+
+ReplayShape = Literal["idempotent", "recognisable", "applies_twice"]
+
+
+class ReplayAnswer(NamedTuple):
+    """What the second of two identical calls answers, in one form of a verb."""
+
+    form: str
+    status: Literal["created", "updated", "unchanged", "deleted"] | None = None
+    kind: str | None = None
+    severity: Literal["error", "warning"] | None = None
+    data: frozenset[str] = frozenset()
+    applies_twice: bool = False
+
+
+class Replay(NamedTuple):
+    """One verb's replay answers, its default form first."""
+
+    answers: tuple[ReplayAnswer, ...]
+
+    @property
+    def shape(self) -> ReplayShape: ...
+
+
+REPLAY: Final[dict[Op, Replay]] = {...}          # the rows of decision 3
+IDEMPOTENT_OPS: Final[frozenset[Op]] = frozenset(op for op, row in REPLAY.items() if row.shape == "idempotent")
+```
+
+`status` is the status every row the second call returns carries, and `None` when it returns no row. `kind` is the value of the one error or warning it carries, as a string, and `severity` that entry's severity; both are `None` when it carries none. `data` is the exact set of keys of that entry's `data`. The group sits after the ladder group in `ops.py`, so it reads `Op` and nothing above it.
+
+Reason: the source puts the table beside the op classes it describes, so the conformance family, the drift tests and later the MCP adapter read one source. Facts a test can compare, in place of the source's prose columns, are what makes the table pinned: a landing that changes an answer fails until its row says so. The kind is a string because `vfs.results` imports `vfs.ops` (`src/vfs/results/projection.py`), so `ops.py` may not import `ErrorKind`; a peer's op names are plain strings in the same module for the same reason. The source's "first call" and "verify without a key" columns are left out: the first is what the verb's docstring says, and the second is the in-doubt unit's, [177-2](../2026-11-25-a-commit-whose-connection-drops-answers-in-doubt/spec.md).
+
+### 2. A verb's shape follows from its answers, its worst form deciding
+
+`Replay.shape` is `applies_twice` when any answer has `applies_twice`; otherwise `idempotent` when the default answer's `severity` is not `error`; otherwise `recognisable`.
+
+Reason: D11 withholds the hint from a verb with any form that applies twice, so a host never resends an append or an edit on its own. A form that only refuses on replay, such as `if_absent=True`, which the caller chose in order to be refused, does not lower the verb. So `write` and `edit` are `applies_twice`, and `IDEMPOTENT_OPS` is `mkedge`, `rmedge`, `grant`, `revoke`, `set_posture`, `add_member`, `remove_member` and `sweep`. The consequence decision 10 of the rulings accepted, that the `write` tool loses the hint once `append=` lands, holds now, since `append=` has landed.
+
+### 3. The rows
+
+| Verb | Form | The second call answers | `data` keys | Applies twice | Shape |
+|---|---|---|---|---|---|
+| `write` | `plain` | success, its row `unchanged` | none | no | `applies_twice` |
+| | `if_version` | success, `unchanged` | none | no | |
+| | `if_absent` | `vfs.exists`, error | `entry_id`, `kind`, `version`, `content_hash` | no | |
+| | `append` | success, `updated` | none | yes | |
+| `edit` | `old_gone` | `vfs.invalid`, error | `new_present` | no | `applies_twice` |
+| | `new_holds_old` | success, `updated` | none | yes | |
+| `mkdir` | `plain` | `vfs.exists`, error | `entry_id`, `kind`, `version` | no | `recognisable` |
+| | `exist_ok` | success, `unchanged` | none | no | |
+| `delete` | `plain` | `vfs.not_found`, error | `vfs.trashed`, `vfs.deleted_at` | no | `recognisable` |
+| `restore` | `plain` | `vfs.exists`, error | `entry_id`, `kind`, `version`, `content_hash` | no | `recognisable` |
+| `copy` | `plain` | `vfs.exists`, error | `vfs.target`, `entry_id`, `kind`, `version`, `content_hash` | no | `recognisable` |
+| `move` | `plain` | `vfs.not_found`, error | `vfs.target`, `dest` | no | `recognisable` |
+| `mkedge` | `plain` | success, `updated` | none | no | `idempotent` |
+| `rmedge` | `plain` | success, no row; `vfs.not_found`, warning | `edge_type`, `vfs.target` | no | `idempotent` |
+| `grant` | `plain` | success, no row | none | no | `idempotent` |
+| `revoke` | `plain` | success, no row; `vfs.not_found`, warning | `principal_id` | no | `idempotent` |
+| `set_posture` | `plain` | success, no row | none | no | `idempotent` |
+| `add_member` | `plain` | success, no row | none | no | `idempotent` |
+| `remove_member` | `plain` | success, no row; `vfs.not_found`, warning | `group_id`, `principal_id` | no | `idempotent` |
+| `sweep` | `trash_view` | success, no row | none | no | `idempotent` |
+| | `path` | `vfs.not_found`, error | none | no | |
+
+The forms are these calls. `write`'s `plain` writes the body the path already holds; `if_version` names the version the first call found and writes a new body; `if_absent` and `append` are those flags. `edit`'s `old_gone` replaces text the first call removed and that its new text does not contain (`"world"` to `"there"`); `new_holds_old` replaces text with text that contains it (`"foo"` to `"foo!"`). `mkdir`'s `plain` is the strict form of a directory. `copy` and `move` are one pair of files. `sweep`'s `trash_view` is its default path, and `path` names a live directory. Each verb's other forms on `dev`, such as a batch, a directory transfer, `cascade=False` or `replace_all=True`, answer as its default form does, and the table names a form only where the answer differs.
+
+Reason: each row is the answer at `dev` as the probe ran it, with the four refusals this spec adds a record to (decisions 6 and 11) and the edit refusal of decision 12. The `write` rows are the landed spec's. Only the `sweep` row's `path` form is a refusal that names nothing; nothing is there to name, since a swept row leaves no trace, and the deletes spec's landing replaces both `sweep` forms.
+
+### 4. "The state the first call left" is the namespace and the rights, and leaves the counters out
+
+The conformance family compares, after the first call and after the second: each entries row's `path`, `entry_id`, `kind`, `version`, `content_hash`, `deleted_at`, `owner_id` and `everyone_level`; the count of `vfs_versions` rows; each edge's `source_id`, `target_id`, `edge_type`, `weight`, `distance` and `provenance`; each grant's `principal_id`, `path_prefix` and `level`; each membership's `principal_id` and `group_id`; and the count of `vfs_relabels` rows. An answer with `applies_twice` must leave a different state; every other answer the same one.
+
+Left out, because no reader keys on them and a replay of a rights verb moves them: `vfs_meta.grant_revision`, `vfs_principal_revisions`, the grants' `granted_by`, `granted_at` and `revision`, the memberships' `granted_by` and `granted_at`, the index marks in `vfs_index_state`, and every derived search table. Precedent: the source's rule that "same state" ignores counters no reader keys on, a grant replay's rights being unchanged while the caches revalidate.
+
+### 5. A removal of what is already gone keeps today's two answers
+
+An edge, a grant or a membership is a row of a set: removing one that is not there leaves the same set, so `rmedge`, `revoke` and `remove_member` succeed with one `not_found` warning. A path is a name a caller typed: `delete` of one that is not live is refused, as `rm` is, and the tombstone's hint makes it recognisable. The rule is stated in `REPLAY`'s docstring, and the table pins both halves.
+
+Reason: it is what the tree does, POSIX `unlink` answers ENOENT, and the `not_found` kind maps ENOENT (`src/vfs/results/kinds.py:67`). The alternative, `delete` answering an absent path with success and a warning as `rm -f` does, would change a landed contract and gain nothing the hint does not give.
+
+### 6. One occupant record, built by `occupant_exists`, describes every live occupant an `exists` names
+
+`occupant_exists` stays in `staging.py` and takes the row: `occupant_exists(path: Path, row: Mapping[str, Any], *, target: Path | None = None) -> ResultError`. It returns `classified(ErrorKind.exists, path, target=target, data=occupant_record(row))`. Beside it, `occupant_record(row: Mapping[str, Any]) -> dict[str, object]` returns `entry_id`, `kind` and `version`, and `content_hash` where the row has one. Six sites call it:
+
+- `WritePlan.occupied`, the create-only write over a committed row (`staging.py:317-326`);
+- the two rival probes of a create, which already select `entry_id`, `kind`, `path`, `version` and `content_hash` (`writes.py:690`, `:779`, `:693-696`);
+- strict `mkdir` and `mkdir(exist_ok=True)` over a file, from the plan's committed row (`writes.py:266`);
+- `_occupied`, for a move or a copy onto a live occupant, with `target` the source (`topology.py:276-281`);
+- `_RestoreLadder.verdict`, for a restore over a live row (`trash.py:251`).
+
+The keys are flat and unprefixed. The record is the data of `exists` and the value of a moved file's `dest`, nothing else.
+
+Reason: a caller tells its own landed call from a rival's by comparing the record with the row its first call returned, and `version` alone cannot tell a moved or restored file from a different file at the same version, which `entry_id` can (D55: a move and a restore keep the entry's id). `kind` lets a strict `mkdir` over a file say so; it means what `wrong_kind`'s `data["kind"]` already means, the occupant's kind (`src/vfs/results/envelope.py:297-299`). The kinds docstring's producer rule, "producer keys are unprefixed" (`kinds.py:60`), and the landed record set the spelling. One constructor keeps the six sites alike, and is the one place the vid series adds its key. Widening the landed create-only record by `entry_id` and `kind` is additive; it is listed under Choices to confirm. `writes.py` keeps its 1,415 lines: each changed call stays one line.
+
+### 7. The record goes to the caller the gate admitted, and no second judgment is made
+
+A caller reaches each of the six sites, and the move's source miss of decision 11, only after the gate admitted it at the destination's create rung or the occupant's primary rung. Every such rung is `add` or above (`ops.py:151-177`, `:190`), and each rung includes `read`, so the caller may read the occupant. No site judges the row again.
+
+Reason: this is how the landed create-only record is given today, and the ladder tests pin both sides of it (`test_ladder.py:207`, `:241`). Rights are keyed by path, and the gate judged that path. A second judgment in memory would be a branch no caller can reach, which the 100% coverage gate refuses. The leak test of the Tests section pins that a caller the gate refused hears no record, on every verb that gains one.
+
+### 8. A row the same call made, moved or revived is named bare
+
+A copy or move pair whose destination holds a row whose `entry_id` is in the transfer's `own` set refuses `exists` as today, with `vfs.target` and no record. A restore target that a row revived earlier in the same batch occupies, which `_RestoreLadder.row` reports live, refuses `exists` as today, with no data.
+
+Reason: the call fails whole, so that row will not be stored, and a record of it would describe a file the caller will never find. Precedent: `WritePlan.occupied` names a row the batch staged bare, and `test_a_create_only_batch_that_names_a_path_twice_is_refused_whole` pins it (`tests/support/storage_contract.py:421-430`).
+
+### 9. A deleted occupant keeps today's answer
+
+A transfer onto a tombstoned occupant stays `exists` with `vfs.target` and the trashed hint, and no record (`topology.py:278-281`; `test_a_transfer_onto_a_tombstoned_occupant_is_exists_with_the_hint`, `tests/storage/database/test_trash.py:215`). A move whose destination holds only a tombstone, or nothing, gains no `dest`.
+
+Reason: the record describes a live row a caller can read, act on or compare. A deleted row is reached through `restore` and the trash view, and once the deletes spec lands, a deleted row holds no name at all.
+
+### 10. The rows each site reads gain the columns the record needs, and no site gains a statement
+
+`serialized.py` gains `OCCUPANT_COLUMNS = (*SNAPSHOT_COLUMNS, "content_hash")`, and `point_row` gains `names: Sequence[str] = SNAPSHOT_COLUMNS`. The destination read in `transfer_rows` passes `OCCUPANT_COLUMNS`; every other `point_row` call is unchanged. `_TOMBSTONE_COLUMNS` gains `content_hash`. `mkdir` and the create-only write read the plan's committed row, and the rival probes their own select, which hold every column already.
+
+Reason: the replayed `copy`, `restore` and `mkdir` cost what they cost today, the counts of What the code does today, and a successful verb pays only a 64-character column on a row it already reads. The source spec's widening of the rights columns is not needed, since decision 7 makes no second judgment.
+
+### 11. A replayed `move` probes the destinations of its absent sources once, and names the live file at each
+
+In `transfer_rows`, for `op == "move"`, right after the committed snapshot (`topology.py:154`): the pairs whose source has no live row in that snapshot are collected, and when there is at least one, their destinations are read by one call of `rows_by_path` with `OCCUPANT_COLUMNS`, imported into `topology.py` by that name. A move whose every source is live issues nothing more. In the pair loop, when a pair's source misses and `classify_misses` places the `not_found` at the source itself, and the probe found a live row at the destination, the error becomes `classified(ErrorKind.not_found, src, target=dest, data={**(miss.data or {}), "dest": occupant_record(row)})`. A miss placed at an ancestor, and a destination that holds a tombstone or nothing, keep today's error.
+
+- The locus stays the source, because the source is what is missing. `dest` is a nested record with no path in it, so the rebase across mounts touches only `vfs.target`, which `with_mount` already rebases (`envelope.py`, `ResultError.with_mount`).
+- The probe reads committed state, after the serialization point and before any pair runs, so it describes what stands at the destination once the failed call rolls back. A row an earlier pair of the same batch would move there is never in it.
+- The server states facts, never the inference "already moved". A rival could have deleted the source and made the destination. The client's proof is the record against the row its first call returned.
+
+Reason: roadmap K5 criterion 1, and the source's section 1.3 with its probe moved from after the loop to before it, which makes the facts exact without tracking which rows the loop touched. A probe in the loop, one point read a missed pair, would add 10,000 statements to a replayed 10,000-pair batch; one chunked call adds one. Precedent: the committed snapshot it sits beside, and `rows_by_path`, the bounded membership fetch every verb uses.
+
+### 12. A missed edit says whether its new text is there
+
+`ReplaceResult` gains `new_present: bool = False`. `apply_edits` sets it on the result it returns when an edit's `replace` failed because `old` was not found, that edit's `new` is not empty, and `new`, with its line endings normalised as `replace` normalises them, occurs in the text that edit saw. `edited_entry` then refuses `invalid` with `data={"new_present": True}`; in every other case the refusal carries no data, as today. A failure of another cause (an empty `old`, `old == new`, several matches, the fuzzy budget, `replace_all` over a fuzzy match) never sets it.
+
+Reason: this makes the common edit replay recognisable at the cost of one substring search over a body already in hand, on a refusal only. It cannot catch the replay whose new text contains its old, which matches again and applies twice, and that is why `edit` is `applies_twice`. A `False` is not written, because the kinds docstring reads an absent key as "not known" (`kinds.py:52`). The miss is told apart by a field `replace` sets at its final return, never by its message, which is prose.
+
+### 13. A replayed `copy` names the copy and the source, and no derived flag
+
+The `exists` of a copy carries `vfs.target`, the source, and the record of the copy at the destination: `version` 1 and the body's `content_hash` on a replay. The source spec's `matches_source` flag is not added.
+
+Reason: the client holds the source's path and can compare the record's hash with the source's by `stat`. The flag would need the source's hash, which the snapshot does not read. Adding a key later is additive, so leaving it out is the cheaper side; it is listed under Choices to confirm.
+
+### 14. A landing that changes a replay answer changes its row in the same change
+
+The table holds the forms `dev` serves. The vid series' second and fourth landings replace the `if_version` form with `if_vid` and add the `if_vid` forms of `edit`, `delete`, `move` and `restore`. The deletes spec's landing replaces the `sweep` row with a `destroy` row and adds any form it changes. Unit [167-7](../2026-11-25-move-and-copy-take-replace-and-a-move-keeps-the-moved-file/spec.md) adds the `replace=True` forms of `move` and `copy`. The keyed forms of [177-3](../2026-11-25-a-keyed-call-stores-its-answer-with-its-change-and-a-resend-gets-it-back/spec.md) and [177-4](../2026-11-25-request-key-is-an-argument-of-every-keyed-verb-at-the-router/spec.md) are theirs.
+
+Reason: the conformance family drives every form the table names and checks each answer, so a landing that changes an answer without its row is red, and one that adds a verb without a row fails the drift test of decision 15. This is the pin roadmap K5 criterion 2 asks for. Precedent: tasks.md task 1 of the source, which let the `write` row move with spec 174.
+
+### 15. The conformance family is a mixin, driven by the table, on three legs
+
+`tests/support/replay_contract.py` holds `ReplayContract` and `DRIVERS: dict[tuple[Op, str], ReplayDriver]`, one driver for each verb and form of `REPLAY`. A driver seeds the world its form needs and returns the call to send twice. `ReplayContract` is mixed into `TestMemoryConformance`, `TestSqliteConformance` and `TestPostgresConformance` in `tests/storage/test_conformance.py`, beside `CursorContract`. It calls the storage seam with the system actor, as the membership verbs require.
+
+Reason: `CursorContract` is the precedent for a family mixed into each database leg (`tests/support/cursor_contract.py`). Roadmap K5 criterion 2 names the memory and SQLite legs; the Postgres leg is added because decisions 10 and 11 change what the move and the restore read, and Postgres plans and binds those reads its own way. The drift between the table and its drivers is a test, so a form cannot be named and left undriven.
+
+### 16. `REPLAY` is not exported from `vfs` and has no reference page at this unit
+
+`REPLAY`, `Replay`, `ReplayAnswer`, `ReplayShape` and `IDEMPOTENT_OPS` live in `vfs.ops`, as `WRITE_GATED_OPS` does, and are added to no `__all__` of `vfs`. The records a caller reads are documented where a caller meets them, in the docstring of `ErrorKind`, which the Results reference page renders (`documentation/reference/python-api/results.md:31`).
+
+Reason: their readers at this unit are the kernel's own tests, and at M1 the MCP adapter. A public name is frozen at the beta, and nothing outside the package needs these yet. `base.py`'s verb docstrings are left as they are, since the file is at its line baseline and the kind's docstring is the one place a refusal's data is listed today.
+
+### 17. No convention of Unix is departed from
+
+`rename` of a missing source answers ENOENT, and a create over a name answers EEXIST; the kinds stay `not_found` and `exists`. The data is an addition that an errno cannot carry, and it changes no kind, no locus and no retry class. Article 3 of the constitution asks for a numbered deviation only where a convention is left, and none is.
+
+## Cost
+
+Costed against [the reference deployment](../../AGENTS.md#the-reference-deployment-the-scale-every-idea-is-filtered-through) on SQLite and Postgres, the engines `dev` serves, and on the generic floor.
+
+- **Per verb call**, about 150,000 a day. A successful verb issues no statement more: the probe of decision 11 runs only when a move's snapshot holds an absent source. The destination read of a copy or move pair and the restore fetch each select one more column, `content_hash`, 64 characters a row read; at the daytime peak of about 20 calls a second that is under 2 KB a second across the mount. A replayed `move` issues one statement more than today (4 to 5 for the system actor, 8 to 9 for a named caller); a replayed `copy`, `restore`, `mkdir`, `edit`, `delete` and create-only `write` issue what they issue today. A missed edit pays one substring search over the body it already holds.
+- **Per batch**, 100 a night. A replayed 10,000-pair move issues `ceil(10,000 / membership_budget)` probe statements: one on SQLite, whose `membership_budget` is 32,668 (the probe), one on Postgres, where both caps sit above 10,000 (its `in_list_budget` is 65,535, `src/vfs/storage/backends/database/dialects.py:416`, and its driver binds at most 32,767 parameters), and ten on the floor's 1,000. That is one statement on top of the 20,002 the per-pair ladder issues today (2n + 2, the probe). The probe's map holds at most 10,000 rows of nine columns while the call runs.
+- **Per file write**, **per index visit** and **per corpus**: nothing. No write statement, index pass or rebuild step changes.
+- **Per lock**: none is added or held longer. The probe is one read inside the transaction that already holds the mount's serialization point for the move, on a refusal path, and a read never waits on it. No statement is added to any success path, so no lock other callers need is held a statement longer than today.
+
+## Left as it is
+
+- A transfer reads each pair's source by its own `point_row`, and classifies each miss by its own `classify_misses`, so a replayed batch of n pairs costs 2n + 2 statements and a landed one about 12n (the probe: 12,005 at 1,000 pairs). Each statement is bounded, the count grows with the batch, and the batch holds the serialization point throughout. This is the landed topology ladder; a chunked ladder is a change of its own for a scale review, and decision 11 adds one statement, not one a pair.
+- An `edit` whose new text is empty, and one whose new text contains its old, stay unrecognisable on replay. Only a request key cures them, which is [177-3](../2026-11-25-a-keyed-call-stores-its-answer-with-its-change-and-a-resend-gets-it-back/spec.md).
+- `sweep` of a live path stays a bare `not_found` on replay; the deletes spec retires that form.
+- A move whose source is missing at an ancestor keeps its ancestor `not_found` with no `dest`; the replay the table pins misses at the source.
+
+## Tests
+
+Written first and seen failing, at the layer each behaviour lives. Counts and states, never clocks.
+
+The table, `tests/test_ops.py`:
+
+- `test_the_replay_table_has_one_row_for_each_write_gated_verb`: `REPLAY.keys() == WRITE_GATED_OPS`, fifteen rows.
+- `test_each_verb_names_its_forms_once`: every row has at least one answer, and its forms are distinct.
+- `test_an_answer_names_a_kind_exactly_when_it_names_a_severity`: `kind is None` iff `severity is None`, and an answer with `applies_twice` succeeds.
+- `test_a_shape_follows_from_its_answers`: the rule of decision 2 on three synthetic rows, one of each shape, and on `REPLAY`: `write` and `edit` are `applies_twice`; `mkdir`, `delete`, `restore`, `copy` and `move` are `recognisable`.
+- `test_idempotent_ops_are_the_rows_whose_shape_is_idempotent`: `IDEMPOTENT_OPS` equals the literal set of decision 2.
+- `test_every_replay_form_has_a_driver`: `set(DRIVERS) == {(op, answer.form) for op, row in REPLAY.items() for answer in row.answers}`.
+
+The contract, `tests/support/replay_contract.py`, each method run as `tests/storage/test_conformance.py::<Class>::<method>` for `TestSqliteConformance`, `TestPostgresConformance` and `TestMemoryConformance`:
+
+- `test_each_form_sent_twice_answers_as_its_row_says[<op>-<form>]`, parametrised over every form of `REPLAY`: the second answer's success, its rows' statuses, its one error's kind and severity, and the exact key set of that error's data equal the row's; the state of decision 4 after the second call equals the state after the first, and differs where the answer has `applies_twice` (one more version, one more version row).
+- `test_a_replayed_move_names_the_file_at_its_destination`: after `move(/y, /z)` the replay is `not_found` at `/y` with `data["vfs.target"] == "/z"`, `data["dest"]["entry_id"]` equal to the id the entries table held for `/y` before the first move, `data["dest"]["version"]` equal to the first move's returned version, and `data["dest"]["content_hash"]` equal to the stored hash.
+- `test_a_move_whose_destination_holds_nothing_live_names_no_destination`: a move of a path that never existed, and a replay after the moved file was deleted, carry neither `vfs.target` nor `dest`.
+- `test_a_replayed_restore_names_the_row_the_first_restore_revived`: the record's `entry_id` is the id the row had before the delete, and its `version` the first restore's returned version.
+- `test_a_replayed_copy_names_the_copy_and_its_source`: `vfs.target` is the source, the record's `version` is 1, and its `content_hash` equals the source's.
+- `test_a_strict_mkdir_over_a_file_names_a_file`: `exists` with `kind == "file"` and a `content_hash`; over a directory, `kind == "directory"` and no `content_hash`.
+- `test_a_replayed_edit_says_its_new_text_is_there`: `edit(f, "world", "there")` sent twice refuses `invalid` with `data == {"new_present": True}`; an edit whose old text was never there and whose new text is absent refuses with no data.
+
+The storage, a new `tests/storage/database/test_replays.py`:
+
+- `test_a_replayed_refusal_issues_the_statements_it_issued_before[<verb>-<caller>]`, on a SQLite file store: the counts of What the code does today, unchanged for `copy`, `restore`, `mkdir`, `edit`, `delete` and create-only `write`, for the system actor and for a named caller under a `read_write` posture; the replayed one-pair `move` issues 5 and 9.
+- `test_a_landed_move_issues_no_probe[sqlite|postgres]`: with `topology.rows_by_path` wrapped by a counter, a landed one-pair move calls it zero times, and on SQLite issues 16 statements as the system actor and 24 as a named caller.
+- `test_a_replayed_move_probes_its_destinations_once[sqlite|postgres]`: a replayed 3-pair move calls `topology.rows_by_path` once, with the three destinations.
+- `test_a_replayed_batch_of_ten_thousand_moves_names_each_destination`, marked `slow`, on SQLite: 10,000 errors, each with `dest`; the probe's statements are `ceil(10,000 / storage._host.membership_budget)`, and the replay issues 2 × 10,000 + 2 + that many.
+- `test_a_batch_names_bare_an_occupant_it_made_itself`: `copy` of `[(a, c), (a, c)]` refuses the second pair `exists` with `data == {"vfs.target": "/a"}`; `move` of `[(a, b), (c, b)]` where `c` is live refuses the second pair with no record.
+- `test_a_restore_batch_names_bare_a_row_it_revived_itself`: `restore` of `[p, p]` refuses the second `exists` with `data is None`.
+- `test_a_move_onto_a_live_occupant_names_it`: a first-time move onto a live file is `exists` with `vfs.target` the source and the occupant's record.
+
+The rule and the leak, `tests/storage/test_replace.py`, `tests/storage/test_editing.py` and `tests/storage/database/test_ladder.py`:
+
+- `tests/storage/test_replace.py::test_a_missed_edit_says_whether_its_new_text_is_there`: `apply_edits` sets `new_present` when the second of two edits misses and its new text is in the text the first left; not when the new text is absent, is empty, or when the failure is several matches.
+- `tests/storage/test_editing.py::test_an_invalid_edit_carries_new_present_only_when_it_is_true`.
+- `tests/storage/database/test_ladder.py::test_no_caller_the_gate_refused_hears_an_occupant_record[<verb>]`, the leak test, for `copy`, `move`, strict `mkdir`, `restore` and create-only `write`: a caller holding nothing at the occupant's path and one holding `list` there are refused by the gate, and no error of either result carries `entry_id`, `kind` (outside `wrong_kind`), `version`, `content_hash` or `dest`; the replayed move of such a caller names its source miss with no `dest`.
+- `tests/storage/database/test_ladder.py::test_add_hears_exists_from_a_create_only_write_over_anothers_row`, changed: its exact data gains `entry_id` and `kind`, and a `copy` onto and a strict `mkdir` over another's row hear the same record.
+
+The tests that pin the landed record exactly change with it: `tests/support/storage_contract.py:394` (`test_a_create_only_write_over_a_live_file_is_exists_and_names_what_is_there`) and the key list at `tests/storage/database/test_writes.py:676`.
+
+The Postgres leg runs through the `db_test` skill before the pull request, since decisions 10 and 11 change what the move and the restore read.
+
+## Scope
+
+In: decisions 1 to 17. `src/vfs/ops.py`; `src/vfs/storage/backends/database/staging.py`, `writes.py`, `topology.py`, `trash.py` and `serialized.py`; `src/vfs/storage/replace.py` and `src/vfs/storage/editing.py`; the docstring of `ErrorKind` in `src/vfs/results/kinds.py`; `tests/test_ops.py`, `tests/support/replay_contract.py`, `tests/storage/test_conformance.py`, `tests/storage/database/test_replays.py`, `tests/storage/test_replace.py`, `tests/storage/test_editing.py`, `tests/storage/database/test_ladder.py`, `tests/storage/database/test_writes.py` and `tests/support/storage_contract.py`; the state line of story K5 in `context/standards/roadmap.md`.
+
+Out, each with where it belongs:
+
+- The in-doubt commit and the source's "verify without a key" column: [177-2](../2026-11-25-a-commit-whose-connection-drops-answers-in-doubt/spec.md).
+- The stored answer, the `vfs.replayed` record and the request key: [177-3](../2026-11-25-a-keyed-call-stores-its-answer-with-its-change-and-a-resend-gets-it-back/spec.md) and [177-4](../2026-11-25-request-key-is-an-argument-of-every-keyed-verb-at-the-router/spec.md).
+- `idempotentHint` and the tool descriptions that read `IDEMPOTENT_OPS`: [171-1](../2026-11-25-the-wire-adapter-projects-a-result-to-mcp-blocks-within-budget/spec.md).
+- `vid` in the record and the `if_vid` forms: the vid series on its four branches.
+- The `destroy` row, and what a write at a deleted path answers: the deletes spec on `origin/a-deleted-row-gives-up-its-path`.
+- The `replace=True` forms: [167-7](../2026-11-25-move-and-copy-take-replace-and-a-move-keeps-the-moved-file/spec.md).
+- `entry_id` on rows: [181-2](../2026-11-25-every-row-reports-the-entrys-permanent-id-and-its-owner/spec.md).
+- A chunked transfer ladder: no unit; Left as it is.
+
+## What the docs must say
+
+- `ErrorKind`'s docstring, under "Per-kind `data` records": `exists` from a create, a copy, a move, a restore or a strict `mkdir` may carry the `entry_id`, `kind`, `version` and, for a file, `content_hash` of the live row there; `not_found` from a move whose source is gone may carry `dest`, the same record for the live row at the destination `vfs.target` names; `invalid` from an edit may carry `new_present`, when the edit's new text is in the file it found. `scripts/docs.sh check` runs, since this is a docstring the Results page renders.
+- `REPLAY`'s docstring: what a replay is, the three shapes and the rule of decision 2, the removal rule of decision 5, and that a landing which changes an answer changes its row.
+- Story K5 in `context/standards/roadmap.md` gains a state line: criteria 1 and 2 built, with this spec named.
+
+## Not checked
+
+- The Postgres leg was not run. The plan Postgres takes for the probe of decision 11 was not read, and the statement counts of the Tests section are SQLite's alone.
+- The replayed 10,000-pair move was not run; its 20,002 statements today are 2n + 2 measured at 50, 200 and 1,000 pairs.
+- The vid branches and the deletes spec were read, not merged or run against this design; the rebase each needs is reasoned from their texts and from `occupant_exists` on `origin/delete-move-and-restore-require-a-vid`.
+- How the renderer and the shell print an `exists` or `not_found` with the new keys was not run. The shell reads `data["kind"]` only for `wrong_kind` (`src/vfs/shell/host.py:502-504`, `src/vfs/shell/programs.py:951-952`), which was read.
+- Whether the conformance battery's split by kernel operation, drafted as `agents/2026-11-25-the-conformance-battery-is-split-by-kernel-operation-with-no-test-lost/spec.md`, moves the tests at `tests/support/storage_contract.py:394` before this lands.
+
+## Choices to confirm
+
+1. **Does the landed create-only `exists` gain `entry_id` and `kind`?** The rulings and the landed spec do not say. Options: one record at all six sites, or the landed `{version, content_hash}` at the create-only write and the wider record at the four new sites. Side taken: one record, because one constructor keeps every `exists` alike, the vid series then adds its key once, and the change only adds keys. Reversing it removes two keys from one site.
+2. **What is the third shape called?** The source writes `key_only`, after the remedy. Side taken: `applies_twice`, after the fact, because it is true before and after the request key exists, and a host reading the table learns why the hint is withheld. Reversing it is a rename of one literal before the freeze.
+3. **Does a replayed `copy` carry `matches_source`?** The source adds it. Side taken: not at this unit, because the record already holds the copy's hash, the client holds the source's path, and the source's hash is not read today. Adding it later is additive.
+
+## One line
+
+Each of the fifteen write-gated verbs gets a row in a replay table in `ops.py` that a conformance family sends twice on three legs, and every refused replay names the live row it found, by one occupant record, a move's `dest` and an edit's `new_present`, with no statement added to any success path.
