@@ -6,7 +6,8 @@ Run from the repository root, after any spec or review of the conversion is writ
     uv run python agents/2026-11-25-the-backlog-converted/tools/state.py
 
 The page is generated whole from ``tools/units.json`` and from the files on disk, and is
-never edited by hand. A spec counts as written when it holds the template's first section.
+never edited by hand. A spec counts as written when it holds the template's first section,
+and a written spec's title is read from its first line, since a spec may narrow its unit.
 Its review state is the standing verdict of the latest file under its ``reviews/`` folder.
 """
 
@@ -74,11 +75,17 @@ def main() -> int:
     for unit in UNITS:
         bucket, cell = spec_state(unit)
         counts[bucket] += 1
+        spec = Path(unit["dir"]) / "spec.md"
+        title = (
+            spec.read_text().split("\n", 1)[0].removeprefix("# ")
+            if bucket not in ("none", "missing")
+            else unit["title"]
+        )
         holds = (
             unit["dev_holds"] if not unit["spec_owed"] or unit["dev_holds"] else "nothing of it is on `dev`"
         ).replace("|", "\\|")
         rows.append(
-            f"| {unit['key']} | {unit['gate']} | {unit['title'].replace('|', chr(92) + '|')} | {unit['verdict']} | {cell} | {holds[:400]} |"
+            f"| {unit['key']} | {unit['gate']} | {title.replace('|', chr(92) + '|')} | {unit['verdict']} | {cell} | {holds[:400]} |"
         )
     (WORK / "state-on-dev.md").write_text(HEAD.format(dev=dev, **counts) + "\n".join(rows) + "\n")
     sys.stdout.write(", ".join(f"{name} {count}" for name, count in counts.items()) + "\n")
