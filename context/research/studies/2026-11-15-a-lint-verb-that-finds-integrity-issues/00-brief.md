@@ -7,7 +7,8 @@ The brief two researchers received on 2026-11-15, verbatim below the table. The 
 | `00-brief.md` | This brief. |
 | `01-the-llm-wiki-idea-and-how-other-tools-check-themselves.md` | Study 01: the idea the developer named, and prior art for a verb that checks a store's own integrity, read on the web. |
 | `02-what-vfs-could-check-and-what-each-check-costs.md` | Study 02: the invariants vfs holds today, where each can break, and what checking each costs, read in the tree and executed on the in-memory store. |
-| `experiments/` | Study 02's probe scripts and their output. |
+| `03-the-experiments-the-memo-named-run-on-five-engines.md` | Study 03, added on 2026-11-25: the experiments the memo's last section named, run on the in-memory store and on four server engines. It was not sent this brief; its own first paragraph says what it was asked. |
+| `experiments/` | Study 02's probe scripts and their output, `p01` to `p08`, and study 03's, `p09` to `p17`. |
 
 ## The brief
 
