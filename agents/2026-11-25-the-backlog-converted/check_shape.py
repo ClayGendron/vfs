@@ -148,7 +148,7 @@ def _common_faults(path: Path, text: str, prose: list[str]) -> list[str]:
     faults = []
     if not text.startswith("# "):
         faults.append("line one is not a title")
-    for number, line in enumerate(prose, start=1):
+    for line in prose:
         bare = INLINE_CODE_RE.sub("", line)
         if OPEN_RE.search(bare) or re.match(r"^#+\s*open question", bare, re.IGNORECASE):
             faults.append(f"an open question or placeholder word: {line.strip()[:70]}")
@@ -190,7 +190,7 @@ def main(arguments: list[str]) -> int:
         path = Path(name)
         faults = review_faults(path) if path.name.endswith("review.md") else spec_faults(path)
         for fault in faults:
-            print(f"{name}: {fault}")
+            sys.stdout.write(f"{name}: {fault}\n")
         status |= bool(faults)
     return status
 
