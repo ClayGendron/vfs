@@ -198,7 +198,7 @@ In `tests/support/derived_contract.py`, class `DerivedContract`, run on the memo
 - `test_tree_of_a_file_equals_ls_of_it`, at `/t/a/b.txt` for both authorities and at `/t/z.txt` for `bob`, where the row is bare.
 - `test_tree_refusals_equal_ls_refusals`: `/t/nope` for both authorities and `/t/h/secret.txt` for `bob` are `not_found` from both.
 - `test_tree_with_columns_equals_ls_repeated_with_columns`, at `columns={"size_bytes"}`, for both authorities.
-- `test_edit_equals_read_then_a_guarded_write`, parametrized over the rows of decision 7's table, by decision 6's comparison.
+- `test_edit_equals_read_then_a_guarded_write`, parametrized over the rows of decision 7's table, by decision 6's comparison: eighteen rows at their own caller, and seven of them again at the `read_write` holder, the three vid rows (decision 7) and the four text and kind rows (decision 15).
 - `test_the_oracle_refuses_a_rival_write_between_its_read_and_its_write`, by decision 9.
 - `test_below_read_write_the_native_edit_refuses_before_it_reads_the_text`, by decision 15, at a caller who holds `read` on the directory, over four pairs of files: an edit that misses, an edit whose result holds a NUL, a bytes-sourced file and a directory. The native `edit` answers `permission_denied` four times; the oracle answers `invalid`, `invalid`, `wrong_kind` and `wrong_kind`; and a `stat` of each of the eight targets by the system actor returns version 1.
 - `test_the_oracle_answers_unchanged_to_a_rival_that_wrote_the_body_it_carries`, by decision 15: the file holds `alpha`, the oracle is given `alpha`→`beta` and a `between` that writes `beta` as the system actor; the answer is one row, `unchanged`, at version 2 with the vid a `stat` then returns, no error, and a read returns `beta` at version 2.
@@ -211,7 +211,7 @@ In `tests/storage/database/test_rights.py`: `test_tree_lists_what_ls_repeated_li
 
 The partial-view cases are the leak pin of `tree` against `ls`: a row or a field `ls` withholds from `bob` that `tree` returns fails decision 3's comparison. No right changes, so no further leak test is needed.
 
-The Postgres leg runs through the `db_test` skill, on the server CI runs; every row of `DerivedContract` runs there, the two difference rows of decisions 14 and 15 included, so a server engine that answers the road or the refusal order otherwise is seen.
+The Postgres leg runs through the `db_test` skill, on the server CI runs; every row of `DerivedContract` runs there, the three difference rows of decisions 14 and 15 included, so a server engine that answers the road or the refusal order otherwise is seen.
 
 ## Scope
 
@@ -237,18 +237,24 @@ Out:
 ## Not checked
 
 - Nothing was run on the vid branch: it was read with `git show` and never checked out. The `edit` probe ran on `dev` with `if_versions` in place of `if_vids`, so the three vid rows of decision 7 and the vid half of decision 6 rest on the branch's code and its `vid_contract.py` as read.
-- No probe ran on Postgres. The byte order of `é` and `-` there rests on `listings.py:6-8` and the listing spec's legs.
+- No probe ran on Postgres, in either reading, and none on a SQLite file in the second: every run was the in-memory storage. The byte order of `é` and `-` on Postgres rests on `listings.py:6-8` and the listing spec's legs. That Postgres leaves out the same road directory under a depth bound rests on `_subtree` being one builder for both engines (`listings.py:398-412`), READ.
+- The two differences of decision 15 ran on `dev` with `if_versions`. On the vid branch they rest on `settle` (`staging.py:475-503`) and on the order of `writes.py:318` and `:1450`, as read.
+- The rule of decision 14 held on the 480 comparisons run. That it is exact on every world rests on the reading of `tree_rows` (`listings.py:190`, `:205-211`), and no proof beyond those runs was made.
+- Nothing of unit 179-10 is built. Its composed `tree` was run as a prototype of its batched walk over the seam's `ls`, with no snapshot, no cursor and no router; its composed `edit`, `copy`, `glob` and `grep` were compared as texts only.
 - Whether a `stat` on the branch returns the same vid a `write` result row carries, which decision 6 compares; the branch's `vid_contract.py:168` pins one vid from every verb, read and not run.
 - `tree` against `ls` repeated at the kernel across nested mounts, healthy or failing.
-- The seeded test's time at 36 comparisons; the two to three seconds are scaled from the 360-comparison probe.
-- The listing spec's statement counts, three and five, on today's code; the Cost section takes them from its landing notes.
+- The seeded test's time at 36 comparisons inside the suite; the two to three seconds are scaled from the 360-comparison probe, and the second reading's 468 comparisons took 39 seconds with process start.
+- The statement counts of `ls`, three and five, were run on the in-memory storage alone, and the count of an `ls` over several parents for a named caller was run with one grant above them: on the fixed world, where the four directories lie under different grants, the same call was 10 statements.
 
 ## Choices to confirm
 
 1. **Do the kernel's `tree` and `edit` docstrings state the definition?** Taken: no. `src/vfs/base.py` is held at its exact line count by `MODULE_LINE_BASELINE` (3,090 on `dev`, 3,123 on the vid branch, `tests/lint/allowlist.py`), so each sentence forces lines out of the module, and a docstring change runs the docs gate. The definition lives in the oracle module, and the sentences can be added later with nothing to undo. The other side writes spec 181's two sentences.
 2. **One pull request, after the vid landing?** Taken: yes. The `tree` half needs nothing unbuilt and could land now; the two halves share one oracle module and one mixin, and the vid landing is reviewed "lands". Splitting is cheap if the vid series stalls: the `tree` half lands alone with the same tests.
 3. **Is `tree` compared with `ls` repeated at the kernel across mounts?** Taken: no, until the mount-point listing draft lands. That draft names defects in `tree` at a mount point, so the comparison may be red on `dev` for reasons this unit does not fix. The other side adds a kernel-level row over a nested mount now and marks the known divergences.
+4. **At a depth bound, is the road directory `ls` lists a row of `tree`?** Taken: neither verb changes, and the comparison states the difference by an exact rule and one named test (decision 14). It changes nothing a caller gets, and the day one verb is changed the rule and the test are deleted and the plain comparison stands. The other side is the `tree` push-down of the listing spec, changed to list the road, which makes `tree` at depth 1 the rows of `ls` and costs a read past the bound that the shallow tree page spec is written to avoid. The other side is also unit 179-10: its composed `tree` is built from `ls`, cannot tell a road from a directory the caller holds `list` on, and so lists the road the native `tree` leaves out, against that unit's promise of the native rows.
+5. **Does the `edit` oracle answer as the native `edit` where a plain guarded write cannot?** Taken: no. The oracle stays a read, the shared edits and one guarded write, and the two places it answers otherwise are pinned as differences and left out of the parity (decision 15). The other side gives the oracle the native order, rights before the text and a stale vid before an equal body, which needs a storage call that judges without writing; that call is the composition scope of unit 179-10's choice 3, and the vid spec's `write` table would have to give up "`unchanged`, whatever `E` is" for the second. Reversing costs two tests and two rows of the exclusion.
+6. **Who owns the definition of a verb that two specs state?** Taken: this spec owns `tree` and `edit` as compositions, inside the claim of decision 16, and unit 179-10 owns the composed verbs, their guarantees and the definitions of `copy`, `glob` and `grep`. The other side is unit 179-10 owning all five, with these oracles as one fixture among its tests, or this spec writing oracles for all five; either is a move of text and of test support that changes no product code.
 
 ## One line
 
-A readable oracle defines `tree` as `ls` repeated and sorted by path and `edit` as a read, the shared edits and a write that requires the read's vid, and a conformance mixin on every leg, with a seeded test over random grant worlds, holds both push-downs to it at the system actor and at partial views.
+A readable oracle defines `tree` as `ls` repeated and sorted by path and `edit` as a read, the shared edits and a write that requires the read's vid, and a conformance mixin on every leg, with a seeded test over random grant worlds, holds both push-downs to it at the system actor and at partial views, with the three places the composition and the storage answer differently pinned as differences.
