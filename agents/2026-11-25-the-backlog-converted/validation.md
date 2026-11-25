@@ -29,6 +29,10 @@ For 171-1, MCP Python SDK 1.29.0 constructed and round-tripped a `CallToolResult
 
 For 172-1, the published `wasi_python-0.1.0-py3-none-any.whl` downloaded successfully and its SHA-256 was `3bfb0dcc48ce1ce9f4741e142a3a73e865b2028b7468179588d52f418dabfafc`, matching decision 1. Its Python package imported and resolved the snapshot, plain module, standard library and manifest. A cold `run` of a three-element NumPy and pandas sum with no mounts or grants, two billion fuel and a 90-second guest deadline ended at host exit 137 without a guest result. Restricting the host to one CPU and one allocator arena produced the same outcome. The host exit does not establish a guest trap, a stage exit, a working provider adapter or the proposed 21-call budget.
 
+## Layer 7
+
+For 170-4, a local FastMCP server and an initialized ClientSession exchanged messages through MCP Python SDK 1.29.0's in-memory transport. The server advertised one tool, one resource and one prompt. A call to `twice(21)` returned text `42`, structured content `{"result":42}` and `isError=false`. A negative integer rejected by the tool and an invalid string rejected by argument validation each returned a text block with `isError=true` and no structured content. The same session subsequently read the resource and rendered the prompt. This exercised the SDK pathways the proposed VFS import needs. Checking the resulting rows, exit codes and authorization awaits the adapter.
+
 ## Gate preflight
 
 The docs gate (`scripts/docs.sh check`) passed on the work checkout, including 20 Chromium layout tests with the repository-pinned Chrome for Testing 156.0.8078.4. An initial run lacked the browser executable. Installing the checksum-verified pinned headless shell resolved that setup failure.
