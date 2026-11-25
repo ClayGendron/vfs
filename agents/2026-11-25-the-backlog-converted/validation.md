@@ -33,6 +33,10 @@ For 172-1, the published `wasi_python-0.1.0-py3-none-any.whl` downloaded success
 
 For 170-4, a local FastMCP server and an initialized ClientSession exchanged messages through MCP Python SDK 1.29.0's in-memory transport. The server advertised one tool, one resource and one prompt. A call to `twice(21)` returned text `42`, structured content `{"result":42}` and `isError=false`. A negative integer rejected by the tool and an invalid string rejected by argument validation each returned a text block with `isError=true` and no structured content. The same session subsequently read the resource and rendered the prompt. This exercised the SDK pathways the proposed VFS import needs. Checking the resulting rows, exit codes and authorization awaits the adapter.
 
+## Layer 8
+
+For 170-5, two independent MCP Python SDK 1.29.0 streamable HTTP clients called the same FastMCP server through a local HTTPX ASGI transport. Each client supplied a distinct synthetic bearer marker. The server assigned two different session IDs. Every observed request carrying a session ID, including teardown, carried only its own marker. The tool returned `ok` for both calls. Neither serialized result nor the corresponding HTTPX headers representation contained its marker. A custom environment variable holding a fixture credential was absent from the SDK's default stdio child environment. These observations cover the SDK and the constant-output fixture. The VFS resolver, pool, stored rows and action-log redaction remain acceptance checks for the proposed implementation.
+
 ## Gate preflight
 
 The docs gate (`scripts/docs.sh check`) passed on the work checkout, including 20 Chromium layout tests with the repository-pinned Chrome for Testing 156.0.8078.4. An initial run lacked the browser executable. Installing the checksum-verified pinned headless shell resolved that setup failure.
