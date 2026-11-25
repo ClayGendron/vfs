@@ -1,282 +1,121 @@
-# Binding a `VirtualFileSystem` or `AsyncVirtualFileSystem` as storage raises a `TypeError` that says a router is not a storage, and a write through `..` into a read-only sibling mount is refused at the sibling's path
+# Mounting a `VirtualFileSystem` or `AsyncVirtualFileSystem` as storage raises a `TypeError` that says a kernel is not a storage, and a write through `..` into a read-only sibling mount is refused at the sibling's path
 
-A fix, converted by amendment from [spec 156](../../context/specifications/archive/156-mount-admission/spec.md): its Decided semantics items 3 and 4, both slices. Flags. It changes the public API: three intakes on each face refuse an argument the kernel admits today, `add_mount` judges its storage before it reads a name or makes a directory, and both faces gain a base class that is exported from nowhere and shows on their reference pages. It changes two docstrings and the README, so the docs gate runs. It touches no rights rule: it adds two tests of a gate that already holds, and each counts the calls that reached the read-only mount, which is the leak test. It is not structural (no module is added or removed), changes no schema format, needs no engine legs (no storage code changes) and touches no Rust. It is parallel-safe except with a unit that edits `AsyncVirtualFileSystem.__init__`, `bind` or `add_mount`, the class statement of either face, or the Known limits list of the README; [the cross-mount copy](../2026-11-25-a-cross-mount-file-copy-is-a-read-on-one-mount-and-a-write-on-the-other/spec.md) edits another bullet of that list (INFERRED from its title). No roadmap story names this change and its gate is unplaced; decision 1 places it at gate b, ahead of the re-check story R5 runs at the first beta. R5 has no spec and reads this unit's result; its acceptance line 7 is "Every README and docs claim is re-checked against ADR 058 pin 7 at b1." ([the roadmap](../../context/standards/roadmap.md), line 947). The spec stands on [the study of the source](../2026-11-25-the-backlog-converted/studies/051-162/156-mount-admission.md), on [the integration memo](../../context/research/2026-10-08-smartowl-workspace-integration-issues.md) (item 17 at line 144, the missed crash at line 234) and on the probes run for this draft. It depends on no spec that is not landed. It builds on three landed specs: [the sync facade](../../context/specifications/archive/2026-11-06-the-sync-facade.md) and [the two faces named](../../context/specifications/archive/2026-11-06-the-two-faces-named.md), which made `VirtualFileSystem` the synchronous face and `AsyncVirtualFileSystem` the kernel, and [the docs tell the truth](../../context/specifications/archive/153-docs-tell-the-truth-about-v2/spec.md), which wrote the README bullet this spec makes true. Build order: nothing precedes it, and it lands before R5's re-check. No choice waits on a ruling. Decisions 1 and 6 are provisional.
+A draft, written on 2026-11-25 and checked against `dev` at `27f3d24d`. It is not reviewed, and nothing is built. It is unit 156-1 of [the backlog conversion](../2026-11-25-the-backlog-converted/units.md), converted from [spec 156](../../context/specifications/archive/156-mount-admission/spec.md) (its Decided semantics items 3 and 4) by way of [the study of the source](../2026-11-25-the-backlog-converted/studies/051-162/156-mount-admission.md) and [the reassessment against dev](../2026-11-25-the-backlog-converted/reassessment/bodies-and-mounts.md), and it replaces the draft of this directory written at `0ed462f`. No roadmap story names it and its gate is unplaced; it is taken at gate b, ahead of the README re-check of story R5 (criterion 7, `context/standards/roadmap.md:1062`), as choice 1 says. It rests on the single admission check `dev` already has, and on nothing unbuilt. The unit's title in the map says "binding" and "router"; on `dev` the method is `add_mount` and the noun is "kernel", so the title here says both words as `dev` does (decisions 2 and 6).
+
+## The outcome wanted
+
+A host that hands either face of the kernel, or a subclass of either, to `AsyncVirtualFileSystem(storage=...)`, `VirtualFileSystem(storage=...)` or `add_mount` on either face gets a `TypeError` at that call, whose message names the argument's class and says it is a kernel, not a storage. Nothing has happened by then: no storage is asked anything, no mount-point directory is made, the mount table is unchanged, and a refused `VirtualFileSystem(...)` starts no loop thread. The `glob` crash that an admitted kernel brings to every root-wide `glob` cannot be reached. The README's sentence that neither face can be mounted is true and points at no spec. Two router-level tests show that a write through `..` is judged by the mount its canonical path lies in: refused `read_only` at `/course/x.md`, with no call reaching either storage, when that mount is read-only, and dispatched once to the writable sibling when the `..` leads out of the read-only one.
+
+## Builds on
+
+- Commits `f34c4ebf` and `31adfbd2` on `dev` (2026-11-17, "one public Mount class, and the mount methods are a verb then the noun"), built with no work directory. They removed the public `bind` (pinned gone by `tests/base/test_mount_admin.py:84-89`) and gave the structural check one home, `require_storage` (`src/vfs/mounts.py:140-148`), called from `AsyncVirtualFileSystem.__init__` (`src/vfs/base.py:303`), `add_mount` (`src/vfs/base.py:400`) and the private `_attach_mount` (`src/vfs/base.py:710`). `add_mount` already calls it before it reads `storage.name` and before the mount-point `mkdir` (`src/vfs/base.py:400-413`), and a test pins that a refused non-storage leaves no directory (`tests/base/test_mounts.py:400-405`).
+- [The sync facade](../../context/specifications/archive/2026-11-06-the-sync-facade.md) and [the two faces named](../../context/specifications/archive/2026-11-06-the-two-faces-named.md), landed: `VirtualFileSystem` builds its kernel before it starts its thread, so a refused constructor argument "raises the router's own error with no thread left behind" (`src/vfs/sync.py:120-135`), and a management method's exception "is raised unchanged" (`src/vfs/sync.py:16-17`).
+- The glossary's entry for the kernel, which already states the rule: "A kernel never holds another kernel, and two file trees are joined only through a storage." (`documentation/reference/glossary.md:69`).
+- The layer ladder, which places `vfs.mounts` below both `vfs.base` and `vfs.sync` (`tests/lint/test_code_shape.py:46-70`).
+- Nothing unbuilt. No open branch of origin touches `require_storage`, either class statement or the imports of `src/vfs/sync.py` (EXECUTED: `require_storage` is unchanged on `origin/the-kernel-writes-records-behind-and-sweeps-them`, `origin/a-deleted-row-gives-up-its-path`, `origin/delete-move-and-restore-require-a-vid`, `origin/edit-requires-a-vid` and `origin/a-call-is-interrupted-and-the-host-asks`, and their `sync.py` diffs add no class or import line). The work can be built at any point.
+
+## Terms
+
+- **Face**: one of the two classes a host holds the kernel through, `AsyncVirtualFileSystem` (calls that are awaited) and `VirtualFileSystem` (plain calls).
+- **Intake**: a call that takes a storage to mount: the constructor's `storage=`, `add_mount`, and the private `_attach_mount` beneath `add_mount`.
+- **Marker**: a class with no members that both faces inherit, so that `isinstance` can name a face from a module that cannot import either face.
+
+## What the code does today
+
+All EXECUTED by a scratch probe through the installed package on the tree at `27f3d24d`, except where marked READ.
+
+- `isinstance(AsyncVirtualFileSystem(), StorageBackend)` is `True`, and `isinstance(VirtualFileSystem(), StorageBackend)` is `False`. READ: `StorageBackend` is a runtime-checkable protocol of the read verbs plus `name`, `description` and `capabilities()` (`src/vfs/storage/protocol.py:493-510`), and `VirtualFileSystem` declares `__slots__` with no `name` (`src/vfs/sync.py:97`).
+- `AsyncVirtualFileSystem(storage=AsyncVirtualFileSystem())` and `AsyncVirtualFileSystem(storage=RecorderFS())` are accepted. `add_mount(AsyncVirtualFileSystem(), "/n")` and `add_mount(RecorderFS(), "/sub")` succeed, and on a root `BindableStorage` the first records `holds`, `mkdir`, `stat` and `ls`. `VirtualFileSystem(storage=BindableStorage()).add_mount(AsyncVirtualFileSystem(), "/n")` succeeds too.
+- After that mount, `glob("/n/**")` and `glob("**/*.md")` from the root raise `TypeError: AsyncVirtualFileSystem.glob() got an unexpected keyword argument 'patterns'. Did you mean 'pattern'?`. READ: the storage seam's `glob` takes `patterns: tuple[str, ...]` (`src/vfs/storage/protocol.py:300-303`) and the kernel's takes `pattern: str` (`src/vfs/base.py:1297-1299`).
+- A `VirtualFileSystem` handed to either face's constructor or `add_mount`, with or without a path, raises `TypeError: storage must implement the read family (see vfs.storage), got VirtualFileSystem`, which says the wrong thing: it has every read verb. `add_mount(AsyncVirtualFileSystem())` with no path raises `ValueError: add_mount needs a path or a named storage`.
+- With a `RecorderStorage` at `/mine` and another at `/course` mounted `permissions="read"`, `write(path="/mine/../course/x.md", content="x")` answers one `vfs.read_only` error at `/course/x.md` and neither storage records a call; the batch form `write(entries=[Entry(path="/mine/../course/y.md", content="y")])` answers the same at `/course/y.md`. `write(path="/course/../mine/x.md", content="x")` succeeds with exactly one `write` on the storage at `/mine`, whose one entry has the local path `/x.md`, and none on the other. READ: the canonical path comes from `normalize_path`, which pops the parent on `..` (`src/vfs/paths.py:540-543`); its pins are unit-level (`tests/test_paths.py:86`, `:102`) and in `locate` (`tests/base/test_mount_admin.py:583`). No test writes through `..` into a sibling mount (EXECUTED, grep of `tests/` for `/../` paths).
+- READ: `README.md:141` says "Neither face is a storage and neither can be mounted." and links `context/specifications/active/156-mount-admission/spec.md`, which does not exist: the folder is under `context/specifications/archive/` (EXECUTED, ls).
 
 ## The problem
 
-Labels: READ means read in the file cited at `5b20fd4f`; EXECUTED means a command ran and the claim reports its output; INFERRED means reasoning. The probes are scratch scripts run with `uv run python` against the tree at `5b20fd4f`, the commit `git rev-parse --short=8 HEAD` prints. The study ran at `0ed462f`; `git diff --stat 0ed462f 5b20fd4f -- src tests README.md crates` lists one file, `tests/lint/allowlist.py` (EXECUTED), so the study's facts were re-run and hold.
-
-**The kernel passes for a storage.** READ. Mount admission is one structural check, `isinstance(storage, StorageBackend)`, written twice: in `AsyncVirtualFileSystem.__init__` (`src/vfs/base.py:379-381`) and in `bind` (`src/vfs/base.py:441-443`). `add_mount` reaches it only by calling `bind` (`base.py:554`), after it has read `storage.name` (`base.py:539`) and made the mount-point directory (`base.py:547`). `StorageBackend` is a `@runtime_checkable` protocol: the read family's method names plus `name`, `description` and `capabilities()` (`src/vfs/storage/protocol.py:440-458`). The kernel has every one of those names (`base.py:387-389`, `base.py:799`). EXECUTED. `isinstance(AsyncVirtualFileSystem(), StorageBackend)` is `True`.
-
-**A mounted kernel breaks `glob` for the whole namespace.** EXECUTED. `add_mount(AsyncVirtualFileSystem(), "/n")` succeeds. So do `bind` of a kernel over an existing directory, `AsyncVirtualFileSystem(storage=AsyncVirtualFileSystem())`, `VirtualFileSystem(storage=AsyncVirtualFileSystem())`, `VirtualFileSystem().add_mount(AsyncVirtualFileSystem(), "/k")` and `add_mount(RecorderFS(), "/sub")`, where `RecorderFS` is a subclass of the kernel. Through the mount, `write`, `read`, `stat`, `ls`, `tree`, `grep` and `search` answer without an error. `glob("/n/**")` and `glob("**/*.md")` from the root each raise `TypeError: AsyncVirtualFileSystem.glob() got an unexpected keyword argument 'patterns'. Did you mean 'pattern'?`. READ. The storage seam's `glob` takes `patterns: tuple[str, ...]` (`protocol.py:277-280`) and the kernel's verb takes `pattern: str` (`base.py:1265-1267`). One mounted kernel therefore makes every root-wide `glob` raise, and the constitution forbids the shape: "Partial or silent implementations are forbidden" (`context/standards/constitution.md:110`).
-
-**The synchronous face is refused in words that mislead, and after a directory is made.** EXECUTED. `isinstance(VirtualFileSystem(), StorageBackend)` is `False`. READ. Its `__slots__` hold no `name` and no `description` (`src/vfs/sync.py:97`), two members the protocol requires. EXECUTED. Every intake on either face refuses it with `TypeError: storage must implement the read family (see vfs.storage), got VirtualFileSystem`, although it has every read verb. `AsyncVirtualFileSystem().add_mount(VirtualFileSystem(), "/o")` raises that error and leaves `/o` behind: `stat("/o")` succeeds afterwards. Any non-storage does the same: `add_mount(object(), "/x")` leaves `/x`, and `add_mount` of an `AsyncSession` leaves its directory. With no path, `add_mount(VirtualFileSystem())` raises `AttributeError: 'VirtualFileSystem' object has no attribute 'name'`, `add_mount(object())` raises `AttributeError`, and `add_mount(AsyncVirtualFileSystem())` raises `ValueError: add_mount needs a path or a named storage`. READ. A rejected `deny_ops` mask is already refused ahead of the mkdir, under the comment "a rejected mask must not mint the site" (`base.py:544-545`), and a test counts zero `mkdir` calls for it (`tests/base/test_mount_admin.py:402-420`).
-
-**No check names a router, and no adapter exists.** EXECUTED. A grep of `src/vfs` for `isinstance(storage` finds the two structural lines and the tests of the protocol families, and nothing that names a face. A grep of `src`, `tests` outside the fixture corpora, `documentation` and the README for "router, not a storage" and "node adapter" finds nothing.
-
-**The README states the refusal as fact and points at a file that moved.** READ. `README.md:141` says "Neither face is a storage and neither can be mounted." and that spec 156 "makes the refusal explicit", with a link to `context/specifications/active/156-mount-admission/spec.md`. The first sentence is false for the kernel (the probes above). EXECUTED. The link's target does not exist: the folder is under `context/specifications/archive/`.
-
-**The `..` gate holds and no router test says so.** EXECUTED. With a `RecorderStorage` at `/mine` and another at `/course` mounted `permissions="read"`, `write(path="/mine/../course/x.md", content="x")` answers one `vfs.read_only` error whose `path` is `/course/x.md`, and neither storage records a call. `write(path="/course/../mine/x.md", content="x")` succeeds with exactly one `write` dispatched to the storage at `/mine`, at the local path `/x.md`, and none to the other. READ. The pins are below the router: `normalize_path` (`tests/test_paths.py:83-84`, `:99-103`) and `locate` (`tests/base/test_mount_admin.py:540`). EXECUTED. A grep of `tests/` for a `/../` path finds, outside `tests/test_paths.py`, the skill and model validators and one payload fixture, that `locate` line and no mutating verb.
-
-**The law is held twice, which decides what the new test can prove.** READ. `write` gates its path (`base.py:1009`), and the `Entry` it then builds canonicalizes the path again (`base.py:323-339`). EXECUTED. A scratch process that made the router's gate hand back the path as typed left both answers above unchanged. A scratch process that made `normalize_path` drop a `..` segment without popping its parent (`src/vfs/paths.py:505-508`) flipped both: the first write succeeded with one call on the storage at `/mine`, and the second was refused `vfs.read_only` at `/course/mine/x.md`.
-
-## Architecture
-
-```mermaid
-flowchart TD
-    CALLER["a host: an agent runtime or a pipeline"]
-    subgraph SYNC["src/vfs/sync.py"]
-        SFACE["VirtualFileSystem: __init__, bind, add_mount forward to the kernel"]
-    end
-    subgraph BASE["src/vfs/base.py"]
-        MARK["RouterFace: marker base of both faces"]:::planned
-        KINIT["AsyncVirtualFileSystem.__init__ storage"]
-        KBIND["bind"]
-        KADD["add_mount"]
-        ADMIT["_admit_storage: a router refused, then a non-storage"]:::planned
-        INLINE["inline read-family check, two copies"]:::retiring
-        NAME["read storage.name"]
-        MKDIR["mount-point mkdir"]
-        TABLE["mount table"]
-        FUNNEL["write: canonical path, deepest binding, permission gate"]
-    end
-    subgraph TESTS["tests"]
-        TM["tests/base/test_mounts.py: a router refused at every intake"]:::planned
-        TS["tests/test_sync.py: the facade refuses the same way"]:::planned
-        TG["tests/base/test_gates.py: a dot-dot write meets the sibling's gate"]:::planned
-        TL["tests/lint/test_code_shape.py: the README bullet"]:::planned
-    end
-    README["README.md Known limits: the pointer to spec 156"]:::retiring
-    CALLER --> SFACE
-    CALLER --> KINIT
-    CALLER --> KBIND
-    CALLER --> KADD
-    SFACE --> KINIT
-    SFACE --> KBIND
-    SFACE --> KADD
-    SFACE -. inherits .-> MARK
-    KINIT --> ADMIT
-    KBIND --> ADMIT
-    KADD --> ADMIT
-    KINIT -.-> INLINE
-    KBIND -.-> INLINE
-    ADMIT --> MARK
-    KADD --> NAME --> MKDIR --> KBIND
-    KBIND --> TABLE
-    CALLER --> FUNNEL --> TABLE
-    TM --> ADMIT
-    TS --> SFACE
-    TG --> FUNNEL
-    TL --> README
-    classDef planned stroke-dasharray: 6 4
-    classDef retiring stroke-dasharray: 2 3
-```
-
-Terms. A **face** is one of the two classes a host holds a namespace through: the kernel `AsyncVirtualFileSystem` and the synchronous `VirtualFileSystem`. A **router** is what a face is: the object that owns a mount table and sends each path to the storage bound deepest at or above it. An **intake** is a call that accepts a storage: `__init__(storage=)`, `bind` and `add_mount`. **Admission** is the check an intake runs on that argument before it does anything else.
+The kernel passes the structural check because it has every member name the storage protocol requires, but not their parameters. Once mounted it answers `read` and `write` and then breaks `glob` for the whole namespace, so one mistaken `add_mount` in a host's start-up turns every root-wide `glob` into a raised `TypeError`. The constitution forbids the shape: "Partial or silent implementations are forbidden." (`context/standards/constitution.md:110`). The synchronous face is refused, but in words that tell the host to implement a read family it already has. The README states the refusal as fact, which R5's criterion 7 will find false at the first beta. At the reference deployment's 150,000 verb calls a day, a `glob` is one of the three in four calls that are reads, so a crash on it is not rare. Separately, the rule that a `..` path meets the gate of the mount it resolves to holds, but nothing at the router says so: a change to the gate that judged the path as typed would pass every router test.
 
 ## Decisions
 
-### 1. The change lands at gate b, before story R5's re-check of the README.
+1. **A kernel handed over as a storage is refused, and no adapter is built.** An adapter that serves a kernel's verbs under the storage protocol's names would make nesting possible, but none exists, and the roadmap's cut list defers "reference adapters for host frameworks" to 0.2 or later (`context/standards/roadmap.md:1196`). Until one exists an admitted kernel is a storage that cannot answer a call it declares. Precedent: `context/standards/constitution.md:110`; the glossary's rule at `documentation/reference/glossary.md:69`; the study's verified lean for the source's item 4. Dev's specs that plan for nesting plan a storage that wraps a kernel, never a bare kernel (`agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/spec.md:240-242`).
+2. **The refusal is the first test inside `require_storage`, so every intake on both faces carries it.** `require_storage` is already the one check behind `__init__(storage=)`, `add_mount` and `_attach_mount` (`src/vfs/base.py:303`, `:400`, `:710`), and the facade forwards its constructor and `add_mount` to the kernel's (`src/vfs/sync.py:120-135`, `:194-219`). No call site in `src/vfs/base.py` or `src/vfs/sync.py` gains a check. This replaces the source draft's decisions 4 and 8, which named `bind` and a new `_admit_storage`; both are moot on `dev`. `VirtualFileSystem.wrap` takes the kernel a facade serves, not a storage, and is unchanged.
+3. **The check is nominal: `isinstance(storage, Kernel)`, where `Kernel` is a marker that both faces inherit, and it refuses subclasses.** `src/vfs/mounts.py` imports nothing of `vfs.base` or `vfs.sync` (`src/vfs/mounts.py:17-29`), and `vfs.sync` imports `vfs.base` at run time (`src/vfs/sync.py:33`), so `require_storage` cannot name either face without an import cycle, which AGENTS.md's Imports rule forbids papering over. A marker defined in `vfs.mounts` is reachable from both faces down the ladder. A subclass of a face is still a kernel; the source's one line is "a mount is a storage". EXECUTED: a syntax-tree scan of `tests/`, `src/` and `scripts/` (fixture corpora left out) finds the ten kernel classes (the two faces and eight doubles in `tests/support/base_doubles.py`) and 819 places a storage is handed to an intake, and none hands over a kernel class bound in the same function; the scan does not follow a name that arrives as a parameter or fixture, so a test the new check refuses is changed to mount the storage its double holds.
+4. **`Kernel` lives in `src/vfs/mounts.py`, declares `__slots__ = ()`, holds no member and is exported from nowhere.** It sits in the group "The checks a mount change passes", directly above `require_storage`, because a type bound to one group lives beside its user (AGENTS.md, File organization). The module docstring's list of what it holds gains the marker. Empty slots keep `VirtualFileSystem` free of a `__dict__`, which a slotted class gains when it inherits a class without slots. It is not added to `vfs.__all__`: it is a mechanism of admission, and `require_storage` and the other checks beside it are not exported either. The docs export records a class's bases (`scripts/docs_export.py:627`) and the reference page prints them (`docs-app/src/lib/docs/ApiBlock.svelte:42-43`), so both faces' pages gain "Bases: `Kernel`"; that is the visible cost, and a base is not a signature, so the export's reachability rule (`scripts/docs_export.py:539-548`) does not apply to it. The name and the home are choices 2 and 3.
+5. **The class statements become `class AsyncVirtualFileSystem(Kernel):` and `class VirtualFileSystem(Kernel):`.** `src/vfs/base.py` adds `Kernel` to its existing `from vfs.mounts import (...)` list (`src/vfs/base.py:69-89`). `src/vfs/sync.py` gains a run-time `from vfs.mounts import Kernel` among its imports, beside the `vfs.mounts` names it already imports under `TYPE_CHECKING` (`src/vfs/sync.py:47`).
+6. **The refusal raises `TypeError` with the text `"{name} is a kernel, not a storage; mount its storages instead (see vfs.storage)"`, where `name` is `type(storage).__name__`.** A wrong argument type at a management call is the caller's programming error; every intake returns `None` or a kernel and raises for a bad argument, and the structural refusal beside it already raises `TypeError` (`src/vfs/mounts.py:142-144`). The noun is "kernel" because one concept has one noun (`documentation/maintainers/how-we-name.md`, Nouns) and the glossary's term is the kernel (`documentation/reference/glossary.md:65-71`); this departs from the source and the unit title, which say "router", and from the source's "wrap it in the node adapter", which names an adapter that does not exist. The class is named as itself, so a subclass reads as its own name. Precedent: the structural message at `src/vfs/mounts.py:143`, which names the class and points at `vfs.storage`.
+7. **The kernel test runs before the structural test.** The asynchronous face passes the structural test, so only an earlier test can refuse it; the synchronous face fails it, so only an earlier test gives it the right words. The two structural messages stay to the letter. An `AsyncSession` or a `Session` is not a `Kernel` and keeps the read-family refusal: a session holds no mount table.
+8. **The `..` rule is pinned at the router by two tests, and nothing in `src/` changes for it.** The behaviour holds today, so the tests pass on their first run; this is a pin of landed behaviour, said plainly, and its red is shown by the mutation of decision 9. One test writes into the read-only sibling, in the single and the batch form, and counts zero calls on both storages; it is the leak test, because it proves no byte reached the read-only mount. The other writes out of the read-only mount into the writable one and counts exactly one `write` at `/x.md`, because a test that only asserts a refusal still passes under a gate that refuses too much. Precedent: the neighbouring gate tests, which assert `child.calls == []` (`tests/base/test_gates.py:221-229`).
+9. **Each new test's docstring names the mutation it kills, and no row is added to the mutant ledger.** The testing standard asks that a pin record the mutation it guards (`context/standards/testing.md:50-53`). The mutations are: the kernel branch deleted from `require_storage`; the kernel branch moved after the structural branch; `VirtualFileSystem` no longer inheriting `Kernel`; `__slots__ = ()` removed from `Kernel`; the message built from a fixed class name; `resolved.pop()` deleted from `normalize_path` (`src/vfs/paths.py:541-542`). Each is applied under AGENTS.md's safe-restore rule during the build. The ledger holds bugs that once survived the whole suite (`context/standards/mutant-ledger.md:3`), and none of these did.
+10. **The README bullet and three docstrings state the refusal, and the dead link goes.** The Known limits bullet at `README.md:141` becomes: `**Neither face is a storage and neither can be mounted.** add_mount and storage= take a storage backend, and either face handed to them raises a TypeError; mount the storages a kernel holds instead.`, with the names in code spans. The class docstring's sentence at `src/vfs/base.py:266` reads "A ``storage`` that cannot be read or is a kernel, or a reranker with no ``rerank`` method, raises ``TypeError``."; `add_mount`'s at `src/vfs/base.py:396` reads "``TypeError`` when ``storage`` cannot be read or is a kernel, before anything is made."; `require_storage`'s summary names the kernel. No docstring names a spec. A lint test holds the README sentence.
+11. **`src/vfs/base.py`'s size entry is set to its exact new count in the same commit.** The module is held at exactly 3,090 lines (`tests/lint/allowlist.py:28`, the same on `dev`), and the import name and the two docstring words add one to three lines; the review closes "Size: allowlist changed". Precedent: landings that raised the same entry by their own lines, `cdf37046` (+2) and `f36595fe` (+6). `src/vfs/mounts.py` (568 lines) and `src/vfs/sync.py` (759) stay under the 1,000-line ceiling.
+12. **Each test lives beside its neighbours.** The kernel's admission tests go in `tests/base/test_mounts.py`, beside `test_init_rejects_backend_missing_the_read_family` (`:85`) and `test_add_mount_rejects_non_storage_backend` (`:400`), and the private step's beside the other `_attach_mount` tests (`:139-152`). The facade's go in `tests/test_sync.py` after `test_the_management_twins_drive_the_mount_tree` (`:519`), using its `_loop_threads()` helper (`:75-76`). The `..` tests go in `tests/base/test_gates.py` after `test_writable_mount_dispatches_every_mutation_once` (`:233`). The README's goes in `tests/lint/test_code_shape.py` after `test_the_readme_tells_the_truth_after_the_yank` (`:333`).
 
-The roadmap places this change nowhere. The README already states the refusal as fact, R5's seventh criterion re-checks every README claim at the first beta, and R5's fifth criterion writes the beta rule as "no rename, no removal, no change of meaning" (`context/standards/roadmap.md:945`). Before the freeze, refusing an argument that is admitted today is an ordinary pre-release change and can be withdrawn freely. After it, the same refusal changes the meaning of a frozen method. The change is a few lines and waits on nothing.
+## Cost
 
-Basis: provisional, no ruling on record; the options were gate b ahead of R5's re-check, a landing after the freeze with R5 rewriting the README bullet to say that a kernel is admitted and then fails `glob`, and 0.2 beside an adapter; chosen because a refusal added before the freeze is the cheapest of the three to reverse and the only one that leaves the published README sentence true at the first beta.
+Nothing rides a verb call, a file write, an index visit, a batch or the corpus: the verb funnel, the write path and the index passes are not edited, and no statement, row, table, column or lock is added, so no `membership_budget` or `chunked` budget is drawn on and no engine floor applies.
 
-### 2. A router handed over as a storage is refused, and no adapter is built.
+- **Per mount added.** `require_storage` gains one `isinstance` against a plain class. A process that builds one kernel and adds M mounts runs it 2M + 1 times (the constructor once, `add_mount` and `_attach_mount` once each per mount): 201 calls at 100 mounts, at a process start or an operator's act. Constant work, no loop over input.
+- **Per lock.** The check runs before `_mount_lock` is taken and awaits nothing, so no caller waits on it. A refused `add_mount` of a kernel issues zero storage calls, where today it issues four on the root (`holds`, `mkdir`, `stat`, `ls`) and binds.
+- **In memory.** `Kernel` holds no state, and its empty slots add no field to an instance.
 
-The alternative was an adapter that serves a router's verbs under the storage protocol's names (`patterns=` for `pattern`, and the rest). No such adapter exists, the roadmap's cut list defers "reference adapters for host frameworks" to 0.2 or later (`context/standards/roadmap.md:1059`), and until one exists an admitted kernel is a storage that cannot answer a call it declared. Refusing makes the README's sentence true. Nesting stays what it is today: deeper bindings in one table (`README.md:62`).
+## Left as it is
 
-Basis: verified lean, the marker in the source's item 4 (refuse now, an adapter as a spec of its own); precedent: `context/standards/constitution.md:110`, which forbids a partial implementation of a declared capability, and the landed structural refusals at `src/vfs/base.py:379-381` and `:441-443`.
+- `require_storage`'s structural branch and its callable-members branch (`src/vfs/mounts.py:142-148`), with their messages, and their tests (`tests/base/test_mounts.py:85`, `:400`; `tests/base/test_mount_admin.py:437`).
+- `normalize_path`, `resolve_path` and the permission gate: read and pinned, not edited.
+- The facade's three lifecycle refusals ahead of each forward: a closed facade handed a kernel still raises its closed `RuntimeError`, as it does for any argument.
 
-### 3. The refusal is a `TypeError` raised by the call, never a `Result` row.
+## Tests
 
-The intakes are a constructor and two mount-administration methods. None of them returns a `Result`: `bind` and `add_mount` return `None` and are listed apart from the ops (`src/vfs/ops.py:106-111`), and the facade says a management method "raises by contract" (`src/vfs/sync.py:66-67`). A wrong argument type is the caller's programming error, and the check beside it already raises `TypeError`.
+Written first. The admission tests are seen red before the code; the `..` tests pass on their first run and are seen red under the mutation of decision 9. Counts and states, never clocks. An argument factory builds the argument under one of three ids: `async` (`AsyncVirtualFileSystem()`), `sync` (`VirtualFileSystem()`, closed in the test's `finally`) and `subclass` (`RecorderFS()`). Where a test counts storage calls, the receiver is built over a `BindableStorage` whose `calls` are cleared after construction.
 
-Basis: the source spec, Decided semantics item 4; still true at `5b20fd4f` (READ, the two structural refusals raise `TypeError` at `src/vfs/base.py:381` and `:443`).
-
-### 4. The refusal covers `__init__(storage=)`, `bind` and `add_mount`, on both faces.
-
-The source named `add_mount` and `__init__`. `bind` is the public primitive that holds the landed check, and `add_mount` only reaches it by calling `bind`, so the three are one rule. The synchronous face has the same three intakes and forwards each to the kernel (`src/vfs/sync.py:116-129`, `:188-207`, `:212-233`), so the kernel's refusal is the facade's. `VirtualFileSystem.wrap` is not an intake: it takes the kernel a facade will serve, not a storage (`src/vfs/sync.py:131-142`), and is unchanged.
-
-Basis: verified lean, the study's amendment that `bind` joins `add_mount` and `__init__`; precedent: `src/vfs/base.py:441` and `:554`, where the landed check sits in `bind` and `add_mount` reaches it by calling `bind`.
-
-### 5. The check is nominal and takes in subclasses.
-
-A router is recognized by what it is, with `isinstance`, not by which methods it has. A subclass of either face is a router too and is refused: the one-line rule of the source is "a mount is a storage", and a subclass of a router is not one. The tree holds eight test doubles that subclass the kernel (`tests/support/base_doubles.py:275`, `:343`, `:416`, `:428`, `:509`, `:525`, `:540`, `:560`). EXECUTED: a syntax-tree scan of `tests`, `src` and `scripts` finds 492 places where a storage is handed over and none where the name handed over was bound from a face or from one of those doubles in the same file. INFERRED: no existing test goes red; the scan does not trace a name that arrives as a parameter or a fixture, so a test the gate finds mounting a double is changed to mount the storage that double holds.
-
-Basis: verified lean, the study's choice of `isinstance` over an exact-class test; precedent: the archived spec's item 4, which writes the check as `isinstance(storage, VirtualFileSystem)`.
-
-### 6. Both faces inherit one marker class, `RouterFace`, and the kernel alone holds the check.
-
-`src/vfs/base.py` cannot import `VirtualFileSystem`: `src/vfs/sync.py` imports `vfs.base` at run time (`sync.py:33`), and AGENTS.md forbids an import placed mid-file to dodge a cycle. The kernel still has to recognize the synchronous face, because the plain name is the one a host reaches for and `AsyncVirtualFileSystem().add_mount(VirtualFileSystem(), "/n")` is one of the calls the title covers. So `base.py` defines a class with no behaviour, `RouterFace`; `AsyncVirtualFileSystem` inherits it; `sync.py` imports it beside `AsyncVirtualFileSystem` and `VirtualFileSystem` inherits it; and admission tests `isinstance(storage, RouterFace)`. One check in one place then covers both receivers, all three intakes and both arguments, twelve combinations. `sync.py` gains no check: its contract is that "a management method's exception is raised unchanged" (`sync.py:16-17`) and that a refused constructor argument "raises the router's own error" (`sync.py:114-115`). This departs from the study's lean, which put a second nominal check in `sync.py`'s three intakes: that leaves the kernel naming a synchronous face with the read-family words in three of the twelve combinations and writes one rule in two files. The cost of the choice is visible: the docs export records a class's bases (`scripts/docs_export.py:196`) and the reference page prints them (`docs-app/src/lib/docs/ApiBlock.svelte:42-43`), so both faces' pages gain the line "Bases: RouterFace". EXECUTED: on a scratch file under the project's configuration, the inheriting marker passes `ruff check`, `ruff format --check` and `ty`, and a marker whose members register on an abstract base class fails `ruff` rule B024.
-
-Basis: provisional, no ruling on record; the options were a marker base class that both faces inherit, a marker whose members register on an abstract base class (nothing shows in a face's bases, but it needs a lint suppression and `src/vfs` holds no abstract base class today), and a second check in `sync.py` with no new class (nothing new is visible, but the kernel then names a synchronous face with the read-family message); chosen because it is additive, it is the only option under which one check gives every combination the same message with no suppression, and the name is in no `__all__`, so it can be withdrawn after a release.
-
-### 7. `RouterFace` declares empty slots, sits with the kernel's shared types and is exported from nowhere.
-
-`VirtualFileSystem` declares `__slots__` (`src/vfs/sync.py:97`), and a slotted class that inherits a class without slots gains a `__dict__`; `__slots__ = ()` on the marker keeps the facade as it is (EXECUTED on a scratch file). The class goes in `base.py` above `AsyncVirtualFileSystem`, after `ResolvedTerminal`, where the module keeps the public types its class uses (`base.py:140-257`). It is not added to `vfs.__all__`: it is a mechanism of admission, not a name a host needs, and `Binding`, `Location` and `EdgeLocation` are already public names of `vfs.base` that `sync.py` imports (`sync.py:45`) and `vfs.__all__` does not hold. Its docstring uses no glossary marker.
-
-Basis: decided in drafting, because the facade's slots are a landed property that a base class must not undo, and AGENTS.md's file organization puts a shared type beside its user and above the public class.
-
-### 8. One private static method, `_admit_storage`, holds both refusals, the router's first.
-
-The structural check is written twice today, word for word. Both copies are replaced by one call. The method is a `@staticmethod` of `AsyncVirtualFileSystem`, placed beside `_normalize_mount_path` and `_validate_deny_ops`, the two intake validators that already raise (`base.py:846-888`). The router's refusal runs first because the kernel passes the structural check, so only an earlier test can refuse it; the synchronous face fails the structural check, so only an earlier test can give it the right words. The structural refusal keeps its message to the letter. An `AsyncSession` or a `Session` handed over is not a `RouterFace` and is still refused by the structural branch with the read-family words (EXECUTED today).
-
-Basis: decided in drafting, because duplicated code is the first smell AGENTS.md lists, and the kernel's own intake validators are private static methods of the class.
-
-### 9. `add_mount` judges its storage before it reads a name or makes a directory.
-
-`add_mount` calls `_admit_storage` as its first statement, ahead of `path or storage.name` and ahead of the mkdir; `bind` keeps its own call, because `bind` is public. Three things change beyond the router. A non-storage handed to `add_mount` is refused before the mkdir, so the mount-point directory it leaves behind today is no longer made. `add_mount` with no path raises the `TypeError` for a non-storage, where today it raises `AttributeError` on the missing `name`. `add_mount(AsyncVirtualFileSystem())` with no path raises the router's `TypeError`, where today it raises `ValueError` for the missing name. The docstring's sentence that a failed bind leaves the directory behind stays true of a refusal that comes after admission: an occupied site, an aliased storage, a closed table. This goes beyond the source, which named only the nominal check.
-
-Basis: decided in drafting, because a call runs every check before any work (`context/standards/how-we-code.md:20`, "Gate, then act"), and `add_mount` already refuses a bad `deny_ops` mask before the mkdir for the reason written at `src/vfs/base.py:544`.
-
-### 10. The message names the argument's class, says it is a router and not a storage, and names no adapter.
-
-The text is `"{class} is a router, not a storage; mount its storages directly (see vfs.storage)"`, where the class is `type(storage).__name__`, so a subclass is named as itself. The source's message told the caller to "wrap it in the node adapter"; no adapter exists, so the message says what the caller can do today. A storage object may be bound into more than one router's table: the aliasing rule is one object, one path, within one table (`base.py:482-484`).
-
-Basis: verified lean, the source's item 4 as the study amended it (no adapter exists to name); precedent: `src/vfs/base.py:380`, whose message names the argument's class and points at `vfs.storage`.
-
-### 11. The refusal of a `..` write into a read-only sibling is pinned at the router, and nothing in `src/` changes for it.
-
-The behaviour holds today. The test is written and passes on its first run, and the spec says so plainly: this is a pin of landed behaviour, not a test seen red before a fix. It lives in `tests/base/test_gates.py`, in the section "mutation gates across the full verb surface", and uses two `RecorderStorage` mounts so the proof is a count: one error, of kind `read_only`, at `/course/x.md`, and zero calls on both storages.
-
-Basis: the source spec, Decided semantics item 3 and Scope; still true at `5b20fd4f` (EXECUTED, the probe in The problem; READ, `tests/base/test_gates.py:215-228` holds the neighbouring gate tests).
-
-### 12. A second test pins the other direction: a `..` out of the read-only mount lands in the writable sibling.
-
-A test that asserts only a refusal still passes under a gate that refuses too much, for example one that judges every mount named along the path as typed. The second test writes `/course/../mine/x.md` and counts one `write` on the storage at `/mine`, at the local path `/x.md`, and none on the storage at `/course`. Together the two say the gate that judges a write is the gate of the canonical path's mount and no other.
-
-Basis: decided in drafting, because the source's rule is that a `..` path meets the sibling's gate, and a writable sibling's gate admits.
-
-### 13. Each new test names the mutation it guards in its docstring, and the landing adds no row to the mutant ledger.
-
-The testing standard asks that a pin be proven by the mutation it kills and that the test's docstring record that mutation (`context/standards/testing.md:48-53`). For the two `..` tests the mutation is the one simulated above: `normalize_path` drops a `..` without popping its parent. The unit test at `tests/test_paths.py:83` already kills it, so it never survived the suite; the ledger holds bugs that once did (`context/standards/mutant-ledger.md:3`), and it gains no row here. For the admission tests the mutations are those listed under Design. Each is applied under the safe-restore rule of AGENTS.md: a copy in the session scratchpad, the mutation, the targeted nodes, the file restored from the copy, `ruff` on the restored file.
-
-Basis: decided in drafting, because the testing standard requires the mutation in the docstring and the ledger's own first paragraph limits its rows to bugs that survived the whole suite.
-
-### 14. The README bullet and the two docstrings state the refusal as fact, and the pointer to spec 156 goes.
-
-The Known limits bullet becomes: "**Neither face is a storage and neither can be mounted.** `add_mount`, `bind` and `storage=` take a storage backend and raise a `TypeError` for a `VirtualFileSystem` or an `AsyncVirtualFileSystem`; mount the storages a router holds instead." The pointer goes because the tree now does what the sentence says and because its target is no longer at that path. `bind`'s docstring gains one sentence: a router is refused with `TypeError`, because a mount binds a storage. `add_mount`'s docstring gains one sentence: the storage is judged before anything is created, so a refused argument makes no directory. Neither docstring names a spec. A lint test holds the README sentence.
-
-Basis: decided in drafting, because a docstring is a page's content (AGENTS.md, Tooling), a public document must not promise what a spec will do once the tree does it, and the link is dead at `5b20fd4f` (EXECUTED).
-
-### 15. The admission tests sit beside the tests of the structural refusal, in `tests/base/test_mounts.py`.
-
-The source put the case in `tests/base/test_mount_admin.py`. At `5b20fd4f` the tests of the landed refusal are in `tests/base/test_mounts.py` (`:80-86` for `__init__`, `:200-203` for `bind`), whose docstring claims the bind and add-mount primitives; `test_mount_admin.py` claims `mounts()`, `remount` and `deny_ops`. The facade's tests go in `tests/test_sync.py`, which holds every pin of the synchronous face, and the README's in `tests/lint/test_code_shape.py`, beside `test_the_readme_tells_the_truth_after_the_yank` (`:327`).
-
-Basis: decided in drafting, because a test lives at the layer and in the file where its neighbours already are.
-
-## Intent
-
-After this spec, a host that hands a `VirtualFileSystem`, an `AsyncVirtualFileSystem` or a subclass of either to `__init__(storage=)`, `bind` or `add_mount`, on either face, gets a `TypeError` at that call. The message names the class, says it is a router and not a storage, and says to mount its storages directly. Nothing has happened by then: no directory is made, no storage is asked anything, the mount table is unchanged and, for a refused `VirtualFileSystem(...)`, no loop thread is started. The crash that an admitted kernel brought to every root-wide `glob` can no longer be reached through either face. Any other object that is not a storage is refused by `add_mount` as early, with the words it gets today. The README's sentence that neither face can be mounted is true, and it points at no spec. Two router-level tests say that a write through `..` is judged by the mount its canonical path belongs to: refused at `/course/x.md` when that mount is read-only, with no call reaching either storage, and dispatched once when it is writable.
-
-## Design
-
-No statement, row, table, column or lock is added. The order of work puts each test before the code that passes it.
-
-**Step 1, the `..` tests, which pass at once.** In `tests/base/test_gates.py`, after `test_writable_mount_dispatches_every_mutation_once`, two async tests. Each builds `AsyncVirtualFileSystem()`, mounts a `RecorderStorage` at `/mine` and another at `/course` with `permissions="read"`. `test_a_dot_dot_write_into_a_read_only_sibling_is_refused_at_the_siblings_path` writes `/mine/../course/x.md` and asserts `result.success is False`, that the errors as `(kind, path)` pairs equal `[(ErrorKind.read_only, "/course/x.md")]`, and that both storages' `calls` are empty. `test_a_dot_dot_write_out_of_a_read_only_mount_lands_in_the_writable_sibling` writes `/course/../mine/x.md` and asserts success, that the storage at `/mine` holds exactly one call, a `write` whose single entry has the path `/x.md`, and that the storage at `/course` holds none. Both pass on the first run (decision 11). Each docstring names the mutation of decision 13, and the build applies it once to `src/vfs/paths.py` under the safe-restore rule to see both tests fail.
-
-**Step 2, the kernel's admission tests, seen red.** In `tests/base/test_mounts.py`, beside the two structural tests, with `VirtualFileSystem` and `RecorderFS` added to the imports. The argument is built by a factory under one of three ids: `kernel` (`AsyncVirtualFileSystem`), `sync` (`VirtualFileSystem`) and `subclass` (`RecorderFS`). A `sync` argument owns a loop thread and is closed in the test's `finally`. Where a test counts storage calls, the receiver is `AsyncVirtualFileSystem(storage=root)` with `root` a `BindableStorage` whose `calls` are cleared after construction.
-
-| Test | What it asserts | Red at `5b20fd4f` | The mutation it guards |
-|---|---|---|---|
-| `test_init_refuses_a_router_as_storage[kernel\|sync\|subclass]` | `AsyncVirtualFileSystem(storage=argument)` raises `TypeError` matching "is a router, not a storage" | `kernel` and `subclass` do not raise; `sync` raises the read-family words (EXECUTED) | the router branch deleted from `_admit_storage`; for `sync`, `VirtualFileSystem` no longer inheriting `RouterFace` |
-| `test_bind_refuses_a_router_and_asks_no_storage[kernel\|sync\|subclass]` | `bind(argument, "/n")` raises the same; `mounts()` holds only `/`; `root.calls == []` | as above; an admitted kernel is probed and bound (EXECUTED) | the same |
-| `test_add_mount_refuses_a_router_before_the_site_mkdir[kernel\|sync\|subclass]` | `add_mount(argument, "/n")` raises the same; `mounts()` holds only `/`; `root.calls == []` | an admitted kernel records `mkdir`, `stat`, `ls` on the root (EXECUTED); `sync` records the `mkdir` (INFERRED from the directory it leaves) | `add_mount` calling `_admit_storage` after the mkdir |
-| `test_add_mount_refuses_a_router_before_it_reads_a_name[kernel\|sync]` | `add_mount(argument)` with no path raises the same `TypeError` | `ValueError` for `kernel`, `AttributeError` for `sync` (EXECUTED) | `add_mount` reading `storage.name` before `_admit_storage` |
-| `test_add_mount_refuses_a_non_storage_before_the_site_mkdir[with-path\|no-path]` | `add_mount(object(), "/x")` and `add_mount(object())` raise `TypeError` matching "read family"; `root.calls == []` | `with-path` leaves a directory, `no-path` raises `AttributeError` (EXECUTED) | `add_mount` testing only `RouterFace` and leaving the structural test to `bind` |
-| `test_the_router_refusal_names_the_arguments_class_and_no_adapter` | for `bind(RecorderFS(), "/n")`, `str(error)` equals `RecorderFS is a router, not a storage; mount its storages directly (see vfs.storage)` | does not raise | the message built from a fixed class name |
-
-**Step 3, the facade's tests, seen red.** In `tests/test_sync.py`, after `test_the_management_twins_drive_the_mount_tree`.
-
-| Test | What it asserts | Red at `5b20fd4f` | The mutation it guards |
-|---|---|---|---|
-| `test_the_facade_refuses_a_router_at_every_intake[init\|bind\|add_mount x kernel\|sync]`, six ids | on a `VirtualFileSystem(storage=root)` with `root` a `BindableStorage`, the intake raises `TypeError` matching "is a router, not a storage"; for `bind` and `add_mount`, `mounts()` holds only `/` and `root.calls == []` | every `kernel` id is admitted; every `sync` id raises the read-family words (EXECUTED) | a check written into `sync.py` that tests only one of the two classes |
-| `test_a_refused_router_starts_no_loop_thread[kernel\|sync]` | the number of threads named `vfs-sync-loop` is the same before and after the refused `VirtualFileSystem(storage=argument)` | `kernel` is admitted and starts a thread (EXECUTED) | admission moved after `_attach` in the facade's constructor |
-| `test_both_faces_carry_the_marker_base_with_no_dict_and_no_export` | both faces are subclasses of `vfs.base.RouterFace`, read as an attribute of the module inside the test; a `VirtualFileSystem` instance has no `__dict__`; `"RouterFace"` is not in `vfs.__all__` | `AttributeError`: `vfs.base` has no `RouterFace` (INFERRED) | `__slots__ = ()` removed from `RouterFace` |
-
-**Step 4, the code.** In `src/vfs/base.py`, about twenty lines in a module of 3,184.
-
-```python
-class RouterFace:
-    """What both faces of the router are, and the one thing a mount never binds.
-
-    ``AsyncVirtualFileSystem`` and ``VirtualFileSystem`` inherit it so that
-    mount admission can refuse either by name: a mount binds a storage, and
-    a router is not one. It carries no behaviour and no state.
-    """
-
-    __slots__ = ()
-```
-
-```python
-    @staticmethod
-    def _admit_storage(storage: object) -> None:
-        """Refuse what a mount cannot bind: a router first, then anything that is no storage."""
-        if isinstance(storage, RouterFace):
-            msg = f"{type(storage).__name__} is a router, not a storage; mount its storages directly (see vfs.storage)"
-            raise TypeError(msg)
-        if not isinstance(storage, StorageBackend):
-            msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
-            raise TypeError(msg)
-```
-
-The class statement becomes `class AsyncVirtualFileSystem(RouterFace):`. In `__init__`, lines 379 to 381 become `self._admit_storage(storage)`, in the same place: after the default `InMemoryStorage()` and before the rerankers are judged. In `bind`, lines 441 to 443 become the same call, still the first statement. In `add_mount`, the same call is added as the first statement, above line 539. The docstrings of `bind` and `add_mount` gain the sentences of decision 14. In `src/vfs/sync.py`, two lines change: the import at line 33 becomes `from vfs.base import AsyncVirtualFileSystem, RouterFace` and the class statement becomes `class VirtualFileSystem(RouterFace):`. The facade's three intakes are not edited. Its lifecycle refusals keep their place ahead of the forward (`sync.py:696-702`), so a closed facade handed a router raises the closed `RuntimeError`, as it does today for any argument. Its constructor builds the kernel before it starts the thread (`sync.py:116-129`), so a refused argument leaves no thread. The two existing structural tests, `test_init_rejects_backend_missing_the_read_family` and `test_bind_rejects_non_storage_backend`, are not edited and stay green.
-
-**Step 5, the README.** `tests/lint/test_code_shape.py::test_the_readme_states_the_router_refusal_and_points_at_no_spec` first: it asserts that the README holds the bullet of decision 14 word for word and does not hold the text `156-mount-admission`. It is red at `5b20fd4f`. Then the bullet at `README.md:141` is replaced.
-
-**Step 6, the gates.** `scripts/ci.sh`, because `src/` and `tests/` change, then `scripts/docs.sh check`, because two docstrings under `src/vfs/` change and the export gains a base on two classes. No engine leg runs: no storage code, schema or dialect profile is touched.
-
-**Cost at the reference deployment.** Each addition, the multiplier it rides on in [AGENTS.md](../../AGENTS.md), and what bounds it.
-
-| Addition | Multiplier | Arithmetic | Bound |
-|---|---|---|---|
-| `_admit_storage`: two `isinstance` tests | none of the six; per router built and per mount bound, which is a process start or an operator's act | a process with M mounts runs it 2M + 1 times at start (`add_mount` once and `bind` once per mount, the constructor once); at 100 mounts that is 201 calls and at most 402 `isinstance` tests per process start | constant work per call; no loop over input |
-| Per verb call, about 150,000 a day | zero | the three call sites are the intakes; the verb funnel is not edited | nothing added |
-| Per file write, per index visit, per batch, per corpus | zero | no write, index or batch path is edited | nothing added |
-| Per lock | none taken | `_admit_storage` runs before `_mount_lock` is acquired (`base.py:459`) and awaits nothing; a refused `add_mount` now issues zero storage calls where today it issues the mkdir | no read waits on it and no lock is held |
-| Statements | zero | no statement is added, so no budget (`membership_budget`, `chunked`) is drawn on and no engine floor applies | nothing to chunk |
-| In-memory structures | zero | `RouterFace` holds no state and its empty slots add no field to an instance | constant |
+- `tests/base/test_mounts.py::test_init_refuses_a_kernel_as_storage[async|sync|subclass]`: `AsyncVirtualFileSystem(storage=argument)` raises `TypeError` matching "is a kernel, not a storage". Red today: `async` and `subclass` are accepted, `sync` gives the read-family words.
+- `tests/base/test_mounts.py::test_add_mount_refuses_a_kernel_and_asks_no_storage[async|sync|subclass]`: `add_mount(argument, "/n")` raises the same; `[m.path for m in fs.mounts()] == ["/"]`; the root's `calls == []`. Red today: `async` and `subclass` are bound after four root calls.
+- `tests/base/test_mounts.py::test_add_mount_refuses_a_kernel_before_it_reads_a_name[async|sync]`: `add_mount(argument)` with no path raises the same `TypeError`. Red today: `ValueError` for `async`, the read-family words for `sync`.
+- `tests/base/test_mounts.py::test_the_kernel_refusal_names_the_arguments_class`: for `add_mount(RecorderFS(), "/n")`, `str(error)` equals `RecorderFS is a kernel, not a storage; mount its storages instead (see vfs.storage)`.
+- `tests/base/test_mounts.py::test_attach_mount_step_refuses_a_kernel`: `await root._attach_mount(AsyncVirtualFileSystem(), "/data")` on a `BindableStorage` root raises the same `TypeError` and the root's `calls == []`.
+- `tests/base/test_mounts.py::test_a_session_keeps_the_read_family_refusal`: `add_mount(fs.open_session(Authority.system()), "/s")` raises `TypeError` matching "read family", so the kernel branch does not catch what is not a kernel (EXECUTED today: that call raises "storage must implement the read family (see vfs.storage), got AsyncSession"; `open_session` is at `src/vfs/base.py:655`). It passes today and guards the mutation that tests for any object with a mount table.
+- `tests/test_sync.py::test_the_facade_refuses_a_kernel_at_every_intake[init-async|init-sync|add_mount-async|add_mount-sync]`: on the facade, `VirtualFileSystem(storage=argument)` and `fs.add_mount(argument, "/n")` raise `TypeError` matching "is a kernel, not a storage"; after `add_mount`, `mounts()` holds only `/` and the root's `calls == []`. Red today: every `async` id is accepted, every `sync` id gives the read-family words.
+- `tests/test_sync.py::test_a_refused_kernel_starts_no_loop_thread[async|sync]`: with the argument already built, `len(_loop_threads())` is the same before and after the refused `VirtualFileSystem(storage=argument)`. The count is taken after the argument exists, because a `VirtualFileSystem()` argument starts a thread of its own (EXECUTED: the count went from 0 to 1 across building one). Red today: `async` is accepted and starts a thread.
+- `tests/test_sync.py::test_both_faces_are_kernels_with_no_dict_and_no_export`: both faces are subclasses of `vfs.mounts.Kernel`; `hasattr(VirtualFileSystem(), "__dict__")` is `False`; `"Kernel"` is not in `vfs.__all__`. Red today: `vfs.mounts` has no `Kernel`.
+- `tests/base/test_gates.py::test_a_dot_dot_write_into_a_read_only_sibling_is_refused_at_the_siblings_path[single|batch]`: with `RecorderStorage` mounts at `/mine` and at `/course` (`permissions="read"`), the write of `/mine/../course/x.md` (as `path=` or as one `Entry`) has `success is False`, its errors as `(kind, path)` pairs equal `[(ErrorKind.read_only, "/course/x.md")]`, and both storages' `calls == []`. The leak test.
+- `tests/base/test_gates.py::test_a_dot_dot_write_out_of_a_read_only_mount_lands_in_the_writable_sibling`: on the same mounts, `write(path="/course/../mine/x.md", content="x")` succeeds; the storage at `/mine` holds exactly one call, a `write` whose one entry has the path `/x.md`; the storage at `/course` holds none.
+- `tests/lint/test_code_shape.py::test_the_readme_says_neither_face_can_be_mounted_and_points_at_no_spec`: the README holds the bullet of decision 10 word for word and does not hold `156-mount-admission`. Red today.
+- The gates: `scripts/ci.sh` (lint, format, types, the suite at 100% coverage) and `scripts/docs.sh check` (three docstrings change, and two classes gain a base). No engine leg: no storage code, schema or dialect profile changes, so the Postgres leg has nothing new to prove.
 
 ## Scope
 
-In: decisions 1 to 15. Source files: `src/vfs/base.py` (`RouterFace`, the class statement, `_admit_storage`, its three call sites, two docstrings), `src/vfs/sync.py` (one import, the class statement), `README.md` (one bullet of Known limits). Test files: `tests/base/test_gates.py`, `tests/base/test_mounts.py`, `tests/test_sync.py`, `tests/lint/test_code_shape.py`.
+In: `src/vfs/mounts.py` (`Kernel`, the kernel branch of `require_storage`, two docstrings); `src/vfs/base.py` (one import name, the class statement, two docstring sentences); `src/vfs/sync.py` (one import, the class statement); `README.md` (one Known limits bullet); `tests/lint/allowlist.py` (the `base.py` entry); `tests/base/test_mounts.py`, `tests/base/test_gates.py`, `tests/test_sync.py`, `tests/lint/test_code_shape.py`.
 
-Out, each with where it belongs.
+Out:
 
-- An adapter that serves a router under the storage protocol's names, and with it a router mounted inside a router: the roadmap's cut list, "reference adapters for host frameworks", 0.2 or later (`context/standards/roadmap.md:1059`). No unit of this conversion carries it.
-- The re-check of every other README and docs claim: roadmap story R5, criterion 7, which has no spec.
-- The other bullets of Known limits. The one on `copy` and `move` across mounts belongs to [the cross-mount copy](../2026-11-25-a-cross-mount-file-copy-is-a-read-on-one-mount-and-a-write-on-the-other/spec.md).
-- The default root's policy, which the source's item 1 dropped: the README states it (`README.md:60`), and nothing here changes it.
-- The trash rule the source's item 2 held: [the trash as a tombstone on the row](../../context/specifications/archive/162-trash-as-a-tombstone-on-the-row/spec.md), landed.
-- Row-level grants: [the landed grants spec](../../context/specifications/archive/058-row-level-permission-grants/spec.md). The `..` tests use mount permissions only.
-- A session handed over as a storage. It is refused today by the structural check and stays so, now before the mkdir; it is not given the router's message, because a session holds no mount table.
-- A foreign object with the storage protocol's method names and the wrong parameters. The structural check compares names and still admits it; what proves a backend's signatures is the conformance battery in `tests/support/storage_contract.py`.
-- `normalize_path`, `resolve_path` and the permission gate: read, pinned and not edited. The batch form `write(entries=...)` with a `..` path answers the same refusal (EXECUTED) and gets no test here; the unit pins in `tests/test_paths.py` hold the `Path` brand it passes through.
-- The mutant ledger and every file under `context/`: not edited.
+- An adapter that serves a kernel under the storage protocol's names, and with it a kernel mounted inside a kernel: the cut list's "reference adapters for host frameworks", 0.2 or later (`context/standards/roadmap.md:1196`); a storage that wraps a kernel follows `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/spec.md` decision 10 when it is built.
+- The re-check of every other README and docs claim: story R5, criterion 7, which has no spec.
+- The other Known limits bullets; the one on `copy` and `move` across mounts belongs to unit 160-1, [the cross-mount copy](../2026-11-25-a-cross-mount-file-copy-is-a-read-on-one-mount-and-a-write-on-the-other/spec.md).
+- A foreign object with the protocol's member names and the wrong parameters. The structural check compares names and still admits it; the conformance battery in `tests/support/storage_contract.py` is what proves a backend's signatures.
+- The default root's policy and the trash rule, which the source dropped (its items 1 and 2), and row-level grants: the `..` tests use mount permissions only.
+- The mutant ledger and every file under `context/`.
 
-## Acceptance criteria
+## What the docs must say
 
-Counts and states, never clocks. An id in brackets is a parametrized case of the node named.
+- `README.md:141`: the bullet of decision 10.
+- `src/vfs/base.py:266` (the class docstring of `AsyncVirtualFileSystem`) and `src/vfs/base.py:396` (`add_mount`): one clause each, as decision 10 gives.
+- `src/vfs/mounts.py`: the module docstring names the marker, `require_storage`'s summary names the kernel, and `Kernel`'s own docstring says that both faces inherit it so that a mount can refuse either by name, and that it holds no behaviour and no state.
+- The glossary already says a kernel never holds another kernel (`documentation/reference/glossary.md:69`) and is not edited.
 
-1. `AsyncVirtualFileSystem(storage=X)` raises a `TypeError` whose message matches "is a router, not a storage" for X an `AsyncVirtualFileSystem`, a `VirtualFileSystem` and a `RecorderFS`. Test: `tests/base/test_mounts.py::test_init_refuses_a_router_as_storage`, ids `kernel`, `sync`, `subclass`.
-2. `bind(X, "/n")` on a kernel raises that `TypeError` for the same three arguments, `mounts()` then holds one row, `/`, and the root storage has recorded zero calls. Test: `tests/base/test_mounts.py::test_bind_refuses_a_router_and_asks_no_storage`, three ids.
-3. `add_mount(X, "/n")` on a kernel raises that `TypeError` for the same three arguments, `mounts()` then holds one row, and the root storage has recorded zero calls, so no `mkdir`. Test: `tests/base/test_mounts.py::test_add_mount_refuses_a_router_before_the_site_mkdir`, three ids.
-4. `add_mount(X)` with no path raises that `TypeError`, not `ValueError` and not `AttributeError`, for an unnamed `AsyncVirtualFileSystem` and for a `VirtualFileSystem`. Test: `tests/base/test_mounts.py::test_add_mount_refuses_a_router_before_it_reads_a_name`, ids `kernel`, `sync`.
-5. `add_mount(object(), "/x")` and `add_mount(object())` each raise a `TypeError` whose message matches "read family", and the root storage has recorded zero calls. Test: `tests/base/test_mounts.py::test_add_mount_refuses_a_non_storage_before_the_site_mkdir`, ids `with-path`, `no-path`.
-6. The message of the refusal for a `RecorderFS` argument equals `RecorderFS is a router, not a storage; mount its storages directly (see vfs.storage)`, character for character. Test: `tests/base/test_mounts.py::test_the_router_refusal_names_the_arguments_class_and_no_adapter`.
-7. On a `VirtualFileSystem`, each of the constructor's `storage=`, `bind(X, "/n")` and `add_mount(X, "/n")` raises that `TypeError` for X a `VirtualFileSystem` and for X an `AsyncVirtualFileSystem`; after `bind` and `add_mount`, `mounts()` holds one row and the root storage has recorded zero calls. Test: `tests/test_sync.py::test_the_facade_refuses_a_router_at_every_intake`, six ids.
-8. A refused `VirtualFileSystem(storage=X)` leaves the count of threads named `vfs-sync-loop` unchanged, for X an `AsyncVirtualFileSystem` and for X a `VirtualFileSystem`. Test: `tests/test_sync.py::test_a_refused_router_starts_no_loop_thread`, ids `kernel`, `sync`.
-9. `VirtualFileSystem` and `AsyncVirtualFileSystem` are both subclasses of `vfs.base.RouterFace`, a `VirtualFileSystem` instance has no `__dict__`, and `RouterFace` is not in `vfs.__all__`. Test: `tests/test_sync.py::test_both_faces_carry_the_marker_base_with_no_dict_and_no_export`.
-10. With `/mine` writable and `/course` mounted `permissions="read"`, `write(path="/mine/../course/x.md", content="x")` answers exactly one error, of kind `read_only` with `path == "/course/x.md"`, and both storages have recorded zero calls. This is the leak test. Test: `tests/base/test_gates.py::test_a_dot_dot_write_into_a_read_only_sibling_is_refused_at_the_siblings_path`.
-11. On the same mounts, `write(path="/course/../mine/x.md", content="x")` succeeds, the storage at `/mine` has recorded exactly one call, a `write` whose one entry has the path `/x.md`, and the storage at `/course` has recorded zero. Test: `tests/base/test_gates.py::test_a_dot_dot_write_out_of_a_read_only_mount_lands_in_the_writable_sibling`.
-12. The README holds the Known limits bullet of decision 14 word for word and does not hold the text `156-mount-admission`. Test: `tests/lint/test_code_shape.py::test_the_readme_states_the_router_refusal_and_points_at_no_spec`.
-13. `scripts/ci.sh` exits 0 with coverage at 100%, and `scripts/docs.sh check` exits 0.
+## Not checked
 
-## Landing notes
+- The suite, `scripts/ci.sh` and `scripts/docs.sh check` were not run. That the reference pages print "Bases: `Kernel`" without a docs-gate fault is read from `scripts/docs_export.py` and `ApiBlock.svelte`, not built.
+- `ruff`, `ruff format --check` and `ty` on the marker and the two class statements were not run on this tree; the earlier draft ran them on a scratch file at `5b20fd4f`, a different tree.
+- The mutations of decision 9 were not applied: no file but this one was edited. That deleting `resolved.pop()` flips both `..` tests was executed by the earlier draft at `5b20fd4f`, not on `27f3d24d`.
+- The scan of decision 3 does not trace a kernel that reaches an intake as a parameter or a fixture.
+- The exact line count `src/vfs/base.py` reaches after the edit; one to three lines is an estimate from the import and the two clauses.
 
-Filled in when the pull request is opened.
+## Choices to confirm
+
+1. **The gate.** Options: gate b, ahead of R5's re-check of the README; after the freeze, with R5 rewriting the bullet to say a kernel is admitted and then breaks `glob`; 0.2, beside an adapter. Taken: gate b. A refusal added before the freeze is an ordinary pre-release change and the cheapest to withdraw, and it is the only option that leaves the published README sentence true at the first beta; after it, R5's beta rule forbids a "change of meaning" (`context/standards/roadmap.md:1060`).
+2. **The marker's home.** Options: `src/vfs/mounts.py`, beside the check that reads it; a new leaf module that both faces import. Taken: `src/vfs/mounts.py`. It adds no module and no rung, the ladder already lets both faces import it, and moving it later is a change of two import lines.
+3. **The marker's name.** Options: `Kernel`, the glossary noun, which reads as `isinstance(storage, Kernel)`; a longer name such as `KernelFace`; a private `_Kernel`, imported across modules. Taken: `Kernel`. It is the one noun the naming rule allows for the concept, and since it is in no `__all__` a rename later breaks no caller.
 
 ## One line
 
-A mount is a storage: either face of the router, handed over as one, is refused by name before anything is made, and a `..` path is judged by the mount it resolves to.
+A mount is a storage: `require_storage` refuses either face of the kernel, or a subclass, by a marker class both faces inherit, before anything is asked or made, and two router tests pin that a `..` write is judged by the mount its canonical path lies in.

@@ -1,354 +1,193 @@
 # A rendered result stops at a declared character budget with one marker, says when it is empty, marks directories with a slash, prints identical fan-out errors once, and ranks search hits by position
 
-This is a feature in `src/vfs/results/render.py`, `src/vfs/results/projection.py` and `Result.to_str`. Flags: it changes the public API (`budget=` on `Result.to_str`, the default `search` projection, the projection name `rank`); it is not structural; it does not change the schema format; it needs no engine legs, because it adds and changes no statement; it touches neither rights nor the engine; it is not parallel-safe with units 167-1 and 167-2, which edit the same files. It serves roadmap story F1, criterion 3, at gate a (READ, `context/standards/roadmap.md:600-605`). It is converted from [spec 167](../../context/specifications/archive/167-the-shell-pipeline-core/spec.md) (slice A items 4 and 5 at `:51-52`, acceptance criterion 3 at `:195`, task 3 at `tasks.md:9`) and from all of [spec 155](../../context/specifications/archive/155-the-text-renderer-for-agents/spec.md), which folded itself into that slice; the studies are [the 167 study](../2026-11-25-the-backlog-converted/studies/165-181/167-the-shell-pipeline-core.md) and [the 155 study](../2026-11-25-the-backlog-converted/studies/051-162/155-the-text-renderer-for-agents.md), and the unit is key 167-3 of [the unit map](../2026-11-25-the-backlog-converted/units.md). It stands on [the 2026-10-08 integration memo](../../context/research/2026-10-08-smartowl-workspace-integration-issues.md), items 9 to 13. It depends on nothing that is not landed: the one-line error format and its contract hints are landed by [archived spec 154](../../context/specifications/archive/154-errors-are-facts/spec.md), and the rank-ordered `search` arrangement by [archived spec 133](../../context/specifications/archive/133-glean-previews-and-renderer/spec.md). Build order: no predecessor. Two sibling units, both drafted and not built and neither needed first, edit the same files: [167-1](../2026-11-25-the-dead-run-verb-leaves-every-face/spec.md) removes the `run` row of `_DEFAULT_PROJECTION` (its Design, `projection.py:57`) and rewrites assertions in `tests/test_ops.py`, and [167-2](../2026-11-25-a-bytes-row-renders-a-placeholder-and-leaves-the-payload-only-when-asked/spec.md) changes `_render_read`, `_render_block` and the cells of `_render_rows` (its decisions 5 and 6, through two helpers, `_read_body` and `_row_field`). Nothing here relies on a decision of either: the three land in any order and the later ones rebase, each keeping the other's change to a shared function. No ruling is awaited: the one product choice no record settles, the marker's paging hint, is decision 7, provisional and reversible.
+A draft, written on 2026-11-25. It is not reviewed, and nothing is built. It was checked against `dev` at `27f3d24d`. It serves story F1 of [the roadmap](../../context/standards/roadmap.md), criterion 3 (`roadmap.md:671`), at gate a, and is key 167-3 of [the unit map](../2026-11-25-the-backlog-converted/units.md). It is converted from [archived spec 167](../../context/specifications/archive/167-the-shell-pipeline-core/spec.md), section 1 items 4 and 5 (`spec.md:51-52`), acceptance criterion 3 (`:195`) and task 3 (`tasks.md:9`), and it carries the whole of [archived spec 155](../../context/specifications/archive/155-the-text-renderer-for-agents/spec.md), which folded itself into that slice. It replaces the draft of the same path written against `main` at `0ed462f`. It rests on the built listing pages and the built shell, and it waits for nothing.
+
+## The outcome wanted
+
+A caller that passes `budget=` to `Result.to_str` gets text no longer than the budget whenever the parts that are never cut fit inside it. The text is cut at the end of a line and carries one line, `[output truncated: N characters removed, R rows remaining; <hint>]`, naming what was left out and how to narrow the call. Every error line is still there. A caller that passes no budget gets today's text. An empty `ls` or `tree` reads `(no entries)`, an empty `glob`, `grep` or `search` reads `(no matches)`, and no successful result renders the empty string. In the text of `ls`, `glob` and `tree` a directory ends in `/`. A failure three mounts report identically is one line naming the three mounts. Search hits read `#1`, `#2` in order, and the scaled score appears only when it is projected by name. A listing page cut by the budget prints a `more: after=` key that never skips a row the text did not show. A shell line's result cuts what the line printed the same way. The rows, the errors and the wire payload are unchanged.
+
+## Builds on
+
+- [The listing pages](../2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md), built on `dev`. It printed `more: after=<key>` after the body (`src/vfs/results/render.py:51-52`, `:72-73`). Its decision 1 is relied on: "The key is a row's plain path. A page seeks strictly after the key and never counts an offset. A key is always a row that was shown." The page's path order is the order of `frontier_page` (`src/vfs/results/paging.py:47-82`), which sorts by `str` of the path.
+- [The shell speaks bash](../2026-11-21-the-shell-speaks-bash/spec.md), built on `dev`. `LineResult` is a `Result` whose `to_str` prints standard output, then standard error, then its facts (`src/vfs/shell/host.py:137-171`).
+- [Archived spec 154](../../context/specifications/archive/154-errors-are-facts/spec.md), landed: the one-line error format of `_error_line` (`render.py:93-125`).
+- [Archived spec 133](../../context/specifications/archive/133-glean-previews-and-renderer/spec.md), landed: a ranked result renders in rank order, never path-sorted (`spec.md:21`; `render.py:440-469`).
+- The wire rollup `Result._rolled_errors`, landed, which groups on `(kind, severity, retryable)` and is applied only by `to_payload(max_errors=...)` (`src/vfs/results/envelope.py:747-767`, `:835-858`).
+- [Unit 167-2](../2026-11-25-a-bytes-row-renders-a-placeholder-and-leaves-the-payload-only-when-asked/spec.md), a unit of this conversion, drafted on `dev` and not built. It edits `_render_read`, `_render_block` and the cells of `_render_rows` through two helpers, `_read_body` and `_row_field` (its decisions 5 and 6). Nothing here relies on it. Either lands first; the second keeps the first's edits to the shared functions.
+- Unit 167-1, a unit of this conversion, not written. It removes the `run` row of `_DEFAULT_PROJECTION` (`src/vfs/results/projection.py:57`). Nothing here relies on it, and either order holds.
+- Build order: no predecessor.
+
+## Terms
+
+- **Body**: the text an arrangement draws for the rows of a result.
+- **Tail**: what follows the body today, each part after one blank line: the unpopulated-projection note, the `more: after=` line, the errors section (`render.py:70-74`). The tail is never cut.
+- **Row**: one observation; for the grant verbs, one `grants=` or `members=` entry; for a shell line, one line of what it printed.
+- **Block**: a run of whole lines of the body, with the number of rows it finishes and the paths of those rows. A body is an ordered list of blocks and one separator.
+- **Marker**: the one line the renderer adds when it cuts a body.
+- **Allowance**: the body characters that still fit once the marker and the tail are counted.
+- **Render-only name**: a projection name for a column the renderer synthesizes. It is no field of `Observation`, and no backend fetches it.
+
+## What the code does today
+
+- `render_result(result, *, projection=None)`, `Result.to_str(self, *, projection=None)` and `LineResult.to_str(self, *, projection=None)` take no budget (`render.py:42`, `envelope.py:819`, `host.py:167`; `inspect.signature` run on all three). No `RENDER_CHARACTER_BUDGET` exists under `src/`.
+- Of the 25 ops in `ALL_OPS`, nine render an empty successful result as `''`: `glob`, `grep`, `ls`, `read`, `run`, `search`, `stat`, `traverse`, `tree`; a cross-op merge does too (run). Two tests pin the empty string (`tests/results/test_render.py:374-375`, `:484-485`).
+- `ls /mine` over a directory row and a file row prints `/mine/empty\n/mine/notes.md` (run, through `AsyncVirtualFileSystem`), though the rows carry `kind` `directory` and `file`. The database backend always fetches `kind` (`src/vfs/storage/backends/database/reads.py:110`).
+- Three warnings equal in kind, severity and message from the sources `/`, `/course` and `/mine` print three lines that differ only in `mount <source>` (run). `_render_errors` prints one line per entry (`render.py:85-90`), and so does `_render_write_errors` (`:643-648`).
+- `min_max` scales the lowest score of a set that is not flat to exactly 0 (`src/vfs/storage/ranking.py:94-102`), and both search paths scale before the row is built (`src/vfs/rerank.py:346-348`; `src/vfs/storage/backends/database/search.py:891`). The default `search` projection is `("path", "score", "matches")` (`projection.py:52`), so the lowest hit prints `score=0.0000`. `validate_projection(("path", "rank"))` raises `ValueError: unknown field 'rank'` (run).
+- `_render_tree` draws by path segment, so its order differs from the key order: over `/t/a`, `/t/a/b.md` and `/t/a-c.md` it draws `a`, `b.md`, `a-c.md`, while a `tree` page keys `/t/a`, `/t/a-c.md`, `/t/a/b.md` (run).
+- `LineResult.to_str` renders its facts as `Result(ops=("cli",), errors=...).to_str()`, which is the errors section alone because the result holds no rows (`host.py:169`; `render.py:65-74`).
+- `src/vfs/results/render.py` holds 728 lines, and the size lint fails a module over 1,000 lines that has no baseline entry (`tests/lint/test_code_shape.py:76`; `tests/lint/allowlist.py:26-33`).
 
 ## The problem
 
-The tree was read at commit `5b20fd4f` (EXECUTED, `git rev-parse --short=8 HEAD`); `src/` and `tests/` are unchanged since `9daedd2b`, where the reading began (EXECUTED, `git diff --stat 9daedd2b HEAD -- src tests` prints nothing). `Result.to_str()` is the only text a caller reads, and five things about it are wrong today.
-
-1. Nothing bounds it. `render_result(result, *, projection=None)` and `Result.to_str(*, projection=None)` take no budget (READ, `src/vfs/results/render.py:42`, `src/vfs/results/envelope.py:799-805`; EXECUTED, `inspect.signature` on both). No `RENDER_CHARACTER_BUDGET` exists (EXECUTED, `hasattr(vfs.results.render, "RENDER_CHARACTER_BUDGET")` is `False`). A 5,000-line file read through the synchronous face renders 48,889 characters, whole (EXECUTED, scratch probe). The memo measured 83,890 characters from one `read` and 172,782 from one unscoped `grep` (READ, `context/research/2026-10-08-smartowl-workspace-integration-issues.md:90`). One call can fill a caller's context window, and every host has to build its own cap.
-2. An empty answer is the empty string. `ls` and `tree` of an empty directory, a `glob` with no match and a `grep` with no match each render `''` with `success` true (EXECUTED, scratch probe). Of the 25 ops, nine render an empty successful result as `''`: `glob`, `grep`, `ls`, `read`, `run`, `search`, `stat`, `traverse`, `tree`; a cross-op merge does too (EXECUTED, a loop over `ALL_OPS`). The code paths are `_render_rows` (READ, `render.py:234-237`), `_render_read` (`:312-313`), `_render_tree` (`:480-498`) and `_render_traverse` (`:515-516`); two tests pin the empty string (READ, `tests/results/test_render.py:374-375`, `:484-485`). A caller cannot tell "nothing there" from "the tool said nothing".
-3. A directory and a file look the same. `ls /mine` prints `/mine/empty` for a row whose `kind` is `directory` and `/mine/notes.md` for a file (EXECUTED, scratch probe). `_render_rows` prints `o.path` bare (READ, `render.py:235`) and `_render_tree` prints path segments without reading `kind` (`:478-498`). Every row carries its kind: the database backend always fetches it (READ, `src/vfs/storage/backends/database/reads.py:109`) and the in-memory backend stamps it (READ, `src/vfs/models/entry.py:292`; EXECUTED, the probe's rows).
-4. One failure prints once per mount. Three errors equal in kind, severity and message, from the mounts `/`, `/course` and `/mine`, render three lines that differ only in `mount <source>` (EXECUTED, scratch probe). `_render_errors` prints one line per entry (READ, `render.py:82-87`). The only grouping in the tree is the wire rollup `_rolled_errors`, applied by `to_payload(max_errors=...)` and never by the text (READ, `envelope.py:741-747`, `:815-839`).
-5. The lowest search hit reads as irrelevant. Scores are min-max scaled before they reach the row, so the lowest hit of a set that is not flat is exactly 0 (READ, `src/vfs/storage/ranking.py:71-79`, `src/vfs/rerank.py:340-342`, `src/vfs/storage/backends/database/search.py:885`). The default `search` projection is `("path", "score", "matches")` (READ, `src/vfs/results/projection.py:52`) and the header prints `score=` with four decimals (READ, `render.py:457-460`), so two hits scored 1.0 and 0.0 render `/z.md  score=1.0000` and `/a.md  score=0.0000` (EXECUTED, scratch probe). `rank` is not a projection name: `validate_projection(("path", "rank"))` raises `ValueError: unknown field 'rank'` (EXECUTED).
-
-No surface passes a budget today, because none exists: `src/vfs/shell` and `src/vfs/mcp` are absent and no method is named `cli` (EXECUTED, `ls`, `grep -rn "def cli"`). The projection is a render-side argument only: `resolve_projection` is called from `render.py` and nowhere else, and a verb's `columns=` reaches the backends through `effective_columns`, which keeps only entry fields (READ, `reads.py:130-144`; EXECUTED, `grep -rn resolve_projection src`).
-
-## Architecture
-
-```mermaid
-flowchart TD
-    to_str["Result.to_str(projection, budget)"]
-    render["render_result(result, projection, budget)"]
-    declared["RENDER_CHARACTER_BUDGET = 32_768"]:::planned
-    checked["_checked_budget: a positive int or None"]:::planned
-    validate["validate_projection and resolve_projection"]
-    render_only["RENDER_ONLY_FIELDS: rank"]:::planned
-    default_old["search default: path, score, matches"]:::retiring
-    default_new["search default: path, rank, matches"]:::planned
-    body["_render_body: one arrangement per op"]
-    blocks["_Body: row blocks, each with the rows it finishes"]:::planned
-    empty["empty words: empty directory, no matches, no rows"]:::planned
-    silent["an empty answer renders the empty string"]:::retiring
-    slash["_shown_path: a slash where kind is directory"]:::planned
-    rank["_render_search: rank from list position"]:::planned
-    note["_render_unpopulated_projection_note"]
-    errors["_render_errors and _render_write_errors"]
-    groups["_error_groups: one line per identical group"]:::planned
-    per_entry["one line per error entry"]:::retiring
-    cut["_cut: whole rows, then whole lines, inside the allowance"]:::planned
-    marker["_truncation_marker and the _NARROWING hint table"]:::planned
-    text["the returned text"]
-
-    to_str --> render
-    declared -.-> to_str
-    render --> checked
-    render --> validate
-    validate --> render_only
-    validate --> default_new
-    validate -.-> default_old
-    render --> body
-    body --> blocks
-    body --> empty
-    body -.-> silent
-    body --> slash
-    body --> rank
-    render --> note
-    render --> errors
-    errors --> groups
-    errors -.-> per_entry
-    blocks --> cut
-    cut --> marker
-    cut --> text
-    marker --> text
-    note --> text
-    groups --> text
-
-    classDef planned stroke-dasharray: 6 4
-    classDef retiring stroke-dasharray: 2 3
-```
-
-- The body is the text an arrangement draws for the rows of a result. The tail is what follows it today: the unpopulated-projection note and the errors section, each after one blank line.
-- A row is one observation. For the grant verbs, whose answer is a table of `grants=` or `members=` entries, a row is one entry.
-- A row block is a run of whole lines of the body that finishes some number of rows; the body is an ordered list of row blocks and one separator.
-- The marker is the one line the renderer adds when it cuts a body. The allowance is the number of body characters that still fit once the marker and the tail are counted.
-- A render-only name is a projection name that selects a column the renderer synthesizes; it is not a field of `Observation` and no backend fetches it.
+`Result.to_str()` is the text an agent reads, and it fails that agent five ways. Nothing bounds it: the 2026-10-08 memo measured 83,890 characters from one `read` and 172,782 from one unscoped `grep` (`context/research/2026-10-08-smartowl-workspace-integration-issues.md:90`), and one call can fill a context window, so each host builds its own cap. An empty answer is the empty string, which reads the same as a tool that said nothing. A directory and a file look the same. One failure prints once per mount. The lowest search hit reads `0.0000`, as if it were irrelevant. At the reference deployment's 150,000 verb calls a day, each rendered at most once, each of these is paid by an agent on every call that hits it. The MCP adapter (unit 171-1, story M1 criterion 2 at `roadmap.md:870`) and a plan's preview (story H2 criterion 6 at `roadmap.md:333`) both need the budget and wait for it.
 
 ## Decisions
 
-### 1. `render_result` and `Result.to_str` take `budget=`, a count of characters, and `None`, the default, renders everything
-
-The signatures are `render_result(result, *, projection=None, budget=None)` and `Result.to_str(self, *, projection=None, budget=None)`. `Result.__str__` keeps calling `to_str()` with no budget. A caller that does not ask gets today's text, so no existing caller changes. The budget counts characters, as `len` of the returned `str` does, because that is what a context window and a wire cap are measured against at the renderer; bytes are a transport's concern.
-
-Basis: the source spec, 167 slice A item 4 (`:51`); still true at `5b20fd4f` (EXECUTED, both signatures printed with no `budget`).
-
-### 2. The declared budget is `RENDER_CHARACTER_BUDGET = 32_768` in `vfs.results.render`, and nothing in `src/` passes it in this change
-
-Decided 2026-10-15: the render cap is 32,768 characters, and it is opt-in. The constant is a module constant of `render.py`, typed `Final[int]`, and is not re-exported from `vfs.results`: the surfaces that will pass it import it from the module that owns the cut. No surface exists at `5b20fd4f` to pass it, so this change declares the constant and pins it against the roadmap's figure in one test.
-
-Basis: ruled, 2026-10-15, recorded in the archived spec 155 at `context/specifications/archive/155-the-text-renderer-for-agents/spec.md:5` and carried by roadmap story F1 criterion 3 (`context/standards/roadmap.md:605`).
-
-### 3. A budget bounds the whole returned text whenever the parts that are never cut fit inside it
-
-When the unbudgeted text is at most `budget` characters, it is returned unchanged, character for character. Otherwise the body is cut so that the kept body, the marker and the tail together are at most `budget` characters. When the marker and the tail alone are longer than the budget, the body is cut to nothing and the marker and the tail are returned whole; the text is then longer than the budget by exactly their excess. The reason: a surface with a hard cap needs the sum bounded. A budget that bounded the body alone would leave every surface to subtract the marker, the note and the errors itself. This departs from spec 155's first criterion and spec 171's criterion 4, which both say "at most N characters plus" the marker line; both remain true, as weaker upper bounds.
-
-Basis: decided in drafting, because the title's promise is about the text a caller receives, and the 155 and 171 wordings are satisfied by the stricter bound.
-
-### 4. The cut keeps whole rows in render order, then whole lines of the first row that does not fit, and never ends inside a line
-
-The renderer keeps row blocks from the top while they fit the allowance. From the first block that does not fit it keeps the longest prefix of whole lines that still fits, which may be no line. A line that is by itself longer than the remaining allowance is removed whole, so a one-line body larger than the budget renders as the marker alone. Cutting inside a line would hand the caller half a path, half a table row or half a statement that reads as complete.
-
-Basis: the source spec, 167 slice A item 4 (`:51`) and 155 rule 1 (`:20`), "cut at a line boundary"; still true at `5b20fd4f` (roadmap F1 criterion 3 repeats it; READ, `roadmap.md:605`).
-
-### 5. A cut body ends with exactly one marker, `[output truncated: N characters removed, R rows remaining]`, on its own line
-
-Decided 2026-10-15: one canonical marker that names the characters removed and the rows remaining, in place of spec 155's six per-verb notes. The marker is the line directly after the kept body, before the tail; when no body line is kept it is the first line. N is the length of the unbudgeted body minus the length of the kept body, so separators between removed blocks count and the marker itself does not. R is the number of rows whose text the cut removed in whole or in part; a row that draws no line in the unbudgeted body is not counted. Both are plain decimal integers with no separator, and the nouns agree in number through the module's `_pluralize` (`1 character`, `1 row`). A hint may follow R inside the brackets, after `; `, as decision 7 says. A body that is not cut carries no marker. File content is printed verbatim, so the marker is recognized by its position, the last line of the body, and not by its text alone.
-
-Basis: ruled, 2026-10-15, recorded at `context/specifications/archive/155-the-text-renderer-for-agents/spec.md:5` and carried by roadmap story F1 criterion 3 (`context/standards/roadmap.md:605`), which fixes the two counts; their arithmetic is fixed here.
-
-### 6. The errors section and the unpopulated-projection note are never cut, whatever the budget
-
-Every error line of the unbudgeted text is in the budgeted text, whole and in the same order, and so is the note. A cut that dropped an error would turn a partial failure into an apparent success in the one text the caller reads. The profile is stated plainly in the docstring: the errors section grows with the number of distinct failures, so a 10,000-row batch whose every row fails at its own path renders 10,000 error lines under any budget. The collapse of decision 15 shortens it only where failures are identical. A surface that must bound the error lines too does so itself, as the wire already does with `to_payload(max_errors=...)`.
-
-Basis: the source spec, 167 slice A item 4 (`:51`), "The errors section is never cut"; still true at `5b20fd4f` (roadmap F1 criterion 3 repeats it; READ, `roadmap.md:605`).
-
-### 7. The marker's paging hint is chosen by the verb, from one table of the arguments that verb takes today, and a verb with no narrowing argument gets no hint
-
-The source disagrees with itself: spec 167 slice A writes one shell hint for every surface (`page with head, tail or sed -n`, `:51`), and spec 171 section 2.4 makes the hint follow the op (`context/specifications/archive/171-the-mcp-adapter-and-the-cli-tool/spec.md:148`). This spec takes the second shape. The table `_NARROWING` in `render.py` maps an op to the arguments it names and the phrase printed after `; `:
+1. **`render_result` and `Result.to_str` take `budget: int | None = None`, a count of characters; `None` renders everything.** The signatures become `render_result(result, *, projection=None, budget=None)` and `to_str(self, *, projection=None, budget=None)`. `Result.__str__` keeps calling `to_str()` with no budget, so no caller's text changes unless it asks. The budget counts `len` of the returned `str`, because a context window and a wire cap are counted in characters at the renderer; bytes are a transport's concern. Precedent: the source, section 1 item 4 (`spec.md:51`).
+2. **The declared budget is `RENDER_CHARACTER_BUDGET: Final[int] = 32_768`, and nothing in `src/` passes it in this change.** Decided 2026-10-15: the render cap is 32,768 characters and it is opt-in (archived spec 155, `spec.md:5`; roadmap F1 criterion 3). The MCP adapter of unit 171-1 passes it. It is not re-exported from `vfs.results`: exporting it later is additive, and its users are inside vfs.
+3. **The cut, the block types and the budget check live in a new module, `src/vfs/results/cut.py`; the marker and the arrangements stay in `render.py`.** `render.py` holds 728 lines and gains about 200 here, against a ceiling of 1,000 that a module crosses only with a baseline entry. The constant lives in `cut.py` and `render.py` imports it, so `vfs.results.render.RENDER_CHARACTER_BUDGET` names the same object. This departs from the source, which put the constant in `render.py`. Precedent: `src/vfs/results/paging.py`, a module of unprefixed names that other modules of vfs import and `vfs.results` does not export.
+4. **A budget bounds the whole returned text whenever the marker and the tail fit inside it.** When the unbudgeted text is at most `budget` characters it is returned unchanged, character for character. Otherwise the body is cut so that the kept body, the marker and the tail together are at most `budget`. When the marker and the tail alone are longer than the budget, the body is cut to nothing, and the text exceeds the budget by exactly their excess. A surface with a hard cap needs the sum bounded, not the body alone. The bound is stricter than story M1 criterion 2's "at most 32,768 characters plus the marker", which it satisfies.
+5. **The cut keeps whole blocks from the top, then the longest prefix of whole lines of the first block that does not fit, and never ends inside a line.** A line longer by itself than what remains is removed whole, so a one-line body larger than the budget renders as the marker alone. Half a path or half a table row would read as complete. Precedent: the source, section 1 item 4, and roadmap F1 criterion 3, "cuts at a line boundary".
+6. **A cut body is followed by exactly one marker, `[output truncated: N characters removed, R rows remaining; <hint>]`, on its own line, before the tail.** Decided 2026-10-15: one canonical marker naming characters removed, rows remaining and how to page (archived spec 155, `spec.md:5`). N is the unbudgeted body's length minus the kept body's length. R is the number of rows not kept whole, so a row whose text was cut part way counts. Both are plain integers, and each noun agrees in number through `_pluralize` (`render.py:698-702`). The hint and its `; ` are left out where decision 8 gives none. A body that is not cut carries no marker. File content is printed verbatim, so the marker is known by its place, the line after the kept body, and not by its text alone.
+7. **The note, the `more: after=` line and the errors section are never cut.** Dropping an error line would turn a partial failure into an apparent success in the one text the caller reads. The profile is stated in the docstring: the errors section grows with the number of distinct failures, so a 10,000-row batch whose every row fails at its own path renders 10,000 error lines under any budget. A surface that must bound them does so itself, as `to_payload(max_errors=...)` already does at the wire. Precedent: the source, section 1 item 4, "the errors section is never cut".
+8. **The marker's hint is chosen by the op from one table, `_NARROWING` in `render.py`, of the arguments that op takes on `dev`; an op with no narrowing argument gets no hint.** The table, each argument a `ParamSpec` name of its op in `vfs.params.PARAMS` (run):
 
 | Op | Arguments named | Hint |
 |---|---|---|
-| `ls` | none | `list a subdirectory` |
-| `tree` | `max_depth` | `lower max_depth` |
-| `glob` | `paths`, `max_count` | `scope with paths or set max_count` |
+| `ls` | `limit` | `set limit, or list a subdirectory` |
+| `tree` | `limit`, `max_depth` | `set limit or max_depth` |
+| `glob` | `paths`, `limit` | `scope with paths or set limit` |
 | `grep` | `paths`, `ext`, `globs`, `max_count` | `scope with paths, add ext or globs, or set max_count` |
 | `search` | `paths`, `ext`, `globs`, `limit` | `scope with paths, add ext or globs, or lower limit` |
-| `traverse` | `depth` | `lower depth` |
+| `traverse` | `depth`, `limit` | `lower depth or limit` |
 
-Every other op, `read` and `stat` among them, closes the marker after the two counts. Every argument in the table is a parameter of its verb at `5b20fd4f` (READ, `src/vfs/params.py:158-163`, `:243-292`, `:293-330`), and a drift test holds the table to `PARAMS`. A shell hint at gate a would name three programs that no caller can run, since no shell exists until gate b. The fixed part of the marker, which is all that F1 pins, is the same under either shape, so a ruling for one shell hint replaces this table with one constant and changes no other line. The unit that adds the `cli` arrangement adds its own row; the units that add `read(range=)` and the listing `after=` add theirs.
-
-Basis: provisional, no ruling on record; the options were one shell-shaped hint on every surface, or a hint chosen by the surface; chosen because a hint keyed by the verb names only arguments that exist at this commit, matches how the error lines already hint in vfs's own verbs, and reverses to the other option by collapsing one table to one constant.
-
-### 8. A budget that is not a positive integer raises, on every arrangement
-
-`budget` is `None` or an `int` of at least 1. A `bool`, a `float` or a `str` raises `TypeError`; an integer below 1 raises `ValueError`. The check runs before any arrangement is chosen, so it raises on a `write` result and on a failed result too, where the budget would otherwise be ignored. This is the rule the projection already follows: a bad argument fails the same way whatever result it lands on (READ, `render.py:54-56`).
-
-Basis: decided in drafting, because `validate_projection` already raises `TypeError` and `ValueError` for a bad render argument on every path (READ, `projection.py:102-121`), and a silently ignored bound is the failure this spec removes.
-
-### 9. The cut changes text only: the envelope keeps every row and every error, and no fact is minted
-
-`to_str(budget=...)` reads the result and returns a string. It adds no entry to `errors`, changes no row, and leaves `to_payload()` equal before and after. In particular it does not add a `vfs.budget_exhausted.truncated` entry: that kind records a cut of the result itself by a runtime budget (READ, `src/vfs/results/kinds.py:88`), and here the result is whole. A surface that also cuts its structured payload says so in that payload.
-
-Basis: decided in drafting, because rendering is declared pure (READ, `render.py:9-10`) and spec 155 keeps the envelope, the wire format and the storage untouched (`:8`).
-
-### 10. Every arrangement returns its body as row blocks, so the cut counts rows without parsing text and never builds the full body when it cuts
-
-Each `_render_*` arrangement returns a `_Body`: a list of `_Block(text, rows)` and the separator between blocks. `render_result` joins them when no cut is needed and hands them to `_cut` when one is. This departs from spec 155's sketch, a `_truncate(text, budget, note)` over a fully joined body: a joined string cannot say how many rows it lost, and joining a 10,000-row body to discard nine tenths of it copies what is thrown away. The profile that remains is stated in the `render_result` docstring: every row is still drawn into its block before the cut, so a budgeted render costs in proportion to the rows of the result, not to the budget. A renderer that stops drawing once the allowance is spent is the future direction; it is not a declared limit.
-
-Basis: decided in drafting, because F1 pins a count of rows remaining and AGENTS.md's production posture asks that a profile that is not optimal at scale be stated and its direction named, never turned into a limit (the 155 study's choice 7 verifies the same reading).
-
-### 11. A listing with no rows renders `(empty directory)` and a match set with no rows renders `(no matches)`
-
-A successful `ls` or `tree` with no observations renders `(empty directory)`. A successful `glob`, `grep` or `search` with no observations renders `(no matches)`. The word is the body, so warnings and info records still follow it after a blank line. A failed result with no observations renders its errors alone, as today, and no word. The test is the absence of observations, not an empty drawing: a `grep` whose rows exist but whose projected columns are unpopulated keeps today's note and gains no word.
-
-Basis: the source spec, 155 rule 2 (`:27`); still true at `5b20fd4f` (EXECUTED, the five verbs render `''` when empty).
-
-### 12. Every other read arrangement with no rows renders `(no rows)`, so no successful result renders the empty string
-
-A successful `read`, `stat` or `traverse` with no observations, an op this client does not know, and a cross-op merge render `(no rows)`. The words the other arrangements already print stay as they are: `No changes` for a mutation, `No grants` and `No members` for the grant tables, `write: nothing to do` for a write (READ, `render.py:581-582`, `:607-608`, `:633-634`). This goes one word beyond the source, which names two words for five verbs and leaves four arrangements silent; neither of its words fits a walk or a read.
-
-Basis: decided in drafting, because the rule the source states is that the text is never silent, and four of the nine silent ops fall outside its two words (EXECUTED, the loop over `ALL_OPS`).
-
-### 13. In the text of `ls`, `glob` and `tree`, a row whose own `kind` is `directory` prints its path with a trailing `/`
-
-The slash is added to the rendered path only: the one-path-per-line list, the `path` cell of a table, and the node name in a tree. The row's `path` field is unchanged. It is read from the row's own `kind` and never inferred: a row whose `kind` is not populated prints bare, and a tree segment that no row stands for, an ancestor drawn only because a descendant was returned, prints bare. The root `/` never becomes `//`. Other verbs print paths as they do today: `stat` already prints `kind` on its own line, and `grep` and `search` rows are files.
-
-Basis: the source spec, 155 rule 3 (`:28`); still true at `5b20fd4f` (EXECUTED, a directory row prints bare; READ, `reads.py:109`, every row carries `kind`).
-
-### 14. The empty words, the slash, the collapse and the rank column belong to the verb arrangements; a `cli` result will print what bash prints and takes only the budget
-
-Decided 2026-10-15: the `cli` surface prints exactly what bash prints, nothing for an empty `ls` and no trailing slash without `-F`, and the markers of spec 155 stay on the verb tools. Nothing in this change draws a `cli` result, because the op does not exist yet. What this change guarantees is the seam: each decoration is chosen by the op inside `_render_body`, so an op with its own arrangement receives none of them unless that arrangement asks.
-
-Basis: verified lean, the 155 study's choice 6 (holds); precedent: `context/specifications/archive/167-the-shell-pipeline-core/spec.md:21`, the decision of 2026-10-15, and for the verb side the memo's items 10 and 11 (`context/research/2026-10-08-smartowl-workspace-integration-issues.md:96-106`).
-
-### 15. Errors equal in `(kind, severity, retryable, path, message)` print as one line that names every mount, and an entry carrying `data` is never merged
-
-The grouping is in the text only; `Result.errors` keeps every entry, and value identity and the wire are unchanged. A group takes the place of its first member in today's order: fatal first, then warnings, then info, each tier in arrival order. Its line is the member's line with one change to the locus: when the group has a path, the path, as today; otherwise ` mount <source>` for one distinct source and ` mounts <a>, <b>, <c>` for several, each distinct source once, in arrival order; no locus when no member has a source. An entry whose `data` is not empty is printed alone, so a `vfs.target` second entry and a `vfs.rollup` count are never merged away, and a rollup line keeps its `[+N more rolled up]` suffix. The same grouping serves the `write errors:` block. Exact duplicates, equal in source too, print once.
-
-Basis: verified lean, the 155 study's choice 5 (holds); precedent: the wire rollup already groups on `(kind, severity, retryable)` and keeps every fact on the envelope (`src/vfs/results/envelope.py:815-839`), and `_error_line` draws its target and rollup suffix from `data` (`src/vfs/results/render.py:111-121`).
-
-### 16. `rank` is a render-only projection name, declared in `RENDER_ONLY_FIELDS`, and is not a field of `Observation`
-
-`validate_projection` admits a name in `OBSERVATION_FIELDS`, in `RENDER_ONLY_FIELDS` or among the two sentinels. `OBSERVATION_FIELDS` keeps equal to the model's fields, which two storage tests rely on (READ, `tests/storage/database/test_reads.py:283`, `tests/support/storage_contract.py:2522`). The `all` sentinel never expands to `rank`, because `all` means every field populated on a row and `rank` is on no row. A verb's `columns=` is untouched: a name outside the entry fields fetches nothing there today, `rank` included (EXECUTED, `ls("/", columns=frozenset({"rank"}))` succeeds with no error).
-
-Basis: verified lean, the 155 study's choice 1 (holds-amended); precedent: `context/specifications/archive/133-glean-previews-and-renderer/spec.md:21`, which fixes rank order as the arrangement of a ranked result and keeps display options in the render layer.
-
-### 17. The default `search` projection is `("path", "rank", "matches")`; the rank prints as `#1`, `#2` from list position, and the scaled score prints only when `score` is projected
-
-In the line arrangement the header is the path, then two spaces and `#N` when `rank` is projected, then two spaces and `score=0.8731` when `score` is projected and populated: `/z.md  #1`, and under `("default", "score")`, `/z.md  #1  score=0.9000`. The path stays first so every line of a hit still begins with its path or with `>`. In the table arrangement `rank` is a right-aligned column whose cell is `#N`. N is the row's one-based position in `result.observations`, which is rank order for a `search` result. The score printed under an explicit `score` projection is the min-max-scaled score, exactly as today. A raw score before scaling is not printed: no such value reaches the row, and adding one would add a field to `Observation`.
-
-Basis: verified lean, the 155 study's choice 1 (holds-amended); precedent: `tests/results/test_render.py:340-342`, the landed pin that an explicit `("path", "score")` projection prints the scaled score, and `src/vfs/storage/ranking.py:71-79`, which makes the lowest scaled score 0 by construction.
-
-### 18. On any op but `search`, a projected `rank` draws an empty column and the unpopulated note names it
-
-`rank` is a valid projection name on every result, because a projection's validity never depends on the result it lands on (READ, `render.py:54-56`). Only a `search` result is ranked, so on any other op the column is empty and the existing note reads `NOTE: rank not populated for any observations.`, as it does for any projected field no row carries. The arrangements that ignore the projection (`tree`, `traverse`, the action and grant verbs) stay silent about it, as they are about every column.
-
-Basis: decided in drafting, because the note is how the renderer already reports a named column with nothing to show (READ, `render.py:130-158`), and raising by op would break the rule cited.
-
-### 19. The two published pages that show a listing with directories are amended in the same change
-
-`documentation/tutorials/control-who-can-access-files.md:129-132` and `:140-142` show `/finance` and `/handbook`, and `documentation/how-to/load-a-folder-of-files.md:148-168` shows ten directories of a loaded repository, all bare. After this change the product prints each with a slash, so the blocks are edited to match. These are `text` blocks beside a call, and no test executes them: the documentation gate runs `python` fences in `README.md` and under `docs/` (READ, `conftest.py:1-12`). The edit is therefore checked by the review reading the diff, and it brings `scripts/docs.sh check` into the gate for this change.
-
-Basis: decided in drafting, because `documentation/` is published and a page that shows output the product no longer prints is a defect of the change that moved the output.
-
-## Intent
-
-After this spec, a caller that passes `budget=` to `Result.to_str` receives at most that many characters whenever the errors fit, cut at the end of a line, with one line that says how many characters and rows were left out and, where the verb has one, which argument narrows the call; every error is still there. A caller that passes no budget receives everything, as before. An empty directory reads `(empty directory)`, a search or a pattern that found nothing reads `(no matches)`, and no successful result reads as the empty string. In `ls`, `glob` and `tree` a directory ends in `/`. A failure that three mounts report identically is one line naming the three mounts. Search hits read `#1`, `#2` in order, and the scaled score appears only when asked for by name. Nothing about the rows, the errors or the wire payload changes.
-
-## Design
-
-### Cost at the reference deployment
-
-Everything here rides one multiplier: per verb call, about 150,000 a day and about 20 a second at peak, one render per call at most, at the boundary that shows text. Nothing rides per file write, per index visit, per batch, per corpus or per lock: the renderer is pure, issues no statement, holds no connection and takes no lock, so a read still never waits on a writer and no engine budget (`membership_budget`, `chunked`, `statement_budget`) is involved. The bound this change declares is `RENDER_CHARACTER_BUDGET`. What it adds in memory, per call, freed at return:
-
-| Structure | Grows with | Size at a 10,000-row result | Bound |
-|---|---|---|---|
-| the `_Block` list of a body | rows drawn | 10,000 two-field tuples beside the 10,000 strings the renderer builds today (`render.py:235`) | the rows of the result already in memory |
-| the length sum and the prefix walk in `_cut` | blocks | 10,000 additions; the walk stops once the allowance is spent, about 1,700 paths of 18 characters at 32,768 | one pass over the blocks |
-| the kept text | the budget | at most 32,768 characters plus the uncut tail | `budget` |
-| the group map in `_error_groups` | distinct errors | at most one key per error entry, 10,000 if every row of a batch fails differently | the errors of the result already in memory |
-| the directory set in `_render_tree` | directory rows | at most one entry per row | the rows of the result |
-| the sources of one collapsed line | mounts that failed identically | one source per mount, each replacing a whole line printed today | the router's mount count |
-
-At the peak rate, 20 renders a second of a typical result of tens of rows is a few hundred small tuples a second. A render never costs in proportion to the corpus: it reads only what the call returned.
-
-### `src/vfs/results/projection.py`
-
-- `RENDER_ONLY_FIELDS: frozenset[str] = frozenset({"rank"})`, declared under `OBSERVATION_FIELDS`.
-- `validate_projection` admits `OBSERVATION_FIELDS | RENDER_ONLY_FIELDS | PROJECTION_SENTINELS`.
-- `_DEFAULT_PROJECTION["search"]` becomes `("path", "rank", "matches")`.
-- The comment at `:45-48` loses its mention of `--output` on a CLI, which does not exist, and gains one sentence on `rank`.
-- `resolve_projection` is unchanged: `all` walks `Observation.model_fields`, which holds no `rank`.
-
-### `src/vfs/results/render.py`
-
-Module constants and shared types, in a new section under the imports as AGENTS.md's file order asks:
-
-- `RENDER_CHARACTER_BUDGET: Final[int] = 32_768`.
-- `_Block(NamedTuple)`: `text: str` (whole lines, no trailing newline) and `rows: int` (the rows this block finishes).
-- `_Body(NamedTuple)`: `blocks: list[_Block]` and `separator: str`.
-- `_Cut(NamedTuple)`: `text: str`, `characters_removed: int`, `rows_remaining: int`.
-- `_Narrowing(NamedTuple)`: `arguments: tuple[str, ...]` and `hint: str`; `_NARROWING: dict[str, _Narrowing]` holds the six rows of decision 7.
-- `_EMPTY_WORDS: dict[str, str]` maps `ls` and `tree` to `(empty directory)` and `glob`, `grep` and `search` to `(no matches)`; `_NO_ROWS = "(no rows)"`.
-- `_SLASH_FUNCTIONS: frozenset[str] = frozenset({"ls", "glob", "tree"})`.
-- `"rank"` joins `_SEARCH_LINE_LEVEL_FIELDS` and `_RIGHT_ALIGN_FIELDS`.
-
-The entry point:
-
-- `render_result(result, *, projection=None, budget=None)` validates the projection, then the budget through `_checked_budget`, then proceeds as today. A `write` result and a failed result with no observations are returned whole: the first has a body of at most three lines whatever the batch size (READ, `render.py:648-675`), the second is the errors section alone. For every other result it takes the `_Body` from `_render_body`, the note and the errors section. With no budget, or when the full length (the sum of block lengths and separators, plus the tail) is within the budget, it joins the blocks with the separator and appends the tail exactly as today. Otherwise it computes the allowance as `budget` minus the length of the marker drawn at its widest counts (N as the full body length, R as the total rows), minus one for the newline before the marker, minus the tail's length with its blank lines, and calls `_cut`; an allowance below zero is treated as zero, which is the case decision 3 names where the marker and the tail are returned alone.
-- The docstring states decisions 3 to 6, the profile of decision 10 and its future direction. It names no spec.
-
-Internal helpers:
-
-- `_checked_budget(budget) -> int | None` raises as decision 8 says.
-- `_cut(body, allowance) -> _Cut` keeps blocks while the running length fits, then the longest whole-line prefix of the next block, found with one `str.rfind` for a newline at or before the remaining allowance; it sums `rows` of the blocks it did not keep whole.
-- `_truncation_marker(op, characters, rows) -> str` draws the line of decision 5 and appends `; <hint>` when `_NARROWING` has the op.
-- `_render_body(result, projection) -> _Body` returns the empty word of decisions 11 and 12 as a one-block body when `result.observations` is empty and the op is not an action or grant verb; otherwise it dispatches as today.
-- The arrangements return `_Body` in place of `str`:
+`read`, `stat`, an unknown op and a cross-op merge close the marker after the two counts. `glob` names `limit` and not `max_count`, because the listing refuses the two together and a page is the bounded form (`paging.py`, `PAGE_BESIDE_MAX_COUNT`). The shell's own hint is decision 18's. Which shape the hint takes is choice 1.
+9. **A budget that is not a positive integer raises, before any arrangement is chosen.** `bool`, `float` and `str` raise `TypeError`; an integer below 1 raises `ValueError`. It raises on a `write` result and a failed result too, where the budget would otherwise be ignored. Precedent: a bad projection already raises on every path (`render.py:56-60`, `projection.py:89-123`).
+10. **The cut changes text only.** `to_str(budget=...)` adds no error, changes no row and leaves `to_payload()` as it was. It mints no `vfs.budget_exhausted.truncated`: that kind records a runtime budget cutting the result itself (`src/vfs/results/kinds.py:91`), and here the result is whole. Precedent: rendering is declared pure (`render.py:9-10`).
+11. **Every arrangement returns its body as blocks, so the cut counts rows without parsing text.** `cut.py` declares `Block(NamedTuple)` with `text: str` (whole lines, no trailing newline), `rows: int` and `paths: tuple[str, ...]`; `Body(NamedTuple)` with `blocks: list[Block]` and `separator: str`; and `Cut(NamedTuple)` with `text: str`, `characters_removed: int`, `rows_remaining: int` and `shown: frozenset[str]`, the paths of the rows kept whole. `paths` is filled by the listing arrangements, the path list, the table and the tree, because only a listing resumes; every other block leaves it empty. The blocks, by arrangement:
 
 | Arrangement | Blocks | Rows a block finishes | Separator |
 |---|---|---|---|
-| path list (`_render_rows`, path only) | one line per row | 1 | newline |
-| table (`_render_rows`, `_markdown_table`) | header and divider, then one line per row | 0, then 1 | newline |
-| `stat` and projected `read` (`_render_block`) | one block per row | 1 | blank line |
+| path list and table (`_render_rows`) | a table's header and divider as one block, then one line per row | 0, then 1 | newline |
+| `stat`, and a `read` with more than content projected (`_render_block`) | one block per row | 1 | blank line |
 | `read`, one row | the content | 1 | newline |
-| `read`, several rows | `==> path <==` and the content | 1 | blank line |
-| `grep` lines | all the lines of one row; a row that draws no line has no block | 1 | newline |
+| `read`, several rows | `==> path <==` and the content of each | 1 | blank line |
+| `grep` lines | the lines of one row; a row that draws no line has no block | 1 | newline |
 | `search` lines | the header, locators and previews of one hit | 1 | newline |
-| `tree` | one line per node | 1 when a row has that path, 0 for an ancestor no row stands for | newline |
+| `tree` | one line per node | 1 where a row has that path, 0 for an ancestor no row stands for | newline |
 | `traverse` | one line each | 1 for a root, 2 for a child (the node and the edge that reached it), 1 for a further edge, 0 for the closing count | newline |
-| action one-liner, grant table | one line; header and divider then one line per entry | 0; 0 then 1 | newline |
+| action one-liner | one line | 0 | newline |
+| grant table | header and divider, then one line per entry | 0, then 1 | newline |
 
-- `_shown_path(observation) -> str` returns the path with `/` appended when `kind == "directory"` and the path is not `/`. `_render_rows` gains `mark_directories: bool` and `ranked: bool`, both keyword-only and false by default; `_render_path_list` passes `mark_directories=result.op in _SLASH_FUNCTIONS`; `_render_search` passes `ranked=True` for its table. `_render_tree` collects the paths of its directory rows in a set and appends `/` to a node whose full path is in it.
-- `_render_search` draws the header of decision 17 from the row's position.
-- `_field_unpopulated` treats `rank` as populated only when the op is `search`, and `_render_unpopulated_projection_note` considers names in `OBSERVATION_FIELDS | RENDER_ONLY_FIELDS`.
-- `_error_groups(errors) -> list[tuple[ResultError, list[Path]]]` orders by the severity tiers as today, then groups by the key of decision 15, leaving every entry with non-empty `data` alone. `_error_line(error, sources=())` draws the locus of decision 15. `_render_errors` and `_render_write_errors` both draw from `_error_groups`, so the two blocks cannot drift.
+A joined string cannot say how many rows it lost. The profile is stated in the `render_result` docstring: every row is still drawn before the cut, so a budgeted render costs in proportion to the rows of the result, not to the budget. A renderer that stops drawing once the allowance is spent is the future direction, never a declared limit. Precedent: AGENTS.md, production posture, last bullet.
+12. **A `write` result and a failed result with no rows are returned whole under any budget.** The first draws at most three body lines whatever the batch size (`render.py:625-678`) and an errors block that decision 7 never cuts; the second is the errors section alone (`render.py:65-66`).
+13. **A cut listing page prints a `more: after=` key that skips no row the text did not show.** When the cut removes a row of a result whose `next_after` is set, the line names the greatest path P, in the order `frontier_page` sorts by, such that every row of the result at or before P is in `Cut.shown`. When the first row in that order is not shown, the line is left out, and the marker's hint narrows the call. `Result.next_after` is unchanged. The rule is `resume_key(paths, shown) -> str | None` in `src/vfs/results/paging.py`, beside the order it reads. Resuming may draw again a row the text showed, as `tree` does where its drawing order differs from the key order; it never loses one. The allowance reserves the line at the length of the longest path of the result, so the bound of decision 4 holds. Without this rule an agent that passes the printed key skips every row the cut hid, which is the silence this spec removes. Precedent: the listing's decision 1, "a key is always a row that was shown".
+14. **A successful `ls` or `tree` with no rows renders `(no entries)`, and a successful `glob`, `grep` or `search` with no rows renders `(no matches)`.** The word is the body, so the tail follows it after a blank line. The test is the absence of observations, not an empty drawing: a `grep` whose rows exist and whose projected columns are empty keeps today's note and gains no word. Precedent: archived spec 155, rule 2 (`spec.md:27`). The listing's word departs from 155's `(empty directory)`; choice 2 says why.
+15. **A successful `read`, `stat` or `traverse` with no rows, an unknown op and a cross-op merge render `(no rows)`, so no successful result renders the empty string.** The words the other arrangements print stay: `No changes`, `No grants`, `No members`, `write: nothing to do` (`render.py:584-585`, `:610-611`, `:615`, `:636-637`). Neither of 155's two words fits a walk or a read, and 155's rule is that the text is never silent.
+16. **In the text of `ls`, `glob` and `tree`, a row whose own `kind` is `directory` prints its path with a trailing `/`.** The slash is added in the path list, the `path` cell of a table and a tree's node name; the row's `path` is unchanged. It is read from the row's `kind`, never inferred: a row whose `kind` is `None` prints bare, a tree ancestor no row stands for prints bare, and `/` never becomes `//`. Other ops print paths as today. `_render_rows` gains a keyword-only `mark_directories: bool = False`, which `_render_path_list` sets when the op is one of the three. Precedent: archived spec 155, rule 3 (`spec.md:28`).
+17. **The empty words, the slash and the rank column decorate `render_result` only; a shell line prints what bash prints.** Decided 2026-10-15: the `cli` surface prints exactly what bash prints, nothing for an empty `ls` and no slash without `-F`, and the markers of spec 155 stay on the verb tools (archived spec 167, `spec.md:21`). The shell never renders a verb's result through `render_result`: its only call of `to_str` under `src/vfs/shell` is the facts of `LineResult` (`host.py:169`; `grep` run), which decision 18 replaces.
+18. **`LineResult.to_str` takes `budget=` and cuts what the line printed by whole lines, keeping its facts.** It must take the argument: `ty` refuses an override of `to_str` that drops a keyword its base takes (`invalid-method-override`, run on a scratch file). It must honour it, because a surface that holds a `Result` cannot tell a line's result from a verb's, and a budget ignored there breaks the bound silently. `render.py` gains `render_output(output: str, errors: list[ResultError], *, budget: int | None = None, hint: str | None = None) -> str`: each line of `output`, its newline kept, is one block of one row; the errors section is the tail. Unbudgeted it returns `output`, then `"\n"` and the errors section when there is one, which is `LineResult.to_str` today. `LineResult.to_str(self, *, projection=None, budget=None)` validates `projection` with `validate_projection`, as today's call through `Result.to_str` does, and returns `render_output(self.stdout + self.stderr, self.errors, budget=budget, hint=PAGING_HINT)`. `PAGING_HINT: Final = "page with head, tail or sed -n"` is a constant of `host.py`, the hint the source wrote for the shell (`spec.md:51`). The marker's noun stays `rows`, the word F1 fixes; a printed line is the record that `head` and `wc -l` count. `LineResult.stdout` and `.stderr` are unchanged.
+19. **Errors equal in `(kind, severity, retryable, path, message)` print as one line that names every source, and an entry carrying `data` is never merged.** The grouping is in the text only; `Result.errors` keeps every entry. A group takes its first member's place in today's order, fatal, then warnings, then info, each in arrival order. Its locus is the path when it has one; otherwise ` mount <source>` for one distinct source, ` mounts <a>, <b>, <c>` for several, each once in arrival order, and none when no member has a source. An entry whose `data` is not empty prints alone, so a `vfs.target` second entry and a `vfs.rollup` count keep their suffixes. `_error_groups(errors)` serves `_render_errors`, `_render_write_errors` and `render_output`, so the three blocks cannot drift. Precedent: the wire rollup groups on the first three fields of the key and keeps every fact on the envelope (`envelope.py:835-858`); `path` and `message` make the text merge only true duplicates.
+20. **`rank` is a render-only name, declared as `RENDER_ONLY_FIELDS: frozenset[str] = frozenset({"rank"})` under `OBSERVATION_FIELDS` in `projection.py`.** `validate_projection` admits `OBSERVATION_FIELDS | RENDER_ONLY_FIELDS | PROJECTION_SENTINELS`. `OBSERVATION_FIELDS` stays equal to the model's fields, which `tests/results/test_projection.py::TestVocabulary::test_observation_fields_track_the_model` pins. `all` never expands to `rank`, because `all` means the fields populated on a row and `rank` is on none. A verb's `columns=` is untouched: the backends keep only entry fields (`reads.py:145`). Precedent: archived spec 133 keeps display options in the render layer (`spec.md:21`).
+21. **The default `search` projection is `("path", "rank", "matches")`; the rank prints `#N` from the row's one-based position in `result.observations`, and the scaled score prints only when `score` is projected.** The line header is the path, then `  #N` when `rank` is projected, then `  score=0.8731` when `score` is projected and populated: `/z.md  #1`, and under `("default", "score")`, `/z.md  #1  score=0.9000`. The path stays first, so every line of a hit begins with its path or with `>`. In a table `rank` is a right-aligned column whose cell is `#N`: `rank` joins `_SEARCH_LINE_LEVEL_FIELDS` and `_RIGHT_ALIGN_FIELDS`. No raw score before scaling is printed, since none reaches the row. Precedent: archived spec 155, rule 5 as its study verified it (`studies/051-162/155-the-text-renderer-for-agents.md`, choice 1), and the landed pin of an explicit score (`tests/results/test_render.py:340-342`).
+22. **On any op but `search`, a projected `rank` draws an empty column, and the unpopulated note names it.** A projection's validity never depends on the result it lands on (`render.py:56-58`). `_field_unpopulated` reads `rank` as populated only on a `search` result with rows, and `_render_unpopulated_projection_note` considers `OBSERVATION_FIELDS | RENDER_ONLY_FIELDS`. The arrangements that ignore the projection stay silent about it, as for every column (`render.py:130`).
+23. **Tests are written first and seen failing, at the layer the behaviour lives: the renderer's in `tests/results/`, the line's in `tests/shell/test_host.py`.** No test asserts on time, and none is marked `slow`: the largest input is 10,000 rows built in memory.
 
-### `src/vfs/results/envelope.py`
+## Cost
 
-- `to_str(self, *, projection=None, budget=None)` passes both through. Its docstring says in two sentences what a budget does and that the errors are never cut; it is a page's content, so `scripts/docs.sh check` is part of this change's gate.
+Everything rides one multiplier, per verb call: about 150,000 a day and 20 a second at peak, one render at most per call, at the boundary that shows text. Nothing rides per file write, per index visit, per batch, per corpus or per lock: the renderer issues no statement, opens no connection and takes no lock, so no read waits on anything and no engine's caps apply, on SQLite, on Postgres or on the generic floor. The one declared bound is `RENDER_CHARACTER_BUDGET`. Each structure is freed when the call returns.
 
-### `documentation/`
+| Structure | Grows with | At a 10,000-row result | Bound |
+|---|---|---|---|
+| the block list of a body | rows drawn | 10,000 three-field tuples beside the 10,000 strings drawn today | the rows the call returned |
+| the length sum and the prefix walk of the cut | blocks | 10,000 additions; at 32,768 the walk keeps about 1,700 paths of 18 characters | one pass over the blocks |
+| the kept text | the budget | at most `budget` characters plus a tail that does not fit | `budget` |
+| the `shown` set and the sort of `resume_key` | rows of a cut listing | one set of up to 10,000 paths and one sort, only when a cut removes rows of a page | the rows the call returned |
+| the group map of `_error_groups` | distinct errors | one key per error, 10,000 if every row of a batch fails differently | the errors of the result |
+| the sources of one grouped line | mounts that failed alike | one source per mount, each in place of a whole line printed today | the router's mounts |
+| a shell line's blocks | lines printed | one block per line, at most 16 MiB of output (`documentation/reference/shell.md`, Budgets) | the line's `output_bytes` budget |
 
-- The three listing blocks of decision 19.
+## Left as it is
 
-### Order of work
+- `Result.to_payload`, `to_json` and the wire: a render cut is not a result cut.
+- `LineResult.stdout`, `.stderr` and what a line prints to them: the 2026-10-15 ruling keeps them what bash prints.
+- `_rolled_errors`: it stays the wire's grouping; the text's grouping is a second, stricter key over the same entries.
+- `_DEFAULT_PROJECTION["run"]`: unit 167-1 removes it.
 
-Each step writes its tests first and sees them fail, then the code. Every node id is under `tests/results/test_render.py` unless another file is named.
+## Tests
 
-1. The projection name. Tests: `tests/results/test_projection.py::TestValidateProjection::test_rank_is_admitted_as_a_render_only_name`, `::TestVocabulary::test_rank_is_not_an_observation_field`, `::TestResolveProjection::test_all_never_expands_to_rank`, `::TestDefaultProjection::test_search_defaults_to_rank`. Amended: `tests/results/test_projection.py::TestVocabulary::test_every_default_projection_uses_real_fields` accepts a render-only name, and `tests/test_ops.py::test_search_and_run_have_default_projections` expects the new default. Then `projection.py`.
-2. The rank column. Tests in `TestSearchRendering`; the pin at `:331-334` is amended to `"/z.md  #1\n/z.md:10-30\n> **needle** here\n> more\n/a.md  #2"`. Then `_render_search`, `_render_rows(ranked=)`, the note.
-3. The error collapse. Tests in `TestErrorRendering`. Then `_error_groups`, `_error_line`, both error blocks.
-4. The slash. Tests in a new `TestDirectorySlash`. Then `_shown_path`, `_render_rows(mark_directories=)`, `_render_tree`.
-5. The empty words. Tests in a new `TestEmptyMarkers`; `TestSearchRendering::test_an_empty_result_renders_nothing` becomes `::test_an_empty_result_says_no_matches` and `TestTraverseRendering::test_an_empty_graph_renders_nothing` becomes `::test_an_empty_graph_says_no_rows`. Then `_EMPTY_WORDS` and `_render_body`.
-6. The row blocks, with no change of behaviour: every arrangement returns a `_Body` and `render_result` joins it. The whole of `tests/results/test_render.py` as it stands after step 5 is the pin.
-7. The budget. Tests in a new `TestRenderBudget`. Then `RENDER_CHARACTER_BUDGET`, `_NARROWING`, `_checked_budget`, `_cut`, `_truncation_marker`, `budget=` on `render_result` and on `Result.to_str`.
-8. The documentation blocks and the docstrings. Then the two gates, `scripts/ci.sh` (lint, format, types and the suite at 100% coverage, so every branch added above is reached by a test named here) and `scripts/docs.sh check`.
+Each node is in `tests/results/test_render.py` unless another file is named.
 
-No test asserts on time. No test is marked `slow`: the largest input is 10,000 hand-built rows in memory.
+- `TestRenderBudget::test_the_declared_budget_cuts_a_ten_thousand_row_listing_and_keeps_its_errors`: `to_str(budget=RENDER_CHARACTER_BUDGET)` on a 10,000-row `ls` result with three distinct warnings returns at most 32,768 characters, holds exactly one line beginning `[output truncated: `, and holds the three warning lines whole.
+- `TestRenderBudget::test_the_declared_constant_and_the_unbounded_default`: `RENDER_CHARACTER_BUDGET == 32_768` in both `vfs.results.cut` and `vfs.results.render`, and `to_str()` on the same result holds 10,000 rows and no marker.
+- `TestRenderBudget::test_a_read_is_cut_at_a_line_boundary_and_counts_what_it_removed`: a one-row read of 5,000 lines under `budget=2000` returns at most 2,000 characters, each line before the marker is a line of the content in order, N is the content's length minus the kept length, and R is 1.
+- `TestRenderBudget::test_rows_remaining_and_characters_removed_reconcile_in_every_arrangement`: for the path list, a table, `stat` blocks, a multi-row `read`, `grep` lines, `search` lines, `tree`, `traverse` and a grant table under a budget that cuts each, the rows kept whole plus R equal the rows drawn unbudgeted, and N plus the kept body's length equals the unbudgeted body's length.
+- `TestRenderBudget::test_a_budget_the_text_fits_changes_nothing`: for each arrangement and a `write` result, `to_str(budget=len(to_str()))` equals `to_str()`.
+- `TestRenderBudget::test_a_line_longer_than_the_allowance_is_removed_whole`: a one-line body of 5,000 characters under `budget=200` renders the marker alone, with N 5,000 and R 1.
+- `TestRenderBudget::test_the_tail_larger_than_the_budget_prints_whole`: 500 rows, twenty distinct errors and one unpopulated projected field under `budget=50` render no body line, one marker, the note and twenty error lines, and the length is the marker's plus the tail's.
+- `TestRenderBudget::test_a_write_and_a_failed_result_are_returned_whole`: a `write` result of 10,000 file rows and a failed result with no rows render the same text under `budget=64` as under none.
+- `TestRenderBudget::test_a_bad_budget_raises_on_every_arrangement`: `0` and `-1` raise `ValueError`, and `True`, `1.5` and `"10"` raise `TypeError`, on an `ls`, a `write` and a failed result.
+- `TestRenderBudget::test_the_cut_leaves_the_envelope_unchanged`: after `to_str(budget=64)` on a 500-row result, `to_payload()` equals its value before, the error count is unchanged and no kind is `vfs.budget_exhausted.truncated`.
+- `TestRenderBudget::test_the_marker_hint_follows_the_op`: a cut `ls`, `tree`, `glob`, `grep`, `search` and `traverse` each end the marker with `; ` and their row of decision 8; a cut `read` and `stat` end it with `remaining]`.
+- `TestRenderBudget::test_every_hint_argument_is_a_parameter_of_its_op`: each argument of `_NARROWING` is a `ParamSpec` name of its op in `PARAMS` and appears in its hint.
+- `tests/results/test_next_after.py::TestText::test_a_cut_page_names_the_last_key_the_text_showed_in_full`: a 2,000-row `ls` page with `next_after` set, under a budget that keeps 100 rows, prints `more: after=<the 100th path>`, and `next_after` is unchanged.
+- `tests/results/test_next_after.py::TestText::test_a_cut_tree_page_resumes_without_losing_a_row`: over `/t/a`, `/t/a/b.md` and `/t/a-c.md`, a budget that keeps the lines of `a` and `b.md` prints `more: after=/t/a`: the one row at or before that key is shown, and the rows after it are `/t/a-c.md`, which the text did not show, and `/t/a/b.md`, which it showed.
+- `tests/results/test_next_after.py::TestText::test_a_page_whose_first_row_is_cut_prints_no_more_line`: a budget that keeps no row of a page with a key renders the marker and no `more:` line.
+- `TestEmptyMarkers::test_the_five_listing_and_matching_ops_name_their_emptiness`: empty successful `ls` and `tree` render `(no entries)`; `glob`, `grep` and `search` render `(no matches)`.
+- `TestEmptyMarkers::test_no_successful_result_renders_the_empty_string`: for every op of `ALL_OPS`, an unknown op and a two-op merge, an empty successful result renders at least one character.
+- `TestEmptyMarkers::test_the_word_follows_the_rows_and_not_the_drawing`: an empty `grep` with one warning renders `(no matches)`, a blank line and the warning; a failed empty result renders its error and no word; a `grep` with rows and unpopulated columns renders the note and no word.
+- `TestSearchRendering::test_an_empty_result_says_no_matches`, in place of `test_an_empty_result_renders_nothing` (`:374-375`), and `TestTraverseRendering::test_an_empty_graph_says_no_rows`, in place of `test_an_empty_graph_renders_nothing` (`:484-485`).
+- `TestDirectorySlash::test_ls_through_the_kernel_marks_the_directory_and_not_the_file`: through `AsyncVirtualFileSystem`, `ls("/mine")` over an empty directory and a file renders `/mine/empty/` and `/mine/notes.md`, and the rows' `path` fields carry no slash.
+- `TestDirectorySlash::test_the_slash_is_read_from_the_rows_own_kind`: a `glob` path list, an `ls` table and a `tree` print the slash on a `directory` row; a tree ancestor no row stands for, a row with `kind` `None` and `/` print without one.
+- `TestDirectorySlash::test_other_ops_print_paths_bare`: a `stat` block, a `grep` table, a `search` result and an unknown op print a directory row's path bare.
+- `TestErrorRendering::test_identical_fan_out_errors_print_once_naming_every_mount`: three errors equal but for the sources `/`, `/course` and `/mine` render one line beginning `ERROR mounts /, /course, /mine: `, and `len(result.errors)` is 3.
+- `TestErrorRendering::test_errors_differing_in_one_key_field_stay_apart`: two errors that differ in exactly one of kind, severity, retryable, path or message render two lines, for each of the five.
+- `TestErrorRendering::test_an_entry_carrying_data_is_never_merged`: two otherwise equal errors that each carry `data` render two lines, and a rollup entry keeps `[+N more rolled up]` beside a grouped line.
+- `TestErrorRendering::test_a_group_keeps_its_first_members_place_in_both_error_blocks`: a group sits where its first member sat within its severity tier, and `write errors:` groups the same three errors into one indented line.
+- `TestSearchRendering::test_default_hits_read_as_ranks_and_never_as_a_zero_score`: hits scored 1.0 and 0.0 render headers ending `#1` and `#2`, and the text holds no `0.0000`. The default pin at `:331-334` becomes `"/z.md  #1\n/z.md:10-30\n> **needle** here\n> more\n/a.md  #2"`.
+- `TestSearchRendering::test_the_scaled_score_prints_only_when_projected`: `("path", "score")` still renders `/z.md  score=0.9000`, and `("default", "score")` renders `/z.md  #1  score=0.9000`.
+- `TestSearchRendering::test_rank_in_a_table_and_on_an_unranked_op`: a `search` table under `("path", "rank", "size_bytes")` holds `#1` and `#2` in row order, and `("path", "rank")` on an `ls` result renders an empty `rank` column and `NOTE: rank not populated for any observations.`
+- `tests/results/test_projection.py::TestValidateProjection::test_rank_is_admitted_as_a_render_only_name`: `validate_projection(("path", "rank"))` returns the tuple, and `rank` is in neither `OBSERVATION_FIELDS` nor `Observation.model_fields`.
+- `tests/results/test_projection.py::TestResolveProjection::test_all_never_expands_to_rank` and `tests/results/test_projection.py::TestDefaultProjection::test_search_defaults_to_rank`.
+- Amended to the new default: `tests/results/test_projection.py::TestVocabulary::test_every_default_projection_uses_real_fields` admits a render-only name; `tests/results/test_projection.py::TestResolveProjection::test_duplicates_drop_first_win` expects `("score", "path", "rank", "matches")`; `tests/test_ops.py::test_search_and_run_have_default_projections` expects `("path", "rank", "matches")`.
+- `tests/shell/test_host.py::test_a_line_result_under_a_budget_cuts_its_output_by_lines_and_keeps_its_facts`: a line that prints 1,000 numbered lines and refuses one verb, under `budget=500`, renders at most 500 characters of whole printed lines, one marker ending `; page with head, tail or sed -n]`, and the warning; `stdout` still holds 1,000 lines; and `str(result)` with no budget is the output, a newline and the error section, as today.
+- `tests/shell/test_host.py::test_a_line_result_refuses_a_bad_budget_and_a_bad_projection`: `budget=0` raises `ValueError` and `projection="path"` raises `TypeError`.
+
+No storage, statement, rights or engine code changes, so no test runs on the Postgres leg and none needs a leak test: the text prints only what the envelope carries. `scripts/ci.sh` and `scripts/docs.sh check` are the gates, the second because docstrings and two published pages change.
 
 ## Scope
 
-In: decisions 1 to 19. Files: `src/vfs/results/render.py`, `src/vfs/results/projection.py`, `src/vfs/results/envelope.py` (the `to_str` signature and docstring only), `tests/results/test_render.py`, `tests/results/test_projection.py`, `tests/test_ops.py` (one assertion), `documentation/tutorials/control-who-can-access-files.md` and `documentation/how-to/load-a-folder-of-files.md` (three text blocks).
+In: `src/vfs/results/cut.py` (new), `src/vfs/results/render.py`, `src/vfs/results/projection.py`, `src/vfs/results/paging.py` (`resume_key`), `src/vfs/results/envelope.py` (the `to_str` signature and docstring), `src/vfs/shell/host.py` (`LineResult.to_str` and `PAGING_HINT`), the tests named above, and the two pages under What the docs must say.
 
 Out, and where each belongs:
 
-- The `cli` arrangement, its display that passes `RENDER_CHARACTER_BUDGET`, its shell hint row and its rule for stderr: [unit 167-5](../2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs/spec.md).
-- The MCP adapter that passes the budget, a public value carrying the text with the number of rows it showed, the errors section leading a failed result, the truncation warning on the structured payload and `max_errors` at the wire: [unit 171-1](../2026-11-25-the-wire-adapter-projects-a-result-to-mcp-blocks-within-budget/spec.md). `_Cut` here is private; that unit decides what it publishes.
-- The placeholder for a bytes row and `to_payload(include_bytes=)`: [unit 167-2](../2026-11-25-a-bytes-row-renders-a-placeholder-and-leaves-the-payload-only-when-asked/spec.md).
-- The removal of `run`, including its row in `_DEFAULT_PROJECTION`: [unit 167-1](../2026-11-25-the-dead-run-verb-leaves-every-face/spec.md).
-- The listing key `next_after`, the `more: after=` line the renderer prints for it, and where that line sits beside the marker: [unit 176-1](../2026-11-25-ls-tree-and-glob-page-on-a-path-key-served-by-a-derived-page-in-the-router/spec.md). A render cut and a resumption key are different things: the first hides text of rows the call returned, the second names rows the call did not return.
-- `read(range=)` and a hint row for `read`: [unit 178-2](../2026-11-25-read-takes-a-byte-range-and-the-row-says-which-slice-it-carries/spec.md).
-- A plan rendered under `to_str(budget=)`: roadmap story H2, criterion 6 (`context/standards/roadmap.md:305`), which has no spec and consumes decision 1.
-- A raw score before scaling: no unit carries it; it needs a new `Observation` field.
-- A bound on the number of error lines in text, a storage-side limit on rows, any change to the envelope or the wire format, and a renderer that stops drawing at the allowance.
+- The MCP adapter that passes the budget, what it publishes of `Cut`, the rows the text showed in `structuredContent` and the `truncated` warning on the payload: unit 171-1, story M1.
+- The bytes placeholder and `to_payload(include_bytes=)`: unit 167-2.
+- The removal of `run`: unit 167-1.
+- A hint row for `read`, once it takes a range: unit 178-2.
+- A plan rendered under `to_str(budget=)`: story H2, criterion 6, which consumes decision 1.
+- A raw score before scaling: no unit; it needs a new `Observation` field.
+- A bound on error lines in text, a renderer that stops drawing at the allowance, and the host paging its listings in the shell (unit 167-5's remainder).
 
-## Acceptance criteria
+## What the docs must say
 
-Every node id is in `tests/results/test_render.py` unless another file is named. Counts and states only.
+- The docstrings of `render_result`, `Result.to_str` and `LineResult.to_str` state decisions 4 to 7, the profile of decision 11 and its direction, and the declared value. They name no spec.
+- `documentation/tutorials/control-who-can-access-files.md:130-131` and `:141` print `/finance/` and `/handbook/`, and `documentation/how-to/load-a-folder-of-files.md:149-150`, `:157-161`, `:164` and `:166-167` print each directory of the loaded repository with its slash. These are `text` blocks no test executes, so the review reads them in the diff.
+- The comment at `projection.py:45-48` loses its mention of `--output` on a CLI, which does not exist, and says that `rank` is render-only.
 
-1. `to_str(budget=32_768)` on a 10,000-row `ls` result carrying three distinct warnings returns at most 32,768 characters, ends its body at a line boundary, holds exactly one line beginning `[output truncated: `, and holds all three warning lines whole: `TestRenderBudget::test_the_declared_budget_cuts_a_ten_thousand_row_listing_and_keeps_its_errors`.
-2. `RENDER_CHARACTER_BUDGET` equals 32,768 and `to_str()` with no budget on the same 10,000-row result returns every row and no marker: `TestRenderBudget::test_the_declared_constant_and_the_unbounded_default`.
-3. `to_str(budget=2000)` on a one-row read of 5,000 lines returns at most 2,000 characters, every line before the marker is a line of the content in order, N equals the content's length minus the kept length, and R is 1: `TestRenderBudget::test_a_read_is_cut_at_a_line_boundary_and_counts_what_it_removed`.
-4. For each arrangement (path list, table, `stat` blocks, multi-row `read`, `grep` lines, `search` lines, `tree`, `traverse`, a grant table) under a budget that cuts it, the rows kept whole plus R equals the rows drawn unbudgeted, and N plus the kept body's length equals the unbudgeted body's length: `TestRenderBudget::test_rows_remaining_and_characters_removed_reconcile_in_every_arrangement`.
-5. For each arrangement and a `write` result, `to_str(budget=len(to_str()))` equals `to_str()` and holds no marker: `TestRenderBudget::test_a_budget_the_text_fits_changes_nothing`.
-6. A one-line body of 5,000 characters under `budget=200` renders the marker alone, with N 5,000 and R 1: `TestRenderBudget::test_a_line_longer_than_the_allowance_is_removed_whole`.
-7. A result with 500 rows, twenty distinct errors and one unpopulated projected field under `budget=50` renders no body line, one marker, the note and all twenty error lines, and its length equals the marker plus the tail: `TestRenderBudget::test_errors_and_note_larger_than_the_budget_print_whole`.
-8. A `write` result of 10,000 file rows and a failed result with no rows render the same text under `budget=64` as under no budget: `TestRenderBudget::test_a_write_and_a_failed_result_are_returned_whole`.
-9. `budget=0` and `budget=-1` raise `ValueError`, and `budget=True`, `budget=1.5` and `budget="10"` raise `TypeError`, on an `ls` result, a `write` result and a failed result: `TestRenderBudget::test_a_bad_budget_raises_on_every_arrangement`.
-10. After `to_str(budget=64)` on a 500-row result, `to_payload()` equals its value before the call, `len(result.errors)` is unchanged and no error kind is `vfs.budget_exhausted.truncated`: `TestRenderBudget::test_the_cut_leaves_the_envelope_unchanged`.
-11. A cut `ls`, `tree`, `glob`, `grep`, `search` and `traverse` result each end their marker with `; ` and the hint of decision 7, and a cut `read` and `stat` result end theirs with `rows remaining]` or `row remaining]`: `TestRenderBudget::test_the_marker_hint_follows_the_verb`.
-12. Every argument named in `_NARROWING` is a `ParamSpec` name of that op in `vfs.params.PARAMS` and appears in its hint: `TestRenderBudget::test_every_hint_argument_is_a_parameter_of_its_verb`.
-13. A successful `ls` and `tree` result with no rows render `(empty directory)`, and a successful `glob`, `grep` and `search` result with no rows render `(no matches)`: `TestEmptyMarkers::test_the_five_listing_and_matching_verbs_name_their_emptiness`.
-14. For every op in `ALL_OPS`, an unknown op and a two-op merge, a successful result with no rows renders a string of at least one character: `TestEmptyMarkers::test_no_successful_result_renders_the_empty_string`.
-15. An empty `grep` result with one warning renders `(no matches)`, a blank line and the warning line; a failed empty result renders its error line and no word; a `grep` whose rows exist with unpopulated columns renders the note and no word: `TestEmptyMarkers::test_the_word_follows_the_rows_and_not_the_drawing`.
-16. Through `AsyncVirtualFileSystem` over `InMemoryStorage`, `ls` of a directory holding an empty directory and a file renders `/mine/empty/` and `/mine/notes.md`, and the two rows' `path` fields are `/mine/empty` and `/mine/notes.md`: `TestDirectorySlash::test_ls_through_the_kernel_marks_the_directory_and_not_the_file`.
-17. A `glob` path list, an `ls` table and a `tree` drawing each print the slash on a row of kind `directory`; a tree ancestor no row stands for, a row with `kind` unpopulated and the root `/` print without one: `TestDirectorySlash::test_the_slash_is_read_from_the_rows_own_kind`.
-18. A `stat` block, a `grep` table, a `search` result and an unknown op print a directory row's path bare: `TestDirectorySlash::test_other_verbs_print_paths_bare`.
-19. Three errors equal in kind, severity, retryability and message from the sources `/`, `/course` and `/mine` render one line beginning `ERROR mounts /, /course, /mine: `, and `len(result.errors)` is 3: `TestErrorRendering::test_identical_fan_out_errors_print_once_naming_every_mount`.
-20. Two errors that differ in exactly one of kind, severity, retryability, path or message render two lines, for each of the five: `TestErrorRendering::test_errors_differing_in_one_key_field_stay_apart`.
-21. Two otherwise identical errors that each carry `data` render two lines, and a rollup entry keeps its `[+N more rolled up]` suffix beside a collapsed group: `TestErrorRendering::test_an_entry_carrying_data_is_never_merged`.
-22. A group renders at the position of its first member within its severity tier, and the `write errors:` block collapses the same three errors to one indented line: `TestErrorRendering::test_a_group_keeps_its_first_members_place_in_both_error_blocks`.
-23. `validate_projection(("path", "rank"))` returns the tuple, `"rank"` is in neither `OBSERVATION_FIELDS` nor `Observation.model_fields`, and `resolve_projection(("all",), "search", rows)` holds no `rank`: `tests/results/test_projection.py::TestValidateProjection::test_rank_is_admitted_as_a_render_only_name`.
-24. `default_projection("search")` is `("path", "rank", "matches")`: `tests/results/test_projection.py::TestDefaultProjection::test_search_defaults_to_rank`.
-25. Two search hits scored 1.0 and 0.0 render headers ending `#1` and `#2` by default, and the text holds no `0.0000`: `TestSearchRendering::test_default_hits_read_as_ranks_and_never_as_a_zero_score`.
-26. `projection=("path", "score")` on a search hit still renders `/z.md  score=0.9000`, and `("default", "score")` renders `/z.md  #1  score=0.9000`: `TestSearchRendering::test_the_scaled_score_prints_only_when_projected`.
-27. A search table under `("path", "rank", "size_bytes")` holds the cells `#1` and `#2` in row order, and `projection=("path", "rank")` on an `ls` result renders an empty `rank` column and the line `NOTE: rank not populated for any observations.`: `TestSearchRendering::test_rank_in_a_table_and_on_an_unranked_verb`.
+## Not checked
 
-## Landing notes
+- The suite was not run. A text pin outside `tests/results/` that prints a directory row through `ls`, `glob` or `tree`, or a default `search` header, may need the new text; a search over `tests/` for `to_str(` and `str(result)` found four files outside `tests/results/`, and only `tests/support/storage_contract.py:2064` reads search text, by substrings the change keeps.
+- Whether a published page other than the two named shows a listing with a directory in a block other than `text`.
+- Whether `render.py` stays under 1,000 lines after the change; the estimate of about 200 added lines was not measured.
+- The marker's exact wording against unit 171-1's acceptance, which is not written.
 
-Filled in when the pull request is opened.
+## Choices to confirm
+
+1. **Which hint the marker carries.** The source wrote one shell hint for every surface (archived spec 167, `spec.md:51`), and archived spec 171 makes the hint follow the op (`context/specifications/archive/171-the-mcp-adapter-and-the-cli-tool/spec.md:148`); the study of spec 155 found no ruling (choice 4). Side taken: a hint per op for the verb arrangements and the shell hint for a line's result, by decisions 8 and 18. It names only arguments that exist and the programs a shell caller has; F1 pins the counts, which both shapes share; and one shell hint everywhere replaces the table by one constant and changes no other line.
+2. **The word for an empty listing.** Spec 155 wrote `(empty directory)`. Side taken: `(no entries)`. The last page of a listing that had exactly `limit` rows left comes back empty, and the result does not carry the `after` it was asked with (`paging.py:68-82`; `Result` holds `ops`, `observations`, `errors` and `next_after`, run), so `(empty directory)` would be false there. The other word is one constant.
 
 ## One line
 
-The text of a result is bounded when a caller asks, never silent, and never misleading about kind or rank, and the rows, the errors and the wire are exactly what they were.
+The text of a result is bounded when a caller asks, never silent, never misleading about kind or rank, and never hides a row behind its paging key, while the rows, the errors and the wire stay exactly what they were.
