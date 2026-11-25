@@ -1,6 +1,7 @@
 # 178 — The ranged read: `read(range=)` in bytes, served by the engine's own slice, and a row that says which slice it carries
 
 - **Disposition, 2026-11-25:** converted. Study verdict live at gate b (story K6): `read` takes no range on any face. Three units. This file is replaced by 3 unit specs under `agents/`, each one pull request: `agents/2026-11-25-the-engine-cuts-a-byte-slice-of-a-body-on-every-tuned-dialect/spec.md` (178-1); `agents/2026-11-25-read-takes-a-byte-range-and-the-row-says-which-slice-it-carries/spec.md` (178-2); `agents/2026-11-25-a-ranged-read-meets-the-integrity-check/spec.md` (178-3). Nothing in this file governs current work, and the Status line below is kept as history: where it says work is uncommitted, unreviewed or waiting, this line supersedes it. The study that sorted this spec against the tree is `agents/2026-11-25-the-backlog-converted/studies/165-181/178-the-ranged-read.md`.
+- **State against dev, 2026-11-25:** the unit list above was planned against `main` at `0ed462f`. Sorted against `dev`, every unit is still owed; 3 of the 3 units are owed a spec against `dev`. Which of them are written, reviewed and fit to build is in `agents/2026-11-25-the-backlog-converted/state-on-dev.md`, which wins where this line and that page differ.
 - **Status:** draft — cut 2026-10-24 from ADR 087 (proposed the same day) and the two memos it stands on. Not started. One open `[NEEDS CLARIFICATION]` (§7, slices and the integrity check).
 - **Date:** 2026-10-24
 - **Owner:** Clay Gendron

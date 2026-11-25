@@ -1,6 +1,7 @@
 # 160 — Cross-mount copy: the router does read-plus-write for files, and says so when it did
 
 - **Disposition, 2026-11-25:** converted. Study verdict live and unplaced: the router still refuses every cross-mount pair, while the README, the `cross_mount` hint and the shell's `cp` all assume the copy. One unit. This file is replaced by 1 unit spec under `agents/`, each one pull request: `agents/2026-11-25-a-cross-mount-file-copy-is-a-read-on-one-mount-and-a-write-on-the-other/spec.md` (160-1). Nothing in this file governs current work, and the Status line below is kept as history: where it says work is uncommitted, unreviewed or waiting, this line supersedes it. The study that sorted this spec against the tree is `agents/2026-11-25-the-backlog-converted/studies/051-162/160-cross-mount-copy-as-read-plus-write.md`.
+- **State against dev, 2026-11-25:** the unit list above was planned against `main` at `0ed462f`. Sorted against `dev`, every unit is still owed; 1 of the 1 unit is owed a spec against `dev`. Which of them are written, reviewed and fit to build is in `agents/2026-11-25-the-backlog-converted/state-on-dev.md`, which wins where this line and that page differ.
 - **Status:** draft — cut 2026-10-08 from the SmartOwl integration memo; revised 2026-10-08 after a review against `0760fe9` (the hook is `_route_two_path`; the read must project `data` and pick the body by `source`; no displacement; the metadata marker's premise was false; the result shape; the two groupings)
 - **Date:** 2026-10-08
 - **Owner:** Clay Gendron
