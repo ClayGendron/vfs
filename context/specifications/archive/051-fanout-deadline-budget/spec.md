@@ -1,5 +1,6 @@
 # 051 — A Deadline for Fan-Out: One Hung Mount Must Not Stall the Namespace
 
+- **Disposition, 2026-11-25:** converted. Study verdict live at gate f, by rewrite: no fan-out chokepoint has a time budget and nothing produces `vfs.timeout`. The roadmap counts the folder as overtaken only in the sense that story H6 rewrites it, and the study converts it as H6's two units. This file is replaced by 2 unit specs under `agents/`, each one pull request: `agents/2026-11-25-a-deadline-on-a-read-fan-out-cancels-the-hung-mount-and-reports-a-timeout/spec.md` (051-1); `agents/2026-11-25-cancel-marks-a-pending-ask-or-a-stopped-run-and-the-re-send-answers-cancelled/spec.md` (051-2). Nothing in this file governs current work, and the Status line below is kept as history: where it says work is uncommitted, unreviewed or waiting, this line supersedes it. The study that sorted this spec against the tree is `agents/2026-11-25-the-backlog-converted/studies/051-162/051-fanout-deadline-budget.md`.
 - **Status:** draft — found in the base2 line-by-line review, 2026-07-07
 - **Date:** 2026-07-07
 - **Owner:** Clay Gendron

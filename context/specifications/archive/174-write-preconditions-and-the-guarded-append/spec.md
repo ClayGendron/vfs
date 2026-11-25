@@ -1,5 +1,6 @@
 # 174 — Write preconditions and the guarded append: `if_version`, `if_absent`, `append`, and `unchanged`
 
+- **Disposition, 2026-11-25:** converted. Study verdict live at gate b (story K2): no precondition, exclusive create, guarded append or `unchanged` answer exists. Four units. This file is replaced by 4 unit specs under `agents/`, each one pull request: `agents/2026-11-25-an-identical-body-write-reports-unchanged-and-leaves-the-version-alone/spec.md` (174-1); `agents/2026-11-25-an-exclusive-create-replaces-overwrite-on-write-and-is-judged-at-add/spec.md` (174-2); `agents/2026-11-25-a-write-that-names-the-version-it-read-is-refused-when-the-row-moved-on/spec.md` (174-3); `agents/2026-11-25-append-is-one-locked-read-modify-write-so-concurrent-appends-keep-every-line/spec.md` (174-4). Nothing in this file governs current work, and the Status line below is kept as history: where it says work is uncommitted, unreviewed or waiting, this line supersedes it. The study that sorted this spec against the tree is `agents/2026-11-25-the-backlog-converted/studies/165-181/174-write-preconditions-and-the-guarded-append.md`.
 - **Status:** draft — cut 2026-10-24 from ADR 087 (proposed the same day) and the two memos it stands on. Not started. One open `[NEEDS CLARIFICATION]` (§9, the content-hash precondition).
 - **Date:** 2026-10-24
 - **Owner:** Clay Gendron

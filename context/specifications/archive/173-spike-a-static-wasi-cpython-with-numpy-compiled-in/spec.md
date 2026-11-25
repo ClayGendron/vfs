@@ -1,5 +1,6 @@
 # 173 — Spike: a statically linked CPython for WebAssembly with numpy compiled in, run over vfs
 
+- **Disposition, 2026-11-25:** landed and archived. Study verdict landed: the spike ran on 2026-10-16 and every deliverable is in the tree. Archived with its landing notes; its facts feed unit 172-1. Nothing in this file governs current work, and the Status line below is kept as history: where it says work is uncommitted, unreviewed or waiting, this line supersedes it. The study that sorted this spec against the tree is `agents/2026-11-25-the-backlog-converted/studies/165-181/173-spike-a-static-wasi-cpython-with-numpy-compiled-in.md`.
 - **Status:** spike, **executed and reported 2026-10-16** (see the landing notes; report `13-wasi-python-spike.md`). Cut the same day from Clay's decision ("let's go with option 2 and commission a spike"). Executed by one research agent; its result is written into ADR 086's pins and spec 172.
 - **Date:** 2026-10-16
 - **Owner:** Clay Gendron

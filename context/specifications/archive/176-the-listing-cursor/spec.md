@@ -1,5 +1,6 @@
 # 176 — The listing cursor on `ls`, `tree` and `glob`: a path key on `Result`, keyset pages that read around tombstones, and one merge rule for every fan-out
 
+- **Disposition, 2026-11-25:** converted. Study verdict live at gate b (story K4): no `after=`, `limit=` or `next_after` exists. Three units; the third (a stored depth column) is unplaced. This file is replaced by 3 unit specs under `agents/`, each one pull request: `agents/2026-11-25-ls-tree-and-glob-page-on-a-path-key-served-by-a-derived-page-in-the-router/spec.md` (176-1); `agents/2026-11-25-native-keyset-pages-in-the-database-storage-read-around-tombstones/spec.md` (176-2); `agents/2026-11-25-a-tree-under-max-depth-pages-on-a-stored-depth-column/spec.md` (176-3). Nothing in this file governs current work, and the Status line below is kept as history: where it says work is uncommitted, unreviewed or waiting, this line supersedes it. The study that sorted this spec against the tree is `agents/2026-11-25-the-backlog-converted/studies/165-181/176-the-listing-cursor.md`.
 - **Status:** draft — cut 2026-10-24 from ADR 087 (proposed the same day) and the two memos it stands on. Not started. Three open `[NEEDS CLARIFICATION]` markers (§1.1, §1.2, §1.4).
 - **Date:** 2026-10-24
 - **Owner:** Clay Gendron
