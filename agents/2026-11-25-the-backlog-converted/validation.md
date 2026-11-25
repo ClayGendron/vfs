@@ -24,3 +24,7 @@ Unit 175-3's body guard was exercised on PostgreSQL 16.2 through three actual as
 ## Layer 3
 
 For 171-1, MCP Python SDK 1.29.0 constructed and round-tripped a `CallToolResult` through `model_dump_json(by_alias=True, exclude_none=True)` and `model_validate_json`. The four content blocks came back as `text`, `image`, `audio` and `resource_link` in that order. The link retained `vfs:///big`, the structured payload kept its four fields and one byte-free row, and `isError` remained false. The fixture supplied two synthetic bytes for each binary block. It tested the SDK's wire object model, without decoding a media file or exercising a VFS adapter or negotiated historical protocol revision.
+
+## Layer 4
+
+For 172-1, the published `wasi_python-0.1.0-py3-none-any.whl` downloaded successfully and its SHA-256 was `3bfb0dcc48ce1ce9f4741e142a3a73e865b2028b7468179588d52f418dabfafc`, matching decision 1. Its Python package imported and resolved the snapshot, plain module, standard library and manifest. A cold `run` of a three-element NumPy and pandas sum with no mounts or grants, two billion fuel and a 90-second guest deadline ended at host exit 137 without a guest result. Restricting the host to one CPU and one allocator arena produced the same outcome. The host exit does not establish a guest trap, a stage exit, a working provider adapter or the proposed 21-call budget.
