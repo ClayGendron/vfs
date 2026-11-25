@@ -20,3 +20,7 @@ The complete `pytest -m postgres` selection at `27f3d24d` contains 565 tests. Al
 ## Layer 2
 
 Unit 175-3's body guard was exercised on PostgreSQL 16.2 through three actual asyncpg connections and a disposable table with a primary key and text body. The predicate `WHERE id=1 AND convert_to(body,'UTF8')=$1 FOR UPDATE` matched the original UTF-8 bytes for `é` and rejected its decomposed encoding. While the first transaction held the matched row, `pg_blocking_pids` identified it as the blocker of a second writer. A third connection read the committed old text before the first transaction released the lock. After the rival update committed, the stale candidate matched zero rows and the third connection read the rival's text. This validates the SQL predicate and lock behavior. The history mutation and end-to-end vfs verb remain separate acceptance checks.
+
+## Layer 3
+
+For 171-1, MCP Python SDK 1.29.0 constructed and round-tripped a `CallToolResult` through `model_dump_json(by_alias=True, exclude_none=True)` and `model_validate_json`. The four content blocks came back as `text`, `image`, `audio` and `resource_link` in that order. The link retained `vfs:///big`, the structured payload kept its four fields and one byte-free row, and `isError` remained false. The fixture supplied two synthetic bytes for each binary block. It tested the SDK's wire object model, without decoding a media file or exercising a VFS adapter or negotiated historical protocol revision.
