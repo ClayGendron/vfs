@@ -55,7 +55,7 @@
  },
  "157-3": {
   "key": "157-3",
-  "dir": "agents/2026-11-25-a-borrowed-sql-server-factory-is-checked-and-the-facade-installs-extensions",
+  "dir": "agents/2026-11-25-install-extensions-runs-one-mounts-install-from-the-file-system-on-both-faces",
   "title": "A borrowed `mssql+aioodbc` factory without `use_setinputsizes=False` is refused `invalid` at first touch naming the argument, and `install_extensions(path)` runs one mount's install from the facade.",
   "gate": "b",
   "source": "157-postgres-provisioning-for-host-apps",
@@ -247,7 +247,7 @@
  },
  "167-8": {
   "key": "167-8",
-  "dir": "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+  "dir": "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
   "title": "Every form of the program table, `set -e` with its POSIX exemptions, and every never-class name answer as GNU and bash do against committed fixtures, with `grant`, `revoke` and `grants` spelled in the shell and `trav` resolved to `traverse` at parse time.",
   "gate": "b",
   "source": "167-the-shell-pipeline-core",
@@ -281,7 +281,7 @@
  },
  "167-9": {
   "key": "167-9",
-  "dir": "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays",
+  "dir": "agents/2026-11-25-a-piped-while-read-consumes-each-listing-page-through-a-bounded-byte-pipe",
   "title": "`for`, `while`, `until`, `if`, `case`, functions, arithmetic, arrays and the parameter operators run with every verb gated, under declared loop and function-depth budgets, with bounded `&` and `wait` and the nondeterministic words recorded for resume.",
   "gate": "b",
   "source": "167-the-shell-pipeline-core",
@@ -307,7 +307,7 @@
   ],
   "deps_dirs": [
    "agents/2026-11-25-the-shell-parses-the-whole-bash-grammar-before-anything-runs",
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do"
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount"
   ],
   "layer": 3
  },
@@ -338,8 +338,8 @@
    "F5"
   ],
   "deps_dirs": [
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
-   "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays",
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
+   "agents/2026-11-25-a-piped-while-read-consumes-each-listing-page-through-a-bounded-byte-pipe",
    "agents/2026-11-25-xargs-and-find-exec-dispatch-through-the-runner-so-no-program-runs-another"
   ],
   "layer": 4
@@ -426,7 +426,7 @@
   ],
   "deps_dirs": [
    "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do"
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount"
   ],
   "layer": 3
  },
@@ -545,8 +545,8 @@
   "deps_dirs": [
    "agents/2026-11-25-serve-answers-each-request-under-its-own-authority-and-refuses-an-open-mount",
    "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
-   "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays"
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
+   "agents/2026-11-25-a-piped-while-read-consumes-each-listing-page-through-a-bounded-byte-pipe"
   ],
   "layer": 5
  },
@@ -580,7 +580,7 @@
   "deps_dirs": [
    "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
    "agents/2026-11-25-move-and-copy-take-replace-and-a-move-keeps-the-moved-file",
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
    "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index"
   ],
   "layer": 4
@@ -1389,7 +1389,7 @@
  },
  "181-2": {
   "key": "181-2",
-  "dir": "agents/2026-11-25-every-row-reports-the-entrys-permanent-id-and-its-owner",
+  "dir": "agents/2026-11-25-a-readable-row-reports-its-owner-and-no-row-reports-the-entrys-id",
   "title": "Read rows and mutation rows carry `entry_id` and `owner_id` as projectable, read-only columns at the read rung, a bare row carries neither, and a write of an input naming `entry_id` is refused `vfs.invalid`.",
   "gate": "b",
   "source": "181-the-public-surface-regrouped-by-kernel-group",
@@ -1490,7 +1490,7 @@
   "deps_dirs": [
    "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it",
    "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
    "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice"
   ],
   "layer": 3
@@ -1628,7 +1628,7 @@
  },
  "170-2": {
   "key": "170-2",
-  "dir": "agents/2026-11-25-a-registered-host-function-is-a-file-under-the-tools-view-and-a-command-by-name",
+  "dir": "agents/2026-11-25-a-registered-host-tool-has-a-manual-in-vfs-bin-and-runs-by-name-through-run",
   "title": "A host function registered once appears at `/.vfs/tools/<name>` and in `/.vfs/bin`, reading it never runs it, and typing its name runs it through one gated door with flags mapped from its schema.",
   "gate": "b",
   "source": "170-tools-and-mcp-servers-as-views",
@@ -1654,7 +1654,7 @@
   ],
   "deps_dirs": [
    "agents/2026-11-25-a-pipeline-runs-gated-verbs-through-cli-with-the-minimal-programs",
-   "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+   "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
    "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
    "agents/2026-11-25-every-shell-call-leaves-a-run-record-as-rows-in-the-root-bindings-storage",
    "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice",
@@ -1691,7 +1691,7 @@
   "deps_dirs": [
    "agents/2026-11-25-the-router-serves-the-program-and-skill-views-and-resolves-a-name-by-the-index",
    "agents/2026-11-25-a-callers-rung-at-many-catalogue-paths-is-one-chunked-statement-per-budget-slice",
-   "agents/2026-11-25-a-registered-host-function-is-a-file-under-the-tools-view-and-a-command-by-name",
+   "agents/2026-11-25-a-registered-host-tool-has-a-manual-in-vfs-bin-and-runs-by-name-through-run",
    "agents/2026-11-25-the-meta-root-is-synthesized-and-refuses-every-write-beneath-it"
   ],
   "layer": 6

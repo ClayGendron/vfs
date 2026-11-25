@@ -31,7 +31,7 @@ A unit's verdict is one of five. "still-needed" means nothing of it is on `dev`.
 
 The gate is the roadmap's: `b` lands before the beta freeze of 0.1.0, `f` before the final 0.1.0, `a` rides any alpha, `0.2` and `0.1.x` come after 0.1.0, and "unplaced" has no roadmap story.
 
-A written spec has the shape of [the spec template](../templates/spec.md). A spec is fit to build when the last dated line of its review's Verdict begins "Fit to build". The steps that take a unit from not written to fit to build are in [instructions.md](instructions.md).
+A written spec has the shape of [the spec template](../templates/spec.md). A spec is fit to build when the last dated line of its review's Verdict begins "Fit to build". No spec of this conversion has been reviewed: each is written, was checked or corrected against the specs beside it, and owes a spec review before it is built. What that check found and no spec settles is in [found-on-the-way.md](found-on-the-way.md).
 
 | Unit | Gate | Title | Against dev | Spec | What dev holds |
 |---|---|---|---|---|---|

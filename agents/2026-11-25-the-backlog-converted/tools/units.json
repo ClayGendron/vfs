@@ -182,7 +182,7 @@
  {
   "key": "157-3",
   "source": "157-postgres-provisioning-for-host-apps",
-  "dir": "agents/2026-11-25-a-borrowed-sql-server-factory-is-checked-and-the-facade-installs-extensions",
+  "dir": "agents/2026-11-25-install-extensions-runs-one-mounts-install-from-the-file-system-on-both-faces",
   "title": "A borrowed `mssql+aioodbc` factory without `use_setinputsizes=False` is refused `invalid` at first touch naming the argument, and `install_extensions(path)` runs one mount's install from the facade.",
   "gate": "b",
   "verdict": "still-needed",
@@ -282,7 +282,7 @@
  {
   "key": "167-8",
   "source": "167-the-shell-pipeline-core",
-  "dir": "agents/2026-11-25-the-program-forms-set-e-and-the-never-table-answer-as-gnu-and-bash-do",
+  "dir": "agents/2026-11-25-the-shell-resolves-trav-explains-unavailable-programs-and-reports-a-busy-mount",
   "title": "Every form of the program table, `set -e` with its POSIX exemptions, and every never-class name answer as GNU and bash do against committed fixtures, with `grant`, `revoke` and `grants` spelled in the shell and `trav` resolved to `traverse` at parse time.",
   "gate": "b",
   "verdict": "partly-covered",
@@ -292,7 +292,7 @@
  {
   "key": "167-9",
   "source": "167-the-shell-pipeline-core",
-  "dir": "agents/2026-11-25-the-shell-runs-control-flow-functions-arithmetic-and-arrays",
+  "dir": "agents/2026-11-25-a-piped-while-read-consumes-each-listing-page-through-a-bounded-byte-pipe",
   "title": "`for`, `while`, `until`, `if`, `case`, functions, arithmetic, arrays and the parameter operators run with every verb gated, under declared loop and function-depth budgets, with bounded `&` and `wait` and the nondeterministic words recorded for resume.",
   "gate": "b",
   "verdict": "partly-covered",
@@ -412,7 +412,7 @@
  {
   "key": "170-2",
   "source": "170-tools-and-mcp-servers-as-views",
-  "dir": "agents/2026-11-25-a-registered-host-function-is-a-file-under-the-tools-view-and-a-command-by-name",
+  "dir": "agents/2026-11-25-a-registered-host-tool-has-a-manual-in-vfs-bin-and-runs-by-name-through-run",
   "title": "A host function registered once appears at `/.vfs/tools/<name>` and in `/.vfs/bin`, reading it never runs it, and typing its name runs it through one gated door with flags mapped from its schema.",
   "gate": "b",
   "verdict": "still-needed",
@@ -852,7 +852,7 @@
  {
   "key": "181-2",
   "source": "181-the-public-surface-regrouped-by-kernel-group",
-  "dir": "agents/2026-11-25-every-row-reports-the-entrys-permanent-id-and-its-owner",
+  "dir": "agents/2026-11-25-a-readable-row-reports-its-owner-and-no-row-reports-the-entrys-id",
   "title": "Read rows and mutation rows carry `entry_id` and `owner_id` as projectable, read-only columns at the read rung, a bare row carries neither, and a write of an input naming `entry_id` is refused `vfs.invalid`.",
   "gate": "b",
   "verdict": "partly-covered",
