@@ -1,46 +1,43 @@
 # Template: a spec
 
-A spec is the one document every change has: a work package one pull request can carry, which decides every choice the build needs and names the test that pins each acceptance criterion. It lives at `agents/YYYY-MM-DD-short-descriptive-title/spec.md`. The directory name is the date the work directory was opened and a title in words; nothing is numbered. A work directory that carries more than one spec names each file for what it specifies and keeps one review file per spec.
+A spec is the one document a piece of work has: it says what the work makes true, why, and how it is built and tested, and it decides every choice the build would otherwise invent. It lives at `agents/YYYY-MM-DD-short-descriptive-title/spec.md`. The directory name is the date the work directory was opened and a title in words, a sentence about the behaviour, with no number. This page writes down the shape the specs on `dev` already share; [the listing spec](../2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md) and [the indexed-verbs spec](../2026-11-21-the-shell-serves-the-indexed-verbs/spec.md) are worked examples of it.
 
 ## Voice and form
 
-- Objective and impersonal. No person's name, no mention of a person or an agent, no "I", "we" or "you". A ruling is written "Decided 2026-11-15: ..." with its reason.
-- One line per paragraph. No header lines under the title: the date is the directory name.
-- A claim about the tree is labelled EXECUTED (a command ran), READ (read in a cited file, as `path:line`) or INFERRED (reasoning).
-- No open question. No clarification marker, no note that a choice is made later, no heading that opens a list of questions. A choice that sense and precedent do not settle becomes a provisional decision, in the form given under Decisions. Only a choice with no reversible option (one that would destroy data, publish a name that cannot be withdrawn, or commit money) is named in the first paragraph as "Waits on a ruling: ..." with its options, and that spec is not fit to build until the ruling is recorded.
-- Links are relative Markdown links to files that exist. Code is cited as `path:line`.
+- Objective and impersonal, as AGENTS.md requires of everything under `agents/`: no person's name, no "I", "we" or "you", and nothing about who wrote or decided what. A ruling is written "Decided 2026-11-15: ..." with its reason.
+- One line per paragraph. Short sentences, one idea each; every term of art defined the first time it is used, or in Terms.
+- A claim about the tree is checked at a named commit and cited as `path:line`; a claim that was run says so.
+- Links are relative Markdown links to files that exist.
 - Code comments and docstrings written from a spec never name the spec.
 
-## The shape
+## The first paragraph
 
-Line one is the title: a sentence that states the behaviour after the change. A first paragraph follows. It says what kind of change this is (feature, fix, refactor, spike, process, docs) and which flags apply: structural, changes the public API, changes the schema format, needs the engine legs, touches rights, touches the engine, parallel-safe. It names the roadmap story and gate the change serves, the source it was converted from when there is one, the research it stands on, and each spec it depends on with that spec's state (landed, or drafted and not built).
+Under the title, which is a sentence stating the behaviour after the change, one paragraph says what state the spec is in ("A draft, written on 2026-11-25. It is not reviewed, and nothing is built."), the commit of `dev` it was checked against, the roadmap story and gate it serves, the source it was converted from when there is one, and what it rests on.
 
-Then nine sections, in this order.
+## The sections
 
-1. `## The problem` What the code does today, at a named commit, and why that is wrong or missing. Labelled facts.
-2. `## Architecture` One Mermaid block: solid for what exists, the class `planned` (dashed, `stroke-dasharray: 6 4`) for what the spec adds, the class `retiring` (dotted, `stroke-dasharray: 2 3`) for what it removes. Every component the Design names is drawn. New terms are defined under the block.
-3. `## Decisions` Every choice the change needs, as `### N.` headings numbered from 1 without gaps. Each heading is a sentence; its body ends in its reason and then one basis line, in one of four forms:
-   - `Basis: ruled, <date>, <where the ruling is recorded>.`
-   - `Basis: verified lean, <the roadmap decision or the source marker>; precedent: <the landed code, the archived spec, the memo line or the standard>.`
-   - `Basis: the source spec, <section>; still true at <commit> (<how it was checked>).`
-   - `Basis: decided in drafting, because <the rule it follows from>.`
-   - `Basis: provisional, no ruling on record; the options were <each option>; chosen because <why this one is the cheaper to reverse or the nearer to precedent>.`
-   A decision that departs from a landed spec or a standard names the departure. A provisional decision is a product choice that sense and precedent did not settle: the spec takes the option that is additive or the cheaper to reverse, says so, and the work directory's ledger of provisional decisions lists it so that a ruling can overturn it before the build.
-4. `## Intent` One paragraph beginning "After this spec, ...": the observable state once it is merged, in the caller's terms.
-5. `## Design` The files, functions, types and tests that change, with sizes where a ceiling matters, and the order of work: each test first, then the code that passes it. For every statement, loop or in-memory structure added: what grows with input, and the declared budget that bounds it on the least generous engine.
-6. `## Scope` In: the decisions by number and the files by path. Out: each neighbouring thing the spec does not do, and where it belongs.
-7. `## Acceptance criteria` Numbered. Each is a sentence one test can pin, and it names that test (file and node id, or conformance row) before the test exists. Counts and states, never clocks.
-8. `## Landing notes` "Filled in when the pull request is opened." until then. Then: the commits, the reviews by link, the gate's counts, the engine legs run and not run, measurements labelled EXECUTED, the answer to every review finding, differences from the text above with their reasons, and one `**Changelog:**` line.
-9. `## One line` The whole change in one sentence.
+In this order. The ones marked optional are left out when they would be empty; every other one is present.
 
-## Dependencies
-
-A spec names everything it builds on, with its state: landed (the commit or the archived spec), drafted (the work directory, by link), or a roadmap story with no spec. For a dependency that is not landed, the spec quotes what it relies on, by the other spec's decision number or the story's acceptance line, so that a disagreement between the two can be read off the page, and it states the build order. It never restates the other spec's design as its own decision.
+1. `## The outcome wanted` What a caller can do once the work is built, in the caller's terms, and how that is seen.
+2. `## Builds on` Each landed spec, built work directory or code path this work stands on, and each work it waits for with its state (built on `dev`, specified on `dev` and not built, on an open branch with its name, or a unit of this conversion). For a dependency that is not built, the shape relied on is quoted by its spec's decision number, so that a disagreement can be read off the page, and the build order is stated.
+3. `## Terms` (optional) The words this spec uses in a sense of its own.
+4. `## What the code does today` (optional) The facts the problem rests on, each cited.
+5. `## The problem` What is wrong or missing, and why it matters, at the scale AGENTS.md's reference deployment sets.
+6. `## Decisions` Numbered. Each is a sentence followed by its reason and, where one exists, the precedent: the landed code, the archived spec, the research memo line or the public standard it follows. A decision that departs from a landed spec or a standard names the departure. Every default, error kind, budget, name and file the build would otherwise choose is decided here.
+7. `## Cost` (optional for a change with no statement, loop or structure that grows) For each statement, loop or in-memory structure added: the multiplier of the reference deployment it rides on (per verb call, per file write, per index visit, per batch, per corpus, per lock), the arithmetic, and the declared budget that bounds it on the least generous engine served. A read never waits on a writer; a lock is held for a commit.
+8. `## Left as it is` (optional) What the change deliberately does not touch, and why.
+9. `## Tests` Each behaviour as one test that pins it, named by file and node, at the layer the behaviour lives, written before the code; counts and states, never clocks. A rights change carries a leak test. A storage change names the Postgres leg.
+10. `## Scope` In: the files and modules by path. Out: each neighbouring thing not done, and where it belongs.
+11. `## What the docs must say` (optional) The pages and docstrings that change.
+12. `## Earlier decisions this reverses` (optional) Each, with where it was made.
+13. `## Not checked` What was not run or read in writing the spec, said plainly.
+14. `## Choices to confirm` (optional) Each choice that the rulings on record, the tree and the precedent do not settle. The spec takes one side, the one that is additive or the cheaper to reverse, and builds on it; the entry names the options, the side taken and why, so that a ruling can overturn it before the build. A choice with no reversible side is not taken; the entry says the build waits for it.
+15. `## One line` The whole change in one sentence.
 
 ## What makes a spec fit to build
 
-Its spec review, written to [the review template](review.md) by a reader that did not write the spec, has a standing verdict that begins "Fit to build". Fit to build means fit to build in its turn: once the dependencies it names have landed in the order it states. One pull request to `dev` then carries the build, green at its end.
+A reader that did not write the spec reviews it with the `spec_review` skill and ends "Fit to build" or "Not yet"; the review goes in a `reviews/` folder of the work directory. Fit to build means fit to build in its turn, once the work it names under Builds on has landed in the order it states.
 
-## A spec converted from an earlier shape
+## A spec converted from an earlier one
 
-The first paragraph names the source by path. Every marker in the source becomes a numbered decision with its basis line. Every name, argument, kind, path and count is checked against the tree and the later rulings before it is carried over; the source is evidence of intent, never of the present state of the code. Content the source repeats from a retired record is restated in the spec with its reason, since the record no longer governs.
+The first paragraph names the source by path. Every open choice in the source is decided, or listed under Choices to confirm. Every name, argument, kind, path and count is checked against `dev` before it is carried over: the source is evidence of intent, never of the present state of the code. A rule the source took from a retired decision record is restated as a decision with its reason, or dropped.

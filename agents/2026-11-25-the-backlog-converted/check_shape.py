@@ -16,20 +16,26 @@ import sys
 from pathlib import Path
 
 SPEC_SECTIONS = (
-    "The problem",
-    "Architecture",
-    "Decisions",
-    "Intent",
-    "Design",
-    "Scope",
-    "Acceptance criteria",
-    "Landing notes",
-    "One line",
+    ("The outcome wanted", True),
+    ("Builds on", True),
+    ("Terms", False),
+    ("What the code does today", False),
+    ("The problem", True),
+    ("Decisions", True),
+    ("Cost", False),
+    ("Left as it is", False),
+    ("Tests", True),
+    ("Scope", True),
+    ("What the docs must say", False),
+    ("Earlier decisions this reverses", False),
+    ("Not checked", True),
+    ("Choices to confirm", False),
+    ("One line", True),
 )
 REVIEW_SECTIONS = (
     "Decisions, one line each",
     "Acceptance criteria, countable as written",
-    "The diagram and the scope",
+    "The tests and the scope",
     "Scale and the production posture",
     "Constitution and AGENTS.md checks",
     "Premortem",
@@ -39,13 +45,6 @@ REVIEW_SECTIONS = (
     "Verdict",
 )
 REVIEW_OPTIONAL_FIRST = "Questions put to the review, answered first"
-BASIS_FORMS = (
-    "Basis: ruled,",
-    "Basis: verified lean,",
-    "Basis: the source spec,",
-    "Basis: decided in drafting,",
-    "Basis: provisional,",
-)
 VERDICT_WORDS = ("Fit to build", "Not yet")
 
 FENCE_RE = re.compile(r"^(```|~~~)")
@@ -53,7 +52,7 @@ INLINE_CODE_RE = re.compile(r"`[^`]*`")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)\)")
 DATED_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2},")
 OPEN_RE = re.compile(r"NEEDS CLARIFICATION|\bTBD\b|\bTODO\b")
-PERSON_RE = re.compile(r"\b(Clay|I|we|We|you|You|our|Our|my|My|us)\b")
+PERSON_RE = re.compile(r"(?<![-`])\b(Clay|I|we|We|you|You|our|Our|my|My|us)\b")
 PERSON_ALLOWED_RE = re.compile(r"\bI/O\b|\bUS\b")
 
 
@@ -68,21 +67,19 @@ def spec_faults(path: Path) -> list[str]:
     prose = _prose_lines(text)
     faults = _common_faults(path, text, prose)
     headings = [line[3:].strip() for line in prose if line.startswith("## ")]
-    if tuple(headings) != SPEC_SECTIONS:
-        faults.append(f"sections are {headings}, expected {list(SPEC_SECTIONS)}")
+    names = [name for name, _ in SPEC_SECTIONS]
+    expected = [name for name, required in SPEC_SECTIONS if required or name in headings]
+    if headings != expected:
+        unknown = [h for h in headings if h not in names]
+        faults.append(f"sections are {headings}, expected {expected}" + (f"; unknown {unknown}" if unknown else ""))
         return faults
-    sections = _sections(text)
-    if sections["Architecture"].count("```mermaid") != 1:
-        faults.append("Architecture holds no single mermaid block")
-    if not sections["Intent"].strip().startswith("After this spec,"):
-        faults.append('Intent does not begin "After this spec,"')
-    faults += _decision_faults(sections["Decisions"])
-    criteria = [line for line in sections["Acceptance criteria"].splitlines() if re.match(r"^\d+\. ", line)]
-    if not criteria:
-        faults.append("Acceptance criteria holds no numbered criterion")
-    for index, line in enumerate(criteria, start=1):
-        if not line.startswith(f"{index}. "):
-            faults.append(f"acceptance criterion {index} is out of sequence")
+    decisions = _sections(text)["Decisions"]
+    numbered = [line for line in decisions.splitlines() if re.match(r"^(### )?\d+\. ", line)]
+    if not numbered:
+        faults.append("Decisions holds no numbered decision")
+    for index, line in enumerate(numbered, start=1):
+        if not re.match(rf"^(### )?{index}\. ", line):
+            faults.append(f"decision {index} is out of sequence: {line[:50]!r}")
             break
     return faults
 
@@ -163,24 +160,6 @@ def _common_faults(path: Path, text: str, prose: list[str]) -> list[str]:
                 continue
             if not (path.parent / target.split("#")[0]).exists():
                 faults.append(f"dead link {target}")
-    return faults
-
-
-def _decision_faults(body: str) -> list[str]:
-    faults = []
-    blocks = re.split(r"^### ", body, flags=re.MULTILINE)[1:]
-    if not blocks:
-        return ["Decisions holds no numbered decision"]
-    for index, block in enumerate(blocks, start=1):
-        heading = block.splitlines()[0]
-        if not heading.startswith(f"{index}. "):
-            faults.append(f"decision {index} is headed {heading[:40]!r}; the numbering has a gap")
-            break
-        basis = [line.strip() for line in block.splitlines() if line.strip().startswith("Basis:")]
-        if len(basis) != 1:
-            faults.append(f"decision {index} carries {len(basis)} basis lines, expected one")
-        elif not basis[0].startswith(BASIS_FORMS):
-            faults.append(f"decision {index} has a basis line in none of the five forms: {basis[0][:50]}")
     return faults
 
 
