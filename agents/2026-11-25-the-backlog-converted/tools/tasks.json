@@ -1161,7 +1161,7 @@
  "160-1": {
   "key": "160-1",
   "dir": "agents/2026-11-25-a-cross-mount-file-copy-is-a-read-on-one-mount-and-a-write-on-the-other",
-  "title": "`copy` of a file across mounts reads the source with the caller's authority, writes it at the destination through that mount's own gate, and reports each pair as two operations.",
+  "title": "`copy` of a file across mounts reads the source with the caller's authority, writes it at the destination through that mount's own gate, and reports each pair of mounts once, as a read on one and a write on the other.",
   "gate": "unplaced (lean b)",
   "source": "160-cross-mount-copy-as-read-plus-write",
   "study_group": "051-162",
