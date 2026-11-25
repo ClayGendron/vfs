@@ -178,7 +178,7 @@ Each sibling is written, not reviewed and not built, and each owns the names and
 | 167-6 | its storage rows and its plan pin; its two leak rows; its page row | `QueryGlobRows`; `RightsViewRows`; `CursorRows`, as it says | 4; 3; 2 |
 | 167-7 | landing 1's rows of `StorageContract`; its rows of `GrantsContract` in both landings; landing 2's rows in `vid_contract.py`; its two drivers in `replay_contract.py` | `FilesystemTransferRows`; `RightsGateRows`; `VidRows`; `replay.py` | 4; 3; 2; decision 17 |
 | 169-1 | its storage row; its grants row; its cursor row | `FilesystemShapeRows`; `RightsViewRows`; `CursorRows`, as it says | 1; 3; 2 |
-| 170-1 | `GrantsContract::test_holds_all_reports_the_highest_qualifying_rung_in_input_order` and `::test_per_path_holds_does_not_reveal_occupancy_or_an_old_posture`; `test_per_path_holds_reads_each_membership_slice_once`, which it names by the Postgres leg's id | `RightsViewRows` | 3 |
+| 170-1 | `GrantsContract::test_holds_all_reports_the_highest_qualifying_rung_in_input_order` and `::test_per_path_holds_does_not_reveal_occupancy_or_an_old_posture`; `GrantsContract::test_per_path_holds_reads_each_membership_slice_once`, a contract row on every leg by 170-1's Tests | `RightsViewRows` | 3 |
 | 175-1, 175-2, 175-3, 178-3 | the rows of `IntegrityContract` | `IntegrityRows` in `integrity.py` | decision 17 |
 | 177-1, 177-3 | the rows of `ReplayContract`; the row of `StorageContract` that 177-1 changes, `test_a_create_only_write_over_a_live_file_is_exists_and_names_what_is_there` | `ReplayRows` in `replay.py`, as 177-1 says; `FilesystemWriteRows`, under "POSIX parent/site rules" | decision 17; decision 7 |
 | 178-2 | its three read-range rows, which it names by leg id and puts in `tests/support/storage_contract.py` | `FilesystemShapeRows` | 4 |
@@ -252,7 +252,7 @@ Out, with where each belongs:
 - The line sizes of the new files were not measured; the AST spans of the rows put `filesystem_write.py` at about 700 lines of rows and `maintenance.py` at about 70.
 - No engine leg was run, locally or on Postgres.
 - The join of a loose family module into `derived.py` or `history.py` (decision 17) was run on a toy tree only. None of `replay_contract.py`, `integrity_contract.py`, `narrowing_contract.py`, `history_contract.py` and `derived_contract.py` exists on `dev` or on an open branch, so no clash of top-level names between one of them and its file could be looked for.
-- The placements of decision 18 are read from each sibling's Tests section as it stood on 2026-11-25. No row of a sibling exists to collect, and whether 170-1's row named by the Postgres leg's id is a contract row or that leg's own member is that unit's to say; the table places it as a contract row.
+- The placements of decision 18 are read from each sibling's Tests section as it stood on 2026-11-25. No row of a sibling exists to collect; 170-1's Tests makes its slice-count row a `GrantsContract` row on every leg, and the table places it so.
 - `test_every_leg_composes_the_two_contracts_alone` was run only as a walk of `dev`'s legs, where it is red as expected; it was not run on a package.
 
 ## Choices to confirm
