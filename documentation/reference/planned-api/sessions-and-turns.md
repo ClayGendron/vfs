@@ -165,7 +165,9 @@ A line run with `fs.cli(...)` and no session gets a strict session of its own fo
 ## List and Remove Sessions
 
 ```python
-fs.sessions(authority=None, *, after=None, limit=None) -> SessionPage
+fs.sessions(
+    authority=None, *, after=None, limit=None
+) -> SessionPage
 fs.remove_session(authority, id) -> bool
 session.exists() -> bool
 ```

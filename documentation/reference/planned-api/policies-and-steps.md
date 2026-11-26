@@ -12,10 +12,14 @@ Every name is imported from `vfs`.
 from vfs import Decision, DeleteStep, MoveStep, Mutation, policy
 
 @policy
-async def contracts_need_a_person(step: Mutation) -> Decision: ...
+async def contracts_need_a_person(
+    step: Mutation,
+) -> Decision: ...
 
 @policy(name="frozen", timeout=30.0)
-async def contracts_are_frozen(step: DeleteStep | MoveStep) -> Decision: ...
+async def contracts_are_frozen(
+    step: DeleteStep | MoveStep,
+) -> Decision: ...
 ```
 
 | Keyword of `@policy` | Default | Meaning |
