@@ -46,9 +46,11 @@ A row with no version carries no vid. That covers an edge row, a grant row, and 
 ```python
 write(entries=None, *, path=None, content=None, data=None,
       if_vid=None, if_vids=None,
-      if_absent=False, append=False, parents=False, authority=None)
+      if_absent=False, append=False, parents=False,
+      authority=None)
 
-edit(path=None, old=None, new=None, edits=None, observations=None, replace_all=False, *,
+edit(path=None, old=None, new=None, edits=None,
+     observations=None, replace_all=False, *,
      if_vid=None, if_vids=None, authority=None)
 
 delete(path=None, observations=None, *, cascade=True,
@@ -72,14 +74,24 @@ A caller that reads a file and changes it later passes the vid back.
 
 ```python
 row = fs.read("/notes/plan.md", authority=ada).observations[0]
-fs.edit("/notes/plan.md", old="Friday", new="Monday", if_vid=row.vid, authority=ada)
+fs.edit(
+    "/notes/plan.md",
+    old="Friday",
+    new="Monday",
+    if_vid=row.vid,
+    authority=ada,
+)
 ```
 
 A batch requires each of its rows the same way.
 
 ```python
 rows = fs.glob("/notes/*.md", authority=ada).observations
-fs.delete(observations=rows, if_vids={row.path: row.vid for row in rows}, authority=ada)
+fs.delete(
+    observations=rows,
+    if_vids={row.path: row.vid for row in rows},
+    authority=ada,
+)
 ```
 
 Rows passed back as `observations=` are used for their paths only. Their own vids are ignored, so passing rows never implies a precondition. A batch of 10,000 entries with a precondition on each is a supported call and adds no statement.
