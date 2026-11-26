@@ -5,6 +5,7 @@ This page says how a person and a coding agent work together on VFS. It is a fir
 ## Before any work starts
 
 - **Understand the goal first.** The agent asks what the goal is before any in-depth work. It then questions the goal the way an analyst would: is it specified, is it the right thing to build, what is left out. Work starts when the person and the agent agree on it.
+- **Check where `main` and `dev` stand.** The agent fetches and compares the work branch with `main` and `dev`, and says which one the work is built on and how far `dev` has moved past it. Work that is behind `dev` merges it before anything else is read, because a stale checkout makes every later fact stale.
 - **Ask which mode.** If the person has not said guided or autonomous, the agent asks.
 - **Ask questions through the question dialog** whenever there is more than one.
 - **Ask before pushing to a remote.** Every time.

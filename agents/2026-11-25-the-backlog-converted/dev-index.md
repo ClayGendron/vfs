@@ -1,0 +1,113 @@
+# What dev and the open branches hold, read on 2026-11-25
+
+An index for the reassessment of the backlog against `origin/dev` at `27f3d24d`. It lists each work directory under `agents/` on dev with the title of each spec in it, then each branch of `origin` that dev does not contain, with its commits ahead of dev and its last commit subject. It is a starting point for reading, not a verdict: whether a work directory's spec is built is read in the tree.
+
+## Work directories on dev
+
+- `agents/2026-11-17-search-applies-its-file-filters-to-rows-in-hand/spec.md`: Search applies its file filters to rows in hand
+- `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/research.md`: Mature systems wait without limit by default, bound a member only for reads, and never promise that the member stopped
+- `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/spec-a-cancelled-call-leaves-its-storage-intact.md`: A cancelled call leaves its storage intact
+- `agents/2026-11-18-a-call-that-reaches-several-mounts-bounds-each-mount/spec.md`: A call that reaches several mounts bounds each mount
+- `agents/2026-11-18-a-mount-is-listed-as-a-directory-is/spec.md`: A mount is listed as a directory is
+- `agents/2026-11-18-add-mount-takes-a-posture/spec.md`: `add_mount` takes a posture
+- `agents/2026-11-20-vfs-serves-sqlite-and-postgres-only/inventory.md`: Inventory: dropping MariaDB/MySQL, SQL Server and Oracle (SQLite and Postgres stay; GENERIC stays, warned)
+- `agents/2026-11-20-vfs-serves-sqlite-and-postgres-only/research.md`: With only SQLite and Postgres left, the first Postgres gains are a bound subtree range, a pgvector floor, one array bind and dropped epoch tables
+- `agents/2026-11-20-vfs-serves-sqlite-and-postgres-only/spec.md`: VFS serves SQLite and Postgres only
+- `agents/2026-11-20-write-takes-preconditions-and-an-append/spec.md`: Write takes preconditions and an append
+- `agents/2026-11-21-a-cancelled-call-is-whole-on-every-path/spec.md`: A cancelled call is whole on every path
+- `agents/2026-11-21-a-close-during-a-planning-hop-answers-one-refusal/spec.md`: A close during a planning hop answers one refusal
+- `agents/2026-11-21-a-grep-under-many-sessions-on-sqlite-serves-fewer-calls-than-one-session/spec.md`: A grep under many sessions on SQLite serves fewer calls than one session
+- `agents/2026-11-21-a-key-list-is-one-array-bind/spec.md`: A key list is one array bind
+- `agents/2026-11-21-a-line-has-a-verb-budget-and-cli-tightens-it/spec.md`: A line has a verb budget, a host sets the shell's budgets, and a cli call may only tighten them
+- `agents/2026-11-21-a-listing-at-a-mount-point-is-read-again/spec.md`: A listing at a mount point is read again
+- `agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/research.md`: A page reads around its tombstones on both engines only through partial indexes, and only once the tombstone index holds tombstones alone
+- `agents/2026-11-21-a-listing-comes-back-a-page-at-a-time/spec.md`: A listing comes back a page at a time
+- `agents/2026-11-21-a-managed-sqlite-is-studied-before-it-is-served/spec.md`: A managed SQLite is studied before it is served
+- `agents/2026-11-21-a-scoped-grep-finds-its-root-by-path/spec.md`: A scoped grep finds its root by path
+- `agents/2026-11-21-a-shallow-tree-page-reads-only-its-depth/spec.md`: A shallow tree page reads only its depth
+- `agents/2026-11-21-a-sqlite-writer-beside-a-batch-waits-for-its-commit/spec.md`: A SQLite writer beside a batch waits for its commit
+- `agents/2026-11-21-a-storage-always-owns-its-sessions/research.md`: A storage already owns every session it runs, the handed session factory can go, and a URL alone is not enough to build the engine it owns
+- `agents/2026-11-21-a-storage-owns-its-engine-well/spec.md`: A storage owns its engine well
+- `agents/2026-11-21-a-test-session-that-writes-begins-as-a-writer/spec.md`: A test session that writes begins as a writer
+- `agents/2026-11-21-a-timed-out-close-leaves-no-connection-open/spec.md`: A timed-out close leaves no connection open
+- `agents/2026-11-21-a-write-beside-a-batch-on-sqlite-is-refused-after-twenty-seconds/spec.md`: A write beside a batch on SQLite is refused after twenty seconds
+- `agents/2026-11-21-an-append-keeps-only-what-it-added/spec.md`: An append keeps only what it added
+- `agents/2026-11-21-an-interrupted-sync-call-closes-the-coroutine-it-never-ran/spec.md`: An interrupted sync call closes the coroutine it never ran
+- `agents/2026-11-21-an-old-index-epoch-is-dropped-as-a-table/spec.md`: An old index epoch is dropped as a table
+- `agents/2026-11-21-changing-a-mount-restores-nothing-it-refuses/spec.md`: Changing a mount restores nothing it refuses
+- `agents/2026-11-21-concurrent-writes-on-postgres-outlive-their-retries/spec.md`: Concurrent writes on Postgres outlive their retries
+- `agents/2026-11-21-dev-is-checked-after-every-merge/spec.md`: `dev` is checked after every merge
+- `agents/2026-11-21-docstrings-and-words-follow-the-rules/spec.md`: Docstrings and words follow the rules
+- `agents/2026-11-21-every-wait-in-a-test-is-bounded-by-the-run-alone/spec.md`: Every wait in a test is bounded by the run alone
+- `agents/2026-11-21-grep-query-planner/research.md`: How database grep spends its time today, and what a planner can know before it fetches a body
+- `agents/2026-11-21-grep-query-planner/spec.md`: Database grep plans from what it can count before it fetches a body
+- `agents/2026-11-21-grep-reads-a-pattern-as-its-matcher-does/spec.md`: Grep reads a pattern as its matcher does
+- `agents/2026-11-21-linux-grep-benchmark/README.md`: Linux grep benchmark: system tools, ripgrep and vfs, and the in-hand crossover
+- `agents/2026-11-21-linux-grep-benchmark/results.md`: vfs first call on a fresh process (opens the database): 15.2 ms
+- `agents/2026-11-21-no-test-depends-on-the-clock-or-on-luck/spec.md`: No test depends on the clock or on luck
+- `agents/2026-11-21-postgres-reads-a-subtree-by-its-range/spec.md`: Postgres reads a subtree by its range, and searches vectors through its index
+- `agents/2026-11-21-search-and-grep-agree-over-rows-in-hand/spec.md`: Search and grep agree over rows in hand
+- `agents/2026-11-21-the-docs-say-how-a-listing-pages/spec.md`: The docs say how a listing pages
+- `agents/2026-11-21-the-shell-closes-its-known-failures/spec.md`: The shell closes its known failures and counts depth by construct
+- `agents/2026-11-21-the-shell-crosses-its-boundary-in-binary/spec.md`: The shell's module crosses its boundary in binary
+- `agents/2026-11-21-the-shell-matches-in-linear-time/spec.md`: The shell matches patterns and regular expressions in time linear in the text
+- `agents/2026-11-21-the-shell-runs-the-standing-program-table/spec.md`: The shell runs the standing program table, and `ls -l`
+- `agents/2026-11-21-the-shell-serves-the-indexed-verbs/spec.md`: The shell serves grep, find and the verbs with no Unix name from the indexed verbs
+- `agents/2026-11-21-the-shell-speaks-bash/acceptance.md`: The roadmap's acceptance for stories F1 to F4 and F7, against the branch
+- `agents/2026-11-21-the-shell-speaks-bash/progress.md`: Progress
+- `agents/2026-11-21-the-shell-speaks-bash/research-bash-suites.md`: Research Q5: what the bash suites cover, and what their parsers teach
+- `agents/2026-11-21-the-shell-speaks-bash/research-prior-art.md`: A long flat chain kills the host process, and at the commit studied nothing bounds a line's total work, deadline or output
+- `agents/2026-11-21-the-shell-speaks-bash/research-runtime.md`: Research Q1–Q4: fuel, pausing, memory and the cost of the runtime
+- `agents/2026-11-21-the-shell-speaks-bash/spec.md`: The shell speaks bash
+- `agents/2026-11-21-the-sync-session-twin-imports-nothing-above-it/spec.md`: The sync session twin imports nothing above it
+- `agents/2026-11-21-the-topology-lock-is-held-for-a-commit/spec.md`: The topology lock is held for a commit
+- `agents/2026-11-21-what-a-log-row-per-call-costs/research.md`: What a log row per call costs
+- `agents/2026-11-21-what-a-log-row-per-call-costs/spec.md`: What a log row per call costs
+- `agents/2026-11-22-a-file-carries-its-executable-bit/spec.md`: A file carries its executable bit, and the shell shows the rest from rights
+- `agents/2026-11-22-a-job-is-interrupted-and-resumed/spec.md`: A job is interrupted, saved, and resumed with an answer
+- `agents/2026-11-22-a-policy-judges-each-step/spec.md`: A policy judges each step before it runs
+- `agents/2026-11-22-a-rewind-puts-a-sessions-files-back/spec.md`: A rewind puts a session's files back as they were before a turn
+- `agents/2026-11-22-a-row-carries-a-vid-and-a-change-can-require-it/spec.md`: A row carries a vid, and a change can require it
+- `agents/2026-11-22-a-served-grep-hands-its-matches-to-the-line-a-page-at-a-time/spec.md`: A served grep hands its matches to the line a page at a time
+- `agents/2026-11-22-a-session-is-stored-named-and-forked/spec.md`: A session is stored under its owner and its id
+- `agents/2026-11-22-a-session-works-in-turns-and-rewinds-or-forks-at-one/spec.md`: A session works in turns, and is rewound or forked at one
+- `agents/2026-11-22-an-interrupted-line-replays-its-replies/spec.md`: An interrupted line is saved as its inputs and its replies, and replays them when it is resumed
+- `agents/2026-11-22-shell-builtins-and-variables/spec.md`: Builtins preserve shell state and consume input according to Bash
+- `agents/2026-11-22-shell-descriptors/spec.md`: Redirections and pipelines propagate data, closure and failures in order
+- `agents/2026-11-22-shell-file-operations/spec.md`: File commands validate operands and preserve occupied targets
+- `agents/2026-11-22-shell-file-reads-and-metadata/spec.md`: Every shell open is a fresh public read, and predicates ask the caller's rights
+- `agents/2026-11-22-shell-filters-and-matching/spec.md`: Filters preserve bytes and distinguish an incomplete match
+- `agents/2026-11-22-shell-parsing-and-memory/spec.md`: The parser and interpreter account for depth and live storage
+- `agents/2026-11-22-shell-runtime-termination/spec.md`: A shell line has one admission budget and one terminal outcome
+- `agents/2026-11-22-shell-sed-edits/spec.md`: Sed validates its script and commits completed edits in order
+- `agents/2026-11-22-shell-wire-and-instance-lifecycle/spec.md`: Shell wire messages decode exactly or not at all
+- `agents/2026-11-22-the-kernel-keeps-records-of-its-own/spec.md`: The kernel keeps records of its own
+- `agents/2026-11-22-the-library-grep-reads-as-gnu-grep-in-four-more-forms/spec.md`: The library's grep reads as GNU grep in four more forms
+- `agents/2026-11-22-the-session-remembers-what-it-read/spec.md`: The session remembers what it read, and refuses a change to a file that moved on
+- `agents/2026-11-22-the-shell-acts-as-bash-where-it-refused/spec.md`: The shell acts as bash where it refused
+- `agents/2026-11-22-the-specs-for-jobs-and-sessions/overview.md`: The specs for jobs and sessions: what each one decides, and what they share
+- `agents/2026-11-22-two-loop-tests-of-a-lines-facts-race-its-deadline/spec.md`: Two loop tests of a line's facts race its deadline
+- `agents/2026-11-23-code-mode-prior-art/2026-11-23-code-mode-keeps-the-tool-catalog-out-of-the-context-and-vfs-can-add-search-and-authority-to-it.md`: Code mode keeps the tool catalog out of the context; vfs can do the same with its shell over a searchable, rights-filtered catalog, and four pieces are missing
+
+## Branches of origin that dev does not contain
+
+- `origin/a-call-is-interrupted-and-the-host-asks`: 5 commits ahead of dev, last `7ed09cd0 2026-11-21 interrupts: the design as a spec, the tools guide rewritten around vfs's own tools, and the spike that a stopped line is its memory`
+- `origin/a-deleted-row-gives-up-its-path`: 6 commits ahead of dev, last `d8c1d55d 2026-11-24 specs: the deletes spec's review stands at fit to build`
+- `origin/a-storage-names-where-the-kernel-keeps-its-records`: 29 commits ahead of dev, last `d6c63a24 2026-11-24 review: the second kernel-records landing's review stands at lands`
+- `origin/claude/api-shapes-research`: 874 commits ahead of dev, last `a6a46b5f 2026-11-06 docs(context): the two faces named, a spec for the decision`
+- `origin/claude/cool-ride-wvjrju`: 841 commits ahead of dev, last `b46257dc 2026-10-28 docs(standards): roadmap — fold in the durable-run review; file it as study 12`
+- `origin/claude/etl-ergonomics`: 890 commits ahead of dev, last `045721f4 2026-11-06 feat(api): ETL ergonomics — Entry and the storages from vfs, iterable write, 10k pin`
+- `origin/claude/great-meitner-fcuks0`: 854 commits ahead of dev, last `26f2c985 2026-11-02 examples: the Pluto demo account menu in the ribbon, product copy only`
+- `origin/claude/sync-facade`: 865 commits ahead of dev, last `0330e42b 2026-11-06 docs(context): the Postgres run id for the sync-facade landing`
+- `origin/claude/tender-clarke-j01e4i`: 856 commits ahead of dev, last `35df5bb3 2026-11-06 docs(context): the Dialect run id for the release-plumbing landing`
+- `origin/claude/two-faces-named`: 882 commits ahead of dev, last `767fb347 2026-11-06 docs(context): the landing notes name the notes commit by its real sha`
+- `origin/delete-move-and-restore-require-a-vid`: 22 commits ahead of dev, last `b00ab57b 2026-11-24 vid: the covered hold refuses where no count can prove it`
+- `origin/edit-requires-a-vid`: 15 commits ahead of dev, last `85880fed 2026-11-24 review: the third vid landing's review stands at lands`
+- `origin/every-row-carries-a-vid`: 5 commits ahead of dev, last `3df1b39e 2026-11-24 review: the first vid landing's review stands at lands`
+- `origin/how-we-work-refinements`: 1 commits ahead of dev, last `55c302bf 2026-11-15 docs: a person directs all work and starts every session`
+- `origin/the-engine-core-is-split-from-the-mount`: 25 commits ahead of dev, last `b957b19f 2026-11-24 review: the first kernel-records landing's review stands at lands`
+- `origin/the-kernel-keeps-a-store-of-its-own`: 41 commits ahead of dev, last `588bc530 2026-11-24 review: the third kernel-records landing's review stands at lands`
+- `origin/the-kernel-writes-records-behind-and-sweeps-them`: 56 commits ahead of dev, last `42ebe354 2026-11-24 agents: the ranking pin's second failure, counted`
+- `origin/worktree-agent-a92408b3`: 226 commits ahead of dev, last `cad3172a 2026-03-24 Cover remaining gaps in models and paths modules for 100% coverage`
+- `origin/worktree-agent-ac1bfdbf`: 240 commits ahead of dev, last `e457ce82 2026-03-24 Add comprehensive tests for base.py, bring coverage from 69% to 99%`
+- `origin/write-requires-a-vid`: 10 commits ahead of dev, last `5b24e427 2026-11-24 review: the second vid landing's review stands at lands`

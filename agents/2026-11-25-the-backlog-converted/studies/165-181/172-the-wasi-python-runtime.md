@@ -1,0 +1,78 @@
+# Study: The WASI Python runtime, a static CPython with numpy and pandas behind a verb door, and QuickJS for JavaScript
+
+## Verdict
+
+live-0.1.0, gate b, by rewrite. Nothing of the spec is built (EXECUTED: `grep -rli "wasi\|wasm\|quickjs\|wasmtime\|guest" src tests crates pyproject.toml` matches only `_native.abi3.so` and ranking-fixture corpus files, no code; no `vfs-py[python]` extra in `pyproject.toml:49-64`).
+
+The problem stands: Python (numpy, pandas) and JavaScript guests whose only file system is vfs are in 0.1.0 (Decided 2026-10-28, roadmap row D23, READ `context/standards/roadmap.md` §16 row D23; story T5a `roadmap.md:725-733`, story T5b `roadmap.md:735-745`).
+
+The design is overtaken almost whole: wasi-python 0.1.0 (released 2026-10-23) owns the build, the runner, the mount protocol and the tool door, so spec 172's slices 172a (build), 172b (install rows under `/opt`) and 172c (reactor host, staged-buffer cache, `_host.call` door, guest `vfs` package) are replaced by a thin adapter (READ `context/research/2026-10-23-wasi-python-0-1-0-over-vfs-the-mount-and-the-tool-door.md:11,17-30,112`). Slice 172d (QuickJS) survives in intent as T5b, behind the open host question D49.
+
+## Against the tree
+
+- No shell exists: `src/vfs` has no `shell/` package and no `guests/` module (EXECUTED: `ls src/vfs`). Spec 172's `src/vfs/shell/guests/python.py` and `quickjs.py` have no parent package; specs 167 (pipeline core) and 169 (programs, views, WASI host) are both active and unbuilt (READ `context/specifications/active/169-programs-the-index-and-the-vfs-views/spec.md:3`, "Not started").
+- `WASI_ERRNO` is absent (EXECUTED: grep of `src/vfs/results/kinds.py`); `ErrorKind` has 24 members (EXECUTED: count of `= "` lines in `src/vfs/results/kinds.py:30-108`), matching the memo's 24-kind mapping (READ memo:55,93).
+- The verbs the adapter needs exist: `stat`, `ls`, `read`, `write`, `mkdir`, `move`, `delete`, `glob`, `grep`, `search` are routed ops (EXECUTED: `src/vfs/ops.py:60-102`); `VirtualFileSystem.session(authority)` returns an `AsyncSession` (READ `src/vfs/base.py:789`); `Result.to_payload()` exists (READ `src/vfs/results/envelope.py:723`). This is the public surface the memo's experiments used (READ memo:89, F1).
+- `move` has no replace flag yet (READ `src/vfs/base.py:1235-1246`); `write` still takes `overwrite=` (READ `src/vfs/base.py:967`); `if_version=` and `write_preconditions` do not exist (EXECUTED: grep of `src/vfs`). The guest's `os.replace` therefore still fails with `EEXIST` (READ memo:84,99, F10).
+- `run` is still an op in `EXEC_OPS` (READ `src/vfs/ops.py:85`); story K9 retires it (READ `roadmap.md:204-208`). The adapter's tool list excludes it either way (READ memo:112).
+- No archived spec from 2026-10-29 onward touches the guest (EXECUTED: `grep -rln wasi context/specifications/archive` returned nothing). The ground moved under it through rulings instead: the 2026-11-15 names ruling (`replace=` on `move`, `overwrite=` leaves `write`, `sweep` becomes `destroy`, a moved file keeps its identity; READ `context/specifications/active/2026-11-15-the-kernels-public-names-and-argument-families-are-ruled.md:55-73,101-112`).
+- The ADRs the spec depends on (082, 083, 084, 086, 087) are retired; `context/decisions/` does not exist (EXECUTED: `ls context`). Where the roadmap or a spec does not carry an ADR pin, the pin is no longer a decision (INFERRED, per the retirement of 2026-10-30).
+
+## Where the roadmap places it
+
+- T5a, "The Python guest over wasi-python · spec 172 rewritten, ADR 086 amended · M · gate b" (READ `roadmap.md:725`). Depends on F3, F4, T1; H5 adds the guest's asks; T5b reuses the adapter (READ `roadmap.md:727`). Six counted criteria, among them at most 21 verbs for the pandas CSV job and a `WASI_ERRNO` drift test (READ `roadmap.md:728-733`).
+- T5b, "The JavaScript guest over QuickJS-NG · spec 172 §6 rewritten · M (plus an S spike) · gate b" (READ `roadmap.md:735`). Depends on T5a, D49 and its spike; F3, F4, T1. The spike is gate a, S (READ `roadmap.md:737`).
+- H5 amends spec 172 for guest interrupts: re-enter on resume, door calls served by fingerprint (READ `roadmap.md:336-341`, D42 at `roadmap.md:1114`). H5 is its own story; the guest spec only exposes one door through which every host import passes.
+- T6 (generic wasm host, spec 169b) is 0.2 under D22; it moves up for T5b only if D49's spike finds the wasi-python runner cannot host QuickJS-NG (READ `roadmap.md:745-747`).
+- Batch a5: "T1 → T5a → T5b (after D49's spike)" (READ `roadmap.md:997`).
+- Product line: "Python and JavaScript at 0.1.0 are WASI guests (T5a, T5b, gate b) ... each behind its own extra (`vfs-py[python]`, `vfs-py[javascript]`)" (READ `roadmap.md:53`).
+
+## Units proposed
+
+1. Slug: the python guest runs over wasi python as the caller. Title: "A Python script with numpy and pandas runs inside a WASI guest whose only file system and only verb door are the caller's vfs session, and every refusal reaches the stage classified." Gate b. Depends on: F3, F4, T1 (the `python` kind needs the program table and the stage `Result`), K2/spec 174 (write-back preconditions, `if_absent=`), F4's `replace=` for `os.replace`; D23 (decided). Rewrite. Content: the `vfs-py[python]` extra pinning `wasi-python` by version and hash; `VfsProvider(session, loop)` with the eight provider methods, `/.vfs` hidden before any verb, the errno map, a per-run stat and body cache keyed `(entry_id, version)`; `verb_tools(session)` returning `to_payload()`; `WASI_ERRNO` in `results/kinds.py` with its drift test; budgets mapped onto `run_async` limits; `trapped` mapped to 124/137/134; `done.files.refused` folded into the stage; the agent-facing semantics page (int32 default integer, no threads, no network). Source: spec 172 Intent, §2 (kind, forms, refusals), §5; memo §2, §6 item 3; T5a criteria.
+2. Slug: a spike asks whether the wasi python runner can host quickjs. Title: "A one-afternoon spike runs a QuickJS-NG `wasm32-wasip1` module under the wasi-python runner's mount and tool protocols and reports whether it can host it." Gate a. Depends on: D49. Kind: spike. Rewrite (the spec never asked it). Source: spec 172 §6; T5b *Why* (`roadmap.md:737`); memo Q2 (memo:131).
+3. Slug: the javascript guest runs over the same door as the python guest. Title: "A JavaScript program runs in a QuickJS-NG guest under the same provider, door, errno table and exit codes as the Python guest, behind its own extra." Gate b. Depends on: unit 1, unit 2, D49 (and T6 if the spike answers no). Rewrite. Source: spec 172 §6, Slice 172d; T5b criteria 1-6.
+
+## Open choices, each verified
+
+1. Status line "waits on three pending answers in ADR 086" (READ spec.md:3). Already-ruled: Decided 2026-10-28, D23: both guests in 0.1.0, gate b, each behind its own extra (READ `roadmap.md` §16 row D23); ADR 086 is retired and its pins survive only as the roadmap carries them.
+2. Toolchain pin 2: CPython 3.15 + wasi-sdk 33 (lean) or 3.14.8 + SDK 24 (READ spec.md:16). Holds: wasi-python 0.1.0 ships 3.15.0 on the C++-exception line (EXECUTED in the memo, READ memo:19). The choice is that project's, not vfs's; the converted spec states only the pinned wheel version.
+3. Byte-for-byte reproducibility across the macOS and Linux builds (READ spec.md:19). Holds-amended: the build lives in wasi-python (READ spec.md:13; memo:21,24). Amended text: "vfs verifies the pinned wheel's hash and reads its MANIFEST; build reproducibility is the wasi-python project's gate." Precedent: memo:124 (pin and hash under the extra).
+4. Bytecode-only zip vs source zip, lean bytecode (READ spec.md:34). Holds-amended: the runner preopens its own stdlib zip and nothing is a vfs row (READ memo:24). Amended text: drop the choice; the import path is the runner's. Precedent: memo:24, T5a criterion 1 (`roadmap.md:728`, "zero host preopens beyond the runner's stdlib zip").
+5. QuickJS-NG as a wasm artifact built by the same yearly workflow (lean) or quickjs-rs as a native dependency (READ spec.md:56). Holds-amended for the shape, needs-a-ruling for the builder: a wasm guest is what the roadmap names ("WASI guests", `roadmap.md:53`; "the extra pins the QuickJS-NG artifact by hash", `roadmap.md:742`), and a native dependency would break the wall the guests exist for. "The same yearly workflow" fails: wasi-python is Python only and embedder-neutral (READ memo:23,28). Needs a ruling: who builds and hosts the QuickJS-NG artifact, the wasi-python project (D49's lean, spike first) or vfs with T6's host pulled forward.
+6. Guest-side verb surface: `import vfs` as the spec promises (READ spec.md:43) or `from host import tools` (memo lean, memo:118,125). Holds for the lean at v1: a `vfs` package can never live in wasi-python's zip (READ memo:23, embedder-neutral constitution) and a mount never serves the import path (READ memo:91). Precedent: memo:23,91. Needs a ruling only for later: whether to propose read-only-mount import paths to wasi-python so `import vfs` can ship as rows (memo §6 item 6, Q1).
+7. Two versions per guest-created file (memo F9, Q3), lean accept at v1 (READ memo:119). Holds: POSIX `open(O_CREAT)` creates the file at open, so the refusal of a create belongs at open (READ memo:98); the reference deployment's organic writes are 50,000 a day and guest-created files are a small share, so one extra version row per create is a rounding error against the per-write multiplier (READ AGENTS.md reference deployment, "Per file write"; INFERRED for the share). With spec 174 the open-time write becomes `if_absent=True` and the close-time write `if_version=` (READ spec.md:79).
+8. The guest's writable `HOME` (memo F11, Q4): a per-actor directory under a fixed prefix, or the session's `cwd`. Needs a ruling: both are defensible; it governs only packages that write under `HOME` (matplotlib, READ memo:100).
+9. The package-set pin: adopt wasi-python's set per release, `python3 --version` reading its MANIFEST (memo Q5, READ memo:134). Holds: the shipped set is a superset of numpy and pandas (READ memo:20) and the roadmap names only numpy and pandas as the purpose (READ `roadmap.md:53,727`). Precedent: memo:20,114.
+10. Stat-cache key: `(path, version)` (spec §3) or `entry_id` (rebase note, spec.md:98). Holds for `(entry_id, version)`: a moved file keeps its identity (Decided 2026-11-15, D55; READ the names ruling:69), and K9 puts `entry_id` on `stat` and `ls` rows (READ `roadmap.md:208`), so the key is fetched in the open-time call. Precedent: rebase note spec.md:98; `src/vfs/models/rows.py:10` (identity is never location-derived).
+11. D49 itself: ask wasi-python to host a generic module, spike first, T6 only on a no (READ `roadmap.md` §16 row D49). Holds as sequencing: the research rule requires executed findings before a pending decision (READ AGENTS.md, "The research stage means new investigation"). Precedent: none found beyond that rule; the ruling itself remains needs-a-ruling until the spike reports.
+
+## What is stale
+
+- `src/vfs/shell/guests/python.py`, `quickjs.py`, `tests/support/guests/` (spec.md:6): no `shell` package exists (EXECUTED `ls src/vfs`); the location follows whatever spec 167 lands.
+- §1 the yearly build, `00_download.sh`, pins, zero-patch gate, artifacts, criterion 11: owned by the wasi-python project, released as a wheel (READ memo:21,24).
+- §2 `vfs python install`, rows at `/opt/bin/python3.wasm` and `/opt/lib/python3XY.zip`, `--snapshot`/`--plain`, the `add` grant on `/opt/bin`: the artifact set rides in the wheel and `run(artifacts=)` takes it; nothing is a vfs row (READ memo:24).
+- §3 the reactor export `vfs_run`: the export is `run` after `_initialize` (READ memo:22). The staged-buffer cache, the preopen assertion and "one guest per process" are the runner's (READ memo:26,97 F8).
+- §3 budgets `VERB_CALL_BUDGET`, `STAGING_BYTE_BUDGET`: map onto the runner's `max_file_calls`, `max_tool_calls`, `memory_bytes`, `deadline_s`, `fuel`, `output_bytes` (READ memo:27,96 F7).
+- §4 `_host.call` C module and a `vfs` package in the zip; `host::call` exists but the door is the tool protocol, `from host import tools` (READ memo:23).
+- §4 "the `Result` wire of spec 171's adapter": unbuilt; the memo's working frame is `Result.to_payload()` (READ memo:55; `src/vfs/results/envelope.py:723`).
+- Scope "Out: matplotlib, scipy, sqlite3, bz2, lzma": wasi-python 0.1.0 ships them (EXECUTED in the memo, READ memo:20); §5's "no `ctypes`, no `mmap`" is stale, they import, threads still fail (READ memo:20). The SDK-24 FFT abort note is moot on 3.15/SDK 33 (READ memo:19).
+- Criteria 2 and 3 counts (36 verbs/209 statements; 15 verbs/93 statements): the spike's shim numbers; the measured pandas job on the runner is 21 verbs (READ memo:85; `roadmap.md:729`).
+- Criterion 8 exit 137 named `budget_exhausted`; criterion 9 `unsupported`: the kind spellings are `vfs.`-dotted (READ `src/vfs/results/kinds.py:33`); T5a states the trap mapping (`roadmap.md:732`).
+- Rebase note "a same-bytes reinstall reports `unchanged`" and spec 169 criterion 8: install-by-write is gone for the Python guest (READ memo:24).
+- `move(…, overwrite=)` (memo:111, rebase notes): ruled `replace=`, default refuse (Decided 2026-11-15, names ruling:71-73). `write(overwrite=False)` becomes `write(if_absent=True)` (names ruling:105). `sweep` becomes `destroy` (names ruling:55, D56). `run` is retired (K9, `roadmap.md:206`).
+- `ADR 082/083/084/086/087` pins as dependencies: retired 2026-10-30 (EXECUTED: no `context/decisions/`).
+- The header's Owner and Status lines carry a personal name and a stale state; the converted spec carries neither.
+
+## Notes for the conversion
+
+- Rewrite from the 2026-10-23 memo, not from spec 172: memo §2 (the seam), §6 item 3 (the adapter's contents) and T5a's six criteria are the whole of unit 1. Spec 172 contributes only the Intent sentence, §2's `python` kind forms (`-c`, `-m`, script, stdin) and refusal hints (`pip` as unsupported with a host-side hint, an import outside the set as a classified error), and §5's semantics page (READ spec.md:24-27,51).
+- Counted criteria read operation counts from the runner's `done.files.calls` and `done.tools.outcomes` and statements spied on storage, never a clock (READ memo:126; AGENTS.md "Performance tests").
+- The provider runs on the runner's worker thread and posts each verb to vfs's loop with `run_coroutine_threadsafe`; vfs always calls `run_async` (READ memo:54). The converted spec states which loop owns the session and that a guest never blocks the event loop.
+- The two-write create (F9) interacts with K2: name the open-time `if_absent=True` and the close-time `if_version=`, and the `conflict` → `ESTALE`, `exists` → `EEXIST` rows (READ spec.md:79).
+- Scale: one guest run is one verb call plus its file calls; the per-run stat cache bounds the 17-stat probing (READ memo:85). No guest path may scan the corpus; `glob` and `grep` tools inherit their own bounds (INFERRED).
+- `WASI_ERRNO` is the one table both guests share (`roadmap.md:742`); land it in unit 1 so unit 3 reuses it.
+- Leave H5's interrupt rule (D42) to H5; unit 1 only guarantees every host import passes one door so H5 can fingerprint it (READ `roadmap.md:727,341`).
+- Roadmap decisions the units stand on: D23 (decided), D49 (open, units 2-3), D22 (only if D49 answers no), D42 (H5's, not a blocker for unit 1), D55 and the names ruling for `replace=` and identity.
+- Needs a ruling: the guest's writable `HOME`, a per-actor directory under a fixed prefix or the session's `cwd` (choice 8).
+- Needs a ruling: who builds and hosts the QuickJS-NG artifact, the wasi-python project or vfs with T6's host (choice 5, D49).
