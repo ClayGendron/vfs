@@ -1,0 +1,262 @@
+{
+ "written": "2026-11-26",
+ "dev": "1a5c247f",
+ "themes": {
+  "kernel": "Kernel: writes, reads, history, mounts",
+  "engines": "Engines, concurrency, storage seam",
+  "search": "Search, grep and documents",
+  "shell": "Shell",
+  "mcp": "MCP front and identity",
+  "hitl": "Human in the loop: policies, jobs, sessions",
+  "tools": "Tools, guests and views",
+  "release": "Docs, release and repository"
+ },
+ "waves": [
+  {
+   "wave": 1,
+   "name": "Truth in the core",
+   "goal": "Land the work that is already built and reviewed but sits on branches, then close the defects where vfs gives a wrong or refused answer on Postgres or in grep. Nothing here adds a feature. All of it protects a claim vfs already makes.",
+   "claim_it_makes_true": "Nothing vfs returns is silently wrong, and it holds up on Postgres with many writers at once.",
+   "note": "The two merges are review-and-merge work, not build work."
+  },
+  {
+   "wave": 2,
+   "name": "Complete the surface",
+   "goal": "Finish the kernel's last arguments and settle every public name that would be expensive to change after the freeze: safe retries, the deletes design, replace on move and copy, ranged reads, the integrity check, and the shell output shapes agents see first.",
+   "claim_it_makes_true": "A retried call is safe, a damaged file never reads as success, a large file reads in slices, and the names do not change afterwards.",
+   "note": "The longest wave; most items are independent and can run in parallel."
+  },
+  {
+   "wave": 3,
+   "name": "Serve it",
+   "goal": "Put vfs on the wire. One command serves it over MCP, each request runs under its own verified identity, and an agent gets every verb plus one shell tool. It is the first thing a newcomer can try in five minutes, so it is placed ahead of tools.",
+   "claim_it_makes_true": "Any MCP client connects to the database with one line, and every call is judged as the caller who made it.",
+   "note": "It can start as soon as the two renderer units land."
+  },
+  {
+   "wave": 4,
+   "name": "Human in the loop",
+   "goal": "A host writes a policy, a risky call stops and becomes a question, a person answers, and the job resumes. Sessions remember what the agent read, so a stale overwrite is refused. Every call becomes a row an operator can query.",
+   "claim_it_makes_true": "An agent cannot overwrite what it has not read, cannot run a risky step without approval, and everything it did is in a table the operator owns.",
+   "note": "It runs beside wave 3; the policy and job specs need only wave 1."
+  },
+  {
+   "wave": 5,
+   "name": "Tools as files",
+   "goal": "A Python function registered once appears as a file with a manual; agents find it with ls, read it with cat and run it by name, under the same permissions as any file. Then Python in a sandbox, and other MCP servers mounted as directories.",
+   "claim_it_makes_true": "One permission structure governs a file and a tool alike, and the tool catalogue stays out of the context window.",
+   "note": "The riskiest wave; MCP servers as directories is last and is the first cut."
+  },
+  {
+   "wave": 6,
+   "name": "Proof, docs and release",
+   "goal": "Read history back, pin the scale and atomicity claims on both engines, write the tutorials and reference, publish the threat model and the versioning promise, and prove the engines from the published wheel.",
+   "claim_it_makes_true": "The evidence exists: the pins, the benchmark, the threat model and a beta that held for two weeks.",
+   "note": "History read-back and the docs can start early beside any wave."
+  }
+ ],
+ "choices": [
+  {
+   "n": 1,
+   "id": "order",
+   "question": "Which capability ships first after the kernel is settled.",
+   "why": "The roadmap's critical path runs tools, then mounted MCP servers, then the MCP front, then the durable run. The specs show the MCP front needs only the renderer, the wire adapter and the token edge, none of which wait on tools. Serving first gives something a newcomer can try months sooner.",
+   "options": [
+    [
+     "serve",
+     "Serve over MCP first, human in the loop beside it, tools third. Waves 3 and 4 in parallel, then wave 5."
+    ],
+    [
+     "roadmap",
+     "Keep the roadmap's order: tools, then the MCP front, then interrupts. Nothing external is usable until late."
+    ],
+    [
+     "hitl",
+     "Human in the loop first. The strongest enterprise story, the slowest to a public demonstration."
+    ]
+   ],
+   "taken": "serve"
+  },
+  {
+   "n": 2,
+   "id": "stack",
+   "question": "Whether the built vid and kernel-records stack lands before anything else.",
+   "why": "Eight reviewed landings (56 commits, 85 files under src, tests and crates) sit on a linear stack of branches that dev does not hold. More than twenty drafted specs name them as a prerequisite, and the stack removes if_version and if_versions, which reached dev on 2026-11-20. Each day it waits, more specs are written against names that are about to change.",
+   "options": [
+    [
+     "now",
+     "Review and merge it first, in stack order."
+    ],
+    [
+     "hold",
+     "Hold it until the sessions design is reviewed. The dependents stay blocked."
+    ],
+    [
+     "rework",
+     "Read the stack in full before anything lands, because the vid design is in doubt."
+    ]
+   ],
+   "taken": "now"
+  },
+  {
+   "n": 3,
+   "id": "mcpviews",
+   "question": "Whether 0.1.0 waits for other MCP servers mounted as directories.",
+   "why": "Ruled on 2026-11-15: MCP ships with 0.1.0. The spec that mounts other servers is the largest and riskiest single item left (XL, three spikes unproven, and it needs the action log, which has no spec). Serving vfs over MCP is a separate, much smaller chain.",
+   "options": [
+    [
+     "last",
+     "In 0.1.0, built last in wave 5, and the first thing cut if the freeze is waiting on it."
+    ],
+    [
+     "hold",
+     "In 0.1.0, and the freeze waits for it. The date of 0.1.0 is then set by this item."
+    ],
+    [
+     "later",
+     "Move it to 0.2 now. Serving vfs over MCP stays; mounted servers and per-caller credentials lead 0.2."
+    ]
+   ],
+   "taken": "last"
+  },
+  {
+   "n": 4,
+   "id": "js",
+   "question": "Whether the JavaScript guest is in 0.1.0.",
+   "why": "Ruled on 2026-10-28: Python and JavaScript guests are both in. The Python guest has a known host. The JavaScript guest's host is unknown until a spike runs, and it sits at the very end of the tools chain. It adds a second sandbox before the first has a user.",
+   "options": [
+    [
+     "after",
+     "After 0.1.0; the one-afternoon spike runs now so the answer is known, and the extra's name is reserved."
+    ],
+    [
+     "spike",
+     "The spike decides: if the runner hosts QuickJS as it is, build it in wave 5; if not, 0.2."
+    ],
+    [
+     "in",
+     "Both guests before the freeze, as ruled."
+    ]
+   ],
+   "taken": "after"
+  },
+  {
+   "n": 5,
+   "id": "sessions",
+   "question": "How much of sessions belongs in 0.1.0.",
+   "why": "Five specs cover sessions. The first two (a stored session, and a session that remembers what it read) replace names on dev and so must precede the freeze. Turns, fork and putting a session's files back are additive, have no roadmap story, and are about four agent-weeks together. A ruling of 2026-11-22 wants file rewind for 0.1.0.",
+   "options": [
+    [
+     "all",
+     "All five: stored sessions, read memory, turns, fork and file rewind."
+    ],
+    [
+     "turns",
+     "Stored sessions, read memory and turns; file rewind after. Saves about two agent-weeks."
+    ],
+    [
+     "core",
+     "Only stored sessions and read memory, the freeze-critical pair."
+    ]
+   ],
+   "taken": "all"
+  },
+  {
+   "n": 6,
+   "id": "log",
+   "question": "What the action log is, given that it has no spec.",
+   "why": "The roadmap calls the log a must for 0.1.0, its cost study came back go, and the run record and the audit story both wait on it. No spec exists. The kernel store it would live in is built on the unmerged stack.",
+   "options": [
+    [
+     "full",
+     "A spec is written now: every call a row, on by default, 30 days kept, a documented table."
+    ],
+    [
+     "mut",
+     "Mutations and tool calls only, about a quarter of the rows. Who read what is then not answerable."
+    ],
+    [
+     "later",
+     "The log moves to 0.2. Approvals ship without an audit trail, and the run record waits with it."
+    ]
+   ],
+   "taken": "full"
+  },
+  {
+   "n": 7,
+   "id": "tools",
+   "question": "Whether the tool design the drafted specs converged on is accepted.",
+   "why": "Roadmap decisions D63 to D65 are still marked as leans. All nine tool specs written on 2026-11-25 take the same side: run stays as the one verb that runs a tool, one /.vfs/bin directory holds programs and host tools, and vfs ships no ask_user tool. They agree with each other. Until the three are ruled, the tool design is settled on paper only.",
+   "options": [
+    [
+     "yes",
+     "All three ruled as the specs have them, which unblocks the review of the host-tool spec."
+    ],
+    [
+     "two",
+     "run and one directory are kept, and an ask_user tool is shipped."
+    ],
+    [
+     "talk",
+     "Not yet; the host-tool API is walked through first."
+    ]
+   ],
+   "taken": "yes"
+  },
+  {
+   "n": 8,
+   "id": "entryid",
+   "question": "Whether entry_id is public.",
+   "why": "The roadmap says stat and ls carry entry_id. Three newer specs (the vid spec, the replay table and the row-owner spec) all decide that no row carries it and a vid is the only identity a caller sees. This cannot be undone after the freeze.",
+   "options": [
+    [
+     "hidden",
+     "No row carries entry_id; vid is the public identity. The roadmap's criteria are updated to match."
+    ],
+    [
+     "public",
+     "stat carries entry_id as a read-only identity, as the roadmap has it. The three specs are amended."
+    ]
+   ],
+   "taken": "hidden"
+  },
+  {
+   "n": 9,
+   "id": "deadline",
+   "question": "How a caller bounds a slow call.",
+   "why": "The roadmap gives read verbs a per-call deadline= argument. The spec that is reviewed and fit to build gives each mount a timeout= set when it is mounted. They are different public names for the same need, and one of them is chosen before the freeze.",
+   "options": [
+    [
+     "mount",
+     "A timeout on each mount, as the reviewed spec has it. A slow mount is cut off and the rest of the answer is kept."
+    ],
+    [
+     "call",
+     "A deadline on each call, as the roadmap has it. More arguments on every read verb."
+    ],
+    [
+     "both",
+     "A mount default that a call may tighten. The most surface."
+    ]
+   ],
+   "taken": "mount"
+  },
+  {
+   "n": 10,
+   "id": "render",
+   "question": "Whether a small binary write is readable at once.",
+   "why": "An agent that writes a PDF or a Word file cannot read or grep it until the next index pass. The roadmap leaves the fix for 0.2 unless a first deployment hits it (decision D21). It is about one to two agent-weeks and adds a constructor flag, which is a public name.",
+   "options": [
+    [
+     "in",
+     "It is pulled into 0.1.0, late in wave 6, after the surface is settled."
+    ],
+    [
+     "later",
+     "It stays in 0.2, and the gap and the refresh call that closes it are documented."
+    ]
+   ],
+   "taken": "in"
+  }
+ ]
+}
