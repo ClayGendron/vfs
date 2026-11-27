@@ -1,34 +1,27 @@
-"""Engine lifecycle — construction, first touch, retry, close.
+"""Engine lifecycle — a mount's tables, first touch, planner statistics, close.
 
-:class:`EngineHost` owns one mount's database connectivity: it builds
-the engine from a URL and the engine arguments it is given, makes every
-session that runs on it, and disposes it at ``close()``. An application
-may put listeners on the engine, and must open no connection or session
-on it: beside a call on an in-memory database, one costs the database.
+:class:`EngineHost` is what a mount adds to the engine core
+(``core.py``), which owns the engine, the dialect policy, the sessions,
+the retry, the classifier and the dispose. The host adds the mount's
+tables, its first touch, and its planner statistics. An application may
+put listeners on the engine, and must open no connection or session on
+it: beside a call on an in-memory database, one costs the database.
 Construction binds nothing to a loop, so first touch may be on another.
 
-The dialect is known once the engine is built, so its declared policy
-is resolved at construction, with no IO. A dialect other than SQLite
-and Postgres is served the generic floor, and the host logs one
-``WARNING`` on this module's logger saying so. First touch is idempotent and
-lazy, on the caller's loop: database-file settings, the profile's vector probe (the
-cosine distance function is a precondition vfs proves and never
-installs — sqlite-vec, pgvector), then — under the topology
-serialization point (``BEGIN IMMEDIATE`` on SQLite via the installed
-transaction control; a per-mount advisory lock on Postgres; a plain
-transaction elsewhere, where the unique-violation arbitration is the
-correctness backstop) — ``create_all`` and the schema-version row. An
-existing row is verified: benign match serves and adopts the durable
-mount identity; a mismatch refuses loudly as ``vfs.unavailable.schema``,
-never PRAGMA/catalog sniffing.
-
-Facts SQLAlchemy models are read from the dialect, never redeclared:
-the parameter budget is ``dialect.insertmanyvalues_max_parameters`` and
-transport-down classification uses ``dialect.is_disconnect()``. On
-SQLite the host takes over the start of a transaction: session settings
-stamp every pool checkout, and an explicit ``BEGIN`` is sent at
-transaction start instead of the driver's deferred implicit one — same
-semantics, earlier lock acquisition for writers only.
+A dialect other than SQLite and Postgres is served the generic floor,
+and the host logs one ``WARNING`` on this module's logger saying so.
+First touch is idempotent and lazy, on the caller's loop:
+database-file settings, the profile's vector probe (the cosine distance
+function is a precondition vfs proves and never installs — sqlite-vec,
+pgvector), then — under the topology serialization point (``BEGIN
+IMMEDIATE`` on SQLite via the core's transaction control; a per-mount
+advisory lock on Postgres; a plain transaction elsewhere, where the
+unique-violation arbitration is the correctness backstop) —
+``create_all`` and the schema-version row. An existing row is verified:
+benign match serves and adopts the durable mount identity; a mismatch
+refuses loudly as ``vfs.unavailable.schema``, never PRAGMA/catalog
+sniffing. A database in one connection that opens a second re-arms
+first touch, since the second is a new and empty database.
 
 The host also owns SQLite's planner statistics, because without them the
 planner assumes a million rows and ten per index key, and seeks the
@@ -50,16 +43,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import random
 import sqlite3
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final, TypeVar
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import event, func, insert, inspect, select
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 from sqlalchemy.util import greenlet_spawn
 from ulid import ULID
 
@@ -68,44 +58,31 @@ from vfs.models import encoded_at_creation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
-from vfs.storage.backends.database.attempts import (
-    AttemptSession,
-    refuse_statements_of_marked_attempts,
-    run_out_of_reach,
-)
+from vfs.storage.backends.database.attempts import run_out_of_reach
+from vfs.storage.backends.database.core import BEGIN_TAG, EngineCore, begin_statement
 from vfs.storage.backends.database.dialects import (
     PROFILES,
-    DialectProfile,
     StaleSnapshot,
     VectorFunction,
     driver_origin,
     is_insufficient_privilege,
-    is_permanent_defect,
     is_retryable,
-    is_value_too_large,
-    membership_budget,
-    profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.drivers import has_sqlite_vec, load_sqlite_vec, merge_engine_arguments
-from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
 from vfs.vid import VidMint
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Mapping
 
-    from sqlalchemy import Engine
-    from sqlalchemy.engine import URL, Connection, Dialect
-    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+    from sqlalchemy.engine import URL, Connection
+    from sqlalchemy.ext.asyncio import AsyncConnection
     from sqlalchemy.pool import Pool, PoolProxiedConnection
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models.rows import VFSTables
     from vfs.storage.grants import Posture
-
-T = TypeVar("T")
 
 _log: Final = logging.getLogger(__name__)
 
@@ -116,7 +93,7 @@ _UNSUPPORTED_DIALECT: Final = (
 )
 
 STATISTICS_NAME = "vfs_statistics"
-"""The statistics step's one name: the detection savepoint, the pass's begin tag and option, the record key."""
+"""The statistics step's one name: the detection savepoint, the pass's begin tag, the record key."""
 
 STATISTICS_CLEAR = f"SELECT 1 /* {STATISTICS_NAME} */"
 """The statement a cancelled pass starts after its last interrupt, which is what clears a pending one."""
@@ -156,8 +133,8 @@ class _AnalysisPass:
         self.interrupted = False
 
 
-class EngineHost:
-    """One mount's connectivity, tables, dialect policy, and first-touch state."""
+class EngineHost(EngineCore):
+    """One mount's tables and first-touch state, on the engine core."""
 
     def __init__(
         self,
@@ -192,34 +169,17 @@ class EngineHost:
         # The distance function's version where the profile's probe reports
         # one (pgvector's, sqlite-vec's); the ANN tier's iterative-scan gate.
         self.vector_version: tuple[int, ...] | None = None
-        # The engine is the host's own: an application puts listeners on it, and opens no connection or session.
-        self.engine: AsyncEngine = create_async_engine(url, **merge_engine_arguments(url, engine_arguments))
-        bind = self.engine.sync_engine
-        # The declared policy and the live dialect it is read beside, both known with no IO.
-        self._profile: DialectProfile = profile_for(bind.dialect.name)
-        self._dialect: Dialect = bind.dialect
+        super().__init__(
+            url=url,
+            engine_arguments=engine_arguments,
+            retry_attempts=retry_attempts,
+            retry_base_delay=retry_base_delay,
+        )
         if self._profile.name not in PROFILES:
             _log.warning(_UNSUPPORTED_DIALECT, self._profile.name)
-        sessions: Callable[[], AsyncSession]
-        if self._profile.attempts_out_of_reach:
-            # An attempt whose caller was cancelled is refused its next statement, its sessions and its commit.
-            refuse_statements_of_marked_attempts(bind)
-            sessions = async_sessionmaker(self.engine, expire_on_commit=False, sync_session_class=AttemptSession)
-        else:
-            sessions = async_sessionmaker(self.engine, expire_on_commit=False)
-        # One shared DBAPI connection cannot overlap transactions: ops
-        # take turns, and a re-minted connection re-arms first touch.
-        if isinstance(bind.pool, StaticPool):
-            sessions = SerializedSessions(sessions)
-            rearm_on_fresh_connection(bind, self._rearm)
-        self.session_factory = sessions
-        if self._profile.name == "sqlite":
-            _install_sqlite_transaction_control(bind, self._profile)
         # Before first touch the schema-qualified table name is the handle,
         # so mounts in two schemas never share the provisioning lock.
         self._table_key = advisory_key(self.tables.entry.fullname)
-        self._retry_attempts = retry_attempts
-        self._retry_base_delay = retry_base_delay
         self.mount_identity: str | None = None
         self._mint: VidMint | None = None
         self._ready = False
@@ -241,22 +201,7 @@ class EngineHost:
         self._indexed: dict[str, bool] = {}
         self._replaces = self._profile.statistics_listing is not None
         if self._replaces:
-            event.listen(bind, "checkout", self._replace_stale)
-
-    @property
-    def profile(self) -> DialectProfile:
-        """Declared dialect policy, resolved from the engine's dialect at construction."""
-        return self._profile
-
-    @property
-    def parameter_budget(self) -> int:
-        """Bind params per statement — SQLAlchemy's own declared datum."""
-        return self._dialect.insertmanyvalues_max_parameters
-
-    @property
-    def membership_budget(self) -> int:
-        """Elements per ``IN``-list chunk under this dialect's budgets."""
-        return membership_budget(self.profile, self.parameter_budget)
+            event.listen(self.engine.sync_engine, "checkout", self._replace_stale)
 
     @property
     def embedding_stale(self) -> bool:
@@ -340,71 +285,6 @@ class EngineHost:
                 detail = f"this role may not install the extension ({origin}); {function.missing}"
                 return classified(ErrorKind.permission_denied, detail=detail)
             return self.classify_failure(exc, context="Install extensions")
-
-    async def with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
-        """Run *fn*, restarting whole on a retryable outcome, with jittered backoff.
-
-        A :class:`StaleSnapshot` is always retryable: a guard proved the
-        snapshot stale, and a fresh attempt re-derives everything from
-        current state. Exhaustion has one channel: it always leaves as
-        :class:`StaleSnapshot` — the in-band signal as itself, a native
-        serialization error wrapped as the cause — so every caller
-        classifies both identically. Only non-retryable failures escape
-        raw to the caller's classifier.
-
-        Each wait is drawn uniformly between half the step and the whole
-        step, the step doubling per attempt, so two rivals that collided
-        do not retry in lockstep and collide again; the base delay bounds
-        the longest wait the same as an unjittered schedule would.
-
-        On SQLite each attempt runs in a task of its own. A caller that is
-        cancelled waits for the attempt in hand, which ends the statement
-        in flight or its wait for a connection, sends no other and is
-        rolled back, and its own cancellation is raised then; ``attempts.py``
-        has the reasons. Elsewhere an attempt runs in its caller's task.
-        """
-        step = self._retry_base_delay
-        for attempt in range(1, self._retry_attempts + 1):
-            try:
-                return await (run_out_of_reach(fn) if self.profile.attempts_out_of_reach else fn())
-            except (DBAPIError, StaleSnapshot) as exc:
-                if not isinstance(exc, StaleSnapshot) and not is_retryable(self.profile, exc):
-                    raise
-                if attempt >= self._retry_attempts:
-                    if isinstance(exc, StaleSnapshot):
-                        raise
-                    raise StaleSnapshot(f"a retryable engine conflict outlived {attempt} attempts") from exc
-                await asyncio.sleep(random.uniform(step / 2, step))
-                step *= 2
-        raise AssertionError("unreachable")  # pragma: no cover
-
-    def classify_failure(self, exc: BaseException, *, context: str) -> ResultError:
-        """Classify a driver failure that escaped retry — always a Result, never a raise.
-
-        A statement defect (syntax class) is a vfs bug, classified
-        ``internal`` and never retryable — retrying a broken statement
-        forever would disguise the bug as an operating condition.
-        """
-        origin = driver_origin(exc)
-        try:
-            # The runtime contract takes any driver exception; the stub's
-            # `Error` type is the DBAPI module protocol, not a real class.
-            disconnected = isinstance(origin, Exception) and self._dialect.is_disconnect(
-                origin,  # ty: ignore[invalid-argument-type]
-                None,
-                None,
-            )
-        except Exception:
-            disconnected = False
-        if disconnected:
-            return classified(ErrorKind.backend_unavailable, retryable=True, detail=f"{context} failed: {origin}")
-        if is_value_too_large(exc):
-            # The engine's own single-value cap, named by the engine: not a vfs ceiling.
-            detail = f"{context} exceeded this engine's single-value limit: {origin}"
-            return classified(ErrorKind.unsupported, detail=detail)
-        if is_permanent_defect(exc):
-            return classified(ErrorKind.internal, detail=f"{context} hit a permanent statement defect: {origin}")
-        return classified(ErrorKind.unavailable, retryable=True, detail=f"{context} failed: {origin}")
 
     # -------------------------------------------------------------------
     # Planner statistics — detect inside the write, analyze in one tracked pass
@@ -552,7 +432,7 @@ class EngineHost:
             # The ready latch falls with its connectivity: the next op re-runs
             # the idempotent first touch instead of serving off a stale latch.
             self._ready = False
-            await self.engine.dispose()
+            await super().close()
 
     # -------------------------------------------------------------------
     # Internal helpers
@@ -564,8 +444,7 @@ class EngineHost:
 
     async def _first_touch(self) -> ResultError | None:
         profile = self._profile
-        if profile.file_settings:
-            await self._apply_file_settings(profile)
+        await self.apply_file_settings()
         if profile.statistics_listing is not None:
             self.in_memory = await self._read_in_memory()
             if self._replaces and (self.in_memory or not self.statistics_enabled):
@@ -579,15 +458,6 @@ class EngineHost:
         if refusal is None:
             self._ready = True
         return refusal
-
-    async def _apply_file_settings(self, profile: DialectProfile) -> None:
-        # Database-file state (WAL, page_size) cannot run inside a
-        # transaction; vfs_no_begin keeps the begin listener silent, and
-        # the driver is already in autocommit (isolation_level=None).
-        async with self.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_no_begin": True})
-            for statement in profile.file_settings:
-                await conn.exec_driver_sql(statement)
 
     async def _install_vector_function(self, install: str) -> None:
         """Run the profile's install statement once, under a savepoint so a rival's earlier install is benign."""
@@ -886,12 +756,12 @@ class EngineHost:
         unknown, and is held as an advisory for the next public verb,
         unless the owning task interrupted the pass on purpose.
         """
-        statement = f"BEGIN IMMEDIATE /* {STATISTICS_NAME} */"
+        statement = begin_statement(writer=True, tag=STATISTICS_NAME)
         pooled: PoolProxiedConnection | None = None
         try:
             async with self.session_factory() as session:
                 state.pool = self.engine.sync_engine.pool
-                conn = await session.connection(execution_options={"vfs_writer": True, STATISTICS_NAME: True})
+                conn = await session.connection(execution_options={"vfs_writer": True, BEGIN_TAG: STATISTICS_NAME})
                 pooled = _record_of(conn)
                 state.driver = pooled.dbapi_connection._connection  # ty: ignore[unresolved-attribute]
                 await self._reload_if_moved(conn)
@@ -959,39 +829,6 @@ class EngineHost:
 # ---------------------------------------------------------------------------
 # Module helpers
 # ---------------------------------------------------------------------------
-
-
-def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectProfile) -> None:
-    """Take over BEGIN emission and stamp session settings at checkout.
-
-    The documented SQLAlchemy recipe: the driver's deferred implicit
-    BEGIN is disabled so the begin event controls transaction start —
-    writers (``vfs_writer`` execution option) get ``BEGIN IMMEDIATE``.
-    Session settings are connection state applied at every pool checkout
-    (op-session start).
-    """
-
-    @event.listens_for(sync_engine, "checkout")
-    def _on_checkout(dbapi_connection, _record, _proxy) -> None:  # noqa: ANN001
-        dbapi_connection.isolation_level = None
-        cursor = dbapi_connection.cursor()
-        # A connection already carrying the function skips the load.
-        if not has_sqlite_vec(cursor):
-            load_sqlite_vec(dbapi_connection)
-        for statement in profile.session_settings:
-            cursor.execute(statement)
-        cursor.close()
-
-    @event.listens_for(sync_engine, "begin")
-    def _on_begin(conn) -> None:  # noqa: ANN001
-        options = conn.get_execution_options()
-        if options.get("vfs_no_begin"):
-            return
-        mode = "BEGIN IMMEDIATE" if options.get("vfs_writer") else "BEGIN"
-        if options.get(STATISTICS_NAME):
-            # The analysis pass's own transaction, told apart from a verb's in any statement trace.
-            mode = f"{mode} /* {STATISTICS_NAME} */"
-        conn.exec_driver_sql(mode)
 
 
 def _record_of(conn: AsyncConnection) -> PoolProxiedConnection:
