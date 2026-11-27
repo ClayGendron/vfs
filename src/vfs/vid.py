@@ -13,19 +13,31 @@ vid = mint.mint(entry_key, version)  # 20 lowercase hex characters
 assert is_vid(vid)
 ```
 
+A caller that requires a path to hold nothing passes :data:`ABSENT`
+where it would pass a vid.
+
 The module imports the standard library alone.
 """
 
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 
 VID_LENGTH: Final = 20
 """How many characters a vid has."""
 
 Vid = Annotated[str, "20 lowercase hex characters that name one entry at one version; compared, never parsed"]
 """Twenty lowercase hex characters that name one entry at one version of one mount."""
+
+ABSENT: Final[Literal["absent"]] = "absent"
+"""The mark given where a vid is given: it requires that the path holds no live row.
+
+No vid has this shape, so the two never meet, and it is plain JSON.
+"""
+
+VidOrAbsent = Vid | Literal["absent"]
+"""What a precondition requires at one path: a vid, or :data:`ABSENT`."""
 
 # The digest is half the vid's length in bytes; ``person`` names this form of the vid.
 _DIGEST_BYTES: Final = VID_LENGTH // 2

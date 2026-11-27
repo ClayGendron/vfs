@@ -36,8 +36,9 @@ from ulid import ULID
 
 from vfs.models.rows import vid_at
 from vfs.paths import TRASH_ROOT, byte_length, is_trash_path
-from vfs.results import ErrorKind, ResultError, already_exists, classified, wrong_kind
+from vfs.results import ErrorKind, ResultError, already_exists, classified, stale_vid, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain, tombstone_miss, trashed_hint
+from vfs.vid import ABSENT
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.media import Source
     from vfs.paths import ObjectKind, Path
-    from vfs.vid import Vid, VidMint
+    from vfs.vid import Vid, VidMint, VidOrAbsent
 
 Status = Literal["created", "updated", "unchanged"]
 # Which execution pass writes a staged row's material columns. Distinct
@@ -81,7 +82,8 @@ class StagedEntry:
     base_data: bytes | None = None  # the replaced bytes body, when the snapshot joined it; its text rides base_content
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
     revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
-    expected_version: int | None = None  # the version the caller said it replaces; settle refuses any other
+    expected: Vid | None = None  # the vid the caller said it replaces; settle refuses any other
+    exclusive: bool = False  # the entry only creates: arbitration never lands it on a rival's row
 
     def __post_init__(self) -> None:
         self.ext = self.path.ext
@@ -265,7 +267,7 @@ class WritePlan:
         owner_id: str | None = None,
         data: bytes | None = None,
         source: Source = "text",
-        expected: int | None = None,
+        expected: VidOrAbsent | None = None,
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended.
 
@@ -274,20 +276,32 @@ class WritePlan:
         occupies the path. A tombstoned directory refuses ``wrong_kind``
         with the trashed hint, as a live one refuses without it.
 
-        *expected* is the version the caller says it replaces. A row
-        that is expected exists, so nothing is made for it: no parent,
-        no file, and no revive of a deleted one. Whether the version is
-        the row's is judged later, by :meth:`settle`.
+        *expected* is the vid the caller requires at the path, or the mark
+        ``ABSENT``. A row that is required exists, so nothing is made for
+        it: no parent, no file, and no revive of a deleted one, and a live
+        directory standing at the path is the file changed, so ``conflict``.
+        Whether the vid is the row's is judged later, by :meth:`settle`.
+        The mark makes this one entry create-only, as ``overwrite`` false
+        makes every entry.
         """
+        required = expected is not None and expected != ABSENT
         if not self.within_namespace(target) or not self.within_budget(target):
             return None
-        if not self.parent_gate(target, parents=parents and expected is None, target=target):
+        if not self.parent_gate(target, parents=parents and not required, target=target):
             return None
         occupant = self.kind_of(target)
         tombstone = self.tombstone_of(target) if occupant is None else None
         # Occupied is answered before the occupant's kind, as O_EXCL answers EEXIST over a directory.
-        if occupant is not None and not overwrite:
+        if occupant is not None and (not overwrite or expected == ABSENT):
             self.errors.append(self.occupied(target))
+            return None
+        # A key is judged against the state before the call, never against this batch's own rows.
+        stored = self.committed.get(str(target)) if required else None
+        if required and (stored is None or stored["deleted_at"] is not None):
+            self.errors.append(tombstone_miss(target, None if stored is None else stored["deleted_at"]))
+            return None
+        if stored is not None and stored["kind"] == "directory":
+            self.errors.append(stale_vid(target, stored["version"], self.vid_of(stored)))
             return None
         if occupant == "directory":
             self.errors.append(wrong_kind("directory", target))
@@ -295,9 +309,6 @@ class WritePlan:
         if tombstone is not None and tombstone["kind"] == "directory":
             hint = {"kind": "directory", **trashed_hint(tombstone["deleted_at"])}
             self.errors.append(classified(ErrorKind.wrong_kind, target, detail="directory", data=hint))
-            return None
-        if expected is not None and occupant is None:
-            self.errors.append(tombstone_miss(target, None if tombstone is None else tombstone["deleted_at"]))
             return None
         self.mint_chain(target)
         stage = self.stage_create if occupant is None and tombstone is None else self.stage_update
@@ -315,7 +326,8 @@ class WritePlan:
         )
         if tombstone is not None:
             self.staged[target].revive = True
-        self.staged[target].expected_version = expected
+        self.staged[target].expected = expected if required else None
+        self.staged[target].exclusive = expected == ABSENT or not overwrite
         return "created" if occupant is None and tombstone is None else "updated"
 
     def occupied(self, path: Path) -> ResultError:
@@ -461,7 +473,7 @@ class WritePlan:
         )
 
     def settle(self) -> None:
-        """Drop each staged update that would leave its row as it is, then refuse each stale expected version.
+        """Drop each staged update that would leave its row as it is, then refuse each stale required vid.
 
         It runs once, after every entry is staged, so a path written twice
         is judged on its last body. A revive is a change whatever its
@@ -470,8 +482,8 @@ class WritePlan:
         version, its stamps and its index marks stay as they were.
 
         The drop comes first, so a call sent twice meets its own body and
-        hears ``unchanged``, whatever version it expected. Every row left
-        whose expected version is not the committed one is a ``conflict``.
+        hears ``unchanged``, whatever vid it required. Every row left
+        whose required vid is not the committed row's is a ``conflict``.
         """
         same = frozenset(
             path
@@ -485,11 +497,11 @@ class WritePlan:
         if same:
             self.pending = [(path, "unchanged" if path in same else status) for path, status in self.pending]
         for path, staged in self.staged.items():
-            if staged.expected_version is None:
+            if staged.expected is None:
                 continue
             row = self.committed[str(path)]
-            if staged.expected_version != row["version"]:
-                self.errors.append(stale_version(path, row["version"], self.vid_of(row)))
+            if staged.expected != (vid := self.vid_of(row)):
+                self.errors.append(stale_vid(path, row["version"], vid))
 
     def vid_of(self, row: RowMapping) -> Vid:
         """The vid of a committed row of the snapshot, at the version it was read at."""
@@ -524,16 +536,6 @@ class WritePlan:
 # ---------------------------------------------------------------------------
 # Refusals
 # ---------------------------------------------------------------------------
-
-
-def stale_version(path: Path, current: int, vid: Vid) -> ResultError:
-    """The ``conflict`` of a write whose expected version is not the row's, naming the version and the vid there now.
-
-    It is not retryable: the same call would carry the same stale
-    version, so the caller reads the file again first.
-    """
-    detail = "the version expected is not the version stored"
-    return classified(ErrorKind.conflict, path, detail=detail, data={"version": current, "vid": vid})
 
 
 def occupant_exists(path: Path, version: int, content_hash: str | None, vid: Vid) -> ResultError:

@@ -179,4 +179,4 @@ A vid is only for comparing. A caller cannot read a version number out of it, an
 
 No change has to carry a vid. A change sent without one is made as it is sent.
 
-Every row a call returns with a version carries its vid today, as `Observation.vid`. Passing a vid back to a change is part of a design that is not yet built. [Vids and Preconditions](planned-api/vids-and-preconditions.md) has its details.
+Every row a call returns with a version carries its vid today, as `Observation.vid`, and `write` takes one back as `if_vid`. The same argument on `edit`, `delete`, `move` and `restore` is part of a design that is not yet built. [Vids and Preconditions](planned-api/vids-and-preconditions.md) has its details.

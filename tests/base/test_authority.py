@@ -273,12 +273,13 @@ async def test_a_session_verb_is_the_direct_call_with_the_authority_filled_in(op
 
 @pytest.mark.parametrize("op", sorted(ALL_OPS))
 def test_session_verbs_take_no_identity_argument(op: Op) -> None:
-    # The session signature is the verb's, minus the authority, so the two
-    # surfaces cannot drift apart silently.
+    # The session signature is the verb's, minus the authority and the vids a session fills in itself,
+    # so the two surfaces cannot drift apart silently.
     fs_params = dict(inspect.signature(getattr(AsyncVirtualFileSystem, op)).parameters)
     session_params = dict(inspect.signature(getattr(AsyncSession, op)).parameters)
-    assert "authority" not in session_params
-    del fs_params["authority"]
+    withheld = {"authority", "if_vid", "if_vids"}
+    assert withheld.isdisjoint(session_params)
+    fs_params = {name: param for name, param in fs_params.items() if name not in withheld}
     assert [(n, p.kind, p.default) for n, p in fs_params.items()] == [
         (n, p.kind, p.default) for n, p in session_params.items()
     ]

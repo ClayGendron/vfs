@@ -136,9 +136,11 @@ async def _revision_of(storage: ConformanceBackend, path: str) -> int:
     return version
 
 
-async def _vid_of(storage: ConformanceBackend, path: str) -> str | None:
-    """The vid a ``stat`` of *path* returns now."""
-    return (await storage.stat(path=Path(path))).observations[0].vid
+async def _vid_of(storage: ConformanceBackend, path: str) -> str:
+    """The vid a ``stat`` of *path* returns now; a row with a version always has one."""
+    vid = (await storage.stat(path=Path(path))).observations[0].vid
+    assert vid is not None
+    return vid
 
 
 # Directory names holding a LIKE metacharacter, beside the near-miss
@@ -2723,62 +2725,64 @@ class StorageContract:
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "body"
 
     # ------------------------------------------------------------------
-    # A write that states the version it expects to replace
+    # A write that requires the vid of what it replaces
     # ------------------------------------------------------------------
 
     @needs("write", "stat", "read")
-    async def test_a_stale_expected_version_is_conflict_and_writes_nothing(self, storage: ConformanceBackend) -> None:
-        for body in ("one", "two"):
-            assert (await storage.write(entries=[_file("/a.txt", body)])).success is True
-        result = await storage.write(entries=[_file("/a.txt", "three")], if_versions={Path("/a.txt"): 1})
+    async def test_a_stale_vid_is_conflict_and_writes_nothing(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        seen = await _vid_of(storage, "/a.txt")
+        assert (await storage.write(entries=[_file("/a.txt", "two")])).success is True
+        result = await storage.write(entries=[_file("/a.txt", "three")], if_vids={Path("/a.txt"): seen})
         assert result.success is False and result.observations == []
         (error,) = result.errors
-        assert (error.kind, error.path, error.data, error.retryable) == (
-            ErrorKind.conflict,
-            "/a.txt",
-            {"version": 2, "vid": await _vid_of(storage, "/a.txt")},
-            False,
-        )
+        now = {"version": 2, "vid": await _vid_of(storage, "/a.txt")}
+        assert (error.kind, error.path, error.data, error.retryable) == (ErrorKind.conflict, "/a.txt", now, False)
+        assert error.message.endswith("the vid required is not the vid of what is stored")
         assert await _revision_of(storage, "/a.txt") == 2
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
 
     @needs("write", "stat", "read")
-    async def test_a_matching_expected_version_updates(self, storage: ConformanceBackend) -> None:
+    async def test_a_matching_vid_updates(self, storage: ConformanceBackend) -> None:
         assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
-        result = await storage.write(entries=[_file("/a.txt", "two")], if_versions={Path("/a.txt"): 1})
+        seen = await _vid_of(storage, "/a.txt")
+        result = await storage.write(entries=[_file("/a.txt", "two")], if_vids={Path("/a.txt"): seen})
         assert result.success is True, result.errors
         assert [(o.status, o.version) for o in result.observations] == [("updated", 2)]
+        assert result.observations[0].vid == await _vid_of(storage, "/a.txt") != seen
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "two"
 
     @needs("write", "stat")
-    async def test_a_write_with_an_expected_version_sent_twice_is_unchanged(self, storage: ConformanceBackend) -> None:
+    async def test_a_write_with_a_vid_sent_twice_is_unchanged(self, storage: ConformanceBackend) -> None:
         assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
-        expecting_one = {Path("/a.txt"): 1}
-        assert (await storage.write(entries=[_file("/a.txt", "two")], if_versions=expecting_one)).success is True
+        seen = {Path("/a.txt"): await _vid_of(storage, "/a.txt")}
+        assert (await storage.write(entries=[_file("/a.txt", "two")], if_vids=seen)).success is True
         # The reply was lost and the call is sent again: it meets its own body.
-        replay = await storage.write(entries=[_file("/a.txt", "two")], if_versions=expecting_one)
+        replay = await storage.write(entries=[_file("/a.txt", "two")], if_vids=seen)
         assert replay.success is True, replay.errors
         assert [(o.status, o.version) for o in replay.observations] == [("unchanged", 2)]
-        other = await storage.write(entries=[_file("/a.txt", "three")], if_versions=expecting_one)
+        other = await storage.write(entries=[_file("/a.txt", "three")], if_vids=seen)
         now = {"version": 2, "vid": await _vid_of(storage, "/a.txt")}
         assert [(e.kind, e.data) for e in other.errors] == [(ErrorKind.conflict, now)]
 
     @needs("write", "delete", "stat")
-    async def test_an_expected_version_on_no_live_row_is_not_found(self, storage: ConformanceBackend) -> None:
-        absent = await storage.write(entries=[_file("/nope.txt", "x")], if_versions={Path("/nope.txt"): 1})
+    async def test_a_vid_on_no_live_row_is_not_found(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
+        seen = await _vid_of(storage, "/a.txt")
+        assert seen is not None
+        absent = await storage.write(entries=[_file("/nope.txt", "x")], if_vids={Path("/nope.txt"): seen})
         assert [(e.kind, e.path) for e in absent.errors] == [(ErrorKind.not_found, "/nope.txt")]
-        # A row that is expected to exist has its parents, so the parents are never made for it.
+        # A row that is required to exist has its parents, so the parents are never made for it.
         orphan = await storage.write(
-            entries=[_file("/no/dir/f.txt", "x")], if_versions={Path("/no/dir/f.txt"): 1}, parents=True
+            entries=[_file("/no/dir/f.txt", "x")], if_vids={Path("/no/dir/f.txt"): seen}, parents=True
         )
         assert [(e.kind, e.path) for e in orphan.errors] == [(ErrorKind.not_found, "/no")]
         assert (await storage.stat(path=Path("/no"))).success is False
-        assert (await storage.write(entries=[_file("/a.txt", "one")])).success is True
         assert (await storage.delete(path=Path("/a.txt"))).success is True
-        deleted = (await storage.stat(path=Path("/.vfs/trash/a.txt"))).observations[0].version
-        assert deleted is not None
-        for expected in (1, deleted):
-            gone = await storage.write(entries=[_file("/a.txt", "two")], if_versions={Path("/a.txt"): expected})
+        tombstone = (await storage.stat(path=Path("/.vfs/trash/a.txt"))).observations[0].vid
+        assert tombstone is not None
+        for required in (seen, tombstone):
+            gone = await storage.write(entries=[_file("/a.txt", "two")], if_vids={Path("/a.txt"): required})
             (error,) = gone.errors
             assert (error.kind, error.path) == (ErrorKind.not_found, "/a.txt")
             assert (error.data or {}).get("vfs.trashed") is True
@@ -2788,15 +2792,15 @@ class StorageContract:
     async def test_stale_keys_refuse_the_whole_batch_and_each_is_named(self, storage: ConformanceBackend) -> None:
         paths = ["/a.txt", "/b.txt", "/c.txt", "/d.txt"]
         assert (await storage.write(entries=[_file(path, "old") for path in paths])).success is True
+        seen = {Path(path): await _vid_of(storage, path) for path in paths}
         moved_on = [_file("/b.txt", "rival"), _file("/d.txt", "rival")]
         assert (await storage.write(entries=moved_on)).success is True
-        result = await storage.write(
-            entries=[_file(path, "new") for path in paths], if_versions={Path(path): 1 for path in paths}
-        )
+        result = await storage.write(entries=[_file(path, "new") for path in paths], if_vids=seen)
         assert result.success is False and result.observations == []
-        assert sorted((e.kind, e.path, (e.data or {}).get("version")) for e in result.errors) == [
-            (ErrorKind.conflict, "/b.txt", 2),
-            (ErrorKind.conflict, "/d.txt", 2),
+        named = [(e.kind, e.path, e.data) for e in sorted(result.errors, key=lambda e: e.path or "")]
+        assert named == [
+            (ErrorKind.conflict, "/b.txt", {"version": 2, "vid": await _vid_of(storage, "/b.txt")}),
+            (ErrorKind.conflict, "/d.txt", {"version": 2, "vid": await _vid_of(storage, "/d.txt")}),
         ]
         bodies = [(await storage.read(path=Path(path))).observations[0].content for path in paths]
         assert bodies == ["old", "rival", "old", "rival"]
@@ -2804,10 +2808,11 @@ class StorageContract:
     @needs("write", "stat")
     async def test_a_key_covers_its_own_row_and_no_other(self, storage: ConformanceBackend) -> None:
         assert (await storage.write(entries=[_file("/a.txt", "old"), _file("/b.txt", "old")])).success is True
+        seen = await _vid_of(storage, "/a.txt")
         assert (await storage.write(entries=[_file("/b.txt", "rival")])).success is True
         # /b.txt moved on, and no key names it: it is replaced, as a plain write replaces.
         result = await storage.write(
-            entries=[_file("/a.txt", "new"), _file("/b.txt", "new")], if_versions={Path("/a.txt"): 1}
+            entries=[_file("/a.txt", "new"), _file("/b.txt", "new")], if_vids={Path("/a.txt"): seen}
         )
         assert result.success is True, result.errors
         assert [(o.status, o.version) for o in result.observations] == [("updated", 2), ("updated", 3)]
@@ -2885,18 +2890,19 @@ class StorageContract:
         assert back.success is True and back.observations[0].status == "updated"
         assert (await storage.read(path=Path("/gone.txt"))).observations[0].content == "new"
 
-    @needs("write", "read")
-    async def test_an_append_with_an_expected_version_lands_at_most_once(self, storage: ConformanceBackend) -> None:
+    @needs("write", "read", "stat")
+    async def test_an_append_with_a_vid_lands_at_most_once(self, storage: ConformanceBackend) -> None:
         assert (await storage.write(entries=[_file("/log.txt", "one\n")])).success is True
-        expecting_one = {Path("/log.txt"): 1}
-        first = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
+        seen = {Path("/log.txt"): await _vid_of(storage, "/log.txt")}
+        first = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_vids=seen)
         assert first.success is True, first.errors
-        # The reply was lost and the call is sent again: the version moved on, and nothing is added twice.
-        again = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
+        # The reply was lost and the call is sent again: the vid moved on, and nothing is added twice.
+        again = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_vids=seen)
         now = {"version": 2, "vid": await _vid_of(storage, "/log.txt")}
         assert [(e.kind, e.data) for e in again.errors] == [(ErrorKind.conflict, now)]
         assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "one\ntwo\n"
-        absent = await storage.write(entries=[_file("/none.txt", "x")], append=True, if_versions={Path("/none.txt"): 1})
+        elsewhere = {Path("/none.txt"): seen[Path("/log.txt")]}
+        absent = await storage.write(entries=[_file("/none.txt", "x")], append=True, if_vids=elsewhere)
         assert [e.kind for e in absent.errors] == [ErrorKind.not_found]
 
     @needs("write", "stat")

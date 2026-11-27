@@ -15,7 +15,7 @@ from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
 from vfs.shell import refused_line
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Sequence
     from types import TracebackType
 
     from vfs.authority import Authority
@@ -128,8 +128,6 @@ class Session:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        if_version: int | None = None,
-        if_versions: Mapping[str, int] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -141,8 +139,6 @@ class Session:
             path=path,
             content=content,
             data=data,
-            if_version=if_version,
-            if_versions=if_versions,
             if_absent=if_absent,
             append=append,
             parents=parents,

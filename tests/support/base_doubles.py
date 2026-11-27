@@ -47,15 +47,21 @@ class RecorderStorage:
         name: str = "recorder",
         description: str = "Recorder storage double",
         caps: frozenset[Op] | None = None,
+        vid: bool = True,
     ) -> None:
         self.name = name
         self.description = description
         self._caps = caps
+        self._vid = vid
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.authorities: list[Authority | None] = []  # one per recorded call, in order
 
     def capabilities(self) -> frozenset[Op]:
         return self._caps if self._caps is not None else storage_ops(self)
+
+    def traits(self) -> dict[str, str]:
+        """The ``vid`` trait, unless *vid* was false: a double that issues no vid must refuse a required one."""
+        return {"vid": "entry_version"} if self._vid else {}
 
     def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))

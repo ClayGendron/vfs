@@ -9,6 +9,7 @@ the version and nothing else.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Protocol
 
 import pytest
@@ -28,8 +29,9 @@ from vfs.storage import (
     SupportsTraits,
     SupportsTraversal,
 )
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
-from vfs.vid import is_vid
+from vfs.vid import ABSENT, is_vid
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -101,9 +103,11 @@ async def _deleted_then(storage: VidBackend, path: str, then: Callable[[Path], A
     return await then(Path(path))
 
 
-async def _vid(storage: VidBackend, path: str) -> str | None:
-    """The vid a ``stat`` of *path* returns now."""
-    return (await storage.stat(path=Path(path))).one().vid
+async def _vid(storage: VidBackend, path: str) -> str:
+    """The vid a ``stat`` of *path* returns now; a row with a version always has one."""
+    vid = (await storage.stat(path=Path(path))).one().vid
+    assert vid is not None
+    return vid
 
 
 class VidContract:
@@ -208,6 +212,125 @@ class VidContract:
             {"version": stored.version, "content_hash": stored.content_hash, "vid": stored.vid},
         )
 
+    @pytest.mark.parametrize("case", ["a new file", "another file moved in", "a copy", "the parent replaced"])
+    async def test_a_path_freed_by_a_move_is_refused(self, storage: VidBackend, case: str) -> None:
+        """Mutation guarded: a precondition judged on the version alone, which each of the four cases passes."""
+        files = {"/x/p": "the file that was read", "/x/q": "another file", "/w/r": "one more"}
+        entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        seen = await _vid(storage, "/x/p")
+        assert seen is not None
+        await _FREED[case](storage)
+        standing = (await storage.read(path=Path("/x/p"))).one()
+        refused = await storage.write(entries=[Entry(path=Path("/x/p"), content="mine")], if_vids={Path("/x/p"): seen})
+        now = {"version": standing.version, "vid": standing.vid}
+        assert [(error.kind, error.data) for error in refused.errors] == [(ErrorKind.conflict, now)]
+        assert (await storage.read(path=Path("/x/p"))).one().content == standing.content
+
+    async def test_a_vid_minted_by_another_storage_is_conflict(self, storage: VidBackend) -> None:
+        other = InMemoryStorage()
+        for each in (storage, other):
+            assert (await each.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        foreign = await _vid(other, "/a.txt")
+        await other.close()
+        refused = await storage.write(
+            entries=[Entry(path=Path("/a.txt"), content="y")], if_vids={Path("/a.txt"): foreign}
+        )
+        assert [error.kind for error in refused.errors] == [ErrorKind.conflict]
+        assert (await storage.read(path=Path("/a.txt"))).one().content == "x"
+
+    async def test_twenty_writers_that_require_one_vid_land_once(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="seed")])).success is True
+        seen = {Path("/a.txt"): await _vid(storage, "/a.txt")}
+        writes = [
+            storage.write(entries=[Entry(path=Path("/a.txt"), content=f"body {n}")], if_vids=seen) for n in range(20)
+        ]
+        results = await asyncio.gather(*writes)
+        assert sum(result.success for result in results) == 1
+        assert sorted(error.kind for result in results for error in result.errors) == [ErrorKind.conflict] * 19
+
+    async def test_a_required_vid_over_a_directory_is_conflict(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        seen = await _vid(storage, "/a.txt")
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        assert (await storage.sweep(path=Path("/a.txt"))).success is True
+        assert (await storage.mkdir(path=Path("/a.txt"))).success is True
+        required = await storage.write(
+            entries=[Entry(path=Path("/a.txt"), content="y")], if_vids={Path("/a.txt"): seen}
+        )
+        directory = (await storage.stat(path=Path("/a.txt"))).one()
+        now = {"version": directory.version, "vid": directory.vid}
+        assert [(error.kind, error.data) for error in required.errors] == [(ErrorKind.conflict, now)]
+        plain = await storage.write(entries=[Entry(path=Path("/a.txt"), content="y")])
+        assert [error.kind for error in plain.errors] == [ErrorKind.wrong_kind]
+
+    async def test_a_required_vid_over_a_tombstoned_directory_is_not_found(self, storage: VidBackend) -> None:
+        assert (await storage.mkdir(path=Path("/d"))).success is True
+        seen = await _vid(storage, "/d")
+        assert (await storage.delete(path=Path("/d"))).success is True
+        required = await storage.write(entries=[Entry(path=Path("/d"), content="y")], if_vids={Path("/d"): seen})
+        assert [(e.kind, (e.data or {}).get("vfs.trashed")) for e in required.errors] == [(ErrorKind.not_found, True)]
+
+    async def test_the_mark_creates_and_never_replaces(self, storage: VidBackend) -> None:
+        """Mutation guarded: the mark read as a plain write, which replaces the occupant and reports success."""
+        assert (await storage.write(entries=[Entry(path=Path("/keyed.txt"), content="old")])).success is True
+        keyed = await _vid(storage, "/keyed.txt")
+        batch = [Entry(path=Path(path), content="new") for path in ("/keyed.txt", "/marked.txt", "/plain.txt")]
+        marks = {Path("/keyed.txt"): keyed, Path("/marked.txt"): ABSENT}
+        landed = await storage.write(entries=batch, if_vids=marks)
+        assert [(row.path, row.status) for row in landed.observations] == [
+            ("/keyed.txt", "updated"),
+            ("/marked.txt", "created"),
+            ("/plain.txt", "created"),
+        ]
+        occupant = (await storage.stat(path=Path("/marked.txt"))).one()
+        again = [Entry(path=Path(path), content="newer") for path in ("/marked.txt", "/plain.txt")]
+        refused = await storage.write(entries=again, if_vids={Path("/marked.txt"): ABSENT})
+        named = {"version": occupant.version, "content_hash": occupant.content_hash, "vid": occupant.vid}
+        assert refused.observations == []
+        assert [(error.kind, error.path, error.data) for error in refused.errors] == [
+            (ErrorKind.exists, "/marked.txt", named)
+        ]
+        assert (await storage.read(path=Path("/plain.txt"))).one().content == "new"
+        assert (await storage.delete(path=Path("/marked.txt"))).success is True
+        revived = await storage.write(
+            entries=[Entry(path=Path("/marked.txt"), content="back")], if_vids={Path("/marked.txt"): ABSENT}
+        )
+        assert [row.status for row in revived.observations] == ["updated"]
+
+    async def test_the_mark_over_a_live_directory_is_exists_and_a_tombstoned_one_wrong_kind(
+        self, storage: VidBackend
+    ) -> None:
+        assert (await storage.mkdir(path=Path("/live"))).success is True
+        assert (await storage.mkdir(path=Path("/gone"))).success is True
+        assert (await storage.delete(path=Path("/gone"))).success is True
+        live = (await storage.stat(path=Path("/live"))).one()
+        over_live = await storage.write(
+            entries=[Entry(path=Path("/live"), content="x")], if_vids={Path("/live"): ABSENT}
+        )
+        assert [(e.kind, e.data) for e in over_live.errors] == [
+            (ErrorKind.exists, {"version": live.version, "vid": live.vid})
+        ]
+        over_gone = await storage.write(
+            entries=[Entry(path=Path("/gone"), content="x")], if_vids={Path("/gone"): ABSENT}
+        )
+        assert [(e.kind, (e.data or {}).get("vfs.trashed")) for e in over_gone.errors] == [(ErrorKind.wrong_kind, True)]
+
+    async def test_twenty_marked_creates_of_one_path_land_once(self, storage: VidBackend) -> None:
+        own = [Entry(path=Path(f"/own{n}.txt"), content="seed") for n in range(20)]
+        assert (await storage.write(entries=own)).success is True
+
+        def batch(n: int) -> Awaitable[Result]:
+            entries = [
+                Entry(path=Path("/lock"), content=f"holder {n}"),
+                Entry(path=Path(f"/own{n}.txt"), content="mine"),
+            ]
+            return storage.write(entries=entries, if_vids={Path("/lock"): ABSENT})
+
+        results = await asyncio.gather(*(batch(n) for n in range(20)))
+        assert sum(result.success for result in results) == 1
+        assert sorted(error.kind for result in results for error in result.errors) == [ErrorKind.exists] * 19
+
     async def test_the_storage_declares_the_vid_trait(self, storage: VidBackend) -> None:
         assert storage.traits()["vid"] == "entry_version"
 
@@ -250,6 +373,26 @@ async def _copy(storage: VidBackend) -> str:
     assert copied.success is True
     return "/d/sub/copy.txt"
 
+
+async def _free_by_moving(storage: VidBackend, then: Callable[[], Awaitable[Result]]) -> None:
+    """Move ``/x/p`` away, then let *then* put another file at the path."""
+    assert (await storage.move(operations=[ResolvedPair(Path("/x/p"), Path("/w/p"))])).success is True
+    assert (await then()).success is True
+
+
+async def _replace_the_parent(storage: VidBackend) -> None:
+    assert (await storage.move(operations=[ResolvedPair(Path("/x"), Path("/y"))])).success is True
+    assert (await storage.write(entries=[Entry(path=Path("/x/p"), content="a new file")], parents=True)).success
+
+
+_FREED: dict[str, Callable[[VidBackend], Awaitable[None]]] = {
+    "a new file": lambda s: _free_by_moving(s, lambda: s.write(entries=[Entry(path=Path("/x/p"), content="new")])),
+    "another file moved in": lambda s: _free_by_moving(
+        s, lambda: s.move(operations=[ResolvedPair(Path("/x/q"), Path("/x/p"))])
+    ),
+    "a copy": lambda s: _free_by_moving(s, lambda: s.copy(operations=[ResolvedPair(Path("/w/r"), Path("/x/p"))])),
+    "the parent replaced": _replace_the_parent,
+}
 
 _CHANGES: dict[str, Callable[[VidBackend], Awaitable[str]]] = {
     "a new body": lambda s: _rewrite(s, "another body"),

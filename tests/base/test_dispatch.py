@@ -25,6 +25,7 @@ from tests.support.base_doubles import (
     TransportFailStorage,
     _fan,
 )
+from tests.support.vids import vid_in
 from vfs import offload as offload_module
 from vfs.authority import Authority
 from vfs.base import AsyncVirtualFileSystem
@@ -38,6 +39,7 @@ from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
+from vfs.vid import ABSENT
 
 # ----------------------------------------------------------------------
 # single-shape verbs localize their dispatch
@@ -1174,39 +1176,52 @@ async def test_write_entries_batch_groups_and_localizes() -> None:
     assert a.calls[0][1]["if_absent"] is False
 
 
-async def test_write_if_version_reaches_the_storage_keyed_by_its_own_path() -> None:
+VID = "0123456789abcdef0123"
+OTHER_VID = "fedcba9876543210fedc"
+
+
+async def test_if_vid_reaches_the_storage_keyed_by_its_own_path() -> None:
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    await root.write(path="/m/f.txt", content="x", if_version=3)
-    assert child.calls[0][1]["if_versions"] == {Path("/f.txt"): 3}
+    await root.write(path="/m/f.txt", content="x", if_vid=VID)
+    assert child.calls[0][1]["if_vids"] == {Path("/f.txt"): VID}
+    await root.write(path="/m/f.txt", content="x", if_vid=ABSENT)
+    assert child.calls[1][1]["if_vids"] == {Path("/f.txt"): ABSENT}
+
+
+async def test_a_call_that_requires_nothing_passes_no_if_vids() -> None:
+    root = AsyncVirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
     await root.write(path="/m/f.txt", content="x")
-    assert child.calls[1][1]["if_versions"] is None
+    await root.write([Entry(path=Path("/m/g.txt"), content="y")])
+    assert [("if_vids" in kwargs) for _, kwargs in child.calls] == [False, False]
 
 
 async def test_write_append_reaches_the_storage_with_the_tail_as_its_one_entry() -> None:
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    await root.write(path="/m/log.txt", content="line\n", append=True, if_version=4)
+    await root.write(path="/m/log.txt", content="line\n", append=True, if_vid=VID)
     kwargs = child.calls[0][1]
     assert [(entry.path, entry.content) for entry in kwargs["entries"]] == [("/log.txt", "line\n")]
-    assert (kwargs["append"], kwargs["if_absent"], kwargs["if_versions"]) == (True, False, {Path("/log.txt"): 4})
+    assert (kwargs["append"], kwargs["if_absent"], kwargs["if_vids"]) == (True, False, {Path("/log.txt"): VID})
     await root.write(path="/m/log.txt", content="line\n")
     assert child.calls[1][1]["append"] is False
 
 
-async def test_write_if_versions_go_to_the_mount_of_each_key() -> None:
+async def test_if_vids_go_to_the_mount_of_each_key() -> None:
     root = AsyncVirtualFileSystem()
     a, b, c = RecorderStorage(), RecorderStorage(), RecorderStorage()
     for storage, path in ((a, "/a"), (b, "/b"), (c, "/c")):
         await root.add_mount(storage, path)
     entries = [Entry(path=Path(f"/{mount}/{name}.txt"), content="x") for mount in "abc" for name in ("f", "g")]
-    expected = {"/a/f.txt": 2, "/a/g.txt": 5, "/b/g.txt": 7}
-    assert (await root.write(entries, if_versions=expected)).success is True
-    assert a.calls[0][1]["if_versions"] == {Path("/f.txt"): 2, Path("/g.txt"): 5}
-    assert b.calls[0][1]["if_versions"] == {Path("/g.txt"): 7}
-    assert c.calls[0][1]["if_versions"] is None
+    required = {"/a/f.txt": VID, "/a/g.txt": ABSENT, "/b/g.txt": OTHER_VID}
+    assert (await root.write(entries, if_vids=required)).success is True
+    assert a.calls[0][1]["if_vids"] == {Path("/f.txt"): VID, Path("/g.txt"): ABSENT}
+    assert b.calls[0][1]["if_vids"] == {Path("/g.txt"): OTHER_VID}
+    assert "if_vids" not in c.calls[0][1]
 
 
 @pytest.mark.parametrize(
@@ -1214,37 +1229,51 @@ async def test_write_if_versions_go_to_the_mount_of_each_key() -> None:
     ["/a/other.txt", "/a/d", "/z/f.txt", "f.txt"],
     ids=["no-entry", "a-directory-entry", "another-mount", "not-a-path"],
 )
-async def test_write_if_versions_key_that_names_no_file_of_the_call_is_invalid(key: str) -> None:
+async def test_a_key_that_names_no_target_of_the_call_is_invalid(key: str) -> None:
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     entries = [Entry(path=Path("/a/f.txt"), content="x"), Entry(path=Path("/a/d"), kind="directory")]
-    result = await root.write(entries, if_versions={"/a/f.txt": 1, key: 1})
-    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
-    assert "if_versions" in result.errors[0].message
+    result = await root.write(entries, if_vids={"/a/f.txt": VID, key: VID})
+    assert [(error.kind, error.data) for error in result.errors] == [(ErrorKind.invalid, {"raw": key})]
+    assert result.errors[0].message.endswith("each key of if_vids must be the path of a file in entries")
     assert a.calls == []
 
 
-async def test_write_if_versions_with_no_entries_is_invalid() -> None:
+async def test_write_if_vids_with_no_entries_is_invalid() -> None:
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
-    result = await root.write([], if_versions={"/a/f.txt": 1})
+    result = await root.write([], if_vids={"/a/f.txt": VID})
     assert [error.kind for error in result.errors] == [ErrorKind.invalid]
-    assert "if_versions" in result.errors[0].message
+    assert "if_vids" in result.errors[0].message
     assert (await root.write([])).success is True
     assert a.calls == []
 
 
-async def test_write_if_versions_that_names_one_path_twice_is_invalid() -> None:
+async def test_if_vids_that_names_one_path_twice_is_invalid() -> None:
     root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     entries = [Entry(path=Path("/a/f.txt"), content="x")]
-    result = await root.write(entries, if_versions={"/a/f.txt": 1, "/a//f.txt": 4})
+    result = await root.write(entries, if_vids={"/a/f.txt": VID, "/a//f.txt": OTHER_VID})
     assert [(error.kind, error.data) for error in result.errors] == [(ErrorKind.invalid, {"raw": "/a//f.txt"})]
-    assert "twice" in result.errors[0].message
+    assert result.errors[0].message.endswith("if_vids names one path twice")
     assert a.calls == []
+
+
+async def test_a_mount_whose_storage_issues_no_vid_refuses_a_required_change() -> None:
+    root = AsyncVirtualFileSystem()
+    plain = RecorderStorage(vid=False)
+    await root.add_mount(plain, "/p")
+    refused = await root.write(path="/p/f.txt", content="x", if_vid=VID)
+    assert [(error.kind, error.path) for error in refused.errors] == [(ErrorKind.unsupported, "/p")]
+    assert refused.errors[0].message.endswith(
+        "the storage mounted here issues no vid, so a change there cannot require one"
+    )
+    assert plain.calls == []
+    assert (await root.write(path="/p/f.txt", content="x")).success is True
+    assert len(plain.calls) == 1
 
 
 async def test_write_a_stale_key_on_one_mount_refuses_that_mount_and_lands_the_other() -> None:
@@ -1255,14 +1284,17 @@ async def test_write_a_stale_key_on_one_mount_refuses_that_mount_and_lands_the_o
     assert (await root.write(seed)).success is True
     assert (await root.write(path="/a/f.txt", content="v2")).success is True
     both = [Entry(path=Path(path), content="new") for path in ("/a/f.txt", "/b/g.txt")]
-    result = await root.write(both, if_versions={"/a/f.txt": 1, "/b/g.txt": 1})
+    first = vid_in(await root.stat(path="/b/g.txt"))
+    stale = vid_in(await root.stat(path="/a/f.txt"))
+    assert (await root.write(path="/a/f.txt", content="v3")).success is True
+    result = await root.write(both, if_vids={"/a/f.txt": stale, "/b/g.txt": first})
     stored = (await root.stat(path="/a/f.txt")).observations[0]
     assert [(error.kind, error.path, error.data) for error in result.errors] == [
-        (ErrorKind.conflict, "/a/f.txt", {"version": 2, "vid": stored.vid})
+        (ErrorKind.conflict, "/a/f.txt", {"version": 3, "vid": stored.vid})
     ]
     assert [(o.path, o.status, o.version) for o in result.observations] == [("/b/g.txt", "updated", 2)]
     bodies = [(await root.read(path=path)).observations[0].content for path in ("/a/f.txt", "/b/g.txt")]
-    assert bodies == ["v2", "new"]
+    assert bodies == ["v3", "new"]
     await root.close()
 
 

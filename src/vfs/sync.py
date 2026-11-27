@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from vfs.storage import StorageBackend
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
+    from vfs.vid import Vid
 
 # The modules of the synchronous face, whose frames a warning steps past to reach its caller.
 _FACADE_MODULES: Final = frozenset({__name__, Session.__module__})
@@ -323,8 +324,8 @@ class VirtualFileSystem:
         path: str | None = None,
         content: str | None = None,
         data: bytes | None = None,
-        if_version: int | None = None,
-        if_versions: Mapping[str, int] | None = None,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         if_absent: bool = False,
         append: bool = False,
         parents: bool = False,
@@ -337,8 +338,8 @@ class VirtualFileSystem:
             path=path,
             content=content,
             data=data,
-            if_version=if_version,
-            if_versions=if_versions,
+            if_vid=if_vid,
+            if_vids=if_vids,
             if_absent=if_absent,
             append=append,
             parents=parents,

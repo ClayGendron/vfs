@@ -54,6 +54,7 @@ from tests.support.commit_worlds import (
 from tests.support.database_helpers import _url, begin_as_writer, writer_engine
 from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
+from tests.support.vids import vid_in
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.paths import Path
@@ -405,29 +406,39 @@ class TestAncestorMintConvergence:
 # ---------------------------------------------------------------------------
 
 
-class TestExpectedVersionRivals:
-    """A rival commits between the snapshot and the update, and the answer is the same on every engine.
+class TestRequiredVidRivals:
+    """A rival commits between the snapshot and the update, and the answer is the one the next snapshot gives.
 
     An engine that probes a missed guard answers from the probe. An
     engine that runs the call again answers from the new snapshot.
     """
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
-    async def test_a_rival_with_another_body_is_a_conflict_that_names_its_version(self, env_var: str) -> None:
+    @pytest.mark.parametrize("rival", ["wrote", "moved", "deleted"])
+    async def test_a_rival_inside_the_window_refuses_a_required_change(self, env_var: str, rival: str) -> None:
         async with server_storage(env_var) as storage:
             target = Path("/a.txt")
             assert (await storage.write(entries=[Entry(path=target, content="one")])).success
-            handler, rivals = _self_clearing(
-                "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="rival")])
-            )
+            seen = vid_in(await storage.stat(path=target))
+            act = {
+                "wrote": lambda: storage.write(entries=[Entry(path=target, content="rival")]),
+                "moved": lambda: storage.move(operations=[ResolvedPair(target, Path("/b.txt"))]),
+                "deleted": lambda: storage.delete(path=target),
+            }[rival]
+            handler, rivals = _self_clearing("write:before-apply", act)
             with seams.installed("write:before-apply", handler):
-                victim = await storage.write(entries=[Entry(path=target, content="mine")], if_versions={target: 1})
+                victim = await storage.write(entries=[Entry(path=target, content="mine")], if_vids={target: seen})
             assert rivals and rivals[0].success is True
-            now = {"version": 2, "vid": (await storage.stat(path=target)).observations[0].vid}
-            assert [(e.kind, e.path, e.data, e.retryable) for e in victim.errors] == [
-                (ErrorKind.conflict, "/a.txt", now, False)
-            ]
-            assert (await storage.read(path=target)).observations[0].content == "rival"
+            if rival == "wrote":
+                now = {"version": 2, "vid": (await storage.stat(path=target)).observations[0].vid}
+                assert [(e.kind, e.path, e.data, e.retryable) for e in victim.errors] == [
+                    (ErrorKind.conflict, "/a.txt", now, False)
+                ]
+                assert (await storage.read(path=target)).observations[0].content == "rival"
+            else:
+                trashed = [(e.data or {}).get("vfs.trashed") for e in victim.errors]
+                assert [(e.kind, e.path) for e in victim.errors] == [(ErrorKind.not_found, "/a.txt")]
+                assert trashed == [True if rival == "deleted" else None]
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
@@ -435,11 +446,12 @@ class TestExpectedVersionRivals:
         async with server_storage(env_var) as storage:
             target = Path("/a.txt")
             assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            seen = vid_in(await storage.stat(path=target))
             handler, rivals = _self_clearing(
                 "write:before-apply", lambda: storage.write(entries=[Entry(path=target, content="same")])
             )
             with seams.installed("write:before-apply", handler):
-                victim = await storage.write(entries=[Entry(path=target, content="same")], if_versions={target: 1})
+                victim = await storage.write(entries=[Entry(path=target, content="same")], if_vids={target: seen})
             assert rivals and rivals[0].success is True
             assert victim.success is True, victim.errors
             assert [(o.status, o.version) for o in victim.observations] == [("unchanged", 2)]

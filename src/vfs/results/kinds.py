@@ -52,11 +52,12 @@ class ErrorKind(StrEnum):
     **Per-kind ``data`` records** (absence means "not known", never a
     default): ``busy`` / ``unavailable.*`` / ``timeout`` may carry
     ``retry_after_ms``; ``conflict`` may carry ``version`` and ``vid``
-    (the version and the vid of the row there now);
+    (the version and the vid of the row there now, which a caller that
+    already holds that state may go on from; any other reads it first);
     ``exists`` from a create-only write may carry the ``version``, the
     ``vid`` and the ``content_hash`` of the file that is there.
-    A ``conflict`` is retryable only where the caller expected no
-    version, since only then is the same call judged afresh. Envelope machinery writes only
+    A ``conflict`` is retryable only where the caller required no
+    vid, since only then is the same call judged afresh. Envelope machinery writes only
     ``vfs.``-prefixed keys into ``data`` (``vfs.overflow``, ``vfs.rollup``,
     ``vfs.quarantine``, ``vfs.claim``); producer keys are unprefixed.
 
@@ -85,7 +86,7 @@ class ErrorKind(StrEnum):
     unaddressable = "vfs.unaddressable"  # ENAMETOOLONG: a real row exceeds MAX_PATH_LENGTH through this mount
 
     # concurrency / preconditions
-    conflict = "vfs.conflict"  # ESTALE: the precondition is stale; re-read and retry with the current version
+    conflict = "vfs.conflict"  # ESTALE: the precondition is stale; read the entry again, then retry
     busy = "vfs.busy"  # EBUSY: a live mount point that a verb may not change; remove the mount first
     cross_mount = "vfs.cross_mount"  # EXDEV: the verb's endpoints resolve to different mounts
     budget_exhausted = "vfs.budget_exhausted"  # ELOOP: the hop or TTL budget is spent; not retryable
@@ -235,8 +236,8 @@ KIND_CONTRACTS: dict[ErrorKind, KindContract] = {
     ErrorKind.conflict: KindContract(
         "Conflict",
         RetryClass.refresh,
-        "Re-read the entry and retry with its current version.",
-        "the entry whose version is stale",
+        "Read the entry again, then retry.",
+        "the entry whose state is not the one the call expected",
     ),
     ErrorKind.busy: KindContract(
         "Busy",

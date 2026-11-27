@@ -13,7 +13,10 @@ from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import ALL_OPS, RUNGS, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.params import GRANTABLE, INT_CEILING, PARAMS, POSTURES, RULES, param_violation
 from vfs.results import ErrorKind
+from vfs.session import AsyncSession
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
+from vfs.sync import Session, VirtualFileSystem
+from vfs.vid import ABSENT
 
 # ----------------------------------------------------------------------
 # drift — the table and the public surface may never diverge
@@ -31,6 +34,18 @@ def test_every_verb_signature_matches_the_table() -> None:
         sig_names = {name for name in inspect.signature(verb).parameters if name != "self"}
         table_names = {spec.name for spec in specs}
         assert sig_names == table_names, f"{op}: drift on {sig_names ^ table_names}"
+
+
+def test_the_version_preconditions_are_gone_from_every_face_and_the_table() -> None:
+    """A version alone names no file, so no face offers it as a precondition."""
+    gone = {"if_version", "if_versions"}
+    assert all(gone.isdisjoint(spec.name for spec in specs) for specs in PARAMS.values())
+    for face in (AsyncVirtualFileSystem, VirtualFileSystem, AsyncSession, Session):
+        for op in PARAMS:
+            verb = getattr(face, op, None)
+            if verb is not None:
+                assert gone.isdisjoint(inspect.signature(verb).parameters), (face.__name__, op)
+    assert {spec.name for spec in PARAMS["write"]} >= {"if_vid", "if_vids", "if_absent"}
 
 
 def test_the_traverse_signature_defaults_equal_the_table_defaults() -> None:
@@ -70,7 +85,7 @@ def test_every_int_channel_enforces_the_shared_ceiling() -> None:
             assert at_max is None or spec.name not in at_max, (op, spec.name, at_max)
             over = param_violation(op, {spec.name: INT_CEILING + 1})
             assert over is not None and spec.name in over and str(INT_CEILING) in over
-    assert swept == 12
+    assert swept == 11
 
 
 def test_violation_messages_name_the_parameter() -> None:
@@ -85,26 +100,41 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("run", {"path": "/t", "arguments": 5}) == "run arguments must be a dict, got int"
     assert param_violation("write", {"path": "/f", "data": "x"}) == "write data must be bytes, got str"
     assert param_violation("write", {"path": "/f", "data": b"x"}) is None
-    assert param_violation("write", {"path": "/f", "content": "x", "if_version": 0}) == (
-        "write if_version must be an integer >= 1 and <= 2147483647, got 0"
+    vid = "0123456789abcdef0123"
+    must = "the 20 characters a result carries"
+    assert param_violation("write", {"path": "/f", "content": "x", "if_vid": 7}) == (
+        f"write if_vid must be a vid, {must}, got int"
     )
-    assert param_violation("write", {"entries": [], "if_versions": {"/f": 0}}) == (
-        "write if_versions values must be integers >= 1 and <= 2147483647, got 0"
+    assert param_violation("write", {"path": "/f", "content": "x", "if_vid": "x" * 40}) == (
+        f"write if_vid must be a vid, {must}, got {'x' * 32!r}"
     )
-    assert param_violation("write", {"entries": [], "if_versions": {7: 1}}) == (
-        "write if_versions keys must be strings, got int"
+    assert param_violation("write", {"path": "/f", "content": "x", "if_vid": vid.upper()}) == (
+        f"write if_vid must be a vid, {must}, got {vid.upper()!r}"
     )
-    assert param_violation("write", {"entries": [], "if_versions": ["/f"]}) == (
-        "write if_versions must be a mapping of paths to versions, got list"
+    assert param_violation("write", {"entries": [], "if_vids": {"/f": 0}}) == (
+        f"write if_vids values must be vids, {must}, got int"
     )
-    assert param_violation("write", {"entries": [], "if_versions": {"/f": INT_CEILING}}) is None
-    assert param_violation("write", {"entries": [], "if_version": 1}) == (
-        "write takes if_version with path, and if_versions with entries"
+    assert (
+        param_violation("write", {"entries": [], "if_vids": {7: vid}}) == "write if_vids keys must be strings, got int"
     )
-    absent = "write if_absent=True takes no if_version or if_versions: an absent file has no version"
-    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True, "if_version": 1}) == absent
-    assert param_violation("write", {"entries": [], "if_absent": True, "if_versions": {"/f": 1}}) == absent
-    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": False, "if_version": 1}) is None
+    assert param_violation("write", {"entries": [], "if_vids": ["/f"]}) == (
+        "write if_vids must be a mapping of paths to vids, got list"
+    )
+    assert param_violation("write", {"entries": [], "if_vids": {"/f": vid, "/g": ABSENT}}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "if_vid": ABSENT}) is None
+    assert param_violation("write", {"entries": [], "if_vid": vid}) == (
+        "write takes if_vid with path, and if_vids with entries"
+    )
+    assert param_violation("write", {"path": "/f", "content": "x", "if_vids": {"/f": vid}}) == (
+        "write takes if_vid with path, and if_vids with entries"
+    )
+    absent = "write if_absent=True takes no if_vid or if_vids: an absent file has no vid"
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True, "if_vid": vid}) == absent
+    assert param_violation("write", {"entries": [], "if_absent": True, "if_vids": {"/f": vid}}) == absent
+    assert param_violation("write", {"path": "/f", "content": "x", "if_absent": False, "if_vid": vid}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_vid": ABSENT}) == (
+        "write takes append or if_absent, not both: an append to an absent path already creates it"
+    )
     assert param_violation("write", {"entries": [], "append": True}) == (
         "write append=True takes one file: path with content or data"
     )
@@ -113,7 +143,7 @@ def test_violation_messages_name_the_parameter() -> None:
     )
     # A flag that is left out is a flag that is off, as on a call that arrives without its defaults.
     assert param_violation("write", {"path": "/f", "content": "x", "append": True}) is None
-    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_version": 3}) is None
+    assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_vid": "0" * 20}) is None
     assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True}) is None
 
 
@@ -138,21 +168,21 @@ GARBAGE = [
     ("write-content-and-data", lambda fs: fs.write(path="/f.txt", content="x", data=b"y")),
     ("write-both-forms", lambda fs: fs.write(entries=[], path="/f.txt", content="x")),
     ("write-entries-and-data", lambda fs: fs.write(entries=[], data=b"y")),
-    ("write-zero-version", lambda fs: fs.write(path="/f.txt", content="x", if_version=0)),
-    ("write-bool-version", lambda fs: fs.write(path="/f.txt", content="x", if_version=True)),
-    ("write-str-version", lambda fs: fs.write(path="/f.txt", content="x", if_version="2")),
-    ("write-version-with-entries", lambda fs: fs.write(entries=[], if_version=1)),
-    ("write-versions-with-path", lambda fs: fs.write(path="/f.txt", content="x", if_versions={"/f.txt": 1})),
-    ("write-versions-not-a-mapping", lambda fs: fs.write(entries=[], if_versions=[("/f.txt", 1)])),
-    ("write-versions-non-str-key", lambda fs: fs.write(entries=[], if_versions={1: 1})),
-    ("write-versions-zero", lambda fs: fs.write(entries=[], if_versions={"/f.txt": 0})),
-    ("write-versions-bool", lambda fs: fs.write(entries=[], if_versions={"/f.txt": True})),
+    ("write-int-vid", lambda fs: fs.write(path="/f.txt", content="x", if_vid=7)),
+    ("write-short-vid", lambda fs: fs.write(path="/f.txt", content="x", if_vid="0" * 19)),
+    ("write-upper-vid", lambda fs: fs.write(path="/f.txt", content="x", if_vid="A" * 20)),
+    ("write-vid-with-entries", lambda fs: fs.write(entries=[], if_vid="0" * 20)),
+    ("write-vids-with-path", lambda fs: fs.write(path="/f.txt", content="x", if_vids={"/f.txt": "0" * 20})),
+    ("write-vids-not-a-mapping", lambda fs: fs.write(entries=[], if_vids=[("/f.txt", "0" * 20)])),
+    ("write-vids-non-str-key", lambda fs: fs.write(entries=[], if_vids={1: "0" * 20})),
+    ("write-vids-not-a-vid", lambda fs: fs.write(entries=[], if_vids={"/f.txt": 1})),
+    ("write-append-with-the-mark", lambda fs: fs.write(path="/f.txt", content="x", append=True, if_vid=ABSENT)),
     ("write-truthy-append", lambda fs: fs.write(path="/f.txt", content="x", append=1)),
     ("write-append-with-entries", lambda fs: fs.write(entries=[], append=True)),
     ("write-append-with-if-absent", lambda fs: fs.write(path="/f.txt", content="x", append=True, if_absent=True)),
     ("write-truthy-if-absent", lambda fs: fs.write(path="/f.txt", content="x", if_absent="yes")),
-    ("write-absent-with-version", lambda fs: fs.write(path="/f.txt", content="x", if_absent=True, if_version=1)),
-    ("write-absent-with-versions", lambda fs: fs.write(entries=[], if_absent=True, if_versions={"/f.txt": 1})),
+    ("write-absent-with-vid", lambda fs: fs.write(path="/f.txt", content="x", if_absent=True, if_vid="0" * 20)),
+    ("write-absent-with-vids", lambda fs: fs.write(entries=[], if_absent=True, if_vids={"/f.txt": "0" * 20})),
     ("write-truthy-parents", lambda fs: fs.write(path="/f.txt", content="x", parents=1)),
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
     ("edit-non-str-old", lambda fs: fs.edit("/f.txt", old=1, new="b")),

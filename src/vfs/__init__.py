@@ -28,12 +28,13 @@ from vfs.storage.backends.sqlite import SQLiteStorage
 from vfs.storage.grants import GrantLevel, Posture
 from vfs.storage.replace import EditOperation
 from vfs.sync import Session, VirtualFileSystem
-from vfs.vid import Vid, VidMint
+from vfs.vid import ABSENT, Vid, VidMint
 
 # The one copy of the number is pyproject.toml; the installed metadata carries it here.
 __version__ = version("vfs-py")
 
 __all__ = [
+    "ABSENT",
     "AsyncSession",
     "AsyncVirtualFileSystem",
     "Authority",
