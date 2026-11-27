@@ -20,7 +20,7 @@ from vfs.permissions import PermissionMap, PermissionsPayload
 from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.session import AsyncSession
 from vfs.shell import LineResult
-from vfs.storage import ResolvedPair, StorageBackend, ranking
+from vfs.storage import RecordPlace, ResolvedPair, StorageBackend, ranking
 from vfs.storage.backends.database.backend import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.backends.postgres import PostgresStorage
@@ -68,6 +68,7 @@ __all__ = [
     "Principal",
     "PrincipalKind",
     "Provenance",
+    "RecordPlace",
     "RenderStatus",
     "ResolvedPair",
     "Result",

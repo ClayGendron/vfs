@@ -76,6 +76,7 @@ Every name that `import vfs` makes public, grouped by what it is for. Each one l
 - [`StorageBackend`](storage.md#vfs.StorageBackend): what every storage backend has.
 - [`ResolvedPair`](storage.md#vfs.ResolvedPair): the two checked paths a backend gets for a move or a copy.
 - [`ScopeChannel`](storage.md#vfs.ScopeChannel): the scope of a search, as a backend gets it.
+- [`RecordPlace`](storage.md#vfs.RecordPlace): the database a root storage names for the file system's records.
 
 ## Search
 

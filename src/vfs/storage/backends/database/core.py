@@ -106,6 +106,7 @@ class EngineCore:
     ) -> None:
         # The engine is the core's own: an application puts listeners on it, and opens no connection or session.
         self.engine: AsyncEngine = create_async_engine(url, **merge_engine_arguments(url, engine_arguments))
+        self.engine_arguments = engine_arguments
         bind = self.engine.sync_engine
         # The declared policy and the live dialect it is read beside, both known with no IO.
         self._profile: DialectProfile = profile_for(bind.dialect.name)
