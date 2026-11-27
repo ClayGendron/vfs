@@ -119,5 +119,6 @@ VFS is tested on every Postgres version the PostgreSQL project supports, 15 to 1
 
 ## Where to Go Next
 
+- [Take VFS to Production](../how-to/take-vfs-to-production.md) says where VFS keeps its own records and which database to choose.
 - [Give an AI Agent the File System](give-an-ai-agent-the-file-system.md) hands the CLI to an LLM as one tool.
 - [Control Who Can Access Files](control-who-can-access-files.md) gives two people different access to one file system.

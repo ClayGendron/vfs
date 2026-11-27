@@ -50,6 +50,13 @@ A task copies the context it is started in, so one started inside an
 attempt carries that attempt's mark for as long as it runs: a task that
 is to outlive its attempt is started outside it, as the statistics pass
 is, or sets the mark to ``None`` first.
+
+``run_to_its_end`` is the one attempt that is never marked. It waits as
+``run_out_of_reach`` does, and its attempt sends every statement and its
+commit whatever happens to the caller. The kernel's record of a change
+that has already landed runs so: stopped between the two commits, the
+change would stand with no record, and the window between them is then
+a crash's width and not a cancellation's.
 """
 
 from __future__ import annotations
@@ -131,32 +138,31 @@ async def run_out_of_reach(attempt: Callable[[], Awaitable[T]]) -> T:
     task ends cancelled.
     """
     mark = _Mark()
-    cancellations: list[asyncio.CancelledError] = []
 
     async def marked() -> T:
         # Set here, in the attempt's own task: a task cannot set a variable in another's context.
         _MARK.set(mark)
         return await attempt()
 
-    task = asyncio.ensure_future(marked())
-    while not task.done():
-        try:
-            await asyncio.wait({task})
-        except asyncio.CancelledError as raised:
-            mark.cancelled = True
-            # A scope cancels again at every turn of the loop, so one cancellation is kept for each message.
-            if all(raised.args != kept.args for kept in cancellations):
-                cancellations.append(raised)
-    if not cancellations:
-        return task.result()
-    # Read what the dropped attempt raised, or the loop reports it as never retrieved.
-    with suppress(asyncio.CancelledError, Exception):
-        task.result()
-    # A message is how a canceller knows its own cancellation, so the first that carries one is the one raised.
-    first = next((kept for kept in cancellations if kept.args), cancellations[0])
-    for kept, later in itertools.pairwise([first, *(kept for kept in cancellations if kept is not first)]):
-        kept.__context__ = later
-    raise first
+    return await _wait_out(asyncio.ensure_future(marked()), mark)
+
+
+async def run_to_its_end(attempt: Callable[[], Awaitable[T]]) -> T:
+    """Run ``attempt`` in a task that a cancellation of the caller does not enter, and never mark it.
+
+    The caller waits as it waits in ``run_out_of_reach``, however many
+    times it is cancelled, and is raised the same cancellation once
+    ``attempt`` has ended. Nothing tells ``attempt`` that its caller gave
+    up, so it sends every statement and its commit. Its task clears any
+    mark it would copy from its starter, so it runs to its end inside a
+    marked attempt as well.
+    """
+
+    async def unmarked() -> T:
+        _MARK.set(None)
+        return await attempt()
+
+    return await _wait_out(asyncio.ensure_future(unmarked()), None)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +202,30 @@ class AttemptSession(Session):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+async def _wait_out(task: asyncio.Future[T], mark: _Mark | None) -> T:
+    """Wait for *task* through every cancellation of the caller, marking *mark*; then raise the one kept first."""
+    cancellations: list[asyncio.CancelledError] = []
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError as raised:
+            if mark is not None:
+                mark.cancelled = True
+            # A scope cancels again at every turn of the loop, so one cancellation is kept for each message.
+            if all(raised.args != kept.args for kept in cancellations):
+                cancellations.append(raised)
+    if not cancellations:
+        return task.result()
+    # Read what the dropped attempt raised, or the loop reports it as never retrieved.
+    with suppress(asyncio.CancelledError, Exception):
+        task.result()
+    # A message is how a canceller knows its own cancellation, so the first that carries one is the one raised.
+    first = next((kept for kept in cancellations if kept.args), cancellations[0])
+    for kept, later in itertools.pairwise([first, *(kept for kept in cancellations if kept is not first)]):
+        kept.__context__ = later
+    raise first
 
 
 def _before_statement(_connection: Connection, _cursor: object, statement: str, *_sent: object) -> None:

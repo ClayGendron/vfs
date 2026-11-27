@@ -43,8 +43,6 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from sqlalchemy import Boolean, DateTime, Integer, bindparam, column, delete, insert, select, update, values
 from sqlalchemy import cast as sql_cast
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
 from vfs.authority import owner_for
@@ -78,6 +76,7 @@ from vfs.storage.backends.database.dialects import (
     rows_per_statement,
     statement_budget,
     supports_values_update,
+    upsert_constructor,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
@@ -93,8 +92,6 @@ if TYPE_CHECKING:
     from concurrent.futures import Executor
 
     from sqlalchemy import Column, ColumnElement, FromClause, Select, Table, Update
-    from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
-    from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
     from sqlalchemy.engine import CursorResult, RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -639,7 +636,7 @@ async def _upsert_layer(
     rolls back to the chunk's savepoint and re-drives row-by-row for
     exact, classified blame.
     """
-    constructor = _upsert_constructor(profile)
+    constructor = upsert_constructor(profile)
     pairs = list(zip(layer, rows, strict=True))
     directories = [(s, r) for s, r in pairs if s.kind == "directory"]
     files = [(s, r) for s, r in pairs if s.kind != "directory"]
@@ -1349,11 +1346,6 @@ async def _bump_by_rowcount(
             matched = cast("CursorResult[Any]", await session.execute(stmt, params)).rowcount
         if matched != len(params):
             raise StaleSnapshot(f"{len(params) - matched} parent(s) were relocated or destroyed mid-batch")
-
-
-def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInsert | PostgresInsert]:
-    """The dialect's ``ON CONFLICT`` insert — only upsert-arbitration engines get here."""
-    return sqlite_insert if profile.name == "sqlite" else pg_insert
 
 
 def _material_values(staged: StagedEntry, now: datetime) -> dict[str, object]:

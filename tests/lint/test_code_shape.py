@@ -34,11 +34,17 @@ DOCUMENT_CITATION = re.compile(r"\b(spec|ADR|story) [0-9]{3}\b")
 SECURITY_SKILL_SHA256 = "ac796659de231c3ab76f6ee012836072bdc82928fb019199925c9062800e16c1"
 
 
-# The database adapter, and the only modules outside it that may import from it:
-# the public export, the backends package's re-export, and the named storages built on it.
+# The database adapter, and the only modules outside it that may import from it: the public export, the
+# backends package's re-export, the named storages built on it, and the kernel's store built on its engine core.
 ADAPTER = "vfs.storage.backends.database"
 ADAPTER_IMPORTERS = frozenset(
-    {"vfs", "vfs.storage.backends", "vfs.storage.backends.sqlite", "vfs.storage.backends.postgres"}
+    {
+        "vfs",
+        "vfs.storage.backends",
+        "vfs.storage.backends.sqlite",
+        "vfs.storage.backends.postgres",
+        "vfs.kernel_store.store",
+    }
 )
 
 # The layer ladder, bottom first: an import between two units points to a lower rung. A module
@@ -60,6 +66,7 @@ LAYERS: Ladder = (
         "vfs.fanout",
         "vfs.chain",
     ),
+    ("vfs.kernel_store",),
     ("vfs.mounts",),
     ("vfs.listing", "vfs.cursor", "vfs.shell", "vfs.preconditions"),
     ("vfs.base",),
@@ -74,6 +81,9 @@ ROOT = "vfs"
 IMPORTS_NO_VFS_MODULE = ("vfs.deadline", "vfs.batching", "vfs.native", "vfs.vid")
 # A module over this many lines is held at its exact count in MODULE_LINE_BASELINE.
 MODULE_LINE_CEILING = 1000
+
+# The kernel and its faces, which keep every statement about a record in the kernel's store.
+SQLALCHEMY_FREE = ("base.py", "session.py", "sync.py", "sync_session.py")
 
 # The only modules that read the monotonic clock: the deadline's, and the renderers timing their own work.
 CLOCK_READERS = frozenset(
@@ -553,6 +563,33 @@ def test_the_clock_the_deadline_and_the_cadence_have_one_home() -> None:
     assert not errors, "\n".join(errors)
 
 
+def test_the_kernel_store_reads_the_system_clock_once_and_no_other_clock() -> None:
+    """One line reads the system clock, the default of ``clock``; a close's budget is a ``Deadline``, never a clock."""
+    sources = {
+        str(path.relative_to(SRC / "kernel_store")): path.read_text() for path in sorted(SRC.glob("kernel_store/*.py"))
+    }
+    system = _line_hits(sources, r"datetime\.now\(|\btime\.time\(|\butcnow\(", "src/vfs/kernel_store", "reads")
+    other = _line_hits(sources, r"\bmonotonic\b|\.time\(\)|perf_counter", "src/vfs/kernel_store", "reads a clock")
+    assert (len(system), other) == (1, [])
+    assert "def system_clock" in sources["store.py"]
+
+
+def test_the_kernel_and_its_faces_import_no_sqlalchemy() -> None:
+    """Every statement about a record is the store's; the storage protocol names SQLAlchemy for its types alone."""
+    faults = [
+        f"src/vfs/{name}:{node.lineno} imports SQLAlchemy"
+        for name in SQLALCHEMY_FREE
+        for node, _typing in _imports(ast.parse((SRC / name).read_text()).body, type_checking=False)
+        if _names_sqlalchemy(node)
+    ]
+    faults += [
+        f"src/vfs/storage/protocol.py:{node.lineno} imports SQLAlchemy at run time"
+        for node, typing in _imports(ast.parse((SRC / "storage" / "protocol.py").read_text()).body, type_checking=False)
+        if _names_sqlalchemy(node) and not typing
+    ]
+    assert not faults, "\n".join(faults)
+
+
 def test_vfs_prints_nothing_and_each_logger_is_its_modules_own() -> None:
     """No module prints, every ``getLogger`` takes ``__name__``, and no record goes to the root logger."""
     errors: list[str] = []
@@ -652,6 +689,13 @@ def _imported_modules(node: ast.Import | ast.ImportFrom, package: str, files: di
         submodule = f"{base}.{alias.name}"
         modules.append(submodule if submodule in files else base)
     return list(dict.fromkeys(modules))
+
+
+def _names_sqlalchemy(node: ast.Import | ast.ImportFrom) -> bool:
+    """Whether one import statement names SQLAlchemy or a module beneath it."""
+    if isinstance(node, ast.Import):
+        return any(_within(alias.name, "sqlalchemy") for alias in node.names)
+    return not node.level and _within(node.module or "", "sqlalchemy")
 
 
 def _line_hits(sources: dict[str, str], pattern: str, folder: str, fault: str) -> list[str]:

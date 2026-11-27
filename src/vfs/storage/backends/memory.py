@@ -54,6 +54,10 @@ class InMemoryStorage(SQLiteStorage):
     before its commit changes nothing, and a write that is cancelled later
     has landed whole. The caller cannot tell which, so it reads the file
     before it writes it again.
+
+    A file system whose root is this storage keeps the kernel's own
+    records in memory too, in a second database of their own with its own
+    connection, and they end with the process.
     """
 
     def __init__(

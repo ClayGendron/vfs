@@ -204,16 +204,16 @@ class DatabaseStorage:
     def record_place(self) -> RecordPlace | None:
         """Where a file system whose root is this storage keeps its records: this storage's own database.
 
-        It is read once, when the file system is made, and does no I/O.
-        On a SQLite file the place is the same file, labelled by its path,
-        and the kernel's tables sit beside the mount's. On Postgres it is
-        the same database and schema, labelled by the schema's name. The
-        kernel reaches either through an engine of its own, built from
-        this storage's URL and its ``engine_arguments`` without ``pool``,
-        so a listener on ``engine`` does not reach it. A database in
-        memory names a second one in memory, whose records end with the
-        process. The generic floor, and a ``file::memory:`` or ``memdb``
-        URI that SQLAlchemy reads as a file, name none. The URL is SQLAlchemy's
+        It is read once, when the file system is made, and does no I/O. On a
+        SQLite file the place is the same file, labelled by its path, and the
+        kernel's own tables, which this storage never reads or writes, sit
+        beside the mount's. On Postgres it is the same database and schema,
+        labelled by the schema's name. The kernel reaches either through an
+        engine of its own, built from this storage's URL and its
+        ``engine_arguments`` without ``pool``, so a listener on ``engine`` does
+        not reach it. A database in memory names a second one in memory, whose
+        records end with the process. The generic floor, and a ``file::memory:``
+        or ``memdb`` URI that SQLAlchemy reads as a file, name none. The URL is SQLAlchemy's
         ``URL``, which masks its password when it is printed.
         """
         return record_place_of(self._host.engine.url, self._host.engine_arguments, self._host.tables.entry.schema)

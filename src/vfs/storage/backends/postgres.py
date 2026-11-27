@@ -45,6 +45,16 @@ class PostgresStorage(DatabaseStorage):
 
     A ``url`` of another dialect raises a ``ValueError`` before any
     engine is built, and the error names both dialects.
+
+    A file system whose root is this storage keeps the kernel's own
+    records in the same database and schema, in tables whose names begin
+    ``vfs_kernel_``, ``vfs_session`` or ``vfs_job``, on a second pool of
+    the same size, built from the same ``engine_arguments`` without
+    ``pool``. A listener put on ``storage.engine`` does not reach it. The
+    first use makes those tables, so a role that may not create tables is
+    refused the records, with the grant it needs named, until a role that
+    may has made them and granted it ``SELECT``, ``INSERT``, ``UPDATE``
+    and ``DELETE`` on each.
     """
 
     def __init__(

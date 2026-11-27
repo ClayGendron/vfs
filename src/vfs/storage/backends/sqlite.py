@@ -51,6 +51,17 @@ class SQLiteStorage(DatabaseStorage):
 
     An empty ``path`` raises a ``ValueError``, because SQLite would serve
     it as a database in memory that keeps nothing.
+
+    A file system whose root is this storage keeps its own records, the
+    rows the kernel keeps about calls, in the same file, in tables of
+    their own whose names begin ``vfs_kernel_``, ``vfs_session`` or
+    ``vfs_job``. No other file is made, and a copy of the file carries
+    them. SQLite has one writer for a file, and the kernel's records share
+    it with this storage's writes: while a large batch is being written,
+    a record waits for the batch to end. A record written after a change
+    that waits longer than its four tries, about 20 seconds, is not
+    written; the change stands, and the kernel is handed a warning that
+    says so. Postgres has no such wait.
     """
 
     def __init__(

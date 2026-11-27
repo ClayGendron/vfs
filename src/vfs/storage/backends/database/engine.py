@@ -48,7 +48,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
 
-from sqlalchemy import event, func, insert, inspect, select
+from sqlalchemy import event, insert, select
 from sqlalchemy.exc import DBAPIError, DisconnectionError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.util import greenlet_spawn
 from ulid import ULID
@@ -574,15 +574,10 @@ class EngineHost(EngineCore):
         )
 
     async def _serialization_point(self, conn: AsyncConnection) -> None:
-        # SQLite serializes via the writer BEGIN IMMEDIATE the listener
-        # already emitted; engines without a declared point rely on the
-        # unique-violation arbitration.
-        if self.profile.name == "postgresql":
-            await conn.execute(select(func.pg_advisory_xact_lock(self._table_key)))
+        await self.serialization_point(conn, self._table_key)
 
     def _has_meta_table(self, connection: Connection) -> bool:
-        meta = self.tables.meta
-        return inspect(connection).has_table(meta.name, schema=meta.schema)
+        return self.has_table(connection, self.tables.meta)
 
     async def _read_in_memory(self) -> bool:
         """Whether the mount's schema is held in memory: ``database_list`` gives it an empty file name.
