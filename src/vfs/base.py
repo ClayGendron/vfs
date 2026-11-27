@@ -112,7 +112,7 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
-from vfs.preconditions import Site, routed_vids
+from vfs.preconditions import Site, routed_vids, single_or_batch
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity
@@ -1017,7 +1017,7 @@ class AsyncVirtualFileSystem:
             entry = await measured_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
-        required = None if if_vid is None else {path: if_vid}
+        required = single_or_batch(path, if_vid, None)
         return await self._route_entry_batch(
             [entry], if_vids=required, if_absent=if_absent, append=append, parents=parents, authority=authority
         )
@@ -1080,7 +1080,7 @@ class AsyncVirtualFileSystem:
         else:
             assert old is not None and new is not None
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
-        required = {path: if_vid} if path is not None and if_vid is not None else if_vids
+        required = single_or_batch(path, if_vid, if_vids)
         return await self._route_single("edit", path, observations, edits=edits, required=required, authority=authority)
 
     async def delete(
@@ -1089,6 +1089,8 @@ class AsyncVirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         cascade: bool = True,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         """Delete the :term:`entry` at ``path``, or each row in ``observations``. A delete can be undone.
@@ -1104,18 +1106,33 @@ class AsyncVirtualFileSystem:
         is a mount point, or that holds one, is refused with ``busy``, and the :term:`mount` must be
         removed first. If ``cascade`` is false, a directory that is not empty is refused with
         ``not_empty``.
+
+        ``if_vid``, or ``if_vids`` for the rows of ``observations``, is the :class:`~vfs.vid.Vid` of
+        what the caller was shown. A row whose vid is not the one required is refused with
+        ``conflict``, and nothing is deleted on the mount that holds it; the error carries the
+        ``version`` and the ``vid`` of what is there now. A directory's vid changes when a child is
+        made in it, removed from it or renamed in it, and not when something deeper changes. A
+        caller that emptied a directory itself moved its vid by doing so, and deletes it without one.
+        ``ABSENT`` in place of a vid refuses a row that is there with ``conflict``. Each key of
+        ``if_vids`` must be the path of a row in ``observations``, and no two keys may name one path.
+        A mount whose storage issues no vid refuses a call that requires one there with
+        ``unsupported``. The vids of the rows passed as ``observations`` are not read: only
+        ``if_vid`` and ``if_vids`` require anything.
         """
         refusal = self._gate_params(
-            "delete", path=path, observations=observations, cascade=cascade, authority=authority
+            "delete",
+            path=path,
+            observations=observations,
+            cascade=cascade,
+            if_vid=if_vid,
+            if_vids=if_vids,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
+        required = single_or_batch(path, if_vid, if_vids)
         return await self._route_single(
-            "delete",
-            path,
-            observations,
-            cascade=cascade,
-            authority=authority,
+            "delete", path, observations, cascade=cascade, required=required, authority=authority
         )
 
     async def restore(
@@ -1123,6 +1140,8 @@ class AsyncVirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         """Bring back a deleted :term:`entry` at its own path.
@@ -1135,11 +1154,23 @@ class AsyncVirtualFileSystem:
         is refused with ``exists``. No verb pushes out what is there, so the caller deletes it and
         restores again. A storage that keeps no trash refuses with ``unsupported``. A path that is a
         mount point, or that holds one, is refused with ``busy``.
+
+        ``if_vid``, or ``if_vids`` for the rows of ``observations``, is the vid of the deleted row,
+        which its row in the ``/.vfs/trash`` view carries. A deleted row with another vid is refused
+        with ``conflict``, and nothing is restored on the mount that holds it: it is not the delete
+        the caller saw. The row a ``delete`` returns carries the vid from before the delete, which is
+        not the deleted row's. Each key of ``if_vids`` must be the path of a row in ``observations``,
+        and no two keys may name one path. A mount whose storage issues no vid refuses a call that
+        requires one there with ``unsupported``. The vids of the rows passed as ``observations`` are
+        not read: only ``if_vid`` and ``if_vids`` require anything.
         """
-        refusal = self._gate_params("restore", path=path, observations=observations, authority=authority)
+        refusal = self._gate_params(
+            "restore", path=path, observations=observations, if_vid=if_vid, if_vids=if_vids, authority=authority
+        )
         if refusal is not None:
             return refusal
-        return await self._route_single("restore", path, observations, authority=authority)
+        required = single_or_batch(path, if_vid, if_vids)
+        return await self._route_single("restore", path, observations, required=required, authority=authority)
 
     async def sweep(
         self,
@@ -1264,6 +1295,8 @@ class AsyncVirtualFileSystem:
         dest: str | None = None,
         moves: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
         *,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         """Move one :term:`entry`, or each pair in ``moves``, to a new path.
@@ -1277,11 +1310,21 @@ class AsyncVirtualFileSystem:
         that is a mount point, or that holds one, is refused with ``busy``. Every pair is checked
         before any storage is called, so one bad pair refuses the whole call. After that each mount
         moves its own pairs, so one mount can succeed where another fails.
+
+        ``if_vid`` is the vid of the row at ``src``, and ``if_vids`` maps each source of ``moves`` that
+        needs one to its vid. A source whose vid is not the one required is refused with ``conflict``,
+        and the mount moves none of its pairs. The destination takes no vid: a move never replaces
+        what is there. Each key of ``if_vids`` must be the path of a source in ``moves``, and no two
+        keys may name one path. A mount whose storage issues no vid refuses a call that requires one
+        there with ``unsupported``.
         """
-        refusal = self._gate_params("move", src=src, dest=dest, moves=moves, authority=authority)
+        refusal = self._gate_params(
+            "move", src=src, dest=dest, moves=moves, if_vid=if_vid, if_vids=if_vids, authority=authority
+        )
         if refusal is not None:
             return refusal
-        return await self._route_pairs("move", src, dest, moves, authority=authority)
+        required = single_or_batch(src, if_vid, if_vids)
+        return await self._route_pairs("move", src, dest, moves, required=required, authority=authority)
 
     async def copy(
         self,
@@ -2364,6 +2407,7 @@ class AsyncVirtualFileSystem:
         op: Op,
         operations: list[TwoPathOperation],
         *,
+        required: Mapping[str, VidOrAbsent] | None = None,
         authority: Authority | None = None,
         **kwargs: object,
     ) -> Result:
@@ -2382,10 +2426,11 @@ class AsyncVirtualFileSystem:
         """
         if not self._mounts:
             return self._closed_error(op)
-        if not operations:
+        if not operations and not required:
             return Result(ops=(op,))
 
         groups: dict[Path, tuple[Mount, list[ResolvedPair]]] = {}
+        sources: dict[Path, Site] = {}
         for pair in operations:
             src = resolve_path(pair.src, mutation=op == "move")
             if src.path is None:
@@ -2416,9 +2461,21 @@ class AsyncVirtualFileSystem:
 
             _b, pairs = groups.setdefault(src_terminal.mount.path, (src_terminal.mount, []))
             pairs.append(ResolvedPair(src=src_terminal.rel, dest=dest_terminal.rel))
+            sources[src_full] = Site(src_terminal.mount.path, src_terminal.rel)
 
+        mounts = {mount.path: mount for mount, _ in groups.values()}
+        keyed = routed_vids(required or {}, sources, mounts, noun="a source in moves")
+        if isinstance(keyed, ResultError):
+            return Result(ops=(op,), errors=[keyed])
         results = await gather_settled(
-            self._dispatch_entry(mount, op, operations=group, authority=authority, **kwargs)
+            self._dispatch_entry(
+                mount,
+                op,
+                operations=group,
+                authority=authority,
+                **({"if_vids": keyed[mount.path]} if mount.path in keyed else {}),
+                **kwargs,
+            )
             for mount, group in groups.values()
         )
         return Result.merge(results, op=op)
@@ -2447,6 +2504,7 @@ class AsyncVirtualFileSystem:
         dest: str | None,
         batch: Sequence[TwoPathOperation | tuple[str, str]] | None,
         *,
+        required: Mapping[str, VidOrAbsent] | None = None,
         authority: Authority | None,
     ) -> Result:
         """Turn the arguments of a move or a copy into a list of pairs, and send the pairs on.
@@ -2471,7 +2529,7 @@ class AsyncVirtualFileSystem:
                     ErrorKind.invalid, op=op, detail=f"{op} pair must be (src, dest) of two strings: {item!r}"
                 )
             operations.append(pair)
-        return await self._route_two_path(op, operations, authority=authority)
+        return await self._route_two_path(op, operations, required=required, authority=authority)
 
     async def _route_entry_batch(
         self,

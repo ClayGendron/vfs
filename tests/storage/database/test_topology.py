@@ -33,6 +33,8 @@ from tests.support.commit_worlds import (
     stamp,
 )
 from tests.support.database_helpers import _url
+from tests.support.statements import recorded
+from tests.support.vids import vid_in
 from vfs.authority import Authority, Principal
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
@@ -526,3 +528,35 @@ class TestDestinationsAreJudged:
             result = await storage.copy(operations=_GROWN, authority=EVE)
         assert len(sessions) == 2
         assert [(error.kind, error.path) for error in result.errors] == [(ErrorKind.permission_denied, "/dst/c/in/sub")]
+
+
+class TestRequiredVid:
+    """A move that requires its source's vid costs what a plain move costs, and a stale one moves nothing."""
+
+    async def test_a_required_vid_adds_no_statement(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        twins = [Entry(path=Path(path), content="x") for path in ("/d/p.txt", "/d/k.txt")]
+        assert (await storage.write(entries=twins, parents=True)).success is True
+        seen = vid_in(await storage.stat(path=Path("/d/k.txt")))
+        await storage._host.settle_statistics()
+        statements = recorded(storage)
+        plain = await storage.move(operations=[ResolvedPair(Path("/d/p.txt"), Path("/d/p2.txt"))])
+        assert plain.success is True, plain.errors
+        without = statements.verbs()
+        statements.clear()
+        pair = [ResolvedPair(Path("/d/k.txt"), Path("/d/k2.txt"))]
+        keyed = await storage.move(operations=pair, if_vids={Path("/d/k.txt"): seen})
+        assert keyed.success is True, keyed.errors
+        assert statements.verbs() == without
+        assert len(without) == 16
+        await storage.close()
+
+    async def test_a_stale_vid_issues_no_mutation_statement(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        statements = recorded(storage)
+        pair = [ResolvedPair(Path("/a.txt"), Path("/b.txt"))]
+        refused = await storage.move(operations=pair, if_vids={Path("/a.txt"): "0" * 20})
+        assert [error.kind for error in refused.errors] == [ErrorKind.conflict]
+        assert statements.mutations() == []
+        await storage.close()

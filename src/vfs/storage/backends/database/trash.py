@@ -93,6 +93,8 @@ from vfs.storage.backends.database.serialized import (
     serialize,
     snapshot_columns,
 )
+from vfs.storage.backends.database.staging import required_refusal
+from vfs.vid import ABSENT
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -104,7 +106,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.vid import VidMint
+    from vfs.vid import VidMint, VidOrAbsent
 
 # A restore target adds its root and what the caller's permit judges it by.
 _TOMBSTONE_COLUMNS: Final[tuple[str, ...]] = (*SNAPSHOT_COLUMNS, "trash_root_id", "owner_id", "everyone_level")
@@ -130,6 +132,7 @@ async def delete_rows(
     cascade: bool,
     authority: Authority | None,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of deletes as a set.
@@ -143,17 +146,22 @@ async def delete_rows(
     in the batch deletes cleanly. A tombstoned row in the snapshot is
     absent, and its miss carries the trashed hint. Each deleted row
     observes its pre-delete snapshot state plus the time of the delete.
+    A target with a key in *if_vids*, covered or not, whose live row has
+    another vid, or any vid under the mark ``ABSENT``, is ``conflict``:
+    judged after the miss and before ``not_empty``.
     *authority* is accepted for signature parity; a delete changes no
     ownership. *gate* runs right after the serialization point, so its
     checks judge the state the batch will act on; any refusal fails the
     batch whole.
 
-    Nothing is written until every target is judged: the claims run as
+    Nothing is written until every target is judged: a covered target
+    that carries a key is held by one guarded set, the claims run as
     one guarded set, the descendant stamps once per chunk of claimed
     directories, and each distinct parent is bumped once.
     """
     del authority
     entry = tables.entry
+    required = if_vids or {}
     await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("delete",), errors=refused)
@@ -170,6 +178,7 @@ async def delete_rows(
     now = datetime.now(UTC)
     seen: set[Path] = set()
     claims: list[RowMapping] = []
+    held: dict[str, RowMapping] = {}
     emptied = Counter[str]()
     rows: list[Observation] = []
     errors: list[ResultError] = []
@@ -184,13 +193,20 @@ async def delete_rows(
             row = live.get(str(target))
             if row is None:
                 errors.append(classify_miss(target, kinds, tombstones))
+            elif (stale := required_refusal(mint, target, row, required.get(target))) is not None:
+                errors.append(stale)
             else:
                 rows.append(_observe_deleted(target, row, mint, deleted_at=now))
+                if covered and target in required:
+                    held[row["entry_id"]] = row
             continue
         seen.add(target)
         row = live.get(str(target))
         if row is None:
             errors.append(classify_miss(target, kinds, tombstones))
+            continue
+        if (stale := required_refusal(mint, target, row, required.get(target))) is not None:
+            errors.append(stale)
             continue
         if not cascade and occupancy[row["entry_id"]] > emptied[row["entry_id"]]:
             errors.append(classified(ErrorKind.not_empty, target))
@@ -203,6 +219,9 @@ async def delete_rows(
     # The claim window: snapshot read, tombstones not yet set — a rival
     # child committing here bumps its parent and must flip the guard.
     await seam("delete:post-collect")
+    refused = await _hold_covered(session, entry, profile, parameter_budget, membership_budget, list(held.values()))
+    if refused is not None:
+        return Result(ops=("delete",), errors=[refused])
     refused = await _tombstone_roots(session, entry, profile, parameter_budget, membership_budget, claims, now)
     if refused is not None:
         return Result(ops=("delete",), errors=[refused])
@@ -279,6 +298,7 @@ async def restore_rows(
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
     permit: Callable[[AsyncSession, Path, Mapping[str, Any] | None, ResultError | None], Awaitable[ResultError | None]]
     | None = None,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of restores as a set, judged in request order.
@@ -297,13 +317,17 @@ async def restore_rows(
     any row is looked up; *permit* then sees each target's row and the
     ladder's verdict, and its refusal wins — so a caller who may not
     see the row is answered before the ladder's wording could tell it
-    anything.
+    anything. A key in *if_vids* then names the tombstone the restore
+    would clear: one with another vid is ``conflict``, judged before the
+    row is claimed. The mark ``ABSENT`` adds nothing: the ladder already
+    answers a live row ``exists``.
 
     The claims run as one guarded set, each root's members clear once
     per chunk of roots, and each distinct parent is bumped once.
     """
     del authority
     entry = tables.entry
+    required = if_vids or {}
     await serialize(session, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("restore",), errors=refused)
@@ -324,6 +348,10 @@ async def restore_rows(
             errors.append(verdict)
             continue
         assert fetched is not None
+        # The mark adds nothing to a restore: the ladder already answers a live row.
+        if (key := required.get(target)) != ABSENT and (stale := required_refusal(mint, target, fetched, key)):
+            errors.append(stale)
+            continue
         ladder.revive(fetched)
         claims.append(fetched)
         version = fetched["version"] + 1
@@ -474,6 +502,39 @@ async def _tombstone_roots(
     side = tombstone_side(entry, trashed=False)
     return await claim_rows(
         session, entry, profile, parameter_budget, membership_budget, claims, side=side, assign=assign, miss=miss
+    )
+
+
+async def _hold_covered(
+    session: AsyncSession,
+    entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    rows: Sequence[RowMapping],
+) -> ResultError | None:
+    """Hold each covered target that carries a key at the version it was judged, changing nothing.
+
+    The descendant stamp has no version term, so a rival's rewrite of a
+    keyed row beneath a claimed root would ride with the root. This
+    guarded claim misses that rival, and the delete redrives into the
+    ``conflict`` the fresh snapshot gives. It runs before the root
+    claims, whose bumps never reach a covered row, and only where a
+    covered target carries a key.
+    """
+    claims = [Claim(row["entry_id"], row["version"]) for row in rows]
+    miss = "a rival write moved a covered entry past the delete's snapshot"
+    side = tombstone_side(entry, trashed=False)
+    return await claim_rows(
+        session,
+        entry,
+        profile,
+        parameter_budget,
+        membership_budget,
+        claims,
+        side=side,
+        assign={"version": entry.c.version},
+        miss=miss,
     )
 
 

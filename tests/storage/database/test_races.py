@@ -56,7 +56,7 @@ from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from tests.support.vids import vid_in
 from vfs.authority import Authority, Principal
-from vfs.models import Edge, Entry
+from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result
 from vfs.storage import ResolvedPair
@@ -456,6 +456,47 @@ class TestRequiredVidRivals:
             now = {"version": 2, "vid": vid_in(await storage.stat(path=target))}
             assert [(e.kind, e.data, e.retryable) for e in victim.errors] == [(ErrorKind.conflict, now, False)]
             assert (await storage.read(path=target)).observations[0].content == "alpha rival"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    @pytest.mark.parametrize("verb", ["delete", "move"])
+    async def test_a_rival_inside_the_window_refuses_a_required_delete_or_move(self, env_var: str, verb: str) -> None:
+        async with server_storage(env_var) as storage:
+            target = Path("/a.txt")
+            assert (await storage.write(entries=[Entry(path=target, content="one")])).success
+            seen = vid_in(await storage.stat(path=target))
+            seam = "delete:post-snapshot" if verb == "delete" else "transfer:post-collect"
+            handler, rivals = _self_clearing(seam, lambda: storage.write(entries=[Entry(path=target, content="rival")]))
+            with seams.installed(seam, handler):
+                if verb == "delete":
+                    victim = await storage.delete(path=target, if_vids={target: seen})
+                else:
+                    pair = [ResolvedPair(target, Path("/b.txt"))]
+                    victim = await storage.move(operations=pair, if_vids={target: seen})
+            assert rivals and rivals[0].success is True
+            now = {"version": 2, "vid": vid_in(await storage.stat(path=target))}
+            assert [(e.kind, e.data) for e in victim.errors] == [(ErrorKind.conflict, now)]
+            assert (await storage.read(path=target)).observations[0].content == "rival"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    @pytest.mark.parametrize("seam", ["delete:post-snapshot", "delete:post-collect"])
+    async def test_a_rival_inside_the_window_refuses_a_required_covered_target(self, env_var: str, seam: str) -> None:
+        """A key on a target inside another target's cascade is held as the root's claim is held."""
+        async with server_storage(env_var) as storage:
+            covered = Path("/d/f.txt")
+            assert (await storage.write(entries=[Entry(path=covered, content="one")], parents=True)).success
+            seen = vid_in(await storage.stat(path=covered))
+            handler, rivals = _self_clearing(
+                seam, lambda: storage.write(entries=[Entry(path=covered, content="rival")])
+            )
+            rows = [Observation(path=Path("/d")), Observation(path=covered)]
+            with seams.installed(seam, handler):
+                victim = await storage.delete(observations=rows, if_vids={covered: seen})
+            assert rivals and rivals[0].success is True
+            now = {"version": 2, "vid": vid_in(await storage.stat(path=covered))}
+            assert [(e.kind, e.path, e.data) for e in victim.errors] == [(ErrorKind.conflict, "/d/f.txt", now)]
+            assert (await storage.read(path=covered)).observations[0].content == "rival"
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)

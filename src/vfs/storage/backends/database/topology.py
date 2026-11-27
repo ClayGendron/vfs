@@ -73,9 +73,10 @@ from vfs.storage.backends.database.serialized import (
     point_row,
     serialize,
 )
+from vfs.storage.backends.database.staging import required_refusal
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
     from typing import Any
 
     from sqlalchemy import Table
@@ -87,7 +88,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.grants import PostureRows
     from vfs.storage.protocol import ResolvedPair
-    from vfs.vid import VidMint
+    from vfs.vid import VidMint, VidOrAbsent
 
 # A transfer subtree adds the material columns a copy reproduces.
 _SUBTREE_COLUMNS: Final[tuple[str, ...]] = (
@@ -127,6 +128,7 @@ async def transfer_rows(
     operations: list[ResolvedPair],
     authority: Authority | None,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of moves or copies, pair by pair.
@@ -137,7 +139,9 @@ async def transfer_rows(
     reads live state inside the serialized transaction, so later pairs
     see earlier pairs' effects. The per-pair ladder runs in the order
     the conformance suite pins: overlap, source miss (a tombstoned
-    source is absent, with the trashed hint), root, rename-to-self,
+    source is absent, with the trashed hint), root, the source's
+    required vid from *if_vids* (``conflict`` where the live source has
+    another vid, or any vid under the mark ``ABSENT``), rename-to-self,
     destination parent gate, an occupied destination refuses ``exists``
     before the cycle check (no transfer replaces an occupant, a
     tombstoned one included — displacement is the caller's delete, then
@@ -162,6 +166,7 @@ async def transfer_rows(
     own: set[str] = set()
     needs = VERB_RUNGS[op]
     assert needs.create is not None
+    required = if_vids or {}
     pending: list[PendingRow] = []
     errors: list[ResultError] = []
     for pair in operations:
@@ -176,6 +181,10 @@ async def transfer_rows(
         if src == ROOT or dest == ROOT:
             detail = f"{op}: the root directory may be neither source nor destination"
             errors.append(classified(ErrorKind.invalid, src, target=dest, detail=detail))
+            continue
+        # A required vid names the source, judged before any fact about the destination.
+        if (refused := required_refusal(mint, src, src_row, required.get(src))) is not None:
+            errors.append(refused)
             continue
         if dest == src:
             # POSIX rename-to-self: a successful no-op, never a refusal.

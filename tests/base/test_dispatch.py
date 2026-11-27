@@ -1283,14 +1283,26 @@ async def test_a_mount_whose_storage_issues_no_vid_refuses_a_required_change() -
 SINGLE: dict[str, Callable[..., Awaitable[Result]]] = {
     "write": lambda root, path, **kw: root.write(path=path, content="x", **kw),
     "edit": lambda root, path, **kw: root.edit(path, old="a", new="b", **kw),
+    "delete": lambda root, path, **kw: root.delete(path, **kw),
+    "move": lambda root, path, **kw: root.move(path, path + ".moved", **kw),
+    "restore": lambda root, path, **kw: root.restore(path, **kw),
 }
 BATCH: dict[str, Callable[..., Awaitable[Result]]] = {
     "write": lambda root, paths, **kw: root.write([Entry(path=Path(p), content="x") for p in paths], **kw),
     "edit": lambda root, paths, **kw: root.edit(
         observations=[Observation(path=Path(p)) for p in paths], edits=[EditOperation("a", "b")], **kw
     ),
+    "delete": lambda root, paths, **kw: root.delete(observations=[Observation(path=Path(p)) for p in paths], **kw),
+    "move": lambda root, paths, **kw: root.move(moves=[(p, p + ".moved") for p in paths], **kw),
+    "restore": lambda root, paths, **kw: root.restore(observations=[Observation(path=Path(p)) for p in paths], **kw),
 }
-NOUNS = {"write": "a file in entries", "edit": "a row in observations"}
+NOUNS = {
+    "write": "a file in entries",
+    "edit": "a row in observations",
+    "delete": "a row in observations",
+    "move": "a source in moves",
+    "restore": "a row in observations",
+}
 
 
 @pytest.mark.parametrize("verb", list(SINGLE))

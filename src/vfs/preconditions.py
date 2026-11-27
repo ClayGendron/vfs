@@ -50,6 +50,17 @@ class Site(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
+def single_or_batch(
+    key: str | None, if_vid: VidOrAbsent | None, if_vids: Mapping[str, VidOrAbsent] | None
+) -> Mapping[str, VidOrAbsent] | None:
+    """What a change requires, as one mapping: ``{key: if_vid}`` for the single form, else *if_vids*.
+
+    The gate has already refused a call that gives both forms, so at
+    most one of *if_vid* and *if_vids* is given here.
+    """
+    return {key: if_vid} if key is not None and if_vid is not None else if_vids
+
+
 def required_by_mount(
     if_vids: Mapping[str, VidOrAbsent], sites: Mapping[Path, Site], *, noun: str
 ) -> Required | ResultError:

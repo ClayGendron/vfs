@@ -70,7 +70,6 @@
           "title": "Planned API",
           "pages": [
             "/reference/planned-api",
-            "/reference/planned-api/vids-and-preconditions",
             "/reference/planned-api/sessions-and-turns",
             "/reference/planned-api/policies-and-steps",
             "/reference/planned-api/jobs-and-interrupts"

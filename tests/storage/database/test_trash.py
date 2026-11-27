@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from math import ceil
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -23,7 +24,8 @@ from ulid import ULID
 
 from tests.support.commit_worlds import ALICE, EVE, attempts, clearing, drop_world, land, paths_under, row_at
 from tests.support.database_helpers import _ReturningSession, _url, begin_as_writer, writer_engine
-from tests.support.statements import is_statistics_statement
+from tests.support.statements import is_statistics_statement, recorded
+from tests.support.vids import vid_in, vids_in
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -1292,15 +1294,24 @@ class TestClaimRows:
             await session.rollback()
         await storage.close()
 
-    async def test_an_unverifiable_claim_classifies_instead_of_guessing(self, tmp_path, monkeypatch) -> None:
+    @pytest.mark.parametrize("claim", ["root", "covered key"])
+    async def test_an_unverifiable_claim_classifies_instead_of_guessing(
+        self, claim: str, tmp_path, monkeypatch
+    ) -> None:
+        """The root claim, and the hold on a covered target with a key, each refuse where no count can prove them."""
         storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
+        await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="a")], parents=True)
+        seen = vid_in(await storage.stat(path=Path("/d/a.txt")))
         dialect = storage._host.engine.sync_engine.dialect
         monkeypatch.setattr(dialect, "supports_sane_multi_rowcount", False)
         monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
-        result = await storage.delete(path=Path("/a.txt"))
+        if claim == "root":
+            result = await storage.delete(path=Path("/d/a.txt"))
+        else:
+            rows = [Observation(path=Path("/d")), Observation(path=Path("/d/a.txt"))]
+            result = await storage.delete(observations=rows, if_vids={Path("/d/a.txt"): seen})
         assert result.success is False and result.errors[0].kind == ErrorKind.unsupported
-        assert (await _rows(storage))["/a.txt"].deleted_at is None
+        assert (await _rows(storage))["/d/a.txt"].deleted_at is None
         await storage.close()
 
 
@@ -1552,3 +1563,119 @@ class TestActedRowsAreJudged:
             assert late is not None and late["deleted_at"] is not None
         else:
             assert late is None
+
+
+class TestRequiredVid:
+    """A delete or a restore that requires a vid costs what a plain one costs, and a stale one changes nothing."""
+
+    @pytest.mark.parametrize(
+        ("shape", "count"),
+        [("file", 4), ("cascade", 5), ("empty-without-cascade", 6)],
+    )
+    async def test_a_required_vid_adds_no_statement(self, shape: str, count: int, tmp_path) -> None:
+        """Mutation guarded: a key that reads the row again, or binds itself into the claim."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        cascade = shape != "empty-without-cascade"
+        for twin in ("p", "k"):
+            if shape == "file":
+                assert (await storage.write(entries=[Entry(path=Path(f"/{twin}.txt"), content="x")])).success
+            elif shape == "cascade":
+                entry = Entry(path=Path(f"/{twin}/a.txt"), content="x")
+                assert (await storage.write(entries=[entry], parents=True)).success
+            else:
+                assert (await storage.mkdir(path=Path(f"/{twin}"))).success
+        target = {"file": "/{}.txt", "cascade": "/{}", "empty-without-cascade": "/{}"}[shape]
+        keyed = Path(target.format("k"))
+        seen = vid_in(await storage.stat(path=keyed))
+        await storage._host.settle_statistics()
+        statements = recorded(storage)
+        assert (await storage.delete(path=Path(target.format("p")), cascade=cascade)).success is True
+        without = statements.verbs()
+        statements.clear()
+        assert (await storage.delete(path=keyed, cascade=cascade, if_vids={keyed: seen})).success is True
+        assert statements.verbs() == without
+        assert len(without) == count
+        await storage.close()
+
+    async def test_a_key_on_a_covered_target_adds_one_guarded_update(self, tmp_path) -> None:
+        """Mutation guarded: a hold issued without a covered key, or once for each covered key."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for twin in ("p", "r", "k"):
+            entries = [Entry(path=Path(f"/{twin}/{name}.txt"), content="x") for name in ("a", "b")]
+            assert (await storage.write(entries=entries, parents=True)).success
+        seen = {name: vid_in(await storage.stat(path=Path(f"/k/{name}.txt"))) for name in ("a", "b")}
+        root = vid_in(await storage.stat(path=Path("/r")))
+        await storage._host.settle_statistics()
+        statements = recorded(storage)
+
+        def rows(twin: str) -> list[Observation]:
+            return [Observation(path=Path(path)) for path in (f"/{twin}", f"/{twin}/a.txt", f"/{twin}/b.txt")]
+
+        assert (await storage.delete(observations=rows("p"))).success is True
+        without = statements.verbs()
+        statements.clear()
+        assert (await storage.delete(observations=rows("r"), if_vids={Path("/r"): root})).success is True
+        assert statements.verbs() == without
+        statements.clear()
+        keyed = {Path(f"/k/{name}.txt"): vid for name, vid in seen.items()}
+        assert (await storage.delete(observations=rows("k"), if_vids=keyed)).success is True
+        assert Counter(statements.verbs()) - Counter(without) == Counter({"UPDATE": 1})
+        assert len(statements.verbs()) == len(without) + 1
+        await storage.close()
+
+    @pytest.mark.parametrize("shape", ["file", "cascade", "empty-without-cascade"])
+    async def test_a_stale_vid_issues_no_mutation_statement(self, shape: str, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        path = Path("/a.txt") if shape == "file" else Path("/d")
+        if shape == "file":
+            assert (await storage.write(entries=[Entry(path=path, content="x")])).success
+        elif shape == "cascade":
+            assert (await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="x")], parents=True)).success
+        else:
+            assert (await storage.mkdir(path=path)).success
+        stale = "0" * 20
+        statements = recorded(storage)
+        refused = await storage.delete(path=path, cascade=shape != "empty-without-cascade", if_vids={path: stale})
+        assert [error.kind for error in refused.errors] == [ErrorKind.conflict]
+        assert statements.mutations() == []
+        await storage.close()
+
+    async def test_a_restore_that_requires_a_vid_adds_no_statement(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for name in ("p", "k"):
+            assert (await storage.write(entries=[Entry(path=Path(f"/{name}.txt"), content="x")])).success
+            assert (await storage.delete(path=Path(f"/{name}.txt"))).success
+        tombstone = vid_in(await storage.stat(path=Path("/.vfs/trash/k.txt")))
+        await storage._host.settle_statistics()
+        statements = recorded(storage)
+        assert (await storage.restore(path=Path("/p.txt"))).success is True
+        without = statements.verbs()
+        statements.clear()
+        keyed = {Path("/k.txt"): tombstone}
+        assert (await storage.restore(path=Path("/k.txt"), if_vids=keyed)).success is True
+        assert statements.verbs() == without
+        assert len(without) == 6
+        assert (await storage.delete(path=Path("/k.txt"))).success
+        statements.clear()
+        refused = await storage.restore(path=Path("/k.txt"), if_vids=keyed)
+        assert [error.kind for error in refused.errors] == [ErrorKind.conflict]
+        assert statements.mutations() == []
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_a_ten_thousand_target_delete_with_a_key_for_every_row_adds_no_statement(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for name in ("p", "k"):
+            entries = [Entry(path=Path(f"/{name}/f{i:05}.txt"), content="x") for i in range(10_000)]
+            assert (await storage.write(entries=entries, parents=True)).success is True
+        seen = vids_in(await storage.glob(patterns=("/k/*.txt",)))
+        await storage._host.settle_statistics()
+        statements = recorded(storage)
+        plain = [Observation(path=Path(f"/p/f{i:05}.txt")) for i in range(10_000)]
+        assert (await storage.delete(observations=plain)).success is True
+        without = statements.verbs()
+        statements.clear()
+        keyed = [Observation(path=path) for path in seen]
+        assert (await storage.delete(observations=keyed, if_vids=seen)).success is True
+        assert statements.verbs() == without
+        await storage.close()

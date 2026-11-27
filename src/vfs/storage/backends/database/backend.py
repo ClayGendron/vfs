@@ -805,6 +805,7 @@ class DatabaseStorage:
         path: Path | None = None,
         observations: list[Observation] | None = None,
         cascade: bool = True,
+        if_vids: Mapping[Path, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
@@ -829,6 +830,7 @@ class DatabaseStorage:
                 cascade=cascade,
                 authority=authority,
                 gate=gate,
+                if_vids=if_vids,
                 mint=self._host.mint,
             ),
         )
@@ -838,6 +840,7 @@ class DatabaseStorage:
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
+        if_vids: Mapping[Path, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
@@ -895,6 +898,7 @@ class DatabaseStorage:
                 authority=authority,
                 gate=gate,
                 permit=permit,
+                if_vids=if_vids,
                 mint=self._host.mint,
             ),
         )
@@ -968,9 +972,10 @@ class DatabaseStorage:
         self,
         *,
         operations: list[ResolvedPair],
+        if_vids: Mapping[Path, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_transfer("move", operations, authority=authority)
+        return await self._execute_transfer("move", operations, if_vids=if_vids, authority=authority)
 
     async def copy(
         self,
@@ -1433,7 +1438,12 @@ class DatabaseStorage:
         return await self._mutate(op, fn, topology_execution_options(self._host.profile))
 
     async def _execute_transfer(
-        self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, authority: Authority | None
+        self,
+        op: Literal["move", "copy"],
+        operations: list[ResolvedPair],
+        *,
+        if_vids: Mapping[Path, Vid | Literal["absent"]] | None = None,
+        authority: Authority | None,
     ) -> Result:
         """Move or copy under the gate: a moved source is modified and a copied one read, whole
         subtrees included; every destination is a creation."""
@@ -1464,6 +1474,7 @@ class DatabaseStorage:
                 operations=operations,
                 authority=authority,
                 gate=gate,
+                if_vids=if_vids,
                 mint=self._host.mint,
             ),
         )

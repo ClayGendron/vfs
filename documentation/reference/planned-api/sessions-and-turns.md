@@ -65,7 +65,7 @@ When the caller states no precondition of its own, the session fills one in.
 | `edit`, `delete`, `move` | Sent with the vid it was shown | Refused as unread. Nothing is sent. | Sent as written |
 | `copy`, `mkdir`, `restore` | No precondition | No precondition | No precondition |
 
-A session takes no vid from its caller. Its `write`, `edit`, `delete`, `move` and `restore` have no `if_vid` argument, because the session fills the vid in. [Vids and Preconditions](vids-and-preconditions.md) describes `if_vid`, which is for a call made on the file system with no session.
+A session takes no vid from its caller. Its `write`, `edit`, `delete`, `move` and `restore` have no `if_vid` argument, because the session fills the vid in. [`AsyncVirtualFileSystem`](../python-api/async-virtual-file-system.md) describes `if_vid` on each verb, which is for a call made on the file system with no session.
 
 A read's stamps are written a moment after the read returns, so a read costs the same with a session as without one. A change's stamps are written before the change returns. `fs.close()` writes whatever is waiting. **A program that ends after each request should close the file system before it ends.**
 
