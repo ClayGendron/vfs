@@ -37,6 +37,7 @@ from vfs.models.edge import Edge
 from vfs.models.media import SNIFF_LENGTH, RenderStatus, Source, sniff_mime
 from vfs.models.version import BodyMetrics, Version, measure_bytes, measure_text
 from vfs.paths import ObjectKind, Path, is_reserved_directory
+from vfs.vid import Vid  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 
 # Stored kinds whose rows carry text content; everything else refuses
 # content reads and edits and surfaces no content metrics.
@@ -428,7 +429,12 @@ class Observation(BaseModel):
     :class:`~vfs.models.version.Version`'s ``number`` (one per-entry sequence:
     a stat's ``version`` is the entry's current value, a version row's is its
     label) and the ``edge_*`` fields mirror :class:`~vfs.models.edge.Edge`
-    (see ``OBSERVATION_MIRROR_OWNERS``). Query fields are facts about
+    (see ``OBSERVATION_MIRROR_OWNERS``). ``vid`` sits beside ``version``:
+    twenty characters a storage mints from the entry and the version the
+    row reports, which name that entry at that version and nothing else.
+    It is filled wherever ``version`` is, shares its mask, is stored
+    nowhere, and is compared and never taken apart. Query fields are
+    facts about
     *(entry, operation)* — a score, the matched regions, a walk's depth,
     a write status — and are never persisted. ``name`` / ``ext`` / ``parent_dir`` need no
     mirrors:
@@ -458,6 +464,7 @@ class Observation(BaseModel):
     mime_type: str | None = None
     size_bytes: int | None = None
     version: int | None = None
+    vid: Vid | None = None
     edge_type: str | None = None
     edge_target: Path | None = None
     edge_weight: float | None = None
@@ -529,7 +536,7 @@ class Observation(BaseModel):
 # Mirror/query partition of Observation's fields. The drift test pins every
 # mirror to its owning model's field type; query fields exist on no model.
 OBSERVATION_QUERY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"score", "matches", "in_degree", "out_degree", "depth", "status", "populated"},
+    {"vid", "score", "matches", "in_degree", "out_degree", "depth", "status", "populated"},
 )
 OBSERVATION_MIRROR_FIELDS: Final[frozenset[str]] = frozenset(Observation.model_fields) - OBSERVATION_QUERY_FIELDS
 

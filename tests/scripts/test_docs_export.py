@@ -869,6 +869,7 @@ def test_the_real_glossary_exports(real_export: dict[str, Any]) -> None:
     assert real_export["glossary"]["Entry"]["related"] == ["Arm", "Mount", "Storage", "Vid"]
     assert real_export["glossary"]["Mount"]["related"] == ["Entry", "Kernel", "Storage"]
     assert [cited["name"] for cited in real_export["glossary"]["Entry"]["types"]] == ["Entry"]
+    assert [cited["name"] for cited in real_export["glossary"]["Vid"]["types"]] == ["Vid"]
 
 
 def test_the_command_writes_the_export_as_json(tmp_path: Path) -> None:

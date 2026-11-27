@@ -23,7 +23,10 @@ from ulid import ULID
 from tests.support.database_helpers import _SqliteError, _url, begin_as_writer, writer_engine
 from tests.support.loop_ticks import LoopTicker
 from tests.support.plan_store import PATH_INDEXES
+from tests.support.statements import is_statistics_statement
+from vfs import AsyncVirtualFileSystem
 from vfs import deadline as deadline_module
+from vfs.authority import Authority
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
@@ -53,6 +56,7 @@ from vfs.storage.backends.database.reads import (
 )
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import LEVEL_RANK
+from vfs.vid import VidMint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -249,7 +253,7 @@ class TestReadFamily:
     async def test_projection_narrows_the_select_and_stamps_the_mask(self, storage: DatabaseStorage) -> None:
         result = await storage.stat(path=Path("/docs/a.txt"), columns=frozenset({"size_bytes", "mime_type"}))
         row = result.observations[0]
-        assert row.populated == {"path", "kind", "version", "size_bytes", "mime_type"}
+        assert row.populated == {"path", "kind", "version", "vid", "size_bytes", "mime_type"}
         assert row.mime_type is None  # fetched, and null
         assert row.content_hash is None
         assert "content_hash" not in row.populated  # not fetched
@@ -267,14 +271,14 @@ class TestReadFamily:
         # gate and must never leak into a narrow columns= observation.
         result = await storage.glob(patterns=("*.txt",), columns=frozenset({"path"}))
         assert result.observations
-        assert all(o.populated == {"path", "kind", "version"} for o in result.observations)
+        assert all(o.populated == {"path", "kind", "version", "vid"} for o in result.observations)
 
     async def test_projection_of_an_unbacked_field_serves_identity_only(self, storage: DatabaseStorage) -> None:
         # A requested field with no entries-table column is dropped from
         # the mask, never a raw column lookup that would raise past _execute.
         result = await storage.stat(path=Path("/docs/a.txt"), columns=frozenset({"score", "content"}))
         assert result.success is True
-        assert result.observations[0].populated == {"path", "kind", "version"}
+        assert result.observations[0].populated == {"path", "kind", "version", "vid"}
 
     def test_entry_observation_fields_track_the_column_vocabulary(self) -> None:
         # Drift pin: the servable set is exactly the Observation fields
@@ -880,8 +884,8 @@ class TestBytesReads:
     def test_the_bytes_column_is_never_fetched_unless_projected(self) -> None:
         assert "data" not in effective_columns(None, content=True)
         assert "content" in effective_columns(None, content=True)
-        assert effective_columns(frozenset({"data"}), content=True) == {"path", "kind", "version", "data"}
-        assert effective_columns(frozenset({"data", "content"}), content=False) == {"path", "kind", "version"}
+        assert effective_columns(frozenset({"data"}), content=True) == {"path", "kind", "version", "vid", "data"}
+        assert effective_columns(frozenset({"data", "content"}), content=False) == {"path", "kind", "version", "vid"}
 
     def test_render_notes_leave_text_rows_and_rendered_bytes_rows_alone(self) -> None:
         text = Observation(path=Path("/a.md"), content="x", source="text")
@@ -922,7 +926,7 @@ class TestBytesReads:
         projected = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data", "content_hash"}))
         [row] = projected.observations
         assert row.data == body and row.content is None and projected.errors == []
-        assert row.populated == {"path", "kind", "version", "data", "content_hash"}
+        assert row.populated == {"path", "kind", "version", "vid", "data", "content_hash"}
         await storage.close()
 
 
@@ -1325,3 +1329,92 @@ class TestScopeChannel:
 def _on_a_path_index(detail: str) -> bool:
     """Whether a plan step seeks the path index or the partial one over the live rows."""
     return any(f"INDEX {name} " in detail for name in PATH_INDEXES)
+
+
+class TestVidCost:
+    """The vid costs a read no statement, and one mint for each row it returns whole."""
+
+    async def test_a_read_issues_the_statements_it_issued_before_the_vid(self, tmp_path) -> None:
+        """Mutation guarded: a mint that reads the entry id, or the mount identity, with a statement of its own."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        fs = AsyncVirtualFileSystem(storage=storage)
+        files = {f"/d/f{i}.txt": f"alpha {i}" for i in range(5)} | {"/d/sub/g.txt": "alpha beneath"}
+        entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        edge = Edge(source=Path("/d/f0.txt"), target=Path("/d/f1.txt"), edge_type="cites")
+        assert (await storage.mkedge(edges=[edge])).success is True
+        assert (await storage.rebuild()).success is True
+        await storage._host.settle_statistics()
+        system = Authority.system()
+        calls = {
+            "stat": lambda: fs.stat(path="/d/f0.txt", authority=system),
+            "read": lambda: fs.read(path="/d/f0.txt", authority=system),
+            "ls": lambda: fs.ls(path="/d", authority=system),
+            "tree": lambda: fs.tree(path="/d", authority=system),
+            "glob": lambda: fs.glob(pattern="/d/*.txt", authority=system),
+            "grep": lambda: fs.grep(pattern="alpha", authority=system),
+            "search": lambda: fs.search(query="alpha", authority=system),
+            "traverse": lambda: fs.traverse(method="outbound", path="/d/f0.txt", authority=system),
+        }
+        counts: dict[str, int] = {}
+        for verb, call in calls.items():
+            statements = _statements_of(storage)
+            result = await call()
+            assert result.success is True, (verb, result.errors)
+            assert any(row.vid is not None for row in result.observations), verb
+            counts[verb] = len(_own(statements))
+            event.remove(storage._host.engine.sync_engine, "before_cursor_execute", statements.recorder)
+        expected = {"stat": 1, "read": 1, "ls": 2, "tree": 2, "glob": 1, "grep": 7, "search": 8, "traverse": 3}
+        assert counts == expected
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_a_listing_mints_once_for_each_row(self, tmp_path, monkeypatch) -> None:
+        """Mutation guarded: a mint per row per statement, or a mint of a bare row that then drops it."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/d/f{i:05}.txt"), content="x") for i in range(10_000)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        minted: list[int] = []
+        real = VidMint.mint
+
+        def counted(self: VidMint, entry_key: bytes, version: int) -> str:
+            minted.append(version)
+            return real(self, entry_key, version)
+
+        monkeypatch.setattr(VidMint, "mint", counted)
+        whole = await storage.glob(patterns=("/d/*.txt",))
+        assert len(whole.observations) == 10_000
+        assert len(minted) == 10_000
+        minted.clear()
+        system = Authority.system()
+        assert (await storage.set_posture(path=Path("/"), posture="list", authority=system)).success is True
+        bare = await storage.glob(patterns=("/d/*.txt",), authority=Authority.anonymous())
+        assert len(bare.observations) == 10_000
+        assert sum(row.vid is not None for row in bare.observations) == 0
+        assert len(minted) == 0
+        await storage.close()
+
+
+class _Recorder(list[str]):
+    """The statements a storage sends, with the listener that records them, so a test can remove it."""
+
+    recorder: Any
+
+
+def _statements_of(storage: DatabaseStorage) -> _Recorder:
+    """Every statement *storage* sends from now on, the statistics pass's left out."""
+    statements = _Recorder()
+
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        if not is_statistics_statement(statement):
+            statements.append(statement)
+
+    event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
+    statements.recorder = record
+    return statements
+
+
+def _own(statements: list[str]) -> list[str]:
+    """*statements* without the ones that open, close or configure a transaction."""
+    control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK")
+    return [statement for statement in statements if not statement.startswith(control)]

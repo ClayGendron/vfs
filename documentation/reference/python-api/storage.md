@@ -21,8 +21,11 @@ from vfs import InMemoryStorage, DatabaseStorage
 
 `StorageBackend` is what every storage backend has. A file system calls a backend with paths it has already checked, so a backend's methods take a `ResolvedPair` for a move or a copy and a `ScopeChannel` for the scope of a search.
 
+A backend that declares the `vid` trait puts a vid on every row it returns with a version. It promises three things. Every such row carries a vid. Two of its rows carry the same vid when, and only when, they are the same entry at the same version. And no vid of another storage equals one of its own. `VidMint` makes vids that keep these promises, from an identity that is the backend's own. A backend that does not declare the trait returns a version alone.
+
 ```python
 from vfs import ResolvedPair, ScopeChannel, StorageBackend
+from vfs import VidMint
 ```
 
 ::: vfs.StorageBackend
@@ -30,3 +33,5 @@ from vfs import ResolvedPair, ScopeChannel, StorageBackend
 ::: vfs.ResolvedPair
 
 ::: vfs.ScopeChannel
+
+::: vfs.VidMint

@@ -486,7 +486,10 @@ class Result(BaseModel):
         ``version=None`` (still masked) — a composite of two snapshots
         claims no single one, and a version-guarded consumer must re-stat.
         Same-version and one-sided merges keep the value, so the rule is
-        agree-or-null: associative, commutative, idempotent.
+        agree-or-null: associative, commutative, idempotent. ``vid`` rides
+        with it: a vid both sides agree on is kept, and either one's
+        disagreement nulls both, since one path at one version under two
+        vids is two entries and the version names neither.
         """
         updates: dict[str, Any] = {}
         for name in Observation.model_fields:
@@ -494,8 +497,10 @@ class Result(BaseModel):
                 continue
             value = getattr(b, name)
             updates[name] = list(value) if isinstance(value, list) else value
-        if "version" in a.populated and "version" in b.populated and a.version != b.version:
-            updates["version"] = None
+        # Two vids of one path at one version are two entries, so either disagreement nulls both.
+        both = {"version", "vid"} & a.populated & b.populated
+        if any(getattr(a, name) != getattr(b, name) for name in both):
+            updates |= dict.fromkeys({"version", "vid"} & (a.populated | b.populated), None)
         mask = a.populated | b.populated
         if mask != a.populated:
             updates["populated"] = mask

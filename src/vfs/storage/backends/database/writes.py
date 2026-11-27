@@ -59,7 +59,7 @@ from vfs.models import (
     measure_bytes,
     measure_text,
 )
-from vfs.models.rows import ULIDKey
+from vfs.models.rows import ULIDKey, vid_at
 from vfs.offload import call_offloaded
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.authorized import admit_landed, admit_staged, admit_targets
@@ -104,6 +104,7 @@ if TYPE_CHECKING:
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.replace import EditOperation
+    from vfs.vid import Vid, VidMint
 
 # The refusal of a content-kind write that carries no body to measure.
 BODILESS_DETAIL: Final = "a file write needs a body: content or data"
@@ -180,6 +181,7 @@ async def write_rows(
     parents: bool,
     authority: Authority | None,
     if_versions: Mapping[Path, int] | None = None,
+    mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
 
@@ -203,7 +205,7 @@ async def write_rows(
     whatever its version.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, mint=mint)
     expected = if_versions or {}
     for entry in entries:
         if entry.kind == "directory":
@@ -242,6 +244,7 @@ async def mkdir_rows(
     parents: bool,
     exist_ok: bool,
     authority: Authority | None,
+    mint: VidMint,
 ) -> Result:
     """Create one directory with POSIX mkdir semantics.
 
@@ -253,7 +256,7 @@ async def mkdir_rows(
     the target, shallowest first.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {path})
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, mint=mint)
     if not plan.within_namespace(path):
         return Result(ops=("mkdir",), errors=plan.errors)
     occupant = plan.kind_of(path)
@@ -288,6 +291,7 @@ async def edit_rows(
     targets: Sequence[Path],
     authority: Authority | None,
     executor: Executor,
+    mint: VidMint,
 ) -> Result:
     """Apply the same edit sequence to every target's content.
 
@@ -306,7 +310,7 @@ async def edit_rows(
     live = {path: row for path, row in committed.items() if row["deleted_at"] is None}
     admit_targets(session, "edit", live, targets)
     missing = await miss_errors(session, tables.entry, targets, live, profile, membership_budget)
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, mint=mint)
     await call_offloaded(executor, lambda: _stage_edits(plan, live, missing, targets, edits))
     return await _finish(session, tables, profile, parameter_budget, membership_budget, plan, op="edit", overwrite=True)
 
@@ -324,6 +328,7 @@ async def append_rows(
     authority: Authority | None,
     executor: Executor,
     primary: Rung,
+    mint: VidMint,
 ) -> Result:
     """Add *entry*'s body to the end of the file at its path, in the caller's transaction.
 
@@ -354,7 +359,7 @@ async def append_rows(
     target, rows = entry.path, tables.entry
     await session.execute(locked_lookup(rows.c.path, [str(target)], [rows.c.entry_id], profile))
     committed = await _fetch_committed(session, tables, profile, membership_budget, {target}, with_data=True)
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, mint=mint)
     body = _body(entry)
     assert body is not None  # measured_entries refused a file with no body
     kind, mime_type = entry.kind, entry.mime_type
@@ -490,6 +495,7 @@ async def _finish(
                     kind=staged.kind,
                     size_bytes=staged.size_bytes,
                     version=staged.version,
+                    vid=vid_at(plan.mint, staged.entry_id, staged.version),
                     status=status,
                 )
             )
@@ -498,7 +504,8 @@ async def _finish(
             # observation must equal a post-commit stat of its path.
             row = plan.committed[str(path)]
             version = plan.bump_versions.get(str(path), row["version"])
-            rows.append(Observation(path=path, kind=row["kind"], version=version, status=status))
+            vid = vid_at(plan.mint, row["entry_id"], version)
+            rows.append(Observation(path=path, kind=row["kind"], version=version, vid=vid, status=status))
     return Result(ops=(op,), observations=rows)
 
 
@@ -536,7 +543,7 @@ async def _apply(
     # rows stood down entirely — nothing left to write.
     updates = [s for s in ordered if s.persistence in ("update", "absorb")]
     if errors := await _update_materials(
-        session, tables.entry, profile, parameter_budget, membership_budget, updates, now=now
+        session, tables.entry, profile, parameter_budget, membership_budget, updates, now=now, mint=plan.mint
     ):
         return errors
     await admit_landed(session, tables.entry, profile, membership_budget, creates, minted)
@@ -583,9 +590,13 @@ async def _insert_creates(
         rows = [_entry_values(s, plan.parent_id_of(s), plan.authority, now, labels[str(s.path)]) for s in layer]
         per_statement = rows_per_statement(parameter_budget, rows)
         if profile.arbitration == "upsert":
-            errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
+            errors = await _upsert_layer(
+                session, entry, profile, layer, rows, per_statement, overwrite=overwrite, mint=plan.mint
+            )
         else:
-            errors = await _catch_retry_layer(session, entry, layer, rows, per_statement, overwrite=overwrite)
+            errors = await _catch_retry_layer(
+                session, entry, layer, rows, per_statement, overwrite=overwrite, mint=plan.mint
+            )
         if errors:
             # Fail fast: children of an unresolved parent cannot be wired.
             return errors
@@ -601,6 +612,7 @@ async def _upsert_layer(
     per_statement: int,
     *,
     overwrite: bool,
+    mint: VidMint,
 ) -> list[ResultError]:
     """``ON CONFLICT`` arbitration on the ``(parent_id, name)`` index.
 
@@ -644,7 +656,7 @@ async def _upsert_layer(
             except IntegrityError:
                 errors.extend(
                     await _resolve_rows(
-                        session, entry, [s for s, _ in chunk], [r for _, r in chunk], overwrite=overwrite
+                        session, entry, [s for s, _ in chunk], [r for _, r in chunk], overwrite=overwrite, mint=mint
                     )
                 )
                 continue
@@ -654,7 +666,9 @@ async def _upsert_layer(
                     staged.entry_id = won["entry_id"]
                     staged.version = won["version"]
                 else:
-                    loss = await _classify_arbitration_loss(session, entry, staged, row_values, clobber=clobber)
+                    loss = await _classify_arbitration_loss(
+                        session, entry, staged, row_values, clobber=clobber, mint=mint
+                    )
                     if loss is not None:
                         errors.append(loss)
     return errors
@@ -667,6 +681,7 @@ async def _classify_arbitration_loss(
     row_values: dict[str, object],
     *,
     clobber: bool,
+    mint: VidMint,
 ) -> ResultError | None:
     """Probe the occupant that beat *staged*; classify, adopt, or redrive.
 
@@ -687,7 +702,9 @@ async def _classify_arbitration_loss(
         return None
     if clobber:
         return wrong_kind("directory", staged.path, target=staged.path)
-    return occupant_exists(staged.path, occupant.version, occupant.content_hash)
+    return occupant_exists(
+        staged.path, occupant.version, occupant.content_hash, vid_at(mint, occupant.entry_id, occupant.version)
+    )
 
 
 def _occupant_query(entry: Table, row_values: Mapping[str, object]) -> Select[Any]:
@@ -714,6 +731,7 @@ async def _catch_retry_layer(
     per_statement: int,
     *,
     overwrite: bool,
+    mint: VidMint,
 ) -> list[ResultError]:
     """Portable arbitration: savepoint per chunk, conflicted chunks re-run row-wise.
 
@@ -731,7 +749,9 @@ async def _catch_retry_layer(
             async with session.begin_nested():
                 await bulk_insert(session, entry, chunk_rows)
         except IntegrityError:
-            resolved = await _resolve_rows(session, entry, [s for s, _ in chunk], chunk_rows, overwrite=overwrite)
+            resolved = await _resolve_rows(
+                session, entry, [s for s, _ in chunk], chunk_rows, overwrite=overwrite, mint=mint
+            )
             errors.extend(resolved)
     return errors
 
@@ -743,6 +763,7 @@ async def _resolve_rows(
     rows: list[dict[str, object]],
     *,
     overwrite: bool,
+    mint: VidMint,
 ) -> list[ResultError]:
     """Re-run a conflicted chunk row-at-a-time, each insert in its own savepoint.
 
@@ -776,7 +797,8 @@ async def _resolve_rows(
         elif staged.kind != "directory" and overwrite:
             errors.append(wrong_kind("directory", staged.path, target=staged.path))
         else:
-            errors.append(occupant_exists(staged.path, occupant.version, occupant.content_hash))
+            vid = vid_at(mint, occupant.entry_id, occupant.version)
+            errors.append(occupant_exists(staged.path, occupant.version, occupant.content_hash, vid))
     return errors
 
 
@@ -789,6 +811,7 @@ async def _update_materials(
     updates: list[StagedEntry],
     *,
     now: datetime,
+    mint: VidMint,
 ) -> list[ResultError]:
     """Material updates with the version-and-path guard, attributed from the statement.
 
@@ -851,14 +874,18 @@ async def _update_materials(
                 revive=revive,
             )
             missed = [s for s in guarded if s.entry_id not in matched]
-            errors.extend(await _classify_guard_misses(session, entry, profile, membership_budget, missed))
+            errors.extend(await _classify_guard_misses(session, entry, profile, membership_budget, missed, mint))
         elif dialect.supports_sane_multi_rowcount:
             errors.extend(
-                await _guarded_by_aggregate(session, entry, profile, membership_budget, guarded, now=now, revive=revive)
+                await _guarded_by_aggregate(
+                    session, entry, profile, membership_budget, guarded, now=now, revive=revive, mint=mint
+                )
             )
         elif dialect.supports_sane_rowcount:
             errors.extend(
-                await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, now=now, revive=revive)
+                await _guarded_by_rowcount(
+                    session, entry, profile, membership_budget, guarded, now=now, revive=revive, mint=mint
+                )
             )
         else:
             detail = f"guarded updates cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
@@ -1000,6 +1027,7 @@ async def _guarded_by_aggregate(
     *,
     now: datetime,
     revive: bool,
+    mint: VidMint,
 ) -> list[ResultError]:
     """Executemany fast path: an aggregate rowcount of N proves N guards matched.
 
@@ -1018,7 +1046,9 @@ async def _guarded_by_aggregate(
     await nested.rollback()
     if profile.guard_miss == "redrive":
         raise StaleSnapshot(f"{len(params) - result.rowcount} guarded update(s) missed their snapshot")
-    return await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, now=now, revive=revive)
+    return await _guarded_by_rowcount(
+        session, entry, profile, membership_budget, guarded, now=now, revive=revive, mint=mint
+    )
 
 
 async def _guarded_by_rowcount(
@@ -1030,6 +1060,7 @@ async def _guarded_by_rowcount(
     *,
     now: datetime,
     revive: bool,
+    mint: VidMint,
 ) -> list[ResultError]:
     """The per-row floor: each statement's own rowcount is the evidence.
 
@@ -1042,7 +1073,7 @@ async def _guarded_by_rowcount(
         result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, now)))
         if result.rowcount == 0:
             missed.append(staged)
-    return await _classify_guard_misses(session, entry, profile, membership_budget, missed)
+    return await _classify_guard_misses(session, entry, profile, membership_budget, missed, mint)
 
 
 async def _classify_guard_misses(
@@ -1051,6 +1082,7 @@ async def _classify_guard_misses(
     profile: DialectProfile,
     membership_budget: int,
     missed: list[StagedEntry],
+    mint: VidMint,
 ) -> list[ResultError]:
     """Interpret zero-row guard outcomes per the dialect's declared mode.
 
@@ -1079,7 +1111,7 @@ async def _classify_guard_misses(
         elif current.path == str(staged.path) and current.content_hash == staged.content_hash:
             raise StaleSnapshot(f"a rival wrote the body staged for {staged.path}")
         else:
-            errors.append(_conflict(staged, current.version))
+            errors.append(_conflict(staged, current.version, vid_at(mint, staged.entry_id, current.version)))
     return errors
 
 
@@ -1107,14 +1139,15 @@ def _guarded_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
     return _update_params(staged, now) | guard
 
 
-def _conflict(staged: StagedEntry, current: int) -> ResultError:
-    """The ``conflict`` of a row that lost its guard to a rival, naming the version the row is at now."""
+def _conflict(staged: StagedEntry, current: int, vid: Vid) -> ResultError:
+    """The ``conflict`` of a row that lost its guard to a rival, naming the version and the vid the row is at now."""
     if staged.expected_version is not None:
-        return stale_version(staged.path, current)
+        return stale_version(staged.path, current, vid)
     # Retryable where the caller expected no version: an identical retry
     # is judged against the rival's committed state and resolves honestly.
     detail = "concurrent modification"
-    return classified(ErrorKind.conflict, staged.path, retryable=True, detail=detail, data={"version": current})
+    data = {"version": current, "vid": vid}
+    return classified(ErrorKind.conflict, staged.path, retryable=True, detail=detail, data=data)
 
 
 async def _replace_bodies(

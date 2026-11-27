@@ -48,7 +48,7 @@ from vfs.storage.backends.database.descent import liveness_filters, rows_by_path
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.ranges import pinned_join
-from vfs.storage.backends.database.reads import BODY_FIELDS, LIST_FIELDS
+from vfs.storage.backends.database.reads import BODY_FIELDS, DERIVED_FIELDS, LIST_FIELDS, vid_of
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
 if TYPE_CHECKING:
@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.rights import Visibility
+    from vfs.vid import VidMint
 
 # ---------------------------------------------------------------------------
 # Module constants and shared types
@@ -84,11 +85,12 @@ TRAVERSE_OPS: Final = ("traverse",)
 
 
 class Site(NamedTuple):
-    """The mount facts a walk reads: its tables, its dialect, its membership budget."""
+    """The mount facts a walk reads: its tables, its dialect, its membership budget, the mint of its vids."""
 
     tables: VFSTables
     profile: DialectProfile
     membership_budget: int
+    mint: VidMint
 
 
 class GraphRequest(NamedTuple):
@@ -212,7 +214,7 @@ async def resolve_seeds(
     tombstoned and hidden seeds yield nothing and are indistinguishable.
     """
     entry = site.tables.entry
-    fields = sorted((request.fetched - BODY_FIELDS) | RIGHTS_FIELDS | {"deleted_at"})
+    fields = sorted((request.fetched - BODY_FIELDS - DERIVED_FIELDS) | RIGHTS_FIELDS | {"deleted_at"})
     columns: list[ColumnElement[object]] = [entry.c.entry_id, *(entry.c[name] for name in fields)]
     wanted = list(dict.fromkeys(str(seed) for seed in seeds))
     found = await rows_by_path(session, entry, wanted, columns, site.profile, site.membership_budget)
@@ -293,7 +295,7 @@ async def hop(
     probed un-narrowed and offered to the road.
     """
     entry = site.tables.entry
-    fields = sorted((request.fetched - BODY_FIELDS) | RIGHTS_FIELDS)
+    fields = sorted((request.fetched - BODY_FIELDS - DERIVED_FIELDS) | RIGHTS_FIELDS)
     columns: list[ColumnElement[object]] = [entry.c.entry_id, *(entry.c[name] for name in fields)]
     rows: list[HopRow] = []
     for direction in request.directions:
@@ -488,7 +490,7 @@ async def observe(
         walk.see(edge)
     among = [edge for edge in walk.edges.values() if edge.source_id in kept and edge.target_id in kept]
     among.sort(key=lambda edge: (walk.nodes[edge.source_id].path, edge.edge_type, walk.nodes[edge.target_id].path))
-    rows = [_observe_node(node, request.fetched) for node in shown]
+    rows = [_observe_node(node, request.fetched, site.mint) for node in shown]
     rows.extend(_observe_edge(edge, walk.nodes) for edge in among)
     errors: list[ResultError] = []
     if cut or walk.more:
@@ -569,12 +571,14 @@ async def _road_rows(
     return [_hop_row(mapping, direction, _bare_node(mapping, 0)) for mapping in hidden if mapping["path"] in road]
 
 
-def _observe_node(node: Node, fetched: frozenset[str]) -> Observation:
+def _observe_node(node: Node, fetched: frozenset[str], mint: VidMint) -> Observation:
     if node.mapping is None:
         values: dict[str, object] = {"path": Path._brand(node.path), "kind": node.kind, "populated": BARE_FIELDS}
     else:
-        values = {name: node.mapping[name] for name in fetched - BODY_FIELDS}
+        values = {name: node.mapping[name] for name in fetched - BODY_FIELDS - DERIVED_FIELDS}
         values["path"] = Path._brand(node.path)
+        if "vid" in fetched:
+            values["vid"] = vid_of(mint, node.mapping)
         values["populated"] = (fetched - BODY_FIELDS) | {"depth"}
     values["depth"] = node.depth
     return Observation.model_validate(values)

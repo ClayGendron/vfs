@@ -423,8 +423,9 @@ class TestExpectedVersionRivals:
             with seams.installed("write:before-apply", handler):
                 victim = await storage.write(entries=[Entry(path=target, content="mine")], if_versions={target: 1})
             assert rivals and rivals[0].success is True
+            now = {"version": 2, "vid": (await storage.stat(path=target)).observations[0].vid}
             assert [(e.kind, e.path, e.data, e.retryable) for e in victim.errors] == [
-                (ErrorKind.conflict, "/a.txt", {"version": 2}, False)
+                (ErrorKind.conflict, "/a.txt", now, False)
             ]
             assert (await storage.read(path=target)).observations[0].content == "rival"
             await _audit(storage)

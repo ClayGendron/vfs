@@ -21,6 +21,7 @@ Every name that `import vfs` makes public, grouped by what it is for. Each one l
 - [`ObjectKind`](entry.md#vfs.ObjectKind): what an entry is, a file or a directory.
 - [`Source`](entry.md#vfs.Source): what an entry's body was written as, text or bytes.
 - [`ContentHash`](entry.md#vfs.ContentHash): the SHA-256 of a body.
+- [`Vid`](entry.md#vfs.Vid): the short value on a row that names one entry at one version.
 - [`RenderStatus`](entry.md#vfs.RenderStatus): how the rendering of a binary body into text ended.
 - [`Path`](path.md#vfs.Path): a path that has been checked and is safe to route.
 

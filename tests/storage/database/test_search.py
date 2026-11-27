@@ -323,7 +323,7 @@ class TestRanking:
     async def test_columns_narrow_the_mask_and_identity_stays(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
         [row] = (await storage.search(query="dispatches", limit=1, columns=frozenset({"path"}))).observations
-        assert row.populated == {"path", "kind", "version", "score", "matches"}
+        assert row.populated == {"path", "kind", "version", "vid", "score", "matches"}
         assert row.size_bytes is None
         await storage.close()
 

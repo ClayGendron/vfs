@@ -39,9 +39,10 @@ from tests.support.commit_worlds import replace as replace_row
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url, begin_as_writer, writer_engine
 from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from tests.support.statements import is_statistics_statement
+from tests.support.vids import TEST_MINT
 from vfs.authority import Authority, Principal
 from vfs.models import MEASURED_BODY, BodyMetrics, Entry, measure_bytes
-from vfs.models.rows import build_vfs_tables
+from vfs.models.rows import build_vfs_tables, vid_at
 from vfs.paths import ObjectKind, Path
 from vfs.results import ErrorKind, ResultError
 from vfs.storage.backends.database import DatabaseStorage
@@ -483,7 +484,7 @@ class TestWriteMechanics:
         await storage.close()
 
     def test_stage_create_folds_a_repeat_target_into_one_row(self) -> None:
-        plan = WritePlan({}, authority=None, budget=SQLITE.key_byte_budget)
+        plan = WritePlan({}, authority=None, budget=SQLITE.key_byte_budget, mint=TEST_MINT)
         target = Path("/f.txt")
         plan.stage_create(target, kind="file", content="one", content_hash="h1", size_bytes=3, lines=1)
         minted = plan.staged[target].entry_id
@@ -594,7 +595,7 @@ class TestArbitration:
             ]
             rows = [_entry_values(s, root_key, None, now, 2) for s in layer]
             statements.clear()
-            errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=True)
+            errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=True, mint=TEST_MINT)
         assert errors == []
         assert layer[5].persistence == "absorb" and layer[5].entry_id == rival_key  # rival's row absorbed the write
         assert all(s.persistence == "insert" for i, s in enumerate(layer) if i != 5)
@@ -628,7 +629,7 @@ class TestArbitration:
                 for i in range(12)
             ]
             rows = [_entry_values(s, root_key, None, now, 2) for s in layer]
-            errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=False)
+            errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=False, mint=TEST_MINT)
         # Rivals sit in chunks 1 and 3: both classify — errors accumulate
         # across conflicted chunks, the last chunk never wins alone.
         assert sorted((e.kind, str(e.path)) for e in errors) == [
@@ -662,7 +663,12 @@ class TestArbitration:
             # update that adopts the rival row's identity.
             clobber = staged_for("/f.txt", "file")
             errors = await _resolve_rows(
-                session, entry, [clobber], [_entry_values(clobber, root_key, None, now, 2)], overwrite=True
+                session,
+                entry,
+                [clobber],
+                [_entry_values(clobber, root_key, None, now, 2)],
+                overwrite=True,
+                mint=TEST_MINT,
             )
             assert errors == []
             assert clobber.persistence == "absorb" and clobber.entry_id == rival_key
@@ -670,16 +676,26 @@ class TestArbitration:
             # overwrite=False over a rival file: a definite exists outcome.
             refused = staged_for("/f.txt", "file")
             errors = await _resolve_rows(
-                session, entry, [refused], [_entry_values(refused, root_key, None, now, 2)], overwrite=False
+                session,
+                entry,
+                [refused],
+                [_entry_values(refused, root_key, None, now, 2)],
+                overwrite=False,
+                mint=TEST_MINT,
             )
             assert [(e.kind, sorted((e.data or {}).keys())) for e in errors] == [
-                (ErrorKind.exists, ["content_hash", "version"])
+                (ErrorKind.exists, ["content_hash", "version", "vid"])
             ]
 
             # overwrite=True where the rival is a directory: wrong_kind.
             blocked = staged_for("/dir", "file")
             errors = await _resolve_rows(
-                session, entry, [blocked], [_entry_values(blocked, root_key, None, now, 2)], overwrite=True
+                session,
+                entry,
+                [blocked],
+                [_entry_values(blocked, root_key, None, now, 2)],
+                overwrite=True,
+                mint=TEST_MINT,
             )
             assert [e.kind for e in errors] == [ErrorKind.wrong_kind]
 
@@ -688,7 +704,12 @@ class TestArbitration:
             dir_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/dir"))).scalar_one()
             dir_adopt = staged_for("/dir", "directory")
             errors = await _resolve_rows(
-                session, entry, [dir_adopt], [_entry_values(dir_adopt, root_key, None, now, 2)], overwrite=True
+                session,
+                entry,
+                [dir_adopt],
+                [_entry_values(dir_adopt, root_key, None, now, 2)],
+                overwrite=True,
+                mint=TEST_MINT,
             )
             assert errors == []
             assert dir_adopt.persistence == "adopt" and dir_adopt.entry_id == dir_key
@@ -696,7 +717,12 @@ class TestArbitration:
             # a directory create losing to a file occupant: exists.
             dir_loss = staged_for("/f.txt", "directory")
             errors = await _resolve_rows(
-                session, entry, [dir_loss], [_entry_values(dir_loss, root_key, None, now, 2)], overwrite=False
+                session,
+                entry,
+                [dir_loss],
+                [_entry_values(dir_loss, root_key, None, now, 2)],
+                overwrite=False,
+                mint=TEST_MINT,
             )
             assert [e.kind for e in errors] == [ErrorKind.exists]
         await storage.close()
@@ -727,6 +753,7 @@ class TestArbitration:
                     [phantom],
                     [_entry_values(phantom, dir_key, None, datetime.now(UTC), 2)],
                     overwrite=True,
+                    mint=TEST_MINT,
                 )
         assert phantom.persistence == "insert" and phantom.entry_id == minted  # no conversion happened
         await storage.close()
@@ -742,7 +769,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, authority=None, budget=profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=profile.key_byte_budget, mint=TEST_MINT)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -811,7 +838,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, mint=host.mint)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -897,7 +924,9 @@ class TestArbitration:
 
             async def run(layer: list[StagedEntry], *, overwrite: bool) -> list[ResultError]:
                 rows = [_entry_values(s, root_key, None, now, 2) for s in layer]
-                return await _upsert_layer(session, entry, profile, layer, rows, 50, overwrite=overwrite)
+                return await _upsert_layer(
+                    session, entry, profile, layer, rows, 50, overwrite=overwrite, mint=TEST_MINT
+                )
 
             # overwrite=True over a rival file: the clobber lands on the
             # rival's row and adopts its identity and bumped version...
@@ -967,6 +996,7 @@ class TestArbitration:
                 host.membership_budget,
                 [stale],
                 now=datetime.now(UTC),
+                mint=host.mint,
             )
         assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].retryable is True
@@ -1002,6 +1032,7 @@ class TestArbitration:
                     host.membership_budget,
                     [relocated],
                     now=datetime.now(UTC),
+                    mint=host.mint,
                 )
             await session.rollback()
         await storage.close()
@@ -1032,6 +1063,7 @@ class TestArbitration:
                     host.membership_budget,
                     [vanished],
                     now=datetime.now(UTC),
+                    mint=host.mint,
                 )
         await storage.close()
 
@@ -1046,7 +1078,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, authority=None, budget=profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=profile.key_byte_budget, mint=TEST_MINT)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -1092,7 +1124,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, mint=host.mint)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -1165,6 +1197,7 @@ class TestGuardedAttribution:
             900,
             [won, lost],
             now=datetime.now(UTC),
+            mint=TEST_MINT,
         )
         assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].path == lost.path
@@ -1183,6 +1216,7 @@ class TestGuardedAttribution:
             900,
             [gone],
             now=datetime.now(UTC),
+            mint=TEST_MINT,
         )
         assert [e.kind for e in errors] == [ErrorKind.not_found]
         assert errors[0].path == gone.path
@@ -1199,6 +1233,7 @@ class TestGuardedAttribution:
             900,
             [staged],
             now=datetime.now(UTC),
+            mint=TEST_MINT,
         )
         sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
         assert "FROM (VALUES" in sql
@@ -1219,6 +1254,7 @@ class TestGuardedAttribution:
                 900,
                 [absorbed, vanished],
                 now=datetime.now(UTC),
+                mint=TEST_MINT,
             )
         assert absorbed.version == 7  # the statement reported the version it assigned
         sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
@@ -1242,6 +1278,7 @@ class TestGuardedAttribution:
             900,
             staged,
             now=datetime.now(UTC),
+            mint=TEST_MINT,
         )
         assert errors == []
         assert len(double.statements) == 3
@@ -1286,6 +1323,7 @@ class TestGuardedAttribution:
                 host.membership_budget,
                 [fresh, stale],
                 now=datetime.now(UTC),
+                mint=host.mint,
             )
             after = await session.execute(select(entry.c.path, entry.c.version))
             versions = {m["path"]: m["version"] for m in after.mappings()}
@@ -1335,6 +1373,7 @@ class TestGuardedAttribution:
                 host.membership_budget,
                 [fresh, stale],
                 now=datetime.now(UTC),
+                mint=host.mint,
             )
         assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].path == stale.path
@@ -1358,6 +1397,7 @@ class TestGuardedAttribution:
                 host.membership_budget,
                 [staged],
                 now=datetime.now(UTC),
+                mint=host.mint,
             )
         assert [e.kind for e in errors] == [ErrorKind.unsupported]
         assert "cannot be verified" in errors[0].message
@@ -1945,10 +1985,11 @@ class TestExpectedVersion:
         await storage._host.settle_statistics()
         statements = _statements_of(storage)
         stale = await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")], if_versions={Path("/a.txt"): 1})
-        assert [(e.kind, e.data, e.retryable) for e in stale.errors] == [(ErrorKind.conflict, {"version": 2}, False)]
         # The snapshot is the whole call: nothing is updated, minted or replaced.
         own = _own(statements)
         assert len(own) == 1 and own[0].startswith("SELECT"), own
+        now = {"version": 2, "vid": (await storage.stat(path=Path("/a.txt"))).observations[0].vid}
+        assert [(e.kind, e.data, e.retryable) for e in stale.errors] == [(ErrorKind.conflict, now, False)]
         await storage.close()
 
     @pytest.mark.parametrize("files", [100, pytest.param(10_000, marks=pytest.mark.slow)])
@@ -1979,8 +2020,9 @@ class TestExpectedVersion:
         stale = await storage.write(
             entries=[Entry(path=path, content="newer") for path in keyed], if_versions=dict.fromkeys(keyed, 2)
         )
-        assert [(e.kind, e.path, e.data) for e in stale.errors] == [(ErrorKind.conflict, keyed[0], {"version": 3})]
         assert [s for s in statements if s.startswith(("INSERT", "UPDATE", "DELETE"))] == []
+        now = {"version": 3, "vid": (await storage.stat(path=keyed[0])).observations[0].vid}
+        assert [(e.kind, e.path, e.data) for e in stale.errors] == [(ErrorKind.conflict, keyed[0], now)]
         await storage.close()
 
     @pytest.mark.parametrize("keyed", [True, False], ids=["expected", "plain"])
@@ -2004,7 +2046,10 @@ class TestExpectedVersion:
                 if_versions={Path("/a.txt"): 1} if keyed else None,
             )
         # Only a caller that expected no version may send the same call again.
-        assert [(e.kind, e.data, e.retryable) for e in lost.errors] == [(ErrorKind.conflict, {"version": 5}, not keyed)]
+        async with storage._host.session_factory() as session:
+            entry_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a.txt"))).scalar_one()
+        now = {"version": 5, "vid": vid_at(storage._host.mint, entry_id, 5)}
+        assert [(e.kind, e.data, e.retryable) for e in lost.errors] == [(ErrorKind.conflict, now, not keyed)]
         assert len(sessions) == 1
         await storage.close()
 
@@ -2018,7 +2063,14 @@ class TestExpectedVersion:
         double = _ReturningSession([], probed=probed)
         with pytest.raises(StaleSnapshot):
             await _update_materials(
-                cast("AsyncSession", double), tables.entry, POSTGRESQL, 32_000, 900, [lost], now=datetime.now(UTC)
+                cast("AsyncSession", double),
+                tables.entry,
+                POSTGRESQL,
+                32_000,
+                900,
+                [lost],
+                now=datetime.now(UTC),
+                mint=TEST_MINT,
             )
 
     async def test_a_guard_lost_to_a_row_that_moved_is_a_conflict_whatever_its_body(self) -> None:
@@ -2030,11 +2082,17 @@ class TestExpectedVersion:
         ]
         double = _ReturningSession([], probed=probed)
         errors = await _update_materials(
-            cast("AsyncSession", double), tables.entry, POSTGRESQL, 32_000, 900, [lost], now=datetime.now(UTC)
+            cast("AsyncSession", double),
+            tables.entry,
+            POSTGRESQL,
+            32_000,
+            900,
+            [lost],
+            now=datetime.now(UTC),
+            mint=TEST_MINT,
         )
-        assert [(e.kind, e.path, e.data, e.retryable) for e in errors] == [
-            (ErrorKind.conflict, "/lost.txt", {"version": 2}, True)
-        ]
+        now = {"version": 2, "vid": vid_at(TEST_MINT, lost.entry_id, 2)}
+        assert [(e.kind, e.path, e.data, e.retryable) for e in errors] == [(ErrorKind.conflict, "/lost.txt", now, True)]
 
 
 class TestAppend:

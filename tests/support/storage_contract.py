@@ -136,6 +136,11 @@ async def _revision_of(storage: ConformanceBackend, path: str) -> int:
     return version
 
 
+async def _vid_of(storage: ConformanceBackend, path: str) -> str | None:
+    """The vid a ``stat`` of *path* returns now."""
+    return (await storage.stat(path=Path(path))).observations[0].vid
+
+
 # Directory names holding a LIKE metacharacter, beside the near-miss
 # decoys an unescaped prefix pattern would erroneously match.
 METACHAR_DIRS = ("a%b", "a_b", "a\\b", "a[1]b")
@@ -391,7 +396,7 @@ class StorageContract:
         assert result.success is False and result.observations == []
         (error,) = result.errors
         assert (error.kind, error.path, error.retryable) == (ErrorKind.exists, "/a.txt", False)
-        assert error.data == {"version": 1, "content_hash": stored.content_hash}
+        assert error.data == {"version": 1, "content_hash": stored.content_hash, "vid": stored.vid}
         # The same body is refused too, or two callers that create one lock file would both hold it.
         same = await storage.write(entries=[_file("/a.txt", "first")], if_absent=True)
         assert [e.kind for e in same.errors] == [ErrorKind.exists]
@@ -2731,7 +2736,7 @@ class StorageContract:
         assert (error.kind, error.path, error.data, error.retryable) == (
             ErrorKind.conflict,
             "/a.txt",
-            {"version": 2},
+            {"version": 2, "vid": await _vid_of(storage, "/a.txt")},
             False,
         )
         assert await _revision_of(storage, "/a.txt") == 2
@@ -2755,7 +2760,8 @@ class StorageContract:
         assert replay.success is True, replay.errors
         assert [(o.status, o.version) for o in replay.observations] == [("unchanged", 2)]
         other = await storage.write(entries=[_file("/a.txt", "three")], if_versions=expecting_one)
-        assert [(e.kind, e.data) for e in other.errors] == [(ErrorKind.conflict, {"version": 2})]
+        now = {"version": 2, "vid": await _vid_of(storage, "/a.txt")}
+        assert [(e.kind, e.data) for e in other.errors] == [(ErrorKind.conflict, now)]
 
     @needs("write", "delete", "stat")
     async def test_an_expected_version_on_no_live_row_is_not_found(self, storage: ConformanceBackend) -> None:
@@ -2887,7 +2893,8 @@ class StorageContract:
         assert first.success is True, first.errors
         # The reply was lost and the call is sent again: the version moved on, and nothing is added twice.
         again = await storage.write(entries=[_file("/log.txt", "two\n")], append=True, if_versions=expecting_one)
-        assert [(e.kind, e.data) for e in again.errors] == [(ErrorKind.conflict, {"version": 2})]
+        now = {"version": 2, "vid": await _vid_of(storage, "/log.txt")}
+        assert [(e.kind, e.data) for e in again.errors] == [(ErrorKind.conflict, now)]
         assert (await storage.read(path=Path("/log.txt"))).observations[0].content == "one\ntwo\n"
         absent = await storage.write(entries=[_file("/none.txt", "x")], append=True, if_versions={Path("/none.txt"): 1})
         assert [e.kind for e in absent.errors] == [ErrorKind.not_found]

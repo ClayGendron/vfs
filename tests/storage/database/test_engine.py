@@ -368,6 +368,24 @@ class TestFirstTouch:
 # ---------------------------------------------------------------------------
 
 
+class TestVidMint:
+    """The mint is built at first touch from the database's identity: the vid is the database's, not the object's."""
+
+    async def test_two_storage_objects_over_one_database_mint_one_vid(self, tmp_path) -> None:
+        """Mutation guarded: a mint keyed by something of the object's own, such as a fresh ULID at construction."""
+        url = f"sqlite+aiosqlite:///{tmp_path / 'one.db'}"
+        first, second = DatabaseStorage(url=url), DatabaseStorage(url=url)
+        other = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path / 'other.db'}")
+        for storage in (first, other):
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        seen = [(await storage.stat(path=Path("/a.txt"))).one() for storage in (first, second, other)]
+        assert [row.version for row in seen] == [1, 1, 1]
+        assert len({seen[0].vid, seen[1].vid}) == 1
+        assert seen[2].vid != seen[0].vid
+        for storage in (first, second, other):
+            await storage.close()
+
+
 class TestLifecycle:
     def test_construct_on_one_loop_first_touch_on_another(self, tmp_path) -> None:
         async def construct() -> DatabaseStorage:

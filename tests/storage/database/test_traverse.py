@@ -18,6 +18,7 @@ from sqlalchemy.dialects import postgresql, sqlite
 
 from tests.support.oracles import graph_walk, meeting_subgraph
 from tests.support.statements import is_statistics_statement
+from tests.support.vids import TEST_MINT
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -247,7 +248,7 @@ class TestStatements:
             ("sqlite", sqlite.dialect(), "CROSS JOIN"),
             ("postgresql", postgresql.dialect(), "JOIN"),
         ):
-            site = Site(tables, PROFILES[name], 1_000)
+            site = Site(tables, PROFILES[name], 1_000, mint=TEST_MINT)
             stmt = hop_statement(site, request, "outbound", ["x", "y"], [tables.entry.c.path, tables.entry.c.kind])
             text = str(stmt.compile(dialect=dialect))
             assert f"vfs_edges {keyword} vfs_entries ON vfs_entries.entry_id = vfs_edges.target_id" in text
@@ -443,5 +444,5 @@ async def test_an_observation_seed_contributes_its_path_and_columns_narrow_the_r
     )
     assert _nodes(result) == {CHAIN[0]: 0, CHAIN[1]: 1}
     rows = [o for o in result.observations if o.edge_target is None]
-    assert all(o.populated == {"path", "kind", "version", "size_bytes", "depth"} for o in rows)
+    assert all(o.populated == {"path", "kind", "version", "vid", "size_bytes", "depth"} for o in rows)
     assert all(o.content is None and o.size_bytes == 1 for o in rows)

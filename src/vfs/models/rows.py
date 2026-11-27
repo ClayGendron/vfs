@@ -75,6 +75,8 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import FromClause
     from sqlalchemy.types import TypeEngine
 
+    from vfs.vid import Vid, VidMint
+
 # Entries-table columns with no counterpart field on the domain model: the id
 # backbone, the tombstone's root (the row a delete named, which restore and
 # sweep act on as a set), and the per-entry version — minted and guarded
@@ -269,6 +271,47 @@ class ULIDKey(TypeDecorator[str]):
         if _uuid_native(dialect):
             return str(ULID.from_uuid(value))
         return str(ULID.from_bytes(value))
+
+
+class ULIDBytes(TypeDecorator[bytes]):
+    """The identity column read as its 16 stored bytes, with no conversion to text.
+
+    A sibling of :class:`ULIDKey` for the reads that mint a vid: selected
+    through ``type_coerce`` under the label ``entry_key``, the column comes
+    back as the bytes a mint hashes. SQLite's driver hands the bytes over
+    as stored; Postgres's hands a UUID, whose ``bytes`` this type passes on.
+    """
+
+    impl = Uuid
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        if _uuid_native(dialect):
+            return dialect.type_descriptor(Uuid())
+        return dialect.type_descriptor(BINARY(16))
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> bytes | None:
+        if value is None:
+            return None
+        return value.bytes if _uuid_native(dialect) else bytes(value)
+
+
+# Crockford's base-32 alphabet, digit for digit onto the one ``int(..., 32)`` reads.
+_CROCKFORD_TO_BASE32: Final = str.maketrans("0123456789ABCDEFGHJKMNPQRSTVWXYZ", "0123456789abcdefghijklmnopqrstuv")
+
+
+def entry_key_of(entry_id: EntryId) -> bytes:
+    """The 16 stored bytes of the entry id written as *entry_id*'s 26 characters.
+
+    For a row that already holds its id as text, the same bytes
+    :class:`ULIDBytes` reads off the column, without a second select.
+    """
+    return int(entry_id.translate(_CROCKFORD_TO_BASE32), 32).to_bytes(16, "big")
+
+
+def vid_at(mint: VidMint, entry_id: EntryId, version: int) -> Vid:
+    """The vid *mint* gives the entry written as *entry_id* at *version*: for a row whose id is in hand as text."""
+    return mint.mint(entry_key_of(entry_id), version)
 
 
 # ---------------------------------------------------------------------------

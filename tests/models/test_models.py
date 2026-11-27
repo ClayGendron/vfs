@@ -317,6 +317,13 @@ class TestEntryToObservation:
             assert getattr(obs, name) is None
             assert name not in obs.populated
 
+    def test_vid_is_a_field_no_model_owns(self) -> None:
+        """The vid is worked out when a row is produced, so no model mirrors it and a projection leaves it out."""
+        assert "vid" in OBSERVATION_QUERY_FIELDS
+        obs = Entry(path=Path("/a.md"), content="x").to_observation()
+        assert obs.vid is None
+        assert "vid" not in obs.populated
+
     def test_query_fields_come_from_the_operation(self) -> None:
         entry = Entry(path=Path("/a.md"), content="x")
         obs = entry.to_observation(

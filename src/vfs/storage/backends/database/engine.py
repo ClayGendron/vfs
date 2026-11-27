@@ -91,6 +91,7 @@ from vfs.storage.backends.database.drivers import has_sqlite_vec, load_sqlite_ve
 from vfs.storage.backends.database.oneconnection import SerializedSessions, rearm_on_fresh_connection
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
+from vfs.vid import VidMint
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -220,6 +221,7 @@ class EngineHost:
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
         self.mount_identity: str | None = None
+        self._mint: VidMint | None = None
         self._ready = False
         # Created lazily on the caller's loop — construction must stay
         # loop-free so construct-here, first-touch-elsewhere works.
@@ -281,6 +283,12 @@ class EngineHost:
         version = self._dialect.server_version_info
         listed = self._profile.statistics_listing is not None
         return listed and version is not None and tuple(version) >= STATISTICS_VERSION
+
+    @property
+    def mint(self) -> VidMint:
+        """The mint of this mount's vids, built at first touch from the identity the database was provisioned with."""
+        assert self._mint is not None, "first touch builds the mint before any verb runs"
+        return self._mint
 
     async def ensure_ready(self) -> ResultError | None:
         """Idempotent first touch; ``None`` when the mount is serving."""
@@ -943,6 +951,7 @@ class EngineHost:
                 ),
             )
         self.mount_identity = row.mount_identity
+        self._mint = VidMint(row.mount_identity)
         self.embedding_identity = stored
         return None
 

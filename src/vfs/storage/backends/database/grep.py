@@ -86,12 +86,14 @@ from vfs.storage.backends.database.membership import live_chunks, membership
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
     CHANNEL_ARM_BINDS,
+    DERIVED_FIELDS,
     content_for_entries,
     effective_columns,
     kind_membership,
     meta_scoped,
     scope_facts,
     side_scope,
+    vid_of,
 )
 from vfs.storage.backends.database.scope import (
     FETCH_RIDE,
@@ -121,6 +123,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Visibility
+    from vfs.vid import VidMint
 
 # Posting bytes decoded per call. The candidate count, the body bytes and the
 # wall are shared laws with homes of their own. A tripped budget truncates with a warning.
@@ -172,6 +175,7 @@ async def grep_rows(
     max_count: int | None,
     allow_scan: bool,
     columns: frozenset[str] | None,
+    mint: VidMint,
     wall_seconds: float = WALL_TIME_BUDGET,
     view: Visibility | None = None,
     scope: AdmittedScope | None = None,
@@ -342,7 +346,7 @@ async def grep_rows(
     rows: list[Observation] = []
     # The projection and populated mask are call-invariant: hoist them
     # out of the per-row assembly path.
-    projected = tuple(fetched - {"content"})
+    projected = tuple(fetched - {"content"} - DERIVED_FIELDS)
     carry_content = "content" in fetched and output_mode == "lines"
     row_mask = fetched if carry_content else fetched - {"content"}
     if output_mode == "lines":
@@ -370,7 +374,11 @@ async def grep_rows(
             for (mapping, text), count in zip(paired, counts, strict=True):
                 if count:
                     score = float(count) if output_mode == "count" else None
-                    rows.append(_observe_hit(mapping, projected, mask, text, None, score, carry_content=carry_content))
+                    rows.append(
+                        _observe_hit(
+                            mapping, projected, mask, text, None, score, carry_content=carry_content, mint=mint
+                        )
+                    )
         else:
             spans, completed = await verify.hit_lines(
                 texts,
@@ -383,7 +391,9 @@ async def grep_rows(
             for (mapping, text), row in zip(paired, spans, strict=True):
                 if row:
                     matches = [Match(start=s, end=e, match=m, content=c) for s, e, m, c in row]
-                    hit = _observe_hit(mapping, projected, mask, text, matches, None, carry_content=carry_content)
+                    hit = _observe_hit(
+                        mapping, projected, mask, text, matches, None, carry_content=carry_content, mint=mint
+                    )
                     rows.append(hit)
         if not completed:
             # The matcher hit the wall mid-batch: bodies it never reached
@@ -577,7 +587,7 @@ async def _entries_for_docs(
     facts so the executed parameter count stays inside the budgets.
     """
     entry = tables.entry
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content", "vid"}))]
     # The kind membership charges its element width; the encoded flag
     # renders as an inline literal on every dialect and binds nothing.
     kinds = kind_membership(entry)
@@ -637,6 +647,7 @@ def _observe_hit(
     score: float | None,
     *,
     carry_content: bool,
+    mint: VidMint,
 ) -> Observation:
     """One result row; only ``lines`` mode may carry the body.
 
@@ -655,5 +666,7 @@ def _observe_hit(
         values["matches"] = matches
     if score is not None:
         values["score"] = score
+    if "vid" in mask:
+        values["vid"] = vid_of(mint, mapping)
     values["populated"] = mask
     return Observation.model_validate(values)

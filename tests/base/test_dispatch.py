@@ -1256,8 +1256,9 @@ async def test_write_a_stale_key_on_one_mount_refuses_that_mount_and_lands_the_o
     assert (await root.write(path="/a/f.txt", content="v2")).success is True
     both = [Entry(path=Path(path), content="new") for path in ("/a/f.txt", "/b/g.txt")]
     result = await root.write(both, if_versions={"/a/f.txt": 1, "/b/g.txt": 1})
+    stored = (await root.stat(path="/a/f.txt")).observations[0]
     assert [(error.kind, error.path, error.data) for error in result.errors] == [
-        (ErrorKind.conflict, "/a/f.txt", {"version": 2})
+        (ErrorKind.conflict, "/a/f.txt", {"version": 2, "vid": stored.vid})
     ]
     assert [(o.path, o.status, o.version) for o in result.observations] == [("/b/g.txt", "updated", 2)]
     bodies = [(await root.read(path=path)).observations[0].content for path in ("/a/f.txt", "/b/g.txt")]

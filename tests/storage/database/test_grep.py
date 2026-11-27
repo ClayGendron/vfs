@@ -668,7 +668,7 @@ class TestOutputModes:
         # Exact equality, not subset: the name/ext/size ride serves the
         # row gates and pricing and must never leak into the wire mask.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        expected = {"path", "kind", "version", "content", "matches"}
+        expected = {"path", "kind", "version", "vid", "content", "matches"}
         scanned = await storage.grep(pattern="needle", columns=frozenset({"content"}))
         assert (await storage.rebuild()).success is True
         indexed = await storage.grep(pattern="needle", columns=frozenset({"content"}))
@@ -1607,6 +1607,7 @@ class TestPushdownBindAccounting:
                 max_count=None,
                 allow_scan=False,
                 columns=None,
+                mint=host.mint,
             )
         assert result.success is True, result.errors
         assert _paths(result) == sorted(files)

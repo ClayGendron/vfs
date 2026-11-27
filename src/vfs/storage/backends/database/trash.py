@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from sqlalchemy import bindparam, case, delete, false, func, select, true, update
 
 from vfs.models import Observation
+from vfs.models.rows import vid_at
 from vfs.ops import VERB_RUNGS
 from vfs.paths import ROOT, TRASH_ROOT, Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.vid import VidMint
 
 # A restore target adds its root and what the caller's permit judges it by.
 _TOMBSTONE_COLUMNS: Final[tuple[str, ...]] = (*SNAPSHOT_COLUMNS, "trash_root_id", "owner_id", "everyone_level")
@@ -128,6 +130,7 @@ async def delete_rows(
     cascade: bool,
     authority: Authority | None,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
+    mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of deletes as a set.
 
@@ -182,7 +185,7 @@ async def delete_rows(
             if row is None:
                 errors.append(classify_miss(target, kinds, tombstones))
             else:
-                rows.append(_observe_deleted(target, row, deleted_at=now))
+                rows.append(_observe_deleted(target, row, mint, deleted_at=now))
             continue
         seen.add(target)
         row = live.get(str(target))
@@ -194,7 +197,7 @@ async def delete_rows(
             continue
         claims.append(row)
         emptied[row["parent_id"]] += 1
-        rows.append(_observe_deleted(target, row, deleted_at=now))
+        rows.append(_observe_deleted(target, row, mint, deleted_at=now))
     if errors:
         return Result(ops=("delete",), errors=errors)
     # The claim window: snapshot read, tombstones not yet set — a rival
@@ -276,6 +279,7 @@ async def restore_rows(
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
     permit: Callable[[AsyncSession, Path, Mapping[str, Any] | None, ResultError | None], Awaitable[ResultError | None]]
     | None = None,
+    mint: VidMint,
 ) -> Result:
     """Adjudicate and apply a batch of restores as a set, judged in request order.
 
@@ -322,7 +326,10 @@ async def restore_rows(
         assert fetched is not None
         ladder.revive(fetched)
         claims.append(fetched)
-        pending.append(PendingRow(target, "created", fetched["kind"], fetched["version"] + 1, fetched["size_bytes"]))
+        version = fetched["version"] + 1
+        pending.append(
+            PendingRow(target, "created", fetched["kind"], version, fetched["size_bytes"], fetched["entry_id"])
+        )
     if errors:
         return Result(ops=("restore",), errors=errors)
     # The claim window: ladder passed, tombstones not yet cleared — a
@@ -334,7 +341,7 @@ async def restore_rows(
     await _revive_sets(session, entry, profile, membership_budget, [row["entry_id"] for row in claims])
     await bump_many(session, entry, profile, membership_budget, [row["parent_id"] for row in claims])
     finals = await final_rows(session, entry, profile, membership_budget, [str(p.path) for p in pending])
-    rows = [observe_final(p, finals.get(str(p.path))) for p in pending]
+    rows = [observe_final(p, finals.get(str(p.path)), mint) for p in pending]
     return Result(ops=("restore",), observations=rows)
 
 
@@ -353,6 +360,7 @@ async def sweep_rows(
     trash_days: int,
     authority: Authority | None,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
+    mint: VidMint,
 ) -> Result:
     """Destroy at *path* — retention at the trash view's head, wholesale purge elsewhere.
 
@@ -384,7 +392,7 @@ async def sweep_rows(
             return Result(ops=("sweep",), errors=misses)
         await _purge(session, tables, profile, membership_budget, subtree_filter(entry, str(path), profile))
         await bump(session, entry, row["parent_id"])
-        return Result(ops=("sweep",), observations=[_observe_deleted(path, row)])
+        return Result(ops=("sweep",), observations=[_observe_deleted(path, row, mint)])
     cutoff = datetime.now(UTC) - timedelta(days=trash_days)
     expired = (
         select(*snapshot_columns(entry))
@@ -399,7 +407,7 @@ async def sweep_rows(
         scope = membership(entry.c.trash_root_id, chunk, profile)
         await _purge(session, tables, profile, membership_budget, scope, proof=still_tombstoned)
     await bump_many(session, entry, profile, membership_budget, [root["parent_id"] for root in roots])
-    rows = [_observe_deleted(Path._brand(root["path"]), root) for root in roots]
+    rows = [_observe_deleted(Path._brand(root["path"]), root, mint) for root in roots]
     notes = await _reclaim_orphan_content(session, tables, profile, membership_budget)
     return Result(ops=("sweep",), observations=rows, errors=notes)
 
@@ -657,12 +665,16 @@ async def _reclaim_orphan_content(
     return notes
 
 
-def _observe_deleted(target: Path, row: Mapping[Any, Any], *, deleted_at: datetime | None = None) -> Observation:
+def _observe_deleted(
+    target: Path, row: Mapping[Any, Any], mint: VidMint, *, deleted_at: datetime | None = None
+) -> Observation:
+    """The row a delete or a sweep changed, as it was before: its version and its vid at that version."""
     return Observation(
         path=target,
         kind=row["kind"],
         size_bytes=row["size_bytes"],
         version=row["version"],
+        vid=vid_at(mint, row["entry_id"], row["version"]),
         status="deleted",
         deleted_at=deleted_at,
     )

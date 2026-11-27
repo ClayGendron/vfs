@@ -512,6 +512,30 @@ class TestMaskedMerge:
         c = Result(observations=[masked("/a.md", {"size_bytes", "version"}, size_bytes=9, version=1)])
         assert ((a | b) | c).one() == (a | (b | c)).one()
 
+    @pytest.mark.parametrize(
+        ("left", "right", "version", "vid"),
+        [
+            pytest.param((5, "a" * 20), (5, "a" * 20), 5, "a" * 20, id="equal-vids-kept"),
+            pytest.param((5, "a" * 20), (5, "b" * 20), None, None, id="equal-versions-differing-vids-nulled"),
+            pytest.param((5, "a" * 20), (3, "b" * 20), None, None, id="differing-versions-null-both"),
+            pytest.param((5, "a" * 20), (3, "a" * 20), None, None, id="a-nulled-version-nulls-the-vid"),
+            pytest.param((5, "a" * 20), (None, None), 5, "a" * 20, id="one-sided-fills"),
+            pytest.param((5, "a" * 20), (3, None), None, None, id="a-one-sided-vid-nulls-with-the-version"),
+        ],
+    )
+    def test_a_merged_vid_agrees_or_is_null(
+        self, left: tuple[int, str], right: tuple[int | None, str | None], version: int | None, vid: str | None
+    ) -> None:
+        """Mutation guarded: a merge that keeps the left vid where the two rows name two entries."""
+        fields = {"kind", "version", "vid"}
+        a = Result(observations=[masked("/a.md", fields, kind="file", version=left[0], vid=left[1])])
+        b_fields = {"kind", "version"} if right[1] is None and right[0] is not None else fields
+        b_fields = b_fields if right[0] is not None else {"content"}
+        b = Result(observations=[masked("/a.md", b_fields, content="x", version=right[0], vid=right[1])])
+        for merged in ((a | b).one(), (b | a).one(), ((a | b) | b).one()):
+            assert (merged.version, merged.vid) == (version, vid)
+            assert {"version", "vid"} <= merged.populated
+
     def test_bind_path_decoration_still_fills_across_unrelated_counters(self) -> None:
         # The router's seam: the owner's directory row and the mounted
         # root's row are the same entry from both sides — their counters
