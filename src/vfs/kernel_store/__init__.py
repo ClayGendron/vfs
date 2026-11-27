@@ -7,7 +7,21 @@ kernel, its sessions and its synchronous face import no SQLAlchemy.
 
 from __future__ import annotations
 
+from vfs.kernel_store.behind import BEHIND_CAPACITY, FLUSH_ROWS, BehindKind
 from vfs.kernel_store.store import KernelStore, KernelStoreUnavailable, Transaction
+from vfs.kernel_store.sweep import SWEEP_CHUNK, Sweeper, expiry_sweeper
 from vfs.models.kernel_rows import KERNEL_FORMAT_VERSION, KERNEL_TABLE_PREFIXES
 
-__all__ = ["KERNEL_FORMAT_VERSION", "KERNEL_TABLE_PREFIXES", "KernelStore", "KernelStoreUnavailable", "Transaction"]
+__all__ = [
+    "BEHIND_CAPACITY",
+    "FLUSH_ROWS",
+    "KERNEL_FORMAT_VERSION",
+    "KERNEL_TABLE_PREFIXES",
+    "SWEEP_CHUNK",
+    "BehindKind",
+    "KernelStore",
+    "KernelStoreUnavailable",
+    "Sweeper",
+    "Transaction",
+    "expiry_sweeper",
+]

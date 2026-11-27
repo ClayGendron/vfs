@@ -100,6 +100,43 @@ A batch of 10,000 records is a supported call, so the store owns the chunking.
 
 The check for a key given twice is what keeps the engines alike: Postgres refuses a statement that updates one row twice, and SQLite stores the later row. Sorted keys make two processes lock rows in one order.
 
+## Written behind
+
+A record that may be dropped is written behind. `put_behind` adds rows to a buffer in memory, wakes the store's task, and returns. **It sends nothing and awaits nothing**, so a read verb whose whole dealing with the store is `put_behind` adds no statement and never waits for one. The writer is `src/vfs/kernel_store/behind.py`.
+
+```python
+store.register_behind(kind)
+store.put_behind(kind, rows, scope=session)
+await store.drain(session)
+```
+
+- **A kind** is a `BehindKind`: a name, the `write` function that writes a batch of its rows in the flush's transaction, and an optional `key`. The kernel registers each kind once, when it is built, and the kinds are flushed in that order, so a kind that needs another kind's rows is registered after it. A row of a keyed kind replaces a waiting row of that kind with the same key, in that row's place, and a keyed kind is handed its rows sorted by key. The store sorts them inside the flush, so keys that cannot be ordered fail as the kind's own `write` would, and only that kind is dropped. A deferred task is a kind too: its row names the task, and its key is what the task is for, so many requests become one run.
+- **The task** is one background task for each store, named `vfs-kernel-store`. It starts at the first put, on the running loop, in a context of its own, so it carries no call's context variables and no attempt's mark. A put on another loop moves it there.
+- **A flush** takes up to `FLUSH_ROWS`, 1,024 rows, from the head of the buffer and writes every kind's rows in one `commit`. The task flushes while the buffer holds anything, and then waits for the next put, `drain`, sweep chunk or `close`. There is no row count to reach and no timer, so rows put in one turn of the loop ride one flush, and batches grow with load.
+- **What waits** can be read and withdrawn. `waiting_behind` returns the rows of a kind, by scope or by key, that are buffered or in the flush in flight. `discard_behind` takes rows out of the buffer, and a row of the flush in flight is stored all the same. `drain(scope)` waits until the rows of that scope put before the call are written or dropped, and raises when the flush that carried one of them failed, or when a flush ahead of them was held for a retry, since no row moves past the head of the buffer. A drain that is cancelled loses no row.
+
+**Every record written behind may be dropped, and a record that may not be dropped is never written behind.** The buffer holds at most `BEHIND_CAPACITY`, 16,384 rows, and drops its oldest rows past it, counted in `store.dropped`. A process that dies loses its buffer and the flush in flight.
+
+| A flush meets | What happens to its rows |
+|---|---|
+| a failure a retry can clear: the store cannot be reached, the writer is held past the retries, a connection is lost, or a privilege the role lacks | They go back to the head of the buffer, and the next put, drain, sweep chunk or close tries again. One `WARNING` at the first failure after a good flush, and one `INFO` at the first good flush after it |
+| a failure no retry can clear: a broken constraint, a statement defect, a value over the engine's cap, or a kind's own code that raises | The flush is tried once more in one transaction, a kind at a time, each under a savepoint. The kinds that fail again are dropped, with one `ERROR` each, and the others are written |
+| a store of another format | The whole flush is dropped, with no second try, under first touch's one `WARNING` |
+
+A row that can never land would otherwise block the head of the buffer until every row behind it was dropped. A flush carries the rows of every kind and every session, so the second try keeps one broken row from costing the rows of kinds that have nothing wrong with them.
+
+## The sweep
+
+**Expired records are removed only when the public `sweep` is called.** `AsyncVirtualFileSystem.sweep()` on the root's trash, its default path, runs the trash's retention and, when that succeeded, awaits one pass of the store. Nothing else starts a pass: no count of writes, no timer and no close, and the task writes and never removes. A root that masks `sweep`, a storage that declares none, and a caller who may not write the root's trash run no pass. A pass that fails adds one error of severity `warning` to the sweep's result.
+
+Expiry does not wait for the sweep. Every read of a table that expires filters on its expiry against `store.now()`, so a record past its expiry reads as absent before it is swept, and a null expiry never expires. The sweep only gives the space back. The sweep is `src/vfs/kernel_store/sweep.py`.
+
+- **A sweeper** is registered by the code that owns a table with an expiry, with `register_sweeper`, in the order its parents and dependents need. It is handed the store, a transaction, the pass's one reading of the clock and a limit, and removes at most that many rows. `expiry_sweeper(table, key=..., expires=..., dependents=...)` is the common case ready-made: it removes the rows of each dependent table that name an expired parent, then the expired parents that have none left.
+- **A pass** calls each sweeper in a `commit` of its own with `SWEEP_CHUNK`, 5,000, until a call removes no row. Each chunk is a transaction of its own, so a lock is held for a commit's length, and a pass that is cancelled or fails has removed whole chunks and nothing else.
+- **The task's flush goes first.** Between two chunks the pass wakes the task when rows wait, waits for that one flush, landed or failed, and goes on. So rows written behind wait a chunk and not a pass.
+- **Two passes at once** remove each row once: on SQLite they take turns on the one writer, and on Postgres the second waits for the first one's row locks and then finds the rows gone.
+- **A place that holds no kernel table** is swept of nothing, and no table is made in it.
+
 ## The clock
 
 Every time a record stores, and every expiry it is compared with, comes from `store.now()`, which calls `store.clock`. The default reads the system's time, and a test replaces it with a clock it steps, from `tests/support/kernel_store.py`. No statement names the engine's own clock. A lint allows one line of the package to read the system clock, and none to read the monotonic clock: the budget of `close` is a `Deadline`.
@@ -108,21 +145,27 @@ Every time a record stores, and every expiry it is compared with, comes from `st
 
 `AsyncVirtualFileSystem.close()` closes the store as one more target of the gather it runs for its storages, within the same `close_timeout`.
 
-1. The store stops taking transactions. A `query` or a `commit` after this raises `vfs.unavailable.backend`, "the filesystem is closed", and a `record_after` returns its warning.
-2. A transaction that began before ends the try it has in hand and starts no other.
-3. The store waits for its transactions in flight, for a budget of `close_timeout` less one second, and never less than half of it.
-4. The engine is disposed, in a `finally`.
+1. The store stops taking rows and transactions. A put after this is dropped and counted. A `query` or a `commit` raises `vfs.unavailable.backend`, "the filesystem is closed", and a `record_after` returns its warning.
+2. A transaction or a flush that began before ends the try it has in hand and starts no other.
+3. The task flushes what the buffer holds, **one try for each flush and not four**. On SQLite that try waits for the file's writer at most the smaller of the connection's `busy_timeout`, 5 seconds by the profile, and half of what is left of the budget. The store carries that wait in an execution option, and the engine core lowers `busy_timeout` to it before it sends the `BEGIN IMMEDIATE`. A flush that fails ends the flushing, and the rows left are dropped and counted with one `WARNING`. Nothing is raised for them, since every such row may be dropped.
+4. The task ends, and is awaited and never interrupted. At the same time the store waits for its transactions in flight.
+5. The engine is disposed, in a `finally`.
 
-A transaction still running when the budget is spent closes its own connection when it ends and returns it to no pool, as an analysis pass a close left running does. A cancelled close keeps the store, as it keeps a storage, and a second `close()` waits for what is still in hand and disposes again. A store that was never used has no engine, and its close does nothing.
+The budget is `close_timeout` less one second, which is kept for the dispose, and never less than half of it. It is a `Deadline` made once when `close` is entered, so the store reads no clock of its own, and a test passes `within=0` for a budget that is spent at once. The task is told the budget with the signal that tells it to close, before the close awaits anything, so no flush of its own starts after the close. Four tries behind a writer held by another process would take about 21 seconds against a timeout of 10; one try ends in about 5.
+
+**A close that is cut short leaves nothing open.** When the budget is spent, when the kernel's timeout fires first, or when the close is cancelled, the task starts no further flush, the rows left are dropped and counted, and the engine is disposed. A flush or a transaction still running closes its own connection when it ends and returns it to no pool, as an analysis pass a close left running does, so SQLite's side files go when it does. A cancelled close keeps the store, as it keeps a storage, and a second `close()` waits for what is still in hand and disposes again. A store that was never used has no engine and no task, and its close does nothing.
 
 ## Rules for code that keeps a record
 
 1. Its table is added to `build_kernel_tables`, its name begins with one of `KERNEL_TABLE_PREFIXES`, and the change adds one to `KERNEL_FORMAT_VERSION`.
 2. Its statements are in a module of `vfs.kernel_store`, never in `vfs.base` or `vfs.session`. A lint holds that the kernel and its faces import no SQLAlchemy.
-3. Every stored time and every expiry compared comes from `store.now()`, and every read of a table that expires filters on the expiry.
-4. Many rows are written with the members above, or by a statement of its own whose binds are fixed or whose rows are cut by `row_chunks`.
-5. A record written beside a change names its form, record after or claim before.
+3. A read verb calls `put_behind` and nothing else of the store, unless a policy stops it: a read that is interrupted has read nothing, and its job is stored with `commit`.
+4. Every stored time and every expiry compared comes from `store.now()`, and every read of a table that expires filters on the expiry.
+5. Many rows are written with the members above, or by a statement of its own whose binds are fixed or whose rows are cut by `row_chunks`.
+6. A record written beside a change names its form, record after or claim before.
+7. A kind's `key` is its statement's conflict key or coarser. A kind that is also written synchronously makes its upsert keep the newest with `newest`, or, where its rows have no counter, reads `waiting_behind` before its synchronous write, calls `discard_behind` for the keys it writes, and states what a row of the flush in flight can then do.
+8. A table that expires has a sweeper.
 
 ## Not built yet
 
-The store writes synchronously alone. Writing a record behind a read, in a buffer the store's own task empties, and removing expired records in the public `sweep` are designed and land next. The sessions and jobs that will keep records here are designed in their own specs and are not built either.
+The sessions, turns, stamps, changes and jobs that will keep records here are designed in their own specs and are not built. This store registers no kind and no sweeper of its own.

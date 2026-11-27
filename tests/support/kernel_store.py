@@ -1,4 +1,4 @@
-"""What the tests of the kernel's store share: a clock a test steps, a table to write rows in, and counts.
+"""What the tests of the kernel's store share: a clock a test steps, a table to write rows in, a kind, and counts.
 
 The store's one table, ``vfs_kernel_meta``, holds one row, so a test that
 writes rows writes them in ``vfs_kernel_probe``, a table of the test's own
@@ -11,6 +11,8 @@ delete by a row value has one to run on; it has a counter for
     await store.commit(lambda t: store.insert_rows(t, table, probe_rows(3)))
     assert await count_rows(store, table) == 3
 
+A kind written behind that writes in the probe table is :func:`probe_kind`.
+
 Every count reads the database through the store or through a plain
 ``sqlite3`` connection on the file, and none reads a clock.
 """
@@ -20,14 +22,19 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
+import pytest
 from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, event, func, select
+from sqlalchemy.engine import make_url
+
+from vfs.kernel_store import BehindKind
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator
-    from pathlib import Path
+    from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 
+    from vfs import RecordPlace
     from vfs.kernel_store import KernelStore, Transaction
 
 PROBE_TABLE: Final = "vfs_kernel_probe"
@@ -38,6 +45,19 @@ PROBE_KEY: Final = ("owner", "scope", "name")
 
 START: Final = datetime(2026, 1, 1, tzinfo=UTC)
 """Where a stepped clock starts."""
+
+TASK_NAME: Final = "vfs-kernel-store"
+"""The name of the store's one background task, as the tests look for it."""
+
+IN_A_FILE = pytest.param("file", id="file")
+IN_MEMORY = pytest.param("memory", id="memory")
+ON_POSTGRES = pytest.param("postgres", marks=pytest.mark.postgres, id="postgres")
+
+SQLITE_PLACES: Final = [IN_A_FILE, IN_MEMORY]
+"""Every test that names no engine: a SQLite file and a store in memory."""
+BOTH_ENGINES: Final = [IN_A_FILE, ON_POSTGRES]
+"""A test of both engines: a SQLite file and the Postgres leg."""
+EVERY_PLACE: Final = [IN_A_FILE, IN_MEMORY, ON_POSTGRES]
 
 
 class SteppedClock:
@@ -70,10 +90,21 @@ class Sent(NamedTuple):
 
 async def probe_table(store: KernelStore) -> Table:
     """Make the test's ``vfs_kernel_probe`` in the store's schema, in a ``commit`` of the store's own."""
-    metadata = MetaData()
-    table = Table(
+    table = probe_table_shape(store)
+
+    async def make(transaction: Transaction) -> None:
+        connection = await transaction.connection()
+        await connection.run_sync(table.metadata.create_all, checkfirst=True)
+
+    await store.commit(make)
+    return table
+
+
+def probe_table_shape(store: KernelStore) -> Table:
+    """The test's ``vfs_kernel_probe`` in the store's schema, as a table, made nowhere."""
+    return Table(
         PROBE_TABLE,
-        metadata,
+        MetaData(),
         Column("owner", String(64), primary_key=True),
         Column("scope", String(64), primary_key=True),
         Column("name", String(64), primary_key=True),
@@ -81,13 +112,6 @@ async def probe_table(store: KernelStore) -> Table:
         Column("expires_at", DateTime(timezone=True)),
         schema=store.tables.meta.schema,
     )
-
-    async def make(transaction: Transaction) -> None:
-        connection = await transaction.connection()
-        await connection.run_sync(metadata.create_all, checkfirst=True)
-
-    await store.commit(make)
-    return table
 
 
 def probe_rows(
@@ -98,6 +122,38 @@ def probe_rows(
         {"owner": owner, "scope": scope, "name": f"n{index:05d}", "counter": counter, "expires_at": expires_at}
         for index in range(count)
     ]
+
+
+def probe_kind(
+    table: Table,
+    *,
+    name: str = "probe",
+    keyed: bool = False,
+    seen: list[Written] | None = None,
+) -> BehindKind:
+    """A kind written behind into *table*: inserted, or upserted by the probe key when *keyed*.
+
+    Each call of its ``write`` is appended to *seen*, with the transaction
+    it was handed and a copy of its rows.
+    """
+
+    async def write(store: KernelStore, transaction: Transaction, rows: Sequence[Mapping[str, object]]) -> None:
+        if seen is not None:
+            seen.append(Written(name, transaction, [dict(row) for row in rows]))
+        if keyed:
+            await store.upsert_rows(transaction, table, rows, key=PROBE_KEY, update=("counter",))
+        else:
+            await store.insert_rows(transaction, table, rows)
+
+    return BehindKind(name=name, write=write, key=PROBE_KEY if keyed else None)
+
+
+class Written(NamedTuple):
+    """One call of a kind's ``write``: the kind's name, the transaction it was handed, and its rows."""
+
+    kind: str
+    transaction: object
+    rows: list[dict[str, object]]
 
 
 async def count_rows(store: KernelStore, table: Table) -> int:
@@ -202,22 +258,35 @@ class HeldWriter:
 
 
 class Gate:
-    """A seam handler that holds its caller the first *times* it is reached, until the test opens it."""
+    """A seam handler that holds its caller the first *times* it is reached after *skip*, until the test opens it."""
 
-    def __init__(self, times: int = 1) -> None:
+    def __init__(self, times: int = 1, *, skip: int = 0) -> None:
         self.reached = asyncio.Event()
         self.entered = 0
         self._open = asyncio.Event()
         self._times = times
+        self._skip = skip
 
     async def __call__(self) -> None:
         self.entered += 1
-        if self.entered <= self._times:
+        if self._skip < self.entered <= self._skip + self._times:
             self.reached.set()
             await self._open.wait()
 
     def open(self) -> None:
         self._open.set()
+
+
+def store_tasks() -> list[asyncio.Task[Any]]:
+    """The tasks of the running loop that are a store's one background task."""
+    return [task for task in asyncio.all_tasks() if task.get_name() == TASK_NAME]
+
+
+def sqlite_file_of(place: RecordPlace) -> Path:
+    """The path of the SQLite file *place* names."""
+    database = make_url(place.url).database
+    assert database is not None
+    return Path(database)
 
 
 def files_in(path: Path) -> list[str]:

@@ -17,7 +17,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import Pool
 
 from vfs.storage.backends.database import core as core_module
-from vfs.storage.backends.database.core import EngineCore
+from vfs.storage.backends.database.core import BUSY_TIMEOUT_CAP, EngineCore
 from vfs.storage.backends.database.dialects import SQLITE, SQLITE_VEC_PROBE
 from vfs.storage.backends.database.engine import EngineHost
 
@@ -117,6 +117,41 @@ class TestFileSettings:
         await bare.apply_file_settings()
         await bare.close()
         assert (sent, (tmp_path / "bare.db").exists()) == ([], False)
+
+
+# ---------------------------------------------------------------------------
+# Transaction control
+# ---------------------------------------------------------------------------
+
+
+class TestTransactionControl:
+    @pytest.mark.parametrize(("own", "lowest", "carried"), [(5_000, 1_500, 1_500), (0, 1_500, 0)])
+    async def test_a_begin_lowers_the_busy_timeout_to_its_option_and_never_raises_it(
+        self, tmp_path: pathlib.Path, own: int, lowest: int, carried: int
+    ) -> None:
+        """Guards a SQLite ``BEGIN`` sent before the wait its option bounds is set, or one that raises the wait."""
+        core = EngineCore(url=_file_url(tmp_path), vector=False)
+        bind = core.engine.sync_engine
+        waits: list[tuple[str, int]] = []
+
+        @event.listens_for(bind, "checkout")
+        def own_wait(dbapi_connection: Any, *_rest: Any) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute(f"PRAGMA busy_timeout = {own}")
+            cursor.close()
+
+        @event.listens_for(bind, "before_cursor_execute")
+        def read_the_wait(conn: Any, _cursor: Any, statement: str, *_rest: Any) -> None:
+            cursor = conn.connection.dbapi_connection.cursor()
+            cursor.execute("PRAGMA busy_timeout")
+            waits.append((statement, cursor.fetchone()[0]))
+            cursor.close()
+
+        async with core.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True, BUSY_TIMEOUT_CAP: lowest})
+            await session.commit()
+        await core.close()
+        assert waits == [("BEGIN IMMEDIATE", carried)]
 
 
 # ---------------------------------------------------------------------------

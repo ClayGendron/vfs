@@ -71,6 +71,13 @@ T = TypeVar("T")
 BEGIN_TAG: Final = "vfs_begin_tag"
 """The execution option whose text a SQLite transaction's ``BEGIN`` carries as a comment, told apart in a trace."""
 
+BUSY_TIMEOUT_CAP: Final = "vfs_busy_timeout_ms"
+"""The execution option that lowers, before a SQLite transaction's ``BEGIN``, the milliseconds it waits for the writer.
+
+It never raises the connection's ``busy_timeout``, and the next checkout
+sets the profile's own again.
+"""
+
 
 # ---------------------------------------------------------------------------
 # The statement that begins a SQLite transaction
@@ -266,7 +273,8 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
 
     The documented SQLAlchemy recipe: the driver's deferred implicit
     BEGIN is disabled so the begin event controls transaction start —
-    writers (``vfs_writer`` execution option) get ``BEGIN IMMEDIATE``.
+    writers (``vfs_writer`` execution option) get ``BEGIN IMMEDIATE``,
+    and ``BUSY_TIMEOUT_CAP`` lowers the wait for the writer before it.
     Session settings are connection state applied at every pool checkout
     (op-session start), and with *vector* the extension is loaded there.
     """
@@ -287,4 +295,17 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
         options = conn.get_execution_options()
         if options.get("vfs_no_begin"):
             return
+        if (cap := options.get(BUSY_TIMEOUT_CAP)) is not None:
+            _lower_busy_timeout(conn.connection.dbapi_connection, int(cap))
         conn.exec_driver_sql(begin_statement(writer=bool(options.get("vfs_writer")), tag=options.get(BEGIN_TAG)))
+
+
+def _lower_busy_timeout(dbapi_connection: Any, cap: int) -> None:
+    """Set the connection's ``busy_timeout`` to *cap* milliseconds when that is lower, through the driver's cursor."""
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA busy_timeout")
+        (current,) = cursor.fetchone()
+        cursor.execute(f"PRAGMA busy_timeout = {min(int(current), cap)}")
+    finally:
+        cursor.close()
