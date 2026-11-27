@@ -216,6 +216,8 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("edits", "edits", doc="native form: sequential, atomic EditOperation list"),
         _OBSERVATIONS,
         ParamSpec("replace_all", "bool", nullable=False, default=False, doc="replace every match of old"),
+        ParamSpec("if_vid", "vid", doc="single form: the vid of the file the edit changes, or ABSENT"),
+        ParamSpec("if_vids", "vids", doc="batch form: the vid required at each named row's path, or ABSENT"),
         _AUTHORITY,
     ),
     "delete": (
@@ -448,6 +450,7 @@ _ONE_LISTING: Final = ShapeRule(
 )
 # Each form of write has its own spelling of the required vid.
 _VID_FORMS: Final = "write takes if_vid with path, and if_vids with entries"
+_EDIT_VID_FORMS: Final = "edit takes if_vid with path, and if_vids with observations"
 
 RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "read": (_ONE_TARGET,),
@@ -464,6 +467,8 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             msg_both="edit takes old/new or an edits list, not both",
             msg_missing="edit requires old and new strings, or an edits list",
         ),
+        ShapeRule((("if_vid",), ("observations",)), exactly_one=False, msg_both=_EDIT_VID_FORMS),
+        ShapeRule((("if_vids",), ("path",)), exactly_one=False, msg_both=_EDIT_VID_FORMS),
     ),
     "write": (
         ShapeRule(

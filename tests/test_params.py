@@ -132,6 +132,14 @@ def test_violation_messages_name_the_parameter() -> None:
     assert param_violation("write", {"path": "/f", "content": "x", "if_absent": True, "if_vid": vid}) == absent
     assert param_violation("write", {"entries": [], "if_absent": True, "if_vids": {"/f": vid}}) == absent
     assert param_violation("write", {"path": "/f", "content": "x", "if_absent": False, "if_vid": vid}) is None
+    edit_forms = "edit takes if_vid with path, and if_vids with observations"
+    assert param_violation("edit", {"path": "/f", "old": "a", "new": "b", "if_vid": vid}) is None
+    assert param_violation("edit", {"observations": [], "edits": [], "if_vids": {"/f": ABSENT}}) is None
+    assert param_violation("edit", {"observations": [], "edits": [], "if_vid": vid}) == edit_forms
+    assert param_violation("edit", {"path": "/f", "old": "a", "new": "b", "if_vids": {"/f": vid}}) == edit_forms
+    assert param_violation("edit", {"path": "/f", "old": "a", "new": "b", "if_vid": 3}) == (
+        f"edit if_vid must be a vid, {must}, got int"
+    )
     assert param_violation("write", {"path": "/f", "content": "x", "append": True, "if_vid": ABSENT}) == (
         "write takes append or if_absent, not both: an append to an absent path already creates it"
     )
@@ -184,6 +192,10 @@ GARBAGE = [
     ("write-absent-with-vid", lambda fs: fs.write(path="/f.txt", content="x", if_absent=True, if_vid="0" * 20)),
     ("write-absent-with-vids", lambda fs: fs.write(entries=[], if_absent=True, if_vids={"/f.txt": "0" * 20})),
     ("write-truthy-parents", lambda fs: fs.write(path="/f.txt", content="x", parents=1)),
+    ("edit-int-vid", lambda fs: fs.edit("/f.txt", old="a", new="b", if_vid=7)),
+    ("edit-vid-with-observations", lambda fs: fs.edit(observations=[], edits=[], if_vid="0" * 20)),
+    ("edit-vids-with-path", lambda fs: fs.edit("/f.txt", old="a", new="b", if_vids={"/f.txt": "0" * 20})),
+    ("edit-vids-not-a-vid", lambda fs: fs.edit(observations=[], edits=[], if_vids={"/f.txt": "x"})),
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
     ("edit-non-str-old", lambda fs: fs.edit("/f.txt", old=1, new="b")),
     ("edit-truthy-replace-all", lambda fs: fs.edit("/f.txt", old="a", new="b", replace_all="yes")),

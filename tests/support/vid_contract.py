@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Protocol
 import pytest
 
 from vfs.authority import Authority
-from vfs.models import Edge, Entry
+from vfs.models import Edge, Entry, Observation
 from vfs.paths import TRASH_ROOT, Path
 from vfs.results import ErrorKind
 from vfs.storage import (
@@ -330,6 +330,72 @@ class VidContract:
         results = await asyncio.gather(*(batch(n) for n in range(20)))
         assert sum(result.success for result in results) == 1
         assert sorted(error.kind for result in results for error in result.errors) == [ErrorKind.exists] * 19
+
+    async def test_an_edit_with_a_matching_vid_updates(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])).success is True
+        seen = await _vid(storage, "/a.txt")
+        edited = await storage.edit(
+            path=Path("/a.txt"), edits=[EditOperation("alpha", "beta")], if_vids={Path("/a.txt"): seen}
+        )
+        assert edited.success is True, edited.errors
+        assert (await storage.read(path=Path("/a.txt"))).one().content == "beta"
+        assert edited.observations[0].vid == await _vid(storage, "/a.txt") != seen
+
+    async def test_an_edit_with_a_stale_vid_is_conflict_before_any_text_is_matched(self, storage: VidBackend) -> None:
+        """Mutation guarded: the vid judged after the edits run, so a missing text answers in its place."""
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])).success is True
+        seen = {Path("/a.txt"): await _vid(storage, "/a.txt")}
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="gamma")])).success is True
+        missing = await storage.edit(path=Path("/a.txt"), edits=[EditOperation("no such text", "x")], if_vids=seen)
+        now = {"version": 2, "vid": await _vid(storage, "/a.txt")}
+        assert [(error.kind, error.data, error.retryable) for error in missing.errors] == [
+            (ErrorKind.conflict, now, False)
+        ]
+        # An edit that landed and is sent again with the same vid meets the vid it moved.
+        current = {Path("/a.txt"): await _vid(storage, "/a.txt")}
+        once = await storage.edit(path=Path("/a.txt"), edits=[EditOperation("gamma", "delta")], if_vids=current)
+        assert once.success is True, once.errors
+        twice = await storage.edit(path=Path("/a.txt"), edits=[EditOperation("gamma", "delta")], if_vids=current)
+        assert [error.kind for error in twice.errors] == [ErrorKind.conflict]
+        assert (await storage.read(path=Path("/a.txt"))).one().content == "delta"
+
+    async def test_an_edit_over_a_directory_that_required_a_file_is_conflict(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])).success is True
+        seen = await _vid(storage, "/a.txt")
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        assert (await storage.sweep(path=Path("/a.txt"))).success is True
+        assert (await storage.mkdir(path=Path("/a.txt"))).success is True
+        required = await storage.edit(
+            path=Path("/a.txt"), edits=[EditOperation("x", "y")], if_vids={Path("/a.txt"): seen}
+        )
+        directory = (await storage.stat(path=Path("/a.txt"))).one()
+        now = {"version": directory.version, "vid": directory.vid}
+        assert [(error.kind, error.data) for error in required.errors] == [(ErrorKind.conflict, now)]
+
+    async def test_a_batch_edit_with_one_stale_key_edits_nothing(self, storage: VidBackend) -> None:
+        entries = [Entry(path=Path(path), content="alpha") for path in ("/a.txt", "/b.txt")]
+        assert (await storage.write(entries=entries)).success is True
+        seen = {Path(path): await _vid(storage, path) for path in ("/a.txt", "/b.txt")}
+        assert (await storage.write(entries=[Entry(path=Path("/b.txt"), content="alpha again")])).success is True
+        rows = [Observation(path=Path("/a.txt")), Observation(path=Path("/b.txt"))]
+        edited = await storage.edit(observations=rows, edits=[EditOperation("alpha", "beta")], if_vids=seen)
+        assert [(error.kind, error.path) for error in edited.errors] == [(ErrorKind.conflict, "/b.txt")]
+        bodies = [(await storage.read(path=Path(path))).one().content for path in ("/a.txt", "/b.txt")]
+        assert bodies == ["alpha", "alpha again"]
+
+    async def test_the_mark_on_an_edit_of_what_is_there(self, storage: VidBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])).success is True
+        there = (await storage.stat(path=Path("/a.txt"))).one()
+        live = await storage.edit(
+            path=Path("/a.txt"), edits=[EditOperation("alpha", "x")], if_vids={Path("/a.txt"): ABSENT}
+        )
+        assert [(error.kind, error.data) for error in live.errors] == [
+            (ErrorKind.conflict, {"version": there.version, "vid": there.vid})
+        ]
+        empty = await storage.edit(
+            path=Path("/none.txt"), edits=[EditOperation("a", "b")], if_vids={Path("/none.txt"): ABSENT}
+        )
+        assert [error.kind for error in empty.errors] == [ErrorKind.not_found]
 
     async def test_the_storage_declares_the_vid_trait(self, storage: VidBackend) -> None:
         assert storage.traits()["vid"] == "entry_version"

@@ -112,7 +112,7 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
-from vfs.preconditions import Site, required_by_mount, vids_unissued
+from vfs.preconditions import Site, routed_vids
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity
@@ -141,7 +141,7 @@ if TYPE_CHECKING:
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
     from vfs.storage.grants import GrantLevel, Posture
-    from vfs.vid import Vid
+    from vfs.vid import Vid, VidOrAbsent
 
 # How many more kernels the current request may enter. One is spent per
 # kernel entered and never per mount.
@@ -1031,6 +1031,8 @@ class AsyncVirtualFileSystem:
         observations: list[Observation] | None = None,
         replace_all: bool = False,
         *,
+        if_vid: Vid | Literal["absent"] | None = None,
+        if_vids: Mapping[str, Vid | Literal["absent"]] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         """Replace text in one file, or in each file in ``observations``.
@@ -1041,6 +1043,15 @@ class AsyncVirtualFileSystem:
         all or nothing. If one edit finds no match, none is applied. Every storage must keep both
         promises. ``old`` and ``new`` are short for a list of one edit, and ``replace_all`` then
         replaces every match of ``old``.
+
+        ``if_vid`` is the :class:`~vfs.vid.Vid` of the file as the caller read it; ``if_vids`` maps each
+        path of ``observations`` that needs one to its vid. A file whose vid is not the one required is
+        refused with ``conflict`` before any of its text is matched, and nothing is edited on the mount that holds it;
+        the error carries the ``version`` and the ``vid`` of what is there now. An edit that landed and
+        is sent again with the same vid meets the vid it moved, and is ``conflict`` too: read the file
+        again first. ``ABSENT`` in place of a vid refuses a file that is there with ``conflict``. Each key of
+        ``if_vids`` must be the path of a row in ``observations``, and no two keys may name one row. A mount
+        whose storage issues no vid refuses a call that requires one there with ``unsupported``.
 
         The call returns a :class:`Result`. An ``edits`` that is not a list of :class:`EditOperation`
         is refused with ``invalid``.
@@ -1053,6 +1064,8 @@ class AsyncVirtualFileSystem:
             edits=edits,
             observations=observations,
             replace_all=replace_all,
+            if_vid=if_vid,
+            if_vids=if_vids,
             authority=authority,
         )
         if refusal is not None:
@@ -1067,7 +1080,8 @@ class AsyncVirtualFileSystem:
         else:
             assert old is not None and new is not None
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
-        return await self._route_single("edit", path, observations, edits=edits, authority=authority)
+        required = {path: if_vid} if path is not None and if_vid is not None else if_vids
+        return await self._route_single("edit", path, observations, edits=edits, required=required, authority=authority)
 
     async def delete(
         self,
@@ -1830,6 +1844,7 @@ class AsyncVirtualFileSystem:
         observations: list[Observation] | None,
         *,
         cursor: Cursor | None = None,
+        required: Mapping[str, VidOrAbsent] | None = None,
         authority: Authority | None = None,
         **kwargs: Any,
     ) -> Result:
@@ -1841,12 +1856,15 @@ class AsyncVirtualFileSystem:
         the gate is asked. The storage is then called once, unless a listing reaches the mounts beneath
         the path, as :meth:`_dispatch_read` says. A delete, a restore or a sweep is refused with
         ``busy`` first when the path is a mount point or holds one. A ``cursor`` pages the listing, and
-        a key that cannot resume it is refused with ``invalid`` before any storage is called.
+        a key that cannot resume it is refused with ``invalid`` before any storage is called. ``required``
+        holds the vids the call requires, by path; each storage is handed the keys of its own rows.
         """
         if not self._mounts:
             return self._closed_error(op)
         if observations is not None:
-            return await self._dispatch_grouped_observations(op, observations, authority=authority, **kwargs)
+            return await self._dispatch_grouped_observations(
+                op, observations, required=required, authority=authority, **kwargs
+            )
 
         assert path is not None
         resolved = resolve_path(path, mutation=op in MUTATING_OPS)
@@ -1864,6 +1882,12 @@ class AsyncVirtualFileSystem:
         err = self._gate_entry(terminal.mount, op, write_rels=(terminal.rel,), subtree=subtree)
         if err is not None:
             return err
+        if required:
+            site = {full: Site(terminal.mount.path, terminal.rel)}
+            keyed = routed_vids(required, site, {terminal.mount.path: terminal.mount}, noun="the path")
+            if isinstance(keyed, ResultError):
+                return Result(ops=(op,), errors=[keyed])
+            kwargs["if_vids"] = keyed[terminal.mount.path]
         if cursor is None:
             return await self._dispatch_read(terminal.mount, op, path=terminal.rel, authority=authority, **kwargs)
         if (problem := cursor.refusal(terminal.mount.path, terminal.rel)) is not None:
@@ -1885,6 +1909,7 @@ class AsyncVirtualFileSystem:
         observations: list[Observation],
         *,
         ranked: _Ranked | None = None,
+        required: Mapping[str, VidOrAbsent] | None = None,
         authority: Authority | None = None,
         **kwargs: object,
     ) -> Result:
@@ -1896,11 +1921,13 @@ class AsyncVirtualFileSystem:
         row is treated for a mutation exactly as the same call with ``path`` would treat it. A read
         answers row by row where the storage does so. With ``ranked``, each mount is asked for
         ``ranked.depth`` rows when more than one mount answers, and the merged answer is ranked again.
+        Each key of ``required`` must be the path of a row of the batch, and goes to that row's mount.
         """
         rows, invalid = self._observation_rows(op, observations)
         if invalid is not None:
             return invalid
         groups: dict[Path, tuple[Mount, list[Observation]]] = {}
+        sites: dict[Path, Site] = {}
         for obs in rows:
             resolved = resolve_path(obs.path, mutation=op in MUTATING_OPS)
             if resolved.path is None:
@@ -1911,8 +1938,9 @@ class AsyncVirtualFileSystem:
                     return busy
             mount = self._resolve_terminal(resolved.path).mount
             _b, obs_list = groups.setdefault(mount.path, (mount, []))
-            obs_list.append(obs.without_mount(mount.path))
-        if not groups:
+            obs_list.append(local := obs.without_mount(mount.path))
+            sites[resolved.path] = Site(mount.path, local.path)
+        if not groups and not required:
             return Result(ops=(op,))
 
         # All gates run before any dispatch, so a batch touching a bad
@@ -1923,10 +1951,22 @@ class AsyncVirtualFileSystem:
             if err is not None:
                 return err
 
+        mounts = {mount.path: mount for mount, _ in groups.values()}
+        keyed = routed_vids(required or {}, sites, mounts, noun="a row in observations")
+        if isinstance(keyed, ResultError):
+            return Result(ops=(op,), errors=[keyed])
         if ranked is not None and len(groups) > 1:
             kwargs = {**kwargs, "limit": ranked.depth}
         results = await gather_settled(
-            self._dispatch_read(mount, op, self._listing, observations=group, authority=authority, **kwargs)
+            self._dispatch_read(
+                mount,
+                op,
+                self._listing,
+                observations=group,
+                authority=authority,
+                **({"if_vids": keyed[mount.path]} if mount.path in keyed else {}),
+                **kwargs,
+            )
             for mount, group in groups.values()
         )
         merged = Result.merge(results, op=op)
@@ -2017,7 +2057,7 @@ class AsyncVirtualFileSystem:
             return self._closed_error(op)
         if observations is not None:
             merged = await self._dispatch_grouped_observations(
-                op, observations, ranked=ranked, authority=authority, **kwargs
+                op, observations, ranked=ranked, required=None, authority=authority, **kwargs
             )
             return merged if ranked is not None else self._cap_rows(merged, op, row_cap)
 
@@ -2488,12 +2528,10 @@ class AsyncVirtualFileSystem:
             if entry.kind != "directory":
                 files[resolved.path] = Site(terminal.mount.path, local.path)
 
-        required = required_by_mount(if_vids or {}, files, noun="a file in entries")
+        mounts = {mount.path: mount for mount, _ in groups.values()}
+        required = routed_vids(if_vids or {}, files, mounts, noun="a file in entries")
         if isinstance(required, ResultError):
             return Result(ops=("write",), errors=[required])
-        mounts = {mount.path: mount for mount, _ in groups.values()}
-        if (unissued := vids_unissued(required, mounts)) is not None:
-            return Result(ops=("write",), errors=[unissued])
 
         results = await gather_settled(
             self._dispatch_entry(

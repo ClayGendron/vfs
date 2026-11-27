@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -40,6 +40,9 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 from vfs.vid import ABSENT
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 # ----------------------------------------------------------------------
 # single-shape verbs localize their dispatch
@@ -1273,6 +1276,80 @@ async def test_a_mount_whose_storage_issues_no_vid_refuses_a_required_change() -
     )
     assert plain.calls == []
     assert (await root.write(path="/p/f.txt", content="x")).success is True
+    assert len(plain.calls) == 1
+
+
+# The single and the batch form of each verb that takes a required vid, called at the router.
+SINGLE: dict[str, Callable[..., Awaitable[Result]]] = {
+    "write": lambda root, path, **kw: root.write(path=path, content="x", **kw),
+    "edit": lambda root, path, **kw: root.edit(path, old="a", new="b", **kw),
+}
+BATCH: dict[str, Callable[..., Awaitable[Result]]] = {
+    "write": lambda root, paths, **kw: root.write([Entry(path=Path(p), content="x") for p in paths], **kw),
+    "edit": lambda root, paths, **kw: root.edit(
+        observations=[Observation(path=Path(p)) for p in paths], edits=[EditOperation("a", "b")], **kw
+    ),
+}
+NOUNS = {"write": "a file in entries", "edit": "a row in observations"}
+
+
+@pytest.mark.parametrize("verb", list(SINGLE))
+async def test_each_verb_hands_its_storage_one_key_without_the_mount(verb: str) -> None:
+    root = AsyncVirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    await SINGLE[verb](root, "/m/f.txt", if_vid=VID)
+    await SINGLE[verb](root, "/m/f.txt")
+    assert [kwargs.get("if_vids") for _, kwargs in child.calls] == [{Path("/f.txt"): VID}, None]
+    assert "if_vids" not in child.calls[1][1]
+
+
+@pytest.mark.parametrize("verb", list(BATCH))
+async def test_each_verb_routes_its_keys_to_the_mount_of_each(verb: str) -> None:
+    root = AsyncVirtualFileSystem()
+    a, b, c = RecorderStorage(), RecorderStorage(), RecorderStorage()
+    for storage, path in ((a, "/a"), (b, "/b"), (c, "/c")):
+        await root.add_mount(storage, path)
+    paths = [f"/{mount}/{name}.txt" for mount in "abc" for name in ("f", "g")]
+    assert (await BATCH[verb](root, paths, if_vids={"/a/f.txt": VID, "/b/g.txt": OTHER_VID})).success is True
+    assert a.calls[0][1]["if_vids"] == {Path("/f.txt"): VID}
+    assert b.calls[0][1]["if_vids"] == {Path("/g.txt"): OTHER_VID}
+    assert "if_vids" not in c.calls[0][1]
+
+
+@pytest.mark.parametrize("verb", list(BATCH))
+async def test_each_verb_refuses_a_key_that_names_no_target(verb: str) -> None:
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    result = await BATCH[verb](root, ["/a/f.txt"], if_vids={"/a/f.txt": VID, "/a/other.txt": VID})
+    assert [(error.kind, error.data) for error in result.errors] == [(ErrorKind.invalid, {"raw": "/a/other.txt"})]
+    assert result.errors[0].message.endswith(f"each key of if_vids must be the path of {NOUNS[verb]}")
+    twice = await BATCH[verb](root, ["/a/f.txt"], if_vids={"/a/f.txt": VID, "/a//f.txt": VID})
+    assert [error.message.endswith("if_vids names one path twice") for error in twice.errors] == [True]
+    assert a.calls == []
+
+
+@pytest.mark.parametrize("verb", list(BATCH))
+async def test_each_verb_refuses_a_key_beside_an_empty_batch(verb: str) -> None:
+    """Mutation guarded: an empty batch answered before its keys are matched, which drops a key that names nothing."""
+    root = AsyncVirtualFileSystem()
+    a = RecorderStorage()
+    await root.add_mount(a, "/a")
+    result = await BATCH[verb](root, [], if_vids={"/a/f.txt": VID})
+    assert [error.kind for error in result.errors] == [ErrorKind.invalid]
+    assert a.calls == []
+
+
+@pytest.mark.parametrize("verb", list(SINGLE))
+async def test_each_verb_refuses_a_required_vid_where_the_storage_issues_none(verb: str) -> None:
+    root = AsyncVirtualFileSystem()
+    plain = RecorderStorage(vid=False)
+    await root.add_mount(plain, "/p")
+    refused = await SINGLE[verb](root, "/p/f.txt", if_vid=VID)
+    assert [(error.kind, error.path) for error in refused.errors] == [(ErrorKind.unsupported, "/p")]
+    assert plain.calls == []
+    assert (await SINGLE[verb](root, "/p/f.txt")).success is True
     assert len(plain.calls) == 1
 
 

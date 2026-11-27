@@ -499,9 +499,8 @@ class WritePlan:
         for path, staged in self.staged.items():
             if staged.expected is None:
                 continue
-            row = self.committed[str(path)]
-            if staged.expected != (vid := self.vid_of(row)):
-                self.errors.append(stale_vid(path, row["version"], vid))
+            if (refused := required_refusal(self.mint, path, self.committed[str(path)], staged.expected)) is not None:
+                self.errors.append(refused)
 
     def vid_of(self, row: RowMapping) -> Vid:
         """The vid of a committed row of the snapshot, at the version it was read at."""
@@ -536,6 +535,17 @@ class WritePlan:
 # ---------------------------------------------------------------------------
 # Refusals
 # ---------------------------------------------------------------------------
+
+
+def required_refusal(mint: VidMint, path: Path, row: RowMapping, required: VidOrAbsent | None) -> ResultError | None:
+    """The ``conflict`` of a row at *path* whose vid is not the *required* one, or nothing where it is or none is.
+
+    The mark ``ABSENT`` is never a row's vid, so a live row under it is refused too.
+    The one comparison every ladder that takes a required vid makes.
+    """
+    if required is None or required == (vid := vid_at(mint, row["entry_id"], row["version"])):
+        return None
+    return stale_vid(path, row["version"], vid)
 
 
 def occupant_exists(path: Path, version: int, content_hash: str | None, vid: Vid) -> ResultError:

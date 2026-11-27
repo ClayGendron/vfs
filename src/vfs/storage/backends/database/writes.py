@@ -84,7 +84,7 @@ from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
-from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists
+from vfs.storage.backends.database.staging import StagedEntry, WritePlan, occupant_exists, required_refusal
 from vfs.storage.backends.database.versions import mint_versions
 from vfs.storage.editing import appended, edited_entry
 
@@ -292,6 +292,7 @@ async def edit_rows(
     targets: Sequence[Path],
     authority: Authority | None,
     executor: Executor,
+    if_vids: Mapping[Path, VidOrAbsent] | None = None,
     mint: VidMint,
 ) -> Result:
     """Apply the same edit sequence to every target's content.
@@ -306,13 +307,19 @@ async def edit_rows(
     clobber, so a concurrent rival surfaces as ``conflict``. The
     per-target matching awaits nothing, so it runs whole in one hop on
     *executor* and the event loop stays free while it matches.
+
+    *if_vids* maps a target to the vid its caller requires, or to the
+    mark ``ABSENT``. A live row whose vid is not the one required, or
+    any live row under the mark, is ``conflict`` before its body is
+    looked at; a target with no live row answers as it would without one.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, set(targets), with_content=True)
     live = {path: row for path, row in committed.items() if row["deleted_at"] is None}
     admit_targets(session, "edit", live, targets)
     missing = await miss_errors(session, tables.entry, targets, live, profile, membership_budget)
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, mint=mint)
-    await call_offloaded(executor, lambda: _stage_edits(plan, live, missing, targets, edits))
+    required = if_vids or {}
+    await call_offloaded(executor, lambda: _stage_edits(plan, live, missing, targets, edits, required))
     return await _finish(session, tables, profile, parameter_budget, membership_budget, plan, op="edit", overwrite=True)
 
 
@@ -1431,12 +1438,17 @@ def _stage_edits(
     missing: Mapping[Path, ResultError],
     targets: Sequence[Path],
     edits: list[EditOperation],
+    required: Mapping[Path, VidOrAbsent],
 ) -> None:
     """Match and stage every target's edit on *plan*: the CPU of an edit, with no statement."""
     for target in targets:
         row = live.get(str(target))
         if row is None:
             plan.errors.append(missing[target])
+            continue
+        # A required vid is judged against the row before the call, and before anything else about it.
+        if (refused := required_refusal(plan.mint, target, row, required.get(target))) is not None:
+            plan.errors.append(refused)
             continue
         if row["source"] == "bytes":
             plan.errors.append(_binary_target(target))

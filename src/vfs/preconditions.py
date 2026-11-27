@@ -8,8 +8,7 @@ call's own targets, and hands each mount the keys of its own targets as
 that mount's storage sees them:
 
     sites = {resolved: Site(mount.path, local) for each target of the call}
-    required = required_by_mount(if_vids, sites, noun="a file in entries")
-    refusal = vids_unissued(required, mounts)
+    required = routed_vids(if_vids, sites, mounts, noun="a file in entries")
 
 A key that names no target of the call, or names a path that another key
 names, is refused ``invalid`` before any storage is called. So is a key
@@ -72,6 +71,20 @@ def required_by_mount(
             return classified(ErrorKind.invalid, detail="if_vids names one path twice", data={"raw": str(key)})
         keyed[site.local] = vid
     return required
+
+
+def routed_vids(
+    if_vids: Mapping[str, VidOrAbsent], sites: Mapping[Path, Site], mounts: Mapping[Path, Mount], *, noun: str
+) -> Required | ResultError:
+    """The keys of *if_vids* keyed by mount, as :func:`required_by_mount` keys them, or the first refusal.
+
+    A key that names no target or names one twice is refused first; then
+    a mount that receives a key and whose storage issues no vid.
+    """
+    required = required_by_mount(if_vids, sites, noun=noun)
+    if isinstance(required, ResultError):
+        return required
+    return vids_unissued(required, mounts) or required
 
 
 def vids_unissued(required: Required, mounts: Mapping[Path, Mount]) -> ResultError | None:

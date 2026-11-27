@@ -210,6 +210,7 @@ class SupportsMutation(Protocol):
         edits: list[EditOperation],
         path: Path | None = None,
         observations: list[Observation] | None = None,
+        if_vids: Mapping[Path, VidOrAbsent] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 
